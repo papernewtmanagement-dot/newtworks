@@ -2766,6 +2766,224 @@ function ChecklistEditor({ draft, onChange, onSave, onCancel, saving, err }) {
   );
 }
 
+// =====================================================================
+// Day done — the reward for clearing everything (Peter 2026-09-17). When
+// the team list is clear, the person's own list is clear, and the wrap-up
+// is settled for the day, the checklist crumbles away and this takes its
+// place: confetti, a dancing pug, the week's numbers so far, and a line
+// telling them to leave.
+//
+// Nothing here writes anything. "Back to the list" and unticking anything
+// both put the checklist straight back.
+// =====================================================================
+const DAY_DONE_LINES = ["Your Day is Done!", "Now Go Home!", "Gyet!", "Scat!"];
+const CONFETTI_COLORS = [T.blue, T.green, T.amber, T.red, T.purple, T.teal, T.gold, T.pink];
+
+function DayDoneStyles() {
+  return (
+    <style>{`
+      @keyframes nwCrumble {
+        0%   { opacity: 1; transform: none; filter: blur(0px); }
+        20%  { transform: translateY(-7px) rotate(-0.7deg); }
+        100% { opacity: 0; transform: translateY(54px) rotate(2.6deg) scale(0.93); filter: blur(5px); }
+      }
+      .nw-crumble > * { animation: nwCrumble 900ms cubic-bezier(.55,.06,.68,.19) forwards; }
+      .nw-crumble > *:nth-child(2) { animation-delay: 130ms; }
+
+      @keyframes nwFall { from { transform: translateY(-14vh); } to { transform: translateY(114vh); } }
+      @keyframes nwSway { from { transform: translateX(-26px); } to { transform: translateX(26px); } }
+      @keyframes nwSpin { from { transform: rotate(0deg); }     to { transform: rotate(900deg); } }
+
+      @keyframes nwRise {
+        from { opacity: 0; transform: translateY(26px) scale(0.97); }
+        to   { opacity: 1; transform: none; }
+      }
+      @keyframes nwPop {
+        0%   { opacity: 0; transform: scale(0.82); }
+        55%  { opacity: 1; transform: scale(1.08); }
+        100% { opacity: 1; transform: scale(1); }
+      }
+      @keyframes nwPugDance {
+        0%   { transform: translateY(0) rotate(-4deg); }
+        25%  { transform: translateY(-12px) rotate(0deg); }
+        50%  { transform: translateY(0) rotate(4deg); }
+        75%  { transform: translateY(-12px) rotate(0deg); }
+        100% { transform: translateY(0) rotate(-4deg); }
+      }
+      @keyframes nwWag  { 0%, 100% { transform: rotate(-20deg); } 50% { transform: rotate(22deg); } }
+      @keyframes nwEarL { 0%, 100% { transform: rotate(-6deg); }  50% { transform: rotate(11deg); } }
+      @keyframes nwEarR { 0%, 100% { transform: rotate(6deg); }   50% { transform: rotate(-11deg); } }
+      @keyframes nwPaw  { 0%, 100% { transform: translateY(0); }  50% { transform: translateY(-8px); } }
+
+      .nw-pug      { animation: nwPugDance 900ms ease-in-out infinite;       transform-box: fill-box; transform-origin: 50% 92%; }
+      .nw-pug-tail { animation: nwWag 260ms ease-in-out infinite;            transform-box: fill-box; transform-origin: 6% 92%; }
+      .nw-pug-earL { animation: nwEarL 900ms ease-in-out infinite;           transform-box: fill-box; transform-origin: 72% 6%; }
+      .nw-pug-earR { animation: nwEarR 900ms ease-in-out infinite;           transform-box: fill-box; transform-origin: 28% 6%; }
+      .nw-pug-pawL { animation: nwPaw 900ms ease-in-out infinite;            transform-box: fill-box; transform-origin: 50% 0%; }
+      .nw-pug-pawR { animation: nwPaw 900ms ease-in-out infinite 450ms;      transform-box: fill-box; transform-origin: 50% 0%; }
+
+      @media (prefers-reduced-motion: reduce) {
+        .nw-crumble > *, .nw-pug, .nw-pug-tail, .nw-pug-earL, .nw-pug-earR,
+        .nw-pug-pawL, .nw-pug-pawR { animation: none !important; }
+      }
+    `}</style>
+  );
+}
+
+// Falls from the top of the screen, over everything, catching no clicks.
+function Confetti() {
+  const pieces = useMemo(() => Array.from({ length: 44 }, (_, i) => ({
+    id: i,
+    left: Math.random() * 100,
+    delay: Math.random() * 2.2,
+    fall: 3.6 + Math.random() * 2.6,
+    sway: 1.1 + Math.random() * 1.1,
+    spin: 0.9 + Math.random() * 1.4,
+    w: 6 + Math.round(Math.random() * 6),
+    h: 9 + Math.round(Math.random() * 9),
+    round: Math.random() < 0.3,
+    color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+  })), []);
+  return (
+    <div aria-hidden="true" style={{ position: "fixed", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 50 }}>
+      {pieces.map(p => (
+        <div key={p.id} style={{ position: "absolute", top: 0, left: `${p.left}%`, animation: `nwFall ${p.fall}s linear ${p.delay}s forwards` }}>
+          <div style={{ animation: `nwSway ${p.sway}s ease-in-out ${p.delay}s infinite alternate` }}>
+            <div style={{
+              width: p.w, height: p.h, boxSizing: "border-box",
+              background: p.color, borderRadius: p.round ? "50%" : 2,
+              animation: `nwSpin ${p.spin}s linear ${p.delay}s infinite`,
+            }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DancingPug({ size = 176 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 200 200" role="img" aria-label="A dancing pug">
+      <g className="nw-pug">
+        <ellipse cx="100" cy="182" rx="52" ry="7" fill="#000000" opacity="0.08" />
+        <g className="nw-pug-tail">
+          <path d="M146 130 c15 -3 21 -13 15 -21 c-7 -8 -19 -4 -19 5 c0 8 9 10 13 5"
+                fill="none" stroke="#C9964E" strokeWidth="9" strokeLinecap="round" />
+        </g>
+        <rect x="62" y="150" width="22" height="26" rx="10" fill="#C9964E" />
+        <rect x="116" y="150" width="22" height="26" rx="10" fill="#C9964E" />
+        <ellipse cx="100" cy="136" rx="48" ry="34" fill="#D8A85B" />
+        <ellipse cx="100" cy="147" rx="30" ry="20" fill="#E8C288" />
+        <g className="nw-pug-pawL"><rect x="56" y="138" width="21" height="36" rx="10" fill="#D8A85B" /></g>
+        <g className="nw-pug-pawR"><rect x="123" y="138" width="21" height="36" rx="10" fill="#D8A85B" /></g>
+        <circle cx="100" cy="78" r="42" fill="#D8A85B" />
+        <g className="nw-pug-earL"><path d="M62 46 q-15 -9 -17 10 q-3 21 17 25 z" fill="#3A322C" /></g>
+        <g className="nw-pug-earR"><path d="M138 46 q15 -9 17 10 q3 21 -17 25 z" fill="#3A322C" /></g>
+        <path d="M84 52 q16 -10 32 0" fill="none" stroke="#B9873F" strokeWidth="4.5" strokeLinecap="round" />
+        <ellipse cx="100" cy="88" rx="32" ry="28" fill="#3A322C" />
+        <ellipse cx="100" cy="97" rx="20" ry="15" fill="#2A2422" />
+        <ellipse cx="100" cy="89" rx="9" ry="6.5" fill="#15100F" />
+        <path d="M92 105 q8 8 16 0" fill="none" stroke="#15100F" strokeWidth="3" strokeLinecap="round" />
+        <path d="M95 108 q5 13 10 0 z" fill="#E87A8F" />
+        <circle cx="80" cy="72" r="10.5" fill="#15100F" />
+        <circle cx="120" cy="72" r="10.5" fill="#15100F" />
+        <circle cx="83.5" cy="68.5" r="3.6" fill="#FFFFFF" />
+        <circle cx="123.5" cy="68.5" r="3.6" fill="#FFFFFF" />
+      </g>
+    </svg>
+  );
+}
+
+function DayDone({ stats, reduce, onBack }) {
+  const _vp = useViewport();
+  const [line, setLine] = useState(0);
+  const [confettiOn, setConfettiOn] = useState(!reduce);
+
+  useEffect(() => {
+    const t = setInterval(() => setLine(i => (i + 1) % DAY_DONE_LINES.length), 1500);
+    return () => clearInterval(t);
+  }, []);
+
+  // A party, not a screensaver. It stops on its own.
+  useEffect(() => {
+    if (!confettiOn) return;
+    const t = setTimeout(() => setConfettiOn(false), 9000);
+    return () => clearTimeout(t);
+  }, [confettiOn]);
+
+  const missing = stats && stats.ok === false;
+  const n = (v) => (stats ? String(Number(v) || 0) : "—");
+  const cells = [
+    { label: "Sales points", value: stats ? fmtWk(stats.sales_points) : "—", color: T.green },
+    { label: "Retention points", value: stats ? fmtWk(stats.retention_points) : "—", color: T.teal },
+    { label: "Quotes", value: n(stats?.quotes), color: T.blue },
+    { label: "Sales", value: n(stats?.sales), color: T.purple },
+    {
+      label: "Conversations scored", value: n(stats?.conversations), color: T.amber,
+      sub: stats && stats.conversation_avg != null ? `${Number(stats.conversation_avg).toFixed(2)} average` : null,
+    },
+    { label: "Policy reviews", value: n(stats?.policy_reviews), color: T.gold },
+  ];
+
+  return (
+    <div style={{ position: "relative" }}>
+      <DayDoneStyles />
+      {confettiOn && <Confetti />}
+
+      <div style={{
+        ...cardStyle,
+        padding: _vp.isPhone ? 20 : 32,
+        textAlign: "center",
+        background: `linear-gradient(180deg, ${T.white} 0%, ${T.slate50} 100%)`,
+        animation: reduce ? undefined : "nwRise 520ms ease-out both",
+      }}>
+        <DancingPug size={_vp.isPhone ? 144 : 176} />
+
+        <div key={line} style={{
+          fontSize: _vp.isPhone ? 26 : 34, fontWeight: 900, color: T.slate900, lineHeight: 1.2,
+          minHeight: _vp.isPhone ? 34 : 44,
+          animation: reduce ? undefined : "nwPop 420ms ease-out both",
+        }}>
+          {DAY_DONE_LINES[line]}
+        </div>
+        <div style={{ marginTop: 4, fontSize: 13, color: T.slate500 }}>
+          Everything is ticked and your wrap-up is settled.
+        </div>
+
+        <div style={{ marginTop: 24, textAlign: "left" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900 }}>Your week so far</div>
+            <span style={{ fontSize: 12, color: T.slate500 }}>
+              {stats?.week_ending ? `Week ending ${fmtDate(stats.week_ending)}` : "Loading"}
+            </span>
+          </div>
+
+          {missing ? (
+            <div style={{ fontSize: 13, color: T.slate600 }}>This login is not matched to a teammate, so there are no numbers to show.</div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+              {cells.map(c => (
+                <div key={c.label} style={{
+                  padding: "14px 12px", borderRadius: 10, background: T.white,
+                  border: `1px solid ${T.slate200}`, boxSizing: "border-box",
+                }}>
+                  <div style={{ fontSize: 26, fontWeight: 800, color: c.color, lineHeight: 1.1 }}>{c.value}</div>
+                  <div style={{ fontSize: 12, color: T.slate600, marginTop: 4 }}>{c.label}</div>
+                  {c.sub && <div style={{ fontSize: 11, color: T.slate400, marginTop: 2 }}>{c.sub}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginTop: 20 }}>
+          <button type="button" onClick={onBack} style={linkBtn}>Back to the list</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ChecklistTab() {
   const _vp = useViewport();
   const [state, setState] = useState(null);
@@ -2978,8 +3196,62 @@ function ChecklistTab() {
   const reds = flags.filter(f => f.severity === "red");
   const yellows = flags.filter(f => f.severity === "yellow");
 
+  // ── Day done ──────────────────────────────────────────────────────
+  // Three things have to be true: the team list is clear, this person's
+  // own list is clear, and the wrap-up is settled for the day.
+  const teamClear = items.length > 0 && items.every(i => i.ticked_at);
+  // A commit answered "no" still counts as answered. Requiring a yes would
+  // cost an honest miss the whole thing, and that buys dishonest ticks.
+  const commitClear = !commit || commit.hit === true || commit.hit === false;
+  const personalClear = commitClear && personal.every(i => i.mine);
+  // Nothing to settle counts as settled: put away for today, clicked
+  // finished, no teammate record, or this week's CPR is not open yet.
+  const wrapSettled = !!wrap && (hiddenToday || finished || wrap.ok === false || !wrap.report_id);
+  const dayDone = teamClear && personalClear && wrapSettled;
+
+  const [dayPhase, setDayPhase] = useState("list");   // list | crumbling | done
+  const [dismissed, setDismissed] = useState(false);
+  const [weekStats, setWeekStats] = useState(null);
+  const reduceMotion = useMemo(
+    () => typeof window !== "undefined" && typeof window.matchMedia === "function"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    []
+  );
+
+  useEffect(() => {
+    if (!dayDone) { setDayPhase("list"); setDismissed(false); setWeekStats(null); return; }
+    if (dismissed) return;
+    if (reduceMotion) { setDayPhase("done"); return; }
+    setDayPhase("crumbling");
+    const t = setTimeout(() => setDayPhase("done"), 950);
+    return () => clearTimeout(t);
+  }, [dayDone, dismissed, reduceMotion]);
+
+  useEffect(() => {
+    if (dayPhase !== "done" || weekStats) return;
+    let alive = true;
+    supabase.rpc("my_week_stats", { p_week_ending: null })
+      .then(r => { if (alive) setWeekStats(r?.data || null); });
+    return () => { alive = false; };
+  }, [dayPhase, weekStats]);
+
+  if (dayPhase === "done") {
+    return (
+      <DayDone
+        stats={weekStats}
+        reduce={reduceMotion}
+        onBack={() => { setDismissed(true); setDayPhase("list"); }}
+      />
+    );
+  }
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: _vp.isPhone ? "1fr" : "repeat(auto-fit, minmax(340px, 1fr))", gap: 16, alignItems: "start" }}>
+    <>
+      <DayDoneStyles />
+      <div
+        className={dayPhase === "crumbling" ? "nw-crumble" : undefined}
+        style={{ display: "grid", gridTemplateColumns: _vp.isPhone ? "1fr" : "repeat(auto-fit, minmax(340px, 1fr))", gap: 16, alignItems: "start" }}
+      >
 
       {/* ── Left column: the daily team list ──────────────── */}
       <div style={cardStyle}>
@@ -3217,7 +3489,8 @@ function ChecklistTab() {
         </div>
 
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 
