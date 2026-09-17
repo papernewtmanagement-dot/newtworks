@@ -6,6 +6,7 @@ import TimeHub from "./TimeHub.jsx";
 import PFA from "./PFA.jsx";
 import Development from "./Development.jsx";
 import { T } from "../lib/theme.js";
+import BackfillTab from "../components/BackfillTab.jsx";
 import { mdToHtml } from "../lib/markdown.js";
 import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
@@ -96,7 +97,7 @@ const RELATIONSHIPS = [
   { key: "existing", label: "Existing" },
   { key: "winback",  label: "Winback" },
 ];
-const TABS = ["log", "checklist", "hours", "deposits", "week", "issued", "development", "changes", "spotcheck", "history"];
+const TABS = ["log", "checklist", "hours", "deposits", "week", "issued", "development", "changes", "spotcheck", "backfill", "history"];
 const CARD_PARTS = [
   { key: "demeanor_score",        label: "Demeanor",              short: "Demeanor" },
   { key: "frogs_score",           label: "FROGS",                 short: "FROGS" },
@@ -3436,6 +3437,7 @@ export default function ActivityLog({ userRole, userId }) {
     { id: "issued", label: "Pending" },
     ...(isAdmin ? [{ id: "changes", label: "Changes" }] : []),  // who changed what and when (Peter 2026-09-10)
     ...(isAdmin ? [{ id: "spotcheck", label: "Spot-check" }] : []),  // monthly check of self-logged entries, owner and managers only (Peter 2026-09-16)
+    ...(isAdmin ? [{ id: "backfill", label: "Backfill" }] : []),  // gaps on older records: phone, marketing source, ECRM link (Peter 2026-09-17)
     { id: "history", label: "History" },
     { type: "divider", id: "_dv_rest" },
     { id: "checklist", label: "Checklist" },
@@ -3502,6 +3504,7 @@ export default function ActivityLog({ userRole, userId }) {
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
       {tab === "changes" && isAdmin && <ChangesTab roster={roster} nameOf={nameOf} values={values} types={types} onChanged={bump} />}
       {tab === "spotcheck" && isAdmin && <SpotCheck isAdmin={isAdmin} />}
+      {tab === "backfill" && isAdmin && <BackfillTab sources={sources} />}
       {tab === "history" && <HistoryTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} />}
     </div>
   );
