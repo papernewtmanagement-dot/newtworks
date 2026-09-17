@@ -2911,19 +2911,37 @@ function DayDone({ stats, reduce, onBack }) {
     return () => clearTimeout(t);
   }, [confettiOn]);
 
-  const missing = stats && stats.ok === false;
-  const n = (v) => (stats ? String(Number(v) || 0) : "—");
+  // The standard five, in the Scoreboard's order, read straight off the
+  // Scoreboard. A week the board does not show Quotes or Retention for does
+  // not show them here either.
+  const missing = stats && (stats.ok === false || stats.on_board === false);
+  const show = stats?.show || { quotes: true, retention: true };
   const cells = [
-    { label: "Sales points", value: stats ? fmtWk(stats.sales_points) : "—", color: T.green },
-    { label: "Retention points", value: stats ? fmtWk(stats.retention_points) : "—", color: T.teal },
-    { label: "Quotes", value: n(stats?.quotes), color: T.blue },
-    { label: "Sales", value: n(stats?.sales), color: T.purple },
     {
-      label: "Conversations scored", value: n(stats?.conversations), color: T.amber,
-      sub: stats && stats.conversation_avg != null ? `${Number(stats.conversation_avg).toFixed(2)} average` : null,
+      label: "Marketing Points", color: T.purple,
+      value: stats ? fmtWk(stats.marketing_points) : "—",
+      sub: stats ? `${fmtPts(stats.marketing_qtd)} this quarter` : null,
     },
-    { label: "Policy reviews", value: n(stats?.policy_reviews), color: T.gold },
-  ];
+    {
+      label: "HH Quotes", color: T.blue, on: show.quotes !== false,
+      value: stats ? String(Number(stats.quotes) || 0) : "—",
+    },
+    {
+      label: "Sales Points", color: T.green,
+      value: stats ? fmtWk(stats.sales_points) : "—",
+      sub: stats ? `${fmtPts(stats.sales_qtd)} this quarter` : null,
+    },
+    {
+      label: "Retention Points", color: T.teal, on: show.retention !== false,
+      value: stats ? fmtWk(stats.retention_net) : "—",
+      sub: stats ? `${fmtPts(stats.retention_gross)} gross` : null,
+    },
+    {
+      label: "Conversations", color: T.amber,
+      value: stats && stats.conversation_avg != null ? Number(stats.conversation_avg).toFixed(2) : "—",
+      sub: stats ? `${plural(stats.conversations || 0, "scored conversation")} \u00b7 ${plural(stats.pivots || 0, "pivot")}` : null,
+    },
+  ].filter(c => c.on !== false);
 
   return (
     <div style={{ position: "relative" }}>
@@ -2959,7 +2977,11 @@ function DayDone({ stats, reduce, onBack }) {
           </div>
 
           {missing ? (
-            <div style={{ fontSize: 13, color: T.slate600 }}>This login is not matched to a teammate, so there are no numbers to show.</div>
+            <div style={{ fontSize: 13, color: T.slate600 }}>
+              {stats.ok === false
+                ? "This login is not matched to a teammate, so there are no numbers to show."
+                : "You are not on this week's scoreboard, so there are no numbers to show."}
+            </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
               {cells.map(c => (
