@@ -36,9 +36,19 @@ export default function BackfillTab({ sources = [], roster = [] }) {
       setLoading(false);
       return;
     }
-    setRows(Array.isArray(data?.rows) ? data.rows : []);
+    const list = Array.isArray(data?.rows) ? data.rows : [];
+    // The issued premium starts at the premium the policy was submitted at.
+    const seed = {};
+    list.forEach(r => {
+      if (Array.isArray(r.policies) && r.policies.length) {
+        const pol = {};
+        r.policies.forEach(p => { pol[p.id] = p.premium == null ? "" : String(p.premium); });
+        seed[r.id] = { policies: pol };
+      }
+    });
+    setRows(list);
     setTotal(Number(data?.total_rows || 0));
-    setEdits({});
+    setEdits(seed);
     setLoading(false);
   };
 
@@ -57,6 +67,18 @@ export default function BackfillTab({ sources = [], roster = [] }) {
 
   const setField = (r, field, value) => {
     setEdits(prev => ({ ...prev, [r.id]: { ...(prev[r.id] || {}), [field]: value } }));
+  };
+
+  const polVal = (r, pid) => {
+    const pol = (edits[r.id] || {}).policies || {};
+    return pol[pid] !== undefined ? pol[pid] : "";
+  };
+
+  const setPolicy = (r, pid, value) => {
+    setEdits(prev => ({
+      ...prev,
+      [r.id]: { ...(prev[r.id] || {}), policies: { ...((prev[r.id] || {}).policies || {}), [pid]: value } },
+    }));
   };
 
   // A phone belongs to the household, so fill every row on screen with the
@@ -89,6 +111,11 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     if ((e.marketing_source || "").trim()) { out.marketing_source = e.marketing_source.trim(); any = true; }
     if ((e.referred_by_customer || "").trim()) { out.referred_by_customer = e.referred_by_customer.trim(); any = true; }
     if ((e.sourced_by_team_member_id || "").trim()) { out.sourced_by_team_member_id = e.sourced_by_team_member_id.trim(); any = true; }
+    const pol = e.policies || {};
+    const plist = Object.keys(pol)
+      .filter(id => String(pol[id] ?? "").trim() !== "")
+      .map(id => ({ id, issued_premium: String(pol[id]).trim() }));
+    if (plist.length) { out.policies = plist; any = true; }
     return any ? out : null;
   }).filter(Boolean);
 
@@ -102,7 +129,8 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     setSaving(false);
     if (error) { setErr(error.message || "That did not save."); return; }
     const filled = Number(data?.also_filled || 0);
-    setMsg(`Saved ${Number(data?.rows_saved || 0)} record${Number(data?.rows_saved) === 1 ? "" : "s"}${filled ? `, plus ${filled} more filled in from the same households` : ""}.`);
+    const issued = Number(data?.policies_issued || 0);
+    setMsg(`Saved ${Number(data?.rows_saved || 0)} record${Number(data?.rows_saved) === 1 ? "" : "s"}${issued ? `, ${issued} issued premium${issued === 1 ? "" : "s"}` : ""}${filled ? `, plus ${filled} more filled in from the same households` : ""}.`);
     load(offset);
   };
 
@@ -136,7 +164,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "baseline", justifyContent: "space-between" }}>
         <div style={{ fontSize: 13, color: T.slate600, maxWidth: 560 }}>
-          Older records still missing something. Fill what you can down the rows and save the batch. A phone fills the other rows with the same name.
+          Older records still missing something. Fill what you can down the rows and save the batch. A phone fills the other rows with the same name. Issued premium starts at what the policy was submitted at.
         </div>
         <div style={{ fontSize: 13, color: T.slate500 }}>
           {total == null ? "" : `${total} to go`}{offset ? ` · from ${offset + 1}` : ""}
@@ -154,7 +182,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
         </div>
       ) : (
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12 }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 880 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1040 }}>
             <thead>
               <tr>
                 <th style={th}>Date</th>
@@ -163,6 +191,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                 <th style={{ ...th, width: 90 }}>Phone</th>
                 <th style={{ ...th, minWidth: 220 }}>ECRM link</th>
                 <th style={{ ...th, minWidth: 170 }}>Marketing source</th>
+                <th style={{ ...th, minWidth: 130 }}>Issued premium</th>
               </tr>
             </thead>
             <tbody>
@@ -238,6 +267,26 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                           </select>
                         </div>
                       ) : null}
+                    </td>
+                    <td style={td}>
+                      {(r.policies || []).length ? (
+                        <div style={{ display: "grid", gap: 6 }}>
+                          {r.policies.map(p => (
+                            <label key={p.id} style={{ display: "grid", gap: 2 }}>
+                              <span style={{ fontSize: 11, color: T.slate500 }}>{p.product_type}</span>
+                              <input
+                                value={polVal(r, p.id)}
+                                onChange={e => setPolicy(r, p.id, e.target.value)}
+                                inputMode="decimal"
+                                autoComplete="off"
+                                style={input}
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      ) : (
+                        <span style={{ color: T.slate500, fontSize: 12 }}>—</span>
+                      )}
                     </td>
                   </tr>
                 );
