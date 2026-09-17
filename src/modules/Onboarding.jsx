@@ -97,7 +97,7 @@ function useOnboardingData(userId, isAdmin) {
       if (plans.length) {
         const planIds = plans.map(p => p.id);
         const stepsRes = await supabase.from("team_onboarding_steps")
-          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, owner_kind, assigned_to, task_id, track, track_order, blocked_by")
+          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, owner_kind, assigned_to, task_id, track, track_order, blocked_by, auto_source, auto_summary")
           .in("plan_id", planIds)
           .order("phase", { ascending: true })
           .order("sort_order", { ascending: true });
@@ -304,6 +304,13 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                   .filter(k => blockersOpen.has(k))
                   .map(k => blockersOpen.get(k));
                 const locked = !done && waitingOn.length > 0;
+                // Some steps fill themselves in from elsewhere in Newtworks.
+                // They carry a short summary instead of hand checkboxes.
+                const isAuto = !!step.auto_source;
+                const autoSum = step.auto_summary && typeof step.auto_summary === "object" ? step.auto_summary : null;
+                // A step with sub-items cannot be ticked until they are all ticked.
+                const gated = !done && !isAuto && subs.length > 0 && !subs.every(s => subsDone.includes(s));
+                const boxOff = locked || gated || isAuto;
 
                 return (
                   <div key={step.id} style={{
@@ -314,17 +321,21 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                   }}>
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 10, ...wrapLongText }}>
                       <button
-                        onClick={() => { if (!locked) handleToggle(step); }}
-                        disabled={isSaving || locked}
+                        onClick={() => { if (!boxOff) handleToggle(step); }}
+                        disabled={isSaving || boxOff}
                         style={{
                           width: 20, height: 20, borderRadius: 4, flexShrink: 0, boxSizing: "border-box",
                           background: done ? T.green : T.white,
                           border: `1.5px solid ${done ? T.green : T.slate300}`,
-                          cursor: locked ? "not-allowed" : (isSaving ? "wait" : "pointer"),
+                          cursor: boxOff ? "not-allowed" : (isSaving ? "wait" : "pointer"),
                           display: "flex", alignItems: "center", justifyContent: "center",
                           marginTop: 1,
                         }}
-                        title={done ? "Mark incomplete" : "Mark complete"}
+                        title={
+                          isAuto ? "This one fills itself in"
+                          : gated ? `Finish all ${subs.length} sub-items first`
+                          : done ? "Mark incomplete" : "Mark complete"
+                        }
                       >
                         {done && <span style={{ color: T.white, fontSize: 11, lineHeight: 1 }}>✓</span>}
                       </button>
@@ -362,6 +373,35 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                         {locked && (
                           <div style={{ fontSize: 11, color: T.amber, marginTop: 4, fontWeight: 600 }}>
                             Waiting on: {waitingOn.join(", ")}
+                          </div>
+                        )}
+
+                        {!locked && isAuto && (
+                          <div style={{
+                            marginTop: 8, padding: "8px 10px",
+                            background: T.slate50, border: `1px solid ${T.slate200}`,
+                            borderRadius: 6,
+                          }}>
+                            {autoSum ? (
+                              <>
+                                <div style={{
+                                  fontSize: 12, fontWeight: 600,
+                                  color: autoSum.complete ? T.green : T.amber,
+                                }}>
+                                  {autoSum.count} of {autoSum.minimum} references on file
+                                </div>
+                                {(Array.isArray(autoSum.items) ? autoSum.items : []).map((it, i) => (
+                                  <div key={i} style={{ fontSize: 11, color: T.slate600, marginTop: 3, ...wrapLongText }}>
+                                    {it.referee}{it.received ? ` · ${it.received}` : ""}
+                                  </div>
+                                ))}
+                              </>
+                            ) : (
+                              <div style={{ fontSize: 12, color: T.slate500 }}>No references on file yet.</div>
+                            )}
+                            <div style={{ fontSize: 10, color: T.slate400, marginTop: 6 }}>
+                              Comes from the hiring module. Ticks itself.
+                            </div>
                           </div>
                         )}
 
@@ -408,8 +448,9 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                 </div>
                               </div>
                             ))}
-                            <div style={{ fontSize: 10, color: T.slate400, marginTop: 6 }}>
+                            <div style={{ fontSize: 10, color: gated ? T.amber : T.slate400, marginTop: 6 }}>
                               {subsDone.length}/{subs.length} done
+                              {gated ? " — tick them all to finish this step" : ""}
                             </div>
                           </div>
                         )}
@@ -897,6 +938,18 @@ export default function Onboarding({ userRole, userId }) {
   // ─── actions ──────────────────────────────────
   const handleToggleStep = async (step) => {
     setActionError("");
+    if (step.auto_source) {
+      setActionError("That step fills itself in from the rest of Newtworks. It cannot be ticked by hand.");
+      return;
+    }
+    if (!step.completed_at) {
+      const subs = subAll(step.substeps);
+      const already = Array.isArray(step.substeps_done) ? step.substeps_done : [];
+      if (subs.length && !subs.every(s => already.includes(s))) {
+        setActionError(`Finish all ${subs.length} sub-items first.`);
+        return;
+      }
+    }
     const newVal = step.completed_at ? null : new Date().toISOString();
     const { error: err } = await supabase.from("team_onboarding_steps")
       .update({ completed_at: newVal, completed_by: newVal ? userId : null })
