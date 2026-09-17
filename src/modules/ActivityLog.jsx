@@ -2990,9 +2990,6 @@ function ChecklistTab() {
   const [openHelp, setOpenHelp] = useState(null);
   const [wrap, setWrap] = useState(null);
   const [parts, setParts] = useState(["", "", "", "", "", ""]);
-  // The toggle that sits with the Save button. On means "pick this up
-  // tomorrow", off means "this save closes my week". Peter 2026-09-17.
-  const [notLastDay, setNotLastDay] = useState(false);
   // The wrap-up sits on screen every day now. Two pieces of state decide how
   // it looks: hiddenToday (they said it is not their last day, so it is put
   // away until tomorrow) and finished (they clicked that nothing is left to
@@ -3137,10 +3134,9 @@ function ChecklistTab() {
     setHiddenToday(on);
   };
 
-  // Typing is the answer to the question the checkbox asks, so it clears it.
+  // Typing is the answer to the question the toggle asks, so it clears it.
   const editPart = (i, val) => {
     setParts(v => { const n = [...v]; n[i] = val; return n; });
-    if (notLastDay) setNotLastDay(false);
     if (hiddenToday) setHide(false);
   };
 
@@ -3154,11 +3150,26 @@ function ChecklistTab() {
     setOk(on ? "Week closed." : "");
   };
 
-  // The one button on the form. The toggle decides what saving means: put it
-  // down until tomorrow, or close the week out.
+  // The toggle acts the moment it is flipped: the form goes away entirely, so
+  // nobody is left looking at six boxes wondering whether they have to fill
+  // them in today (Peter 2026-09-17). Anything already typed is saved on the
+  // way out. Flipping it back brings the form straight back.
+  const toggleNotLastDay = async (on) => {
+    if (on) {
+      if (wrap?.ok && wrap?.report_id && parts.some(p => (p || "").trim())) {
+        if (!(await save())) return;
+      }
+      await setHide(true);
+      setOk("");
+    } else {
+      await setHide(false);
+      setOk("");
+    }
+  };
+
+  // The one button on the form, and the only way the week gets closed.
   const submitWrapup = async () => {
     if (!(await save())) return;
-    if (notLastDay) { await setHide(true); setNotLastDay(false); setOk("Saved. Back tomorrow."); return; }
     await finish(true);
   };
 
@@ -3424,10 +3435,26 @@ function ChecklistTab() {
             </div>
           )}
 
+          {!knownLastDay && !finished && (
+            <div style={{ marginTop: 12 }}>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={hiddenToday}
+                onClick={() => toggleNotLastDay(!hiddenToday)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 10, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
+              >
+                <span style={{ position: "relative", width: 36, height: 20, borderRadius: 999, flexShrink: 0, boxSizing: "border-box", background: hiddenToday ? T.blue : T.slate200 }}>
+                  <span style={{ position: "absolute", top: 2, left: hiddenToday ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: T.white, boxSizing: "border-box" }} />
+                </span>
+                <span style={{ fontSize: 13, color: T.slate800 }}>This is not my last day this week</span>
+              </button>
+            </div>
+          )}
+
           {hiddenToday && (
-            <div style={{ marginTop: 12, fontSize: 13, color: T.slate600, lineHeight: 1.6 }}>
-              Put away for today. It comes back tomorrow.{" "}
-              <button type="button" onClick={() => setHide(false)} style={linkBtn}>Show it</button>
+            <div style={{ marginTop: 10, fontSize: 13, color: T.slate600, lineHeight: 1.6 }}>
+              Nothing to do here today. The wrap-up is back tomorrow.
             </div>
           )}
 
@@ -3458,29 +3485,12 @@ function ChecklistTab() {
                   <button type="button" onClick={() => finish(false)} style={linkBtn}>Reopen it</button>
                 </div>
               ) : (
-                <>
-                  {!knownLastDay && (
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={notLastDay}
-                      onClick={() => setNotLastDay(v => !v)}
-                      style={{ display: "inline-flex", alignItems: "center", gap: 10, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
-                    >
-                      <span style={{ position: "relative", width: 36, height: 20, borderRadius: 999, flexShrink: 0, boxSizing: "border-box", background: notLastDay ? T.blue : T.slate200 }}>
-                        <span style={{ position: "absolute", top: 2, left: notLastDay ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: T.white, boxSizing: "border-box" }} />
-                      </span>
-                      <span style={{ fontSize: 13, color: T.slate800 }}>This is not my last day this week</span>
-                    </button>
-                  )}
-
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
-                    <button type="button" onClick={submitWrapup} disabled={saving} style={btnPrimary(saving)}>
-                      {saving ? "Saving…" : notLastDay ? "Save and pick it up tomorrow" : "Save and close my week"}
-                    </button>
-                    {ok && <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>{ok}</span>}
-                  </div>
-                </>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+                  <button type="button" onClick={submitWrapup} disabled={saving} style={btnPrimary(saving)}>
+                    {saving ? "Saving…" : "Save and close my week"}
+                  </button>
+                  {ok && <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>{ok}</span>}
+                </div>
               )}
             </div>
           )}
