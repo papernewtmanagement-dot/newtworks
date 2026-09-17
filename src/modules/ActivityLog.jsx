@@ -3307,12 +3307,6 @@ function ChecklistTab() {
           </div>
         </div>
 
-        {Number(state?.at_risk_count || 0) > 0 && (
-          <div style={{ marginTop: 8, fontSize: 12, color: T.red, fontWeight: 600 }}>
-            This week at risk: {state.at_risk_count} item{Number(state.at_risk_count) === 1 ? "" : "s"}
-          </div>
-        )}
-
         <div style={{ marginTop: 12 }}>
           {items.length === 0
             ? <div style={{ fontSize: 13, color: T.slate500 }}>No items for this day.</div>
