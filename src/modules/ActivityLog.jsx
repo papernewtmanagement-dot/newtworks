@@ -1141,37 +1141,59 @@ function PendingSaves({ refreshKey }) {
 }
 
 // =====================================================================
-// Monthly spot-check (core principle 450). Owner and managers only, and it
-// sits on its own tab — Peter 2026-09-16 took it off the top of the Score
-// tab. Ten random self-logged entries from the chosen month, stable until
-// verified. "Self-logged" means the person who earned the points typed them
-// in: rp_spot_check_sample drops anything backfilled (no created_by) or
-// logged for someone else, so the historical records Peter seeded himself
-// are never checked back.
+// Weekly spot-check (core principle 450). Owner and managers only, on its own
+// tab — Peter 2026-09-16 took it off the top of the Score tab and put it on a
+// week, not a month. Opens on the current week; only falls back to the newest
+// week with entries when the current week is empty. Ten random self-logged
+// entries from that week, stable until verified. "Self-logged" means the
+// person who earned the points typed them in: rp_spot_check_sample drops
+// anything backfilled (no created_by) or logged for someone else, so the
+// historical records Peter seeded himself are never checked back.
 // Verify stamps verified_at; Remove is the same void the tables use.
 // =====================================================================
 function SpotCheck({ isAdmin }) {
-  const today = todayCentral();
-  const prevMonth = (() => { const [y, m] = today.split("-").map(Number); const d = new Date(Date.UTC(y, m - 2, 1)); return d.toISOString().slice(0, 10); })();
-  const [month, setMonth] = useState(prevMonth);
+  const thisWeek = weekEndOf(todayCentral());
+  const [weeks, setWeeks] = useState([]);
+  const [week, setWeek] = useState(thisWeek);
   const [rows, setRows] = useState([]);
   const [remaining, setRemaining] = useState(0);
   const [busyId, setBusyId] = useState(null);
   const [err, setErr] = useState("");
   const [tick, setTick] = useState(0);
 
+  // Which weeks the picker offers, and which one we land on. A week stays in
+  // the list once it is cleared, so the week being worked does not disappear
+  // out from under the dropdown as entries get verified.
   useEffect(() => {
     if (!isAdmin) return undefined;
     let alive = true;
     (async () => {
-      const { data, error } = await supabase.rpc("rp_spot_check_sample", { p_month: month, p_limit: 10 });
+      const { data, error } = await supabase.rpc("rp_spot_check_weeks", { p_weeks: 12 });
+      if (!alive) return;
+      if (error) { setErr(errText(error)); return; }
+      const list = Array.isArray(data) ? data : [];
+      setWeeks(list);
+      setWeek(w => (
+        list.some(x => x.week_end === w) ? w
+          : list.some(x => x.week_end === thisWeek) ? thisWeek
+          : list.length ? list[0].week_end : thisWeek
+      ));
+    })();
+    return () => { alive = false; };
+  }, [isAdmin, thisWeek, tick]);
+
+  useEffect(() => {
+    if (!isAdmin || !week) return undefined;
+    let alive = true;
+    (async () => {
+      const { data, error } = await supabase.rpc("rp_spot_check_sample", { p_week_end: week, p_limit: 10 });
       if (!alive) return;
       if (error) { setErr(errText(error)); return; }
       const list = Array.isArray(data) ? data : [];
       setRows(list); setRemaining(list.length ? Number(list[0].remaining) : 0);
     })();
     return () => { alive = false; };
-  }, [isAdmin, month, tick]);
+  }, [isAdmin, week, tick]);
 
   const act = async (fn, id) => {
     setErr(""); setBusyId(id);
@@ -1180,20 +1202,21 @@ function SpotCheck({ isAdmin }) {
       if (error) setErr(errText(error)); else setTick(t => t + 1);
     } finally { setBusyId(null); }
   };
-  const monthLabel = (iso) => { const [y, m] = iso.split("-").map(Number); return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" }); };
-  const months = [0, 1, 2].map(k => { const [y, m] = today.split("-").map(Number); return new Date(Date.UTC(y, m - 1 - k, 1)).toISOString().slice(0, 10); });
+  const weekLabel = (iso) => `Week of ${fmtDate(addDays(iso, -6))} \u2013 ${fmtDate(iso)}`;
 
   if (!isAdmin) return null;
   return (
     <div style={cardStyle}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Spot-check</div>
-        <select style={{ ...inputBase, width: "auto" }} value={month} onChange={e => setMonth(e.target.value)}>
-          {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+        <select style={{ ...inputBase, width: "auto" }} value={week} onChange={e => setWeek(e.target.value)}>
+          {(weeks.length ? weeks : [{ week_end: thisWeek }]).map(w => (
+            <option key={w.week_end} value={w.week_end}>{weekLabel(w.week_end)}</option>
+          ))}
         </select>
       </div>
       <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
-        Ten random self-logged entries from the month, the same ten until you clear them. Open the ECRM link, check the note, tap Verified. {remaining > 10 ? `${remaining} still unverified this month.` : remaining > 0 ? `${remaining} left this month.` : "Nothing left to check this month."}
+        Ten random self-logged entries from the week, the same ten until you clear them. Open the ECRM link, check the note, tap Verified. {remaining > 10 ? `${remaining} still unverified this week.` : remaining > 0 ? `${remaining} left this week.` : "Nothing left to check this week."}
       </div>
       {rows.length > 0 && (
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
