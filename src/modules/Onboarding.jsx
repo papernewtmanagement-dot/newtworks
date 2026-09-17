@@ -388,19 +388,45 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                   fontSize: 12, fontWeight: 600,
                                   color: autoSum.complete ? T.green : T.amber,
                                 }}>
-                                  {autoSum.count} of {autoSum.minimum} references on file
+                                  {autoSum.positive} of {autoSum.minimum} positive
+                                  {" · "}{autoSum.count} of {autoSum.asked_for} back
                                 </div>
                                 {(Array.isArray(autoSum.items) ? autoSum.items : []).map((it, i) => (
-                                  <div key={i} style={{ fontSize: 11, color: T.slate600, marginTop: 3, ...wrapLongText }}>
-                                    {it.referee}{it.received ? ` · ${it.received}` : ""}
+                                  <div key={i} style={{
+                                    marginTop: 8, paddingTop: i === 0 ? 0 : 8,
+                                    borderTop: i === 0 ? "none" : `1px solid ${T.slate200}`,
+                                    ...wrapLongText,
+                                  }}>
+                                    <div style={{ display: "flex", gap: 6, alignItems: "baseline", flexWrap: "wrap" }}>
+                                      <span style={{ fontSize: 11, fontWeight: 600, color: T.slate800 }}>{it.referee}</span>
+                                      {it.received && <span style={{ fontSize: 10, color: T.slate400 }}>{it.received}</span>}
+                                      <Pill
+                                        fg={it.positive ? T.green : T.amber}
+                                        bg={it.positive ? T.greenLt : T.amberLt}
+                                      >{it.positive ? "Positive" : "Not counted"}</Pill>
+                                    </div>
+                                    {Array.isArray(it.red_flags) && it.red_flags.length > 0 && (
+                                      <div style={{ marginTop: 4 }}>
+                                        {it.red_flags.map((f, fi) => (
+                                          <div key={fi} style={{ fontSize: 11, color: T.red, lineHeight: 1.4 }}>
+                                            Red flag: {f}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {it.feedback && (
+                                      <div style={{ fontSize: 11, color: T.slate600, marginTop: 4, lineHeight: 1.5 }}>
+                                        {it.feedback}
+                                      </div>
+                                    )}
                                   </div>
                                 ))}
                               </>
                             ) : (
-                              <div style={{ fontSize: 12, color: T.slate500 }}>No references on file yet.</div>
+                              <div style={{ fontSize: 12, color: T.slate500 }}>No references back yet.</div>
                             )}
-                            <div style={{ fontSize: 10, color: T.slate400, marginTop: 6 }}>
-                              Comes from the hiring module. Ticks itself.
+                            <div style={{ fontSize: 10, color: T.slate400, marginTop: 8 }}>
+                              Comes from the hiring module. Ticks itself at {autoSum ? autoSum.minimum : 2} positive.
                             </div>
                           </div>
                         )}
