@@ -2773,7 +2773,12 @@ function ChecklistTab() {
   const [wrap, setWrap] = useState(null);
   const [parts, setParts] = useState(["", "", "", "", "", ""]);
   const [inbox, setInbox] = useState(false);
-  const [wrapOpen, setWrapOpen] = useState(false);
+  // The wrap-up sits on screen every day now. Two pieces of state decide how
+  // it looks: hiddenToday (they said it is not their last day, so it is put
+  // away until tomorrow) and finished (they clicked that nothing is left to
+  // type, which is what the day-done check reads). Peter 2026-09-17.
+  const [hiddenToday, setHiddenToday] = useState(false);
+  const [finished, setFinished] = useState(false);
   const [flags, setFlags] = useState([]);
   const [flagDraft, setFlagDraft] = useState(null);   // {severity, note, correction}
   const [busy, setBusy] = useState(false);
@@ -2833,6 +2838,8 @@ function ChecklistTab() {
       setWrap(d);
       setParts(splitWrapup(d.wrapup_text));
       setInbox(!!d.inbox_done);
+      setHiddenToday(!!d.hidden_today);
+      setFinished(!!d.wrapup_finished);
     });
     return () => { alive = false; };
   }, []);
@@ -2895,9 +2902,36 @@ function ChecklistTab() {
       p_parts: parts, p_inbox_done: inbox, p_code_reds: null, p_code_yellows: null, p_week_ending: null,
     });
     setSaving(false);
-    if (error) { setErr(error.message || "Could not save the wrap-up."); return; }
+    if (error) { setErr(error.message || "Could not save the wrap-up."); return false; }
     setOk(data?.wrapup_done ? "Saved — all six answered." : "Saved. Some answers are still blank.");
     setWrap(w => (w ? { ...w, wrapup_done: !!data?.wrapup_done } : w));
+    return true;
+  };
+
+  // "This is not my last day this week" puts the wrap-up away until tomorrow.
+  // The server refuses it on a known last workday, which is the same answer
+  // that takes the control off the screen.
+  const setHide = async (on) => {
+    setErr("");
+    const { error } = await supabase.rpc("my_wrapup_hide_set", { p_on: on, p_date: null });
+    if (error) { setErr(error.message || "Could not save that."); return; }
+    setHiddenToday(on);
+  };
+
+  // Typing is the answer to the question the checkbox asks, so it clears it.
+  const editPart = (i, val) => {
+    setParts(v => { const n = [...v]; n[i] = val; return n; });
+    if (hiddenToday) setHide(false);
+  };
+
+  // Saves first, so "finished" can never mean "finished with unsaved text".
+  const finish = async (on) => {
+    if (on && !(await save())) return;
+    setErr("");
+    const { data, error } = await supabase.rpc("my_wrapup_finish", { p_on: on, p_week_ending: null });
+    if (error) { setErr(error.message || "Could not save that."); return; }
+    setFinished(!!data?.wrapup_finished);
+    setOk(on ? "Wrap-up finished." : "");
   };
 
   const addFlag = async () => {
@@ -2926,19 +2960,18 @@ function ChecklistTab() {
   const commitHitNames = commitPeople.filter(p => p.hit === true).map(p => p.name).join(", ");
   const prompts = Array.isArray(wrap?.prompts) ? wrap.prompts : [];
   const answered = parts.filter(p => (p || "").trim()).length;
-  // The cue: the wrap-up opens itself on the last workday of the week and
-  // stays open over the weekend — and early for anyone already off for the
-  // rest of the week, since their last workday is today. Any other day it is
-  // one line they can open themselves.
-  const wrapCue = !!state?.is_last_workday || !!wrap?.wrap_cue;
-  const showWrap = wrapCue || wrapOpen;
+  // On screen every day. On a day the system already knows is their last
+  // workday there is no way to put it away — that is the day it exists for.
+  // Any earlier day carries the "not my last day" checkbox instead.
+  const knownLastDay = !!wrap?.wrap_cue;
+  const showWrap = !hiddenToday;
   const reds = flags.filter(f => f.severity === "red");
   const yellows = flags.filter(f => f.severity === "yellow");
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: _vp.isPhone ? "1fr" : "repeat(auto-fit, minmax(340px, 1fr))", gap: 16, alignItems: "start" }}>
 
-      {/* ── Daily team list ───────────────────────────────── */}
+      {/* ── Left column: the daily team list ──────────────── */}
       <div style={cardStyle}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline", justifyContent: "space-between" }}>
           <div>
@@ -2990,52 +3023,16 @@ function ChecklistTab() {
                 </ChecklistRow>
               ))}
         </div>
+      </div>
 
-        {(
-          <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${T.slate200}` }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Personal checklist</div>
-            <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6 }}>Everyone ticks these for themselves. The whole team can see who has.</div>
-            <ChecklistRow
-              item={{ id: commit ? commit.id : "nocommit", title: commit ? `Commit completed \u2014 ${commit.commit_text}` : "Commit completed", help_text: COMMIT_HELP }}
-              checked={!!commit && commit.hit === true}
-              byLabel={commitHitNames || null}
-              busy={busy}
-              disabled={!commit}
-              onToggle={(_it, on) => toggleCommit(commit, on)}
-              openHelp={openHelp}
-              setOpenHelp={setOpenHelp}
-              editMode={false}
-              onEdit={() => {}}
-              onMove={() => {}}
-            />
-            {personal.map(it => (
-              <ChecklistRow
-                key={it.id}
-                item={it}
-                checked={!!it.mine}
-                byLabel={Array.isArray(it.ticked_by) && it.ticked_by.length > 0 ? it.ticked_by.join(", ") : null}
-                busy={busy}
-                onToggle={toggle}
-                openHelp={openHelp}
-                setOpenHelp={setOpenHelp}
-                editMode={editMode}
-                onEdit={startEdit}
-                onMove={moveItem}
-              >
-                {editing?.id === it.id && (
-                  <ChecklistEditor draft={editing} onChange={setEditing} onSave={saveItem}
-                                   onCancel={() => { setEditing(null); setItemErr(""); }}
-                                   saving={itemSaving} err={itemErr} />
-                )}
-              </ChecklistRow>
-            ))}
-          </div>
-        )}
+      {/* ── Right column, in the order the day is worked: what went ──
+          wrong, then your own list, then the wrap-up. Peter 2026-09-17. ── */}
+      <div style={{ display: "grid", gap: 16, alignItems: "start" }}>
 
         {/* Code Reds / Yellows — any day, no email */}
-        <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${T.slate200}` }}>
+        <div style={cardStyle}>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline", justifyContent: "space-between" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Code Reds & Yellows</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900 }}>Code Reds & Yellows</div>
             <span style={{ fontSize: 11, color: T.slate500 }}>this week · {reds.length} red, {yellows.length} yellow</span>
           </div>
 
@@ -3086,73 +3083,124 @@ function ChecklistTab() {
             </div>
           )}
         </div>
-      </div>
 
-      {/* ── Weekly wrap-up ────────────────────────────────── */}
-      <div style={cardStyle}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline", justifyContent: "space-between" }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900 }}>Weekly wrap-up</div>
-            <div style={{ fontSize: 12, color: T.slate500 }}>
-              {wrap?.week_ending ? `Week ending ${fmtDate(wrap.week_ending)}` : "Loading"} · goes straight onto the CPR
-            </div>
-          </div>
-          {showWrap && <span style={{ fontSize: 12, fontWeight: 700, color: answered === 6 ? T.green : T.slate600 }}>{answered} of 6</span>}
+        {/* Personal checklist */}
+        <div style={cardStyle}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900 }}>Personal checklist</div>
+          <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6 }}>Everyone ticks these for themselves. The whole team can see who has.</div>
+          <ChecklistRow
+            item={{ id: commit ? commit.id : "nocommit", title: commit ? `Commit completed \u2014 ${commit.commit_text}` : "Commit completed", help_text: COMMIT_HELP }}
+            checked={!!commit && commit.hit === true}
+            byLabel={commitHitNames || null}
+            busy={busy}
+            disabled={!commit}
+            onToggle={(_it, on) => toggleCommit(commit, on)}
+            openHelp={openHelp}
+            setOpenHelp={setOpenHelp}
+            editMode={false}
+            onEdit={() => {}}
+            onMove={() => {}}
+          />
+          {personal.map(it => (
+            <ChecklistRow
+              key={it.id}
+              item={it}
+              checked={!!it.mine}
+              byLabel={Array.isArray(it.ticked_by) && it.ticked_by.length > 0 ? it.ticked_by.join(", ") : null}
+              busy={busy}
+              onToggle={toggle}
+              openHelp={openHelp}
+              setOpenHelp={setOpenHelp}
+              editMode={editMode}
+              onEdit={startEdit}
+              onMove={moveItem}
+            >
+              {editing?.id === it.id && (
+                <ChecklistEditor draft={editing} onChange={setEditing} onSave={saveItem}
+                                 onCancel={() => { setEditing(null); setItemErr(""); }}
+                                 saving={itemSaving} err={itemErr} />
+              )}
+            </ChecklistRow>
+          ))}
         </div>
 
-        {showWrap && wrap?.off_rest_of_week && (
-          <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, background: T.blueLt, color: T.blue, fontSize: 12, lineHeight: 1.5 }}>
-            You're off the rest of the week, so this is your last workday. Wrap up before you go.
-          </div>
-        )}
-
-        {!showWrap && (
-          <div style={{ marginTop: 12, fontSize: 13, color: T.slate600, lineHeight: 1.6 }}>
-            {answered === 6
-              ? <span style={{ color: T.green, fontWeight: 600 }}>Done for this week.</span>
-              : <>Opens on your last workday of the week. </>}
-            {" "}
-            <button type="button" onClick={() => setWrapOpen(true)} style={linkBtn}>{answered > 0 ? "Open it" : "Start it early"}</button>
-          </div>
-        )}
-
-        {showWrap && wrap && wrap.ok === false && (
-          <div style={{ marginTop: 12, fontSize: 13, color: T.slate600 }}>This login is not matched to a teammate, so there is no wrap-up to write.</div>
-        )}
-        {showWrap && wrap?.ok && !wrap.report_id && (
-          <div style={{ marginTop: 12, fontSize: 13, color: T.slate600 }}>This week's CPR is not open yet. The wrap-up opens with it.</div>
-        )}
-
-        {showWrap && wrap?.ok && wrap.report_id && (
-          <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
-            {prompts.map((p, i) => (
-              <div key={p.n}>
-                <label style={labelStyle}>{p.n}. {p.title} <span style={hintStyle}>{p.hint}</span></label>
-                <textarea
-                  rows={2}
-                  value={parts[i] || ""}
-                  onChange={e => setParts(v => { const n = [...v]; n[i] = e.target.value; return n; })}
-                  style={{ ...inputBase, fontSize: 13, padding: "8px 10px", lineHeight: 1.5, resize: "vertical" }}
-                />
+        {/* Weekly wrap-up */}
+        <div style={cardStyle}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900 }}>Weekly wrap-up</div>
+              <div style={{ fontSize: 12, color: T.slate500 }}>
+                {wrap?.week_ending ? `Week ending ${fmtDate(wrap.week_ending)}` : "Loading"} · goes straight onto the CPR
               </div>
-            ))}
-
-            <label style={{ display: "flex", gap: 10, alignItems: "center", cursor: "pointer" }}>
-              <input type="checkbox" checked={inbox} onChange={e => setInbox(e.target.checked)}
-                     style={{ width: 16, height: 16, accentColor: T.blue, boxSizing: "border-box" }} />
-              <span style={{ fontSize: 13, color: T.slate800 }}>My inbox is cleared</span>
-            </label>
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
-              <button type="button" onClick={save} disabled={saving} style={btnPrimary(saving)}>
-                {saving ? "Saving…" : "Save wrap-up"}
-              </button>
-              {ok && <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>{ok}</span>}
             </div>
+            {showWrap && <span style={{ fontSize: 12, fontWeight: 700, color: answered === 6 ? T.green : T.slate600 }}>{answered} of 6</span>}
           </div>
-        )}
 
-        {err && <div style={{ marginTop: 10, fontSize: 12, color: T.red, fontWeight: 600 }}>{err}</div>}
+          {showWrap && wrap?.off_rest_of_week && (
+            <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, background: T.blueLt, color: T.blue, fontSize: 12, lineHeight: 1.5 }}>
+              You're off the rest of the week, so this is your last workday. Wrap up before you go.
+            </div>
+          )}
+
+          {hiddenToday && (
+            <div style={{ marginTop: 12, fontSize: 13, color: T.slate600, lineHeight: 1.6 }}>
+              Put away for today. It comes back tomorrow.{" "}
+              <button type="button" onClick={() => setHide(false)} style={linkBtn}>Show it</button>
+            </div>
+          )}
+
+          {showWrap && wrap && wrap.ok === false && (
+            <div style={{ marginTop: 12, fontSize: 13, color: T.slate600 }}>This login is not matched to a teammate, so there is no wrap-up to write.</div>
+          )}
+          {showWrap && wrap?.ok && !wrap.report_id && (
+            <div style={{ marginTop: 12, fontSize: 13, color: T.slate600 }}>This week's CPR is not open yet. The wrap-up opens with it.</div>
+          )}
+
+          {showWrap && wrap?.ok && wrap.report_id && (
+            <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
+              {prompts.map((p, i) => (
+                <div key={p.n}>
+                  <label style={labelStyle}>{p.n}. {p.title} <span style={hintStyle}>{p.hint}</span></label>
+                  <textarea
+                    rows={2}
+                    value={parts[i] || ""}
+                    onChange={e => editPart(i, e.target.value)}
+                    style={{ ...inputBase, fontSize: 13, padding: "8px 10px", lineHeight: 1.5, resize: "vertical" }}
+                  />
+                </div>
+              ))}
+
+              <label style={{ display: "flex", gap: 10, alignItems: "center", cursor: "pointer" }}>
+                <input type="checkbox" checked={inbox} onChange={e => setInbox(e.target.checked)}
+                       style={{ width: 16, height: 16, accentColor: T.blue, boxSizing: "border-box" }} />
+                <span style={{ fontSize: 13, color: T.slate800 }}>My inbox is cleared</span>
+              </label>
+
+              {!knownLastDay && (
+                <label style={{ display: "flex", gap: 10, alignItems: "center", cursor: "pointer" }}>
+                  <input type="checkbox" checked={false} onChange={e => { if (e.target.checked) setHide(true); }}
+                         style={{ width: 16, height: 16, accentColor: T.blue, boxSizing: "border-box" }} />
+                  <span style={{ fontSize: 13, color: T.slate800 }}>This is not my last day this week</span>
+                </label>
+              )}
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+                <button type="button" onClick={save} disabled={saving} style={btnPrimary(saving)}>
+                  {saving ? "Saving…" : "Save wrap-up"}
+                </button>
+                {finished
+                  ? <button type="button" onClick={() => finish(false)} style={linkBtn}>Reopen it</button>
+                  : <button type="button" onClick={() => finish(true)} disabled={saving} style={linkBtn}>I'm done, nothing left to type</button>}
+                {finished
+                  ? <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>Finished</span>
+                  : (ok && <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>{ok}</span>)}
+              </div>
+            </div>
+          )}
+
+          {err && <div style={{ marginTop: 10, fontSize: 12, color: T.red, fontWeight: 600 }}>{err}</div>}
+        </div>
+
       </div>
     </div>
   );
