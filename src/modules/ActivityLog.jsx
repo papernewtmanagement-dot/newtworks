@@ -3552,7 +3552,7 @@ export default function ActivityLog({ userRole, userId }) {
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
       {tab === "changes" && isAdmin && <ChangesTab roster={roster} nameOf={nameOf} values={values} types={types} onChanged={bump} />}
       {tab === "spotcheck" && isAdmin && <SpotCheck isAdmin={isAdmin} />}
-      {tab === "backfill" && isAdmin && <BackfillTab sources={sources} />}
+      {tab === "backfill" && isAdmin && <BackfillTab sources={sources} roster={roster} />}
       {tab === "history" && <HistoryTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} />}
     </div>
   );
