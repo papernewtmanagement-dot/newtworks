@@ -6,8 +6,8 @@
 //
 // Data: team_onboarding_plans + team_onboarding_steps.
 // Plan creation compiles from onboarding_step_templates via RPC
-// create_onboarding_plan_from_templates(team_member_id, start_date,
-// target_end_date, notes). Templates are snapshotted at create-time into
+// create_onboarding_plan_from_templates(team_member_id, start_date, notes).
+// Templates are snapshotted at create-time into
 // team_onboarding_steps — later template edits do NOT retro-mutate a
 // running plan.
 //
@@ -71,7 +71,7 @@ function useOnboardingData(userId, isAdmin) {
     try {
       const [plansRes, teamRes, phasesRes, candsRes] = await Promise.all([
         supabase.from("team_onboarding_plans")
-          .select("id, agency_id, team_member_id, candidate_id, attached_at, role_snapshot, role_category_snapshot, role_level_snapshot, start_date, target_end_date, status, notes, created_by, created_at, updated_at")
+          .select("id, agency_id, team_member_id, candidate_id, attached_at, role_snapshot, role_category_snapshot, role_level_snapshot, start_date, status, notes, created_by, created_at, updated_at")
           .eq("agency_id", AGENCY_ID)
           .order("created_at", { ascending: false }),
         supabase.from("team_directory")
@@ -230,7 +230,6 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
             </div>
             <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>
               Started {fmtDate(plan.start_date)} · Day {daysBetween(plan.start_date)}
-              {plan.target_end_date ? ` · Target ${fmtDate(plan.target_end_date)}` : ""}
             </div>
             {plan.notes ? (
               <div style={{ fontSize: 12, color: T.slate600, marginTop: 8, padding: "8px 10px", background: T.slate50, borderRadius: 6 }}>
@@ -503,7 +502,6 @@ function CreatePlanModal({ team, candidates, existingPlans, onClose, onCreated }
   const [candidateId, setCandidateId] = useState("");
   const [candRole, setCandRole] = useState("");             // Sales | Retention
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
-  const [targetEndDate, setTargetEndDate] = useState("");
   const [notes, setNotes] = useState("");
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -581,7 +579,6 @@ function CreatePlanModal({ team, candidates, existingPlans, onClose, onCreated }
         p_candidate_id: subjectKind === "candidate" ? candidateId : null,
         p_role_category: subjectKind === "candidate" ? (candRole || null) : null,
         p_start_date: startDate,
-        p_target_end_date: targetEndDate || null,
         p_notes: notes || null,
       });
       if (err) throw err;
@@ -685,15 +682,9 @@ function CreatePlanModal({ team, candidates, existingPlans, onClose, onCreated }
           </div>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
-          <div>
-            <label style={fieldLabel}>Start date</label>
-            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={inputBase} />
-          </div>
-          <div>
-            <label style={fieldLabel}>Target end (optional)</label>
-            <input type="date" value={targetEndDate} onChange={(e) => setTargetEndDate(e.target.value)} style={inputBase} />
-          </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={fieldLabel}>Start date</label>
+          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={inputBase} />
         </div>
 
         <div style={{ marginBottom: 14 }}>
@@ -736,7 +727,7 @@ function CreatePlanModal({ team, candidates, existingPlans, onClose, onCreated }
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button variant="primary" onClick={submit} disabled={busy || !teamMemberId}>
+          <Button variant="primary" onClick={submit} disabled={busy || (subjectKind === "team" ? !teamMemberId : !candidateId)}>
             {busy ? "Creating…" : "Create plan"}
           </Button>
         </div>
