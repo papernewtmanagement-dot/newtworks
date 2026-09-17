@@ -2776,7 +2776,8 @@ function ChecklistEditor({ draft, onChange, onSave, onCancel, saving, err }) {
 // Nothing here writes anything. "Back to the list" and unticking anything
 // both put the checklist straight back.
 // =====================================================================
-const DAY_DONE_LINES = ["Your Day is Done!", "Now Go Home!", "Gyet!", "Scat!"];
+const DAY_LINES  = ["Your Day is Done!",  "Now Go Home!", "Gyet!", "Scat!"];
+const WEEK_LINES = ["Your Week is Done!", "Now Go Home!", "Gyet!", "Scat!"];
 const CONFETTI_COLORS = [T.blue, T.green, T.amber, T.red, T.purple, T.teal, T.gold, T.pink];
 
 function DayDoneStyles() {
@@ -2803,28 +2804,39 @@ function DayDoneStyles() {
         55%  { opacity: 1; transform: scale(1.08); }
         100% { opacity: 1; transform: scale(1); }
       }
-      @keyframes nwPugDance {
+
+      /* One set of moves, shared by every animal. Each drawing says where the
+         part turns from with its own transform-origin; the class only carries
+         the movement. --d offsets a whole animal so a row of them is not in
+         lockstep, and it inherits down to every moving part inside it. */
+      @keyframes nwDance {
         0%   { transform: translateY(0) rotate(-4deg); }
         25%  { transform: translateY(-12px) rotate(0deg); }
         50%  { transform: translateY(0) rotate(4deg); }
         75%  { transform: translateY(-12px) rotate(0deg); }
         100% { transform: translateY(0) rotate(-4deg); }
       }
-      @keyframes nwWag  { 0%, 100% { transform: rotate(-20deg); } 50% { transform: rotate(22deg); } }
-      @keyframes nwEarL { 0%, 100% { transform: rotate(-6deg); }  50% { transform: rotate(11deg); } }
-      @keyframes nwEarR { 0%, 100% { transform: rotate(6deg); }   50% { transform: rotate(-11deg); } }
-      @keyframes nwPaw  { 0%, 100% { transform: translateY(0); }  50% { transform: translateY(-8px); } }
+      @keyframes nwWag   { 0%, 100% { transform: rotate(-20deg); } 50% { transform: rotate(22deg); } }
+      @keyframes nwSwayL { 0%, 100% { transform: rotate(-8deg); }  50% { transform: rotate(13deg); } }
+      @keyframes nwSwayR { 0%, 100% { transform: rotate(8deg); }   50% { transform: rotate(-13deg); } }
+      @keyframes nwUp    { 0%, 100% { transform: translateY(0); }  50% { transform: translateY(-8px); } }
+      @keyframes nwPeck  { 0%, 62%, 100% { transform: rotate(0deg); } 78% { transform: rotate(15deg); } }
 
-      .nw-pug      { animation: nwPugDance 900ms ease-in-out infinite;       transform-box: fill-box; transform-origin: 50% 92%; }
-      .nw-pug-tail { animation: nwWag 260ms ease-in-out infinite;            transform-box: fill-box; transform-origin: 6% 92%; }
-      .nw-pug-earL { animation: nwEarL 900ms ease-in-out infinite;           transform-box: fill-box; transform-origin: 72% 6%; }
-      .nw-pug-earR { animation: nwEarR 900ms ease-in-out infinite;           transform-box: fill-box; transform-origin: 28% 6%; }
-      .nw-pug-pawL { animation: nwPaw 900ms ease-in-out infinite;            transform-box: fill-box; transform-origin: 50% 0%; }
-      .nw-pug-pawR { animation: nwPaw 900ms ease-in-out infinite 450ms;      transform-box: fill-box; transform-origin: 50% 0%; }
+      .nw-dance { animation: nwDance 900ms ease-in-out infinite; }
+      .nw-wag   { animation: nwWag 260ms ease-in-out infinite; }
+      .nw-swayL { animation: nwSwayL 900ms ease-in-out infinite; }
+      .nw-swayR { animation: nwSwayR 900ms ease-in-out infinite; }
+      .nw-up    { animation: nwUp 900ms ease-in-out infinite; }
+      .nw-upB   { animation: nwUp 900ms ease-in-out infinite; }
+      .nw-peck  { animation: nwPeck 900ms ease-in-out infinite; }
+      .nw-dance, .nw-wag, .nw-swayL, .nw-swayR, .nw-up, .nw-upB, .nw-peck {
+        transform-box: fill-box; transform-origin: 50% 50%; animation-delay: var(--d, 0ms);
+      }
+      .nw-upB { animation-delay: calc(var(--d, 0ms) + 450ms); }
 
       @media (prefers-reduced-motion: reduce) {
-        .nw-crumble > *, .nw-pug, .nw-pug-tail, .nw-pug-earL, .nw-pug-earR,
-        .nw-pug-pawL, .nw-pug-pawR { animation: none !important; }
+        .nw-crumble > *, .nw-dance, .nw-wag, .nw-swayL, .nw-swayR,
+        .nw-up, .nw-upB, .nw-peck { animation: none !important; }
       }
     `}</style>
   );
@@ -2861,46 +2873,384 @@ function Confetti() {
   );
 }
 
-function DancingPug({ size = 176 }) {
+// ── The troupe ────────────────────────────────────────────────────────
+// Twelve animals, all drawn on the same 200x200 stage so they can stand
+// next to each other. Each one is just the shapes; Dancer supplies the
+// frame, the shadow and the beat.
+// Peter 2026-09-17: one at random each day, the whole lot when the week
+// is done.
+
+function PugArt() {
   return (
-    <svg width={size} height={size} viewBox="0 0 200 200" role="img" aria-label="A dancing pug">
-      <g className="nw-pug">
-        <ellipse cx="100" cy="182" rx="52" ry="7" fill="#000000" opacity="0.08" />
-        <g className="nw-pug-tail">
-          <path d="M146 130 c15 -3 21 -13 15 -21 c-7 -8 -19 -4 -19 5 c0 8 9 10 13 5"
-                fill="none" stroke="#C9964E" strokeWidth="9" strokeLinecap="round" />
-        </g>
-        <rect x="62" y="150" width="22" height="26" rx="10" fill="#C9964E" />
-        <rect x="116" y="150" width="22" height="26" rx="10" fill="#C9964E" />
-        <ellipse cx="100" cy="136" rx="48" ry="34" fill="#D8A85B" />
-        <ellipse cx="100" cy="147" rx="30" ry="20" fill="#E8C288" />
-        <g className="nw-pug-pawL"><rect x="56" y="138" width="21" height="36" rx="10" fill="#D8A85B" /></g>
-        <g className="nw-pug-pawR"><rect x="123" y="138" width="21" height="36" rx="10" fill="#D8A85B" /></g>
-        <circle cx="100" cy="78" r="42" fill="#D8A85B" />
-        <g className="nw-pug-earL"><path d="M62 46 q-15 -9 -17 10 q-3 21 17 25 z" fill="#3A322C" /></g>
-        <g className="nw-pug-earR"><path d="M138 46 q15 -9 17 10 q3 21 -17 25 z" fill="#3A322C" /></g>
-        <path d="M84 52 q16 -10 32 0" fill="none" stroke="#B9873F" strokeWidth="4.5" strokeLinecap="round" />
-        <ellipse cx="100" cy="88" rx="32" ry="28" fill="#3A322C" />
-        <ellipse cx="100" cy="97" rx="20" ry="15" fill="#2A2422" />
-        <ellipse cx="100" cy="89" rx="9" ry="6.5" fill="#15100F" />
-        <path d="M92 105 q8 8 16 0" fill="none" stroke="#15100F" strokeWidth="3" strokeLinecap="round" />
-        <path d="M95 108 q5 13 10 0 z" fill="#E87A8F" />
-        <circle cx="80" cy="72" r="10.5" fill="#15100F" />
-        <circle cx="120" cy="72" r="10.5" fill="#15100F" />
-        <circle cx="83.5" cy="68.5" r="3.6" fill="#FFFFFF" />
-        <circle cx="123.5" cy="68.5" r="3.6" fill="#FFFFFF" />
+    <>
+      <g className="nw-wag" style={{ transformOrigin: "6% 92%" }}>
+        <path d="M146 130 c15 -3 21 -13 15 -21 c-7 -8 -19 -4 -19 5 c0 8 9 10 13 5"
+              fill="none" stroke="#C9964E" strokeWidth="9" strokeLinecap="round" />
+      </g>
+      <rect x="62" y="150" width="22" height="26" rx="10" fill="#C9964E" />
+      <rect x="116" y="150" width="22" height="26" rx="10" fill="#C9964E" />
+      <ellipse cx="100" cy="136" rx="48" ry="34" fill="#D8A85B" />
+      <ellipse cx="100" cy="147" rx="30" ry="20" fill="#E8C288" />
+      <g className="nw-up"  style={{ transformOrigin: "50% 0%" }}><rect x="56" y="138" width="21" height="36" rx="10" fill="#D8A85B" /></g>
+      <g className="nw-upB" style={{ transformOrigin: "50% 0%" }}><rect x="123" y="138" width="21" height="36" rx="10" fill="#D8A85B" /></g>
+      <circle cx="100" cy="78" r="42" fill="#D8A85B" />
+      <g className="nw-swayL" style={{ transformOrigin: "72% 6%" }}><path d="M62 46 q-15 -9 -17 10 q-3 21 17 25 z" fill="#3A322C" /></g>
+      <g className="nw-swayR" style={{ transformOrigin: "28% 6%" }}><path d="M138 46 q15 -9 17 10 q3 21 -17 25 z" fill="#3A322C" /></g>
+      <path d="M84 52 q16 -10 32 0" fill="none" stroke="#B9873F" strokeWidth="4.5" strokeLinecap="round" />
+      <ellipse cx="100" cy="88" rx="32" ry="28" fill="#3A322C" />
+      <ellipse cx="100" cy="97" rx="20" ry="15" fill="#2A2422" />
+      <ellipse cx="100" cy="89" rx="9" ry="6.5" fill="#15100F" />
+      <path d="M92 105 q8 8 16 0" fill="none" stroke="#15100F" strokeWidth="3" strokeLinecap="round" />
+      <path d="M95 108 q5 13 10 0 z" fill="#E87A8F" />
+      <circle cx="80" cy="72" r="10.5" fill="#15100F" />
+      <circle cx="120" cy="72" r="10.5" fill="#15100F" />
+      <circle cx="83.5" cy="68.5" r="3.6" fill="#FFFFFF" />
+      <circle cx="123.5" cy="68.5" r="3.6" fill="#FFFFFF" />
+    </>
+  );
+}
+
+function AxolotlArt() {
+  return (
+    <>
+      <g className="nw-wag" style={{ transformOrigin: "50% 8%" }}>
+        <path d="M100 158 q30 12 36 32 q-36 8 -72 0 q6 -20 36 -32 z" fill="#F5B8CE" />
+      </g>
+      <rect x="62" y="158" width="18" height="22" rx="9" fill="#EE9FBB" />
+      <rect x="120" y="158" width="18" height="22" rx="9" fill="#EE9FBB" />
+      <ellipse cx="100" cy="140" rx="38" ry="32" fill="#F2AFC6" />
+      <ellipse cx="100" cy="150" rx="24" ry="19" fill="#FBD9E6" />
+      <g className="nw-up"  style={{ transformOrigin: "50% 0%" }}><rect x="56" y="128" width="17" height="30" rx="8" fill="#F2AFC6" /></g>
+      <g className="nw-upB" style={{ transformOrigin: "50% 0%" }}><rect x="127" y="128" width="17" height="30" rx="8" fill="#F2AFC6" /></g>
+      <g className="nw-swayL" style={{ transformOrigin: "95% 65%" }}>
+        <path d="M62 70 L36 52" stroke="#EE8FB2" strokeWidth="6" strokeLinecap="round" />
+        <path d="M60 84 L30 74" stroke="#EE8FB2" strokeWidth="6" strokeLinecap="round" />
+        <path d="M62 98 L34 98" stroke="#EE8FB2" strokeWidth="6" strokeLinecap="round" />
+        <circle cx="35" cy="51" r="6.5" fill="#F7A9C6" />
+        <circle cx="29" cy="73" r="6.5" fill="#F7A9C6" />
+        <circle cx="33" cy="98" r="6.5" fill="#F7A9C6" />
+      </g>
+      <g className="nw-swayR" style={{ transformOrigin: "5% 65%" }}>
+        <path d="M138 70 L164 52" stroke="#EE8FB2" strokeWidth="6" strokeLinecap="round" />
+        <path d="M140 84 L170 74" stroke="#EE8FB2" strokeWidth="6" strokeLinecap="round" />
+        <path d="M138 98 L166 98" stroke="#EE8FB2" strokeWidth="6" strokeLinecap="round" />
+        <circle cx="165" cy="51" r="6.5" fill="#F7A9C6" />
+        <circle cx="171" cy="73" r="6.5" fill="#F7A9C6" />
+        <circle cx="167" cy="98" r="6.5" fill="#F7A9C6" />
+      </g>
+      <ellipse cx="100" cy="86" rx="42" ry="33" fill="#F5B8CE" />
+      <circle cx="84" cy="80" r="5.5" fill="#2A2422" />
+      <circle cx="116" cy="80" r="5.5" fill="#2A2422" />
+      <circle cx="86" cy="78" r="1.9" fill="#FFFFFF" />
+      <circle cx="118" cy="78" r="1.9" fill="#FFFFFF" />
+      <circle cx="74" cy="95" r="7" fill="#F58AAF" opacity="0.55" />
+      <circle cx="126" cy="95" r="7" fill="#F58AAF" opacity="0.55" />
+      <path d="M88 96 q12 11 24 0" fill="none" stroke="#C96D8C" strokeWidth="3.5" strokeLinecap="round" />
+    </>
+  );
+}
+
+function BeagleArt() {
+  return (
+    <>
+      <g className="nw-wag" style={{ transformOrigin: "10% 90%" }}>
+        <path d="M140 128 q24 -10 28 -30" fill="none" stroke="#FBF6EE" strokeWidth="10" strokeLinecap="round" />
+      </g>
+      <rect x="64" y="150" width="20" height="28" rx="9" fill="#FBF6EE" />
+      <rect x="116" y="150" width="20" height="28" rx="9" fill="#FBF6EE" />
+      <ellipse cx="100" cy="138" rx="43" ry="32" fill="#FBF6EE" />
+      <path d="M60 132 q10 -32 40 -32 q30 0 40 32 q-40 -16 -80 0 z" fill="#3A322C" />
+      <g className="nw-up"  style={{ transformOrigin: "50% 0%" }}><rect x="60" y="140" width="19" height="34" rx="9" fill="#FBF6EE" /></g>
+      <g className="nw-upB" style={{ transformOrigin: "50% 0%" }}><rect x="121" y="140" width="19" height="34" rx="9" fill="#FBF6EE" /></g>
+      <circle cx="100" cy="78" r="37" fill="#C98A4B" />
+      <path d="M88 44 q12 -6 24 0 l-4 46 q-8 4 -16 0 z" fill="#FBF6EE" />
+      <g className="nw-swayL" style={{ transformOrigin: "50% 6%" }}><ellipse cx="63" cy="88" rx="14" ry="29" fill="#8A5A2B" /></g>
+      <g className="nw-swayR" style={{ transformOrigin: "50% 6%" }}><ellipse cx="137" cy="88" rx="14" ry="29" fill="#8A5A2B" /></g>
+      <ellipse cx="100" cy="100" rx="17" ry="13" fill="#FBF6EE" />
+      <ellipse cx="100" cy="92" rx="8.5" ry="6.5" fill="#2A2422" />
+      <path d="M92 105 q8 8 16 0" fill="none" stroke="#5C4A36" strokeWidth="3" strokeLinecap="round" />
+      <circle cx="84" cy="72" r="6.5" fill="#2A2422" />
+      <circle cx="116" cy="72" r="6.5" fill="#2A2422" />
+      <circle cx="86" cy="69.5" r="2.2" fill="#FFFFFF" />
+      <circle cx="118" cy="69.5" r="2.2" fill="#FFFFFF" />
+    </>
+  );
+}
+
+function TurtleArt() {
+  return (
+    <>
+      <g className="nw-wag" style={{ transformOrigin: "6% 50%" }}>
+        <path d="M150 142 q18 4 22 15" fill="none" stroke="#7FA86A" strokeWidth="9" strokeLinecap="round" />
+      </g>
+      <rect x="58" y="152" width="22" height="24" rx="10" fill="#7FA86A" />
+      <rect x="120" y="152" width="22" height="24" rx="10" fill="#7FA86A" />
+      <g className="nw-up"  style={{ transformOrigin: "50% 0%" }}><rect x="44" y="126" width="20" height="30" rx="9" fill="#7FA86A" /></g>
+      <g className="nw-upB" style={{ transformOrigin: "50% 0%" }}><rect x="136" y="126" width="20" height="30" rx="9" fill="#7FA86A" /></g>
+      <rect x="86" y="92" width="28" height="22" rx="8" fill="#8FBB77" />
+      <ellipse cx="100" cy="132" rx="56" ry="42" fill="#4E7A46" />
+      <ellipse cx="100" cy="134" rx="44" ry="32" fill="#6B9B5C" />
+      <path d="M100 110 l17 11 -6 20 h-22 l-6 -20 z" fill="#4E7A46" />
+      <circle cx="68" cy="130" r="9" fill="#4E7A46" />
+      <circle cx="132" cy="130" r="9" fill="#4E7A46" />
+      <circle cx="84" cy="156" r="8" fill="#4E7A46" />
+      <circle cx="116" cy="156" r="8" fill="#4E7A46" />
+      <ellipse cx="100" cy="72" rx="31" ry="27" fill="#8FBB77" />
+      <circle cx="88" cy="67" r="5.5" fill="#2A2422" />
+      <circle cx="112" cy="67" r="5.5" fill="#2A2422" />
+      <circle cx="90" cy="65" r="1.9" fill="#FFFFFF" />
+      <circle cx="114" cy="65" r="1.9" fill="#FFFFFF" />
+      <path d="M89 84 q11 9 22 0" fill="none" stroke="#3E6B2E" strokeWidth="3" strokeLinecap="round" />
+    </>
+  );
+}
+
+function DuckArt() {
+  return (
+    <>
+      <rect x="82" y="168" width="15" height="13" rx="4" fill="#E8913A" />
+      <rect x="103" y="168" width="15" height="13" rx="4" fill="#E8913A" />
+      <path d="M144 124 q24 -8 26 -24 q-16 6 -30 16 z" fill="#EFC23C" />
+      <ellipse cx="100" cy="134" rx="46" ry="34" fill="#F5CE4E" />
+      <g className="nw-swayL" style={{ transformOrigin: "90% 18%" }}><ellipse cx="66" cy="132" rx="20" ry="26" fill="#EFC23C" /></g>
+      <g className="nw-swayR" style={{ transformOrigin: "10% 18%" }}><ellipse cx="134" cy="132" rx="20" ry="26" fill="#EFC23C" /></g>
+      <circle cx="100" cy="76" r="34" fill="#F5CE4E" />
+      <ellipse cx="100" cy="93" rx="23" ry="11" fill="#E8913A" />
+      <path d="M79 93 h42" fill="none" stroke="#C9762B" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="88" cy="68" r="5.5" fill="#2A2422" />
+      <circle cx="112" cy="68" r="5.5" fill="#2A2422" />
+      <circle cx="90" cy="66" r="1.9" fill="#FFFFFF" />
+      <circle cx="114" cy="66" r="1.9" fill="#FFFFFF" />
+    </>
+  );
+}
+
+function GooseArt() {
+  return (
+    <>
+      <rect x="84" y="170" width="14" height="12" rx="4" fill="#E8913A" />
+      <rect x="102" y="170" width="14" height="12" rx="4" fill="#E8913A" />
+      <path d="M146 134 q26 -6 30 -24 q-20 4 -36 14 z" fill="#8F8A7B" />
+      <ellipse cx="100" cy="144" rx="47" ry="31" fill="#A8A396" />
+      <ellipse cx="100" cy="154" rx="33" ry="18" fill="#DCD7C8" />
+      <g className="nw-swayL" style={{ transformOrigin: "88% 16%" }}><ellipse cx="64" cy="142" rx="20" ry="24" fill="#8F8A7B" /></g>
+      <g className="nw-swayR" style={{ transformOrigin: "12% 16%" }}><ellipse cx="136" cy="142" rx="20" ry="24" fill="#8F8A7B" /></g>
+      <path d="M90 128 q-8 -52 10 -66 q18 14 10 66 z" fill="#B5B0A2" />
+      <ellipse cx="100" cy="56" rx="24" ry="21" fill="#B5B0A2" />
+      <path d="M82 66 q18 14 36 0 q-18 10 -36 0 z" fill="#DCD7C8" />
+      <ellipse cx="100" cy="46" rx="9" ry="6" fill="#E8913A" />
+      <path d="M100 58 q14 3 14 9 q0 7 -14 9 q-14 -2 -14 -9 q0 -6 14 -9 z" fill="#E8913A" />
+      <circle cx="88" cy="50" r="4.6" fill="#2A2422" />
+      <circle cx="112" cy="50" r="4.6" fill="#2A2422" />
+      <circle cx="89.6" cy="48" r="1.6" fill="#FFFFFF" />
+      <circle cx="113.6" cy="48" r="1.6" fill="#FFFFFF" />
+    </>
+  );
+}
+
+function LizardArt() {
+  return (
+    <>
+      <g className="nw-wag" style={{ transformOrigin: "3% 35%" }}>
+        <path d="M146 136 q34 -4 44 24" fill="none" stroke="#6BA84F" strokeWidth="13" strokeLinecap="round" />
+      </g>
+      <rect x="58" y="156" width="30" height="14" rx="7" fill="#5A9342" />
+      <rect x="112" y="156" width="30" height="14" rx="7" fill="#5A9342" />
+      <ellipse cx="100" cy="138" rx="50" ry="26" fill="#6BA84F" />
+      <path d="M58 122 l10 -14 l10 14 l10 -14 l10 14 l10 -14 l10 14 l10 -14 l10 14 l10 -14 l10 14 z" fill="#4C8038" />
+      <ellipse cx="100" cy="144" rx="33" ry="14" fill="#A8CF8A" />
+      <ellipse cx="100" cy="84" rx="37" ry="28" fill="#6BA84F" />
+      <path d="M67 74 q33 -15 66 0 q-33 -6 -66 0 z" fill="#A8CF8A" opacity="0.5" />
+      <circle cx="83" cy="78" r="8" fill="#F2D24E" />
+      <circle cx="83" cy="78" r="3.4" fill="#15100F" />
+      <circle cx="117" cy="78" r="8" fill="#F2D24E" />
+      <circle cx="117" cy="78" r="3.4" fill="#15100F" />
+      <path d="M84 98 q16 9 32 0" fill="none" stroke="#3E6B2E" strokeWidth="3" strokeLinecap="round" />
+    </>
+  );
+}
+
+function LemurArt() {
+  return (
+    <>
+      <g className="nw-wag" style={{ transformOrigin: "10% 95%" }}>
+        <path d="M142 138 q38 -16 32 -70" fill="none" stroke="#EFEAE0" strokeWidth="14" strokeLinecap="round" />
+        <path d="M142 138 q38 -16 32 -70" fill="none" stroke="#2A2422" strokeWidth="14" strokeDasharray="11 11" />
+      </g>
+      <rect x="66" y="152" width="20" height="26" rx="9" fill="#9B9384" />
+      <rect x="114" y="152" width="20" height="26" rx="9" fill="#9B9384" />
+      <ellipse cx="100" cy="138" rx="42" ry="32" fill="#9B9384" />
+      <ellipse cx="100" cy="148" rx="28" ry="20" fill="#EFEAE0" />
+      <g className="nw-up"  style={{ transformOrigin: "50% 0%" }}><rect x="60" y="136" width="17" height="32" rx="8" fill="#9B9384" /></g>
+      <g className="nw-upB" style={{ transformOrigin: "50% 0%" }}><rect x="123" y="136" width="17" height="32" rx="8" fill="#9B9384" /></g>
+      <g className="nw-swayL" style={{ transformOrigin: "70% 90%" }}><circle cx="68" cy="52" r="13" fill="#9B9384" /></g>
+      <g className="nw-swayR" style={{ transformOrigin: "30% 90%" }}><circle cx="132" cy="52" r="13" fill="#9B9384" /></g>
+      <circle cx="100" cy="80" r="36" fill="#EFEAE0" />
+      <ellipse cx="84" cy="74" rx="13" ry="14.5" fill="#2A2422" />
+      <ellipse cx="116" cy="74" rx="13" ry="14.5" fill="#2A2422" />
+      <circle cx="84" cy="74" r="7" fill="#E0A53C" />
+      <circle cx="84" cy="74" r="3.2" fill="#15100F" />
+      <circle cx="116" cy="74" r="7" fill="#E0A53C" />
+      <circle cx="116" cy="74" r="3.2" fill="#15100F" />
+      <ellipse cx="100" cy="99" rx="14" ry="11" fill="#2A2422" />
+      <ellipse cx="100" cy="94" rx="6" ry="4" fill="#15100F" />
+    </>
+  );
+}
+
+function SlothArt() {
+  return (
+    <>
+      <rect x="72" y="158" width="20" height="23" rx="9" fill="#7A6A56" />
+      <rect x="108" y="158" width="20" height="23" rx="9" fill="#7A6A56" />
+      <ellipse cx="100" cy="136" rx="40" ry="34" fill="#9C8B73" />
+      <ellipse cx="100" cy="144" rx="26" ry="24" fill="#C6B69C" />
+      <g className="nw-swayL" style={{ transformOrigin: "92% 6%" }}>
+        <path d="M72 108 q-34 22 -28 58" fill="none" stroke="#6E5C46" strokeWidth="17" strokeLinecap="round" />
+        <path d="M46 168 q-8 -8 -2 -14 M52 170 q-8 -8 -2 -14" fill="none" stroke="#4A3C2E" strokeWidth="4" strokeLinecap="round" />
+      </g>
+      <g className="nw-swayR" style={{ transformOrigin: "8% 6%" }}>
+        <path d="M128 108 q34 22 28 58" fill="none" stroke="#6E5C46" strokeWidth="17" strokeLinecap="round" />
+        <path d="M154 168 q8 -8 2 -14 M148 170 q8 -8 2 -14" fill="none" stroke="#4A3C2E" strokeWidth="4" strokeLinecap="round" />
+      </g>
+      <circle cx="100" cy="78" r="38" fill="#C6B69C" />
+      <path d="M63 76 q37 -36 74 0 q-37 -13 -74 0 z" fill="#9C8B73" />
+      <ellipse cx="84" cy="77" rx="12.5" ry="10.5" fill="#6E5C46" />
+      <ellipse cx="116" cy="77" rx="12.5" ry="10.5" fill="#6E5C46" />
+      <circle cx="84" cy="77" r="5" fill="#15100F" />
+      <circle cx="116" cy="77" r="5" fill="#15100F" />
+      <circle cx="86" cy="75" r="1.8" fill="#FFFFFF" />
+      <circle cx="118" cy="75" r="1.8" fill="#FFFFFF" />
+      <ellipse cx="100" cy="93" rx="7" ry="5" fill="#4A3C2E" />
+      <path d="M86 103 q14 12 28 0" fill="none" stroke="#6E5C46" strokeWidth="3.5" strokeLinecap="round" />
+    </>
+  );
+}
+
+function RoosterArt() {
+  return (
+    <>
+      <rect x="86" y="168" width="10" height="14" rx="3" fill="#E8B13A" />
+      <rect x="104" y="168" width="10" height="14" rx="3" fill="#E8B13A" />
+      <g className="nw-swayL" style={{ transformOrigin: "16% 92%" }}>
+        <path d="M142 142 q34 -8 34 -54 q-16 28 -42 34 z" fill="#2F5E4E" />
+        <path d="M140 148 q38 -2 44 -42 q-22 24 -48 28 z" fill="#3E7A63" />
+      </g>
+      <ellipse cx="100" cy="136" rx="44" ry="34" fill="#B5502F" />
+      <ellipse cx="100" cy="146" rx="28" ry="22" fill="#D2703F" />
+      <g className="nw-swayR" style={{ transformOrigin: "12% 20%" }}><ellipse cx="128" cy="134" rx="22" ry="20" fill="#8E3B22" /></g>
+      <circle cx="100" cy="76" r="30" fill="#C05B34" />
+      <path d="M83 52 q5 -15 12 -6 q5 -17 12 -6 q6 -15 13 -3 q-19 9 -37 15 z" fill="#D63B33" />
+      <ellipse cx="94" cy="98" rx="5" ry="9" fill="#D63B33" />
+      <ellipse cx="106" cy="98" rx="5" ry="9" fill="#D63B33" />
+      <path d="M100 82 l11 9 l-22 0 z" fill="#E8B13A" />
+      <circle cx="90" cy="70" r="5.5" fill="#15100F" />
+      <circle cx="110" cy="70" r="5.5" fill="#15100F" />
+      <circle cx="92" cy="68" r="1.9" fill="#FFFFFF" />
+      <circle cx="112" cy="68" r="1.9" fill="#FFFFFF" />
+    </>
+  );
+}
+
+function PuffinArt() {
+  return (
+    <>
+      <rect x="85" y="168" width="13" height="14" rx="4" fill="#E8913A" />
+      <rect x="102" y="168" width="13" height="14" rx="4" fill="#E8913A" />
+      <ellipse cx="100" cy="134" rx="44" ry="36" fill="#2A2422" />
+      <ellipse cx="100" cy="142" rx="30" ry="27" fill="#FBF6EE" />
+      <g className="nw-swayL" style={{ transformOrigin: "88% 14%" }}><ellipse cx="64" cy="132" rx="17" ry="26" fill="#1A1614" /></g>
+      <g className="nw-swayR" style={{ transformOrigin: "12% 14%" }}><ellipse cx="136" cy="132" rx="17" ry="26" fill="#1A1614" /></g>
+      <circle cx="100" cy="76" r="32" fill="#2A2422" />
+      <ellipse cx="100" cy="82" rx="23" ry="24" fill="#FBF6EE" />
+      <circle cx="88" cy="71" r="5" fill="#15100F" />
+      <circle cx="112" cy="71" r="5" fill="#15100F" />
+      <circle cx="89.6" cy="69" r="1.7" fill="#FFFFFF" />
+      <circle cx="113.6" cy="69" r="1.7" fill="#FFFFFF" />
+      <path d="M100 82 q21 4 19 16 q-2 12 -19 14 q-17 -2 -19 -14 q-2 -12 19 -16 z" fill="#E8913A" />
+      <path d="M100 82 q-17 4 -19 16 q0 7 6 11 q-2 -15 13 -27 z" fill="#C9C2B4" />
+      <path d="M91 97 q17 -2 27 2" fill="none" stroke="#D6602F" strokeWidth="3" strokeLinecap="round" />
+    </>
+  );
+}
+
+function WoodpeckerArt() {
+  return (
+    <>
+      <path d="M100 168 l-12 22 h24 z" fill="#1A1614" />
+      <rect x="84" y="164" width="11" height="12" rx="4" fill="#8A7A62" />
+      <rect x="105" y="164" width="11" height="12" rx="4" fill="#8A7A62" />
+      <ellipse cx="100" cy="138" rx="38" ry="40" fill="#2A2422" />
+      <ellipse cx="100" cy="146" rx="23" ry="29" fill="#FBF6EE" />
+      <circle cx="74" cy="124" r="4" fill="#FBF6EE" />
+      <circle cx="70" cy="140" r="4" fill="#FBF6EE" />
+      <circle cx="74" cy="156" r="4" fill="#FBF6EE" />
+      <circle cx="126" cy="124" r="4" fill="#FBF6EE" />
+      <circle cx="130" cy="140" r="4" fill="#FBF6EE" />
+      <circle cx="126" cy="156" r="4" fill="#FBF6EE" />
+      <g className="nw-peck" style={{ transformOrigin: "50% 72%" }}>
+        <circle cx="100" cy="74" r="30" fill="#2A2422" />
+        <path d="M78 54 q22 -31 44 0 q-22 -13 -44 0 z" fill="#D63B33" />
+        <ellipse cx="100" cy="86" rx="18" ry="14" fill="#FBF6EE" />
+        <circle cx="88" cy="70" r="5" fill="#FBF6EE" />
+        <circle cx="88" cy="70" r="2.4" fill="#15100F" />
+        <circle cx="112" cy="70" r="5" fill="#FBF6EE" />
+        <circle cx="112" cy="70" r="2.4" fill="#15100F" />
+        <path d="M100 88 l8 26 l-16 0 z" fill="#C9C2B4" />
+      </g>
+    </>
+  );
+}
+
+const DANCERS = [
+  { key: "pug",        label: "pug",        Art: PugArt },
+  { key: "axolotl",    label: "axolotl",    Art: AxolotlArt },
+  { key: "beagle",     label: "beagle",     Art: BeagleArt },
+  { key: "turtle",     label: "turtle",     Art: TurtleArt },
+  { key: "duck",       label: "duck",       Art: DuckArt },
+  { key: "goose",      label: "goose",      Art: GooseArt },
+  { key: "lizard",     label: "lizard",     Art: LizardArt },
+  { key: "lemur",      label: "lemur",      Art: LemurArt },
+  { key: "sloth",      label: "sloth",      Art: SlothArt },
+  { key: "rooster",    label: "rooster",    Art: RoosterArt },
+  { key: "puffin",     label: "puffin",     Art: PuffinArt },
+  { key: "woodpecker", label: "woodpecker", Art: WoodpeckerArt },
+];
+
+// One animal a day, picked from the date itself. Same for everyone, and it
+// does not change while the page is open.
+function dancerForDate(iso) {
+  const s = String(iso || "");
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return DANCERS[h % DANCERS.length].key;
+}
+
+// delay offsets the whole animal so a row of them is not in lockstep.
+function Dancer({ which, size = 176, delay = 0 }) {
+  const a = DANCERS.find(d => d.key === which) || DANCERS[0];
+  const Art = a.Art;
+  return (
+    <svg width={size} height={size} viewBox="0 0 200 200" role="img" aria-label={`A dancing ${a.label}`}
+         style={{ "--d": `${delay}ms` }}>
+      <g className="nw-dance">
+        <ellipse cx="100" cy="186" rx="50" ry="7" fill="#000000" opacity="0.08" />
+        <Art />
       </g>
     </svg>
   );
 }
 
-function DayDone({ stats, reduce, onBack }) {
+function DayDone({ stats, reduce, onBack, which, weekDone }) {
+  // Same four lines either way; only the first one changes when the whole
+  // week is closed out rather than just the day (Peter 2026-09-17).
+  const lines = weekDone ? WEEK_LINES : DAY_LINES;
   const _vp = useViewport();
   const [line, setLine] = useState(0);
   const [confettiOn, setConfettiOn] = useState(!reduce);
 
   useEffect(() => {
-    const t = setInterval(() => setLine(i => (i + 1) % DAY_DONE_LINES.length), 1500);
+    const t = setInterval(() => setLine(i => (i + 1) % lines.length), 1500);
     return () => clearInterval(t);
   }, []);
 
@@ -2955,14 +3305,22 @@ function DayDone({ stats, reduce, onBack }) {
         background: `linear-gradient(180deg, ${T.white} 0%, ${T.slate50} 100%)`,
         animation: reduce ? undefined : "nwRise 520ms ease-out both",
       }}>
-        <DancingPug size={_vp.isPhone ? 144 : 176} />
+        {weekDone ? (
+          <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", alignItems: "flex-end" }}>
+            {DANCERS.map((d, i) => (
+              <Dancer key={d.key} which={d.key} size={_vp.isPhone ? 78 : 104} delay={i * 110} />
+            ))}
+          </div>
+        ) : (
+          <Dancer which={which} size={_vp.isPhone ? 144 : 176} />
+        )}
 
         <div key={line} style={{
           fontSize: _vp.isPhone ? 26 : 34, fontWeight: 900, color: T.slate900, lineHeight: 1.2,
           minHeight: _vp.isPhone ? 34 : 44,
           animation: reduce ? undefined : "nwPop 420ms ease-out both",
         }}>
-          {DAY_DONE_LINES[line]}
+          {lines[line]}
         </div>
         <div style={{ marginTop: 4, fontSize: 13, color: T.slate500 }}>
           Everything is ticked and your wrap-up is settled.
@@ -3273,6 +3631,8 @@ function ChecklistTab() {
       <DayDone
         stats={weekStats}
         reduce={reduceMotion}
+        which={dancerForDate(state?.date)}
+        weekDone={!!finished}
         onBack={() => { setDismissed(true); setDayPhase("list"); }}
       />
     );
