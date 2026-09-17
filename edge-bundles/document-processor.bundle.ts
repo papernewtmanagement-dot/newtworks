@@ -11364,6 +11364,9 @@ interface ProcessedAttachment {
   queueId?: string;
   sourceLabel?: string; // "gmail" or "gmail_zip:<outer>"
   innerCount?: number; // for archive_bundle: how many inner files processed
+  // Row id in document_classifier_skips when the classifier returned "skip".
+  // NOT a documents id — a skip never creates a documents row.
+  skipTraceId?: string;
 }
 
 const MAX_ZIP_DEPTH = 2;
@@ -12605,10 +12608,47 @@ async function processOneAttachment(
   }
 
   if (docType === "skip") {
+    // A skip used to vanish. This branch pushed documentId "" and wrote no row
+    // anywhere, so a sender-gated classifier miss left nothing to query — which
+    // is why the 2026-09-16 sender-rule sweep had to be done by reading
+    // classifier.ts instead of asking the database. Every skip now upserts a
+    // row in document_classifier_skips.
+    //
+    // Upsert, not insert: the Gmail fetcher looks back 7 days and is not
+    // restricted to the inbox, so the same skipped attachment is re-seen every
+    // hourly run. The key (agency_id, gmail_message_id, file_name) turns those
+    // repeats into last_seen_at + seen_count on one row.
+    //
+    // Never fatal. A trace that cannot be written must not stop intake, so the
+    // failure is logged and the skip proceeds exactly as before.
+    let skipTraceId: string | undefined;
+    try {
+      const { data: traceId, error: traceErr } = await sb.rpc("record_classifier_skip", {
+        p_agency_id: ctx.agencyId,
+        p_file_name: att.fileName,
+        p_gmail_message_id: att.messageId ?? "",
+        p_gmail_thread_id: att.threadId ?? null,
+        p_mime_type: att.mimeType ?? null,
+        p_from_email: att.fromEmail ?? null,
+        p_subject: att.subject ?? null,
+        p_received_at: att.receivedAt ?? null,
+        p_upload_source: uploadSource,
+        p_depth: depth,
+      });
+      if (traceErr) {
+        console.error(`[skip-trace] ${att.fileName}: ${traceErr.message}`);
+      } else if (typeof traceId === "string" && traceId) {
+        skipTraceId = traceId;
+      }
+    } catch (e) {
+      console.error(`[skip-trace] ${att.fileName}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
     results.push({
       documentId: "", fileName: att.fileName, fromEmail: att.fromEmail,
       docType, status: "skipped", jeCount: 0, suspenseCount: 0,
       sourceLabel: uploadSource,
+      skipTraceId,
     });
     return results;
   }
