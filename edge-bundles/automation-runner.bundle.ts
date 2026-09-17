@@ -466,6 +466,65 @@ async function getDefaultModel(agencyId: string): Promise<string> {
 
 async function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
 
+// Serialise an edge function's `summary` object for automation_run_log.output_summary
+// so that what lands in the column is ALWAYS valid, parseable JSON.
+//
+// Replaced a blind JSON.stringify(summary).slice(0, 300) on 2026-09-16. That cut
+// every document-processor summary mid-array at exactly 300 characters of JSON,
+// so all 155+ rows in a week were unparseable and the items[] list — the only
+// record of which attachments were skipped — was destroyed on write.
+//
+// Strategy when the whole thing does not fit inside the budget: keep every scalar
+// key in full (those are the counters, they are small and they are what gets read
+// most), then trim the array-valued keys down to as many leading elements as will
+// fit, and record how many were left out under "<key>_omitted". Nothing is ever cut
+// mid-token. If even the scalars-only object will not fit, fall back to a small
+// marker object. Every return path is valid JSON.
+const SUMMARY_LOG_BUDGET = 20000;
+
+function compactSummaryForLog(summary: unknown, budget = SUMMARY_LOG_BUDGET): string {
+  let full: string;
+  try { full = JSON.stringify(summary) ?? "null"; }
+  catch (_e) { return JSON.stringify({ _truncated: true, _reason: "summary could not be serialised" }); }
+  if (full.length <= budget) return full;
+
+  if (summary === null || typeof summary !== "object" || Array.isArray(summary)) {
+    return JSON.stringify({ _truncated: true, _reason: "summary too large to store", _bytes: full.length });
+  }
+
+  const scalars: Record<string, unknown> = {};
+  const arrays: Array<[string, unknown[]]> = [];
+  for (const [k, v] of Object.entries(summary as Record<string, unknown>)) {
+    if (Array.isArray(v)) arrays.push([k, v]); else scalars[k] = v;
+  }
+
+  const build = (keep: number): string => {
+    const out: Record<string, unknown> = { ...scalars };
+    for (const [k, arr] of arrays) {
+      out[k] = arr.slice(0, keep);
+      if (arr.length > keep) out[`${k}_omitted`] = arr.length - keep;
+    }
+    try { return JSON.stringify(out) ?? "null"; }
+    catch (_e) { return ""; }
+  };
+
+  const floor = build(0);
+  if (!floor || floor.length > budget) {
+    return JSON.stringify({ _truncated: true, _reason: "summary too large to store", _bytes: full.length });
+  }
+
+  let best = floor;
+  let lo = 1;
+  let hi = arrays.length ? Math.max(...arrays.map(([, a]) => a.length)) : 0;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const candidate = build(mid);
+    if (candidate && candidate.length <= budget) { best = candidate; lo = mid + 1; }
+    else { hi = mid - 1; }
+  }
+  return best;
+}
+
 
 async function telegram(agencyId: string | null, text: string): Promise<void> {
   if (!agencyId) return;
@@ -941,7 +1000,7 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
         if (!fetchRes.ok) { const em = parsedBody?.error || parsedBody?.output_summary || (text ? text.slice(0, 400) : "no body"); throw new Error(`${edgeName} returned HTTP ${fetchRes.status}: ${em}`); }
         if (parsedBody) {
           recordsProcessed = (parsedBody.records_processed as number) ?? (parsedBody.summary?.processed as number) ?? (parsedBody.rows_upserted as number) ?? (parsedBody.processed_messages as number) ?? 0;
-          outputSummary = (parsedBody.output_summary as string) ?? (parsedBody.summary ? `${edgeName} completed: ${JSON.stringify(parsedBody.summary).slice(0,300)}` : `${edgeName} completed (records_processed=${recordsProcessed})`);
+          outputSummary = (parsedBody.output_summary as string) ?? (parsedBody.summary ? `${edgeName} completed: ${compactSummaryForLog(parsedBody.summary)}` : `${edgeName} completed (records_processed=${recordsProcessed})`);
         } else {
           outputSummary = `${edgeName} returned HTTP ${fetchRes.status} (empty body)`;
         }

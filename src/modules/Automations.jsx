@@ -400,7 +400,7 @@ const RunLog = ({ runLog }) => {
 
               {isExpanded && (
                 <div style={{ padding:"0 12px 12px", borderTop:`1px solid ${T.slate100}` }}>
-                  <div style={{ fontSize:11, color:T.slate700, lineHeight:1.6, marginTop:8, marginBottom:run.error_message?8:0 }}>
+                  <div style={{ fontSize:11, color:T.slate700, lineHeight:1.6, marginTop:8, marginBottom:run.error_message?8:0, whiteSpace:"pre-wrap", wordBreak:"break-word", overflowWrap:"anywhere", maxHeight:220, overflowY:"auto" }}>
                     {run.output_summary}
                   </div>
                   {run.error_message && (
