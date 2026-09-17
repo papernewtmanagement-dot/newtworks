@@ -3217,15 +3217,6 @@ const DANCERS = [
   { key: "woodpecker", label: "woodpecker", Art: WoodpeckerArt },
 ];
 
-// One animal a day, picked from the date itself. Same for everyone, and it
-// does not change while the page is open.
-function dancerForDate(iso) {
-  const s = String(iso || "");
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return DANCERS[h % DANCERS.length].key;
-}
-
 // delay offsets the whole animal so a row of them is not in lockstep.
 function Dancer({ which, size = 176, delay = 0 }) {
   const a = DANCERS.find(d => d.key === which) || DANCERS[0];
@@ -3241,10 +3232,14 @@ function Dancer({ which, size = 176, delay = 0 }) {
   );
 }
 
-function DayDone({ stats, reduce, onBack, which, weekDone }) {
+function DayDone({ stats, reduce, onBack, weekDone }) {
   // Same four lines either way; only the first one changes when the whole
   // week is closed out rather than just the day (Peter 2026-09-17).
   const lines = weekDone ? WEEK_LINES : DAY_LINES;
+  // A fresh animal every time the panel comes up, not one a day. Picked in a
+  // state initialiser so it holds still for as long as the panel is showing
+  // and re-rolls the next time it opens (Peter 2026-09-17).
+  const [which] = useState(() => DANCERS[Math.floor(Math.random() * DANCERS.length)].key);
   const _vp = useViewport();
   const [line, setLine] = useState(0);
   const [confettiOn, setConfettiOn] = useState(!reduce);
@@ -3631,7 +3626,6 @@ function ChecklistTab() {
       <DayDone
         stats={weekStats}
         reduce={reduceMotion}
-        which={dancerForDate(state?.date)}
         weekDone={!!finished}
         onBack={() => { setDismissed(true); setDayPhase("list"); }}
       />
