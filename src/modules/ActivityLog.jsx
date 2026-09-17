@@ -2772,7 +2772,9 @@ function ChecklistTab() {
   const [openHelp, setOpenHelp] = useState(null);
   const [wrap, setWrap] = useState(null);
   const [parts, setParts] = useState(["", "", "", "", "", ""]);
-  const [inbox, setInbox] = useState(false);
+  // The toggle that sits with the Save button. On means "pick this up
+  // tomorrow", off means "this save closes my week". Peter 2026-09-17.
+  const [notLastDay, setNotLastDay] = useState(false);
   // The wrap-up sits on screen every day now. Two pieces of state decide how
   // it looks: hiddenToday (they said it is not their last day, so it is put
   // away until tomorrow) and finished (they clicked that nothing is left to
@@ -2837,7 +2839,6 @@ function ChecklistTab() {
       const d = r.data;
       setWrap(d);
       setParts(splitWrapup(d.wrapup_text));
-      setInbox(!!d.inbox_done);
       setHiddenToday(!!d.hidden_today);
       setFinished(!!d.wrapup_finished);
     });
@@ -2899,7 +2900,7 @@ function ChecklistTab() {
   const save = async () => {
     setSaving(true); setErr(""); setOk("");
     const { data, error } = await supabase.rpc("my_wrapup_save", {
-      p_parts: parts, p_inbox_done: inbox, p_code_reds: null, p_code_yellows: null, p_week_ending: null,
+      p_parts: parts, p_code_reds: null, p_code_yellows: null, p_week_ending: null,
     });
     setSaving(false);
     if (error) { setErr(error.message || "Could not save the wrap-up."); return false; }
@@ -2921,17 +2922,26 @@ function ChecklistTab() {
   // Typing is the answer to the question the checkbox asks, so it clears it.
   const editPart = (i, val) => {
     setParts(v => { const n = [...v]; n[i] = val; return n; });
+    if (notLastDay) setNotLastDay(false);
     if (hiddenToday) setHide(false);
   };
 
-  // Saves first, so "finished" can never mean "finished with unsaved text".
+  // Reopening a closed week. Saving is what closes it, so there is no
+  // separate "I am done" button any more.
   const finish = async (on) => {
-    if (on && !(await save())) return;
     setErr("");
     const { data, error } = await supabase.rpc("my_wrapup_finish", { p_on: on, p_week_ending: null });
     if (error) { setErr(error.message || "Could not save that."); return; }
     setFinished(!!data?.wrapup_finished);
-    setOk(on ? "Wrap-up finished." : "");
+    setOk(on ? "Week closed." : "");
+  };
+
+  // The one button on the form. The toggle decides what saving means: put it
+  // down until tomorrow, or close the week out.
+  const submitWrapup = async () => {
+    if (!(await save())) return;
+    if (notLastDay) { await setHide(true); setNotLastDay(false); setOk("Saved. Back tomorrow."); return; }
+    await finish(true);
   };
 
   const addFlag = async () => {
@@ -3170,31 +3180,36 @@ function ChecklistTab() {
                 </div>
               ))}
 
-              <label style={{ display: "flex", gap: 10, alignItems: "center", cursor: "pointer" }}>
-                <input type="checkbox" checked={inbox} onChange={e => setInbox(e.target.checked)}
-                       style={{ width: 16, height: 16, accentColor: T.blue, boxSizing: "border-box" }} />
-                <span style={{ fontSize: 13, color: T.slate800 }}>My inbox is cleared</span>
-              </label>
+              {finished ? (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+                  <span style={{ fontSize: 13, color: T.green, fontWeight: 700 }}>Week closed.</span>
+                  <button type="button" onClick={() => finish(false)} style={linkBtn}>Reopen it</button>
+                </div>
+              ) : (
+                <>
+                  {!knownLastDay && (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={notLastDay}
+                      onClick={() => setNotLastDay(v => !v)}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 10, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
+                    >
+                      <span style={{ position: "relative", width: 36, height: 20, borderRadius: 999, flexShrink: 0, boxSizing: "border-box", background: notLastDay ? T.blue : T.slate200 }}>
+                        <span style={{ position: "absolute", top: 2, left: notLastDay ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: T.white, boxSizing: "border-box" }} />
+                      </span>
+                      <span style={{ fontSize: 13, color: T.slate800 }}>This is not my last day this week</span>
+                    </button>
+                  )}
 
-              {!knownLastDay && (
-                <label style={{ display: "flex", gap: 10, alignItems: "center", cursor: "pointer" }}>
-                  <input type="checkbox" checked={false} onChange={e => { if (e.target.checked) setHide(true); }}
-                         style={{ width: 16, height: 16, accentColor: T.blue, boxSizing: "border-box" }} />
-                  <span style={{ fontSize: 13, color: T.slate800 }}>This is not my last day this week</span>
-                </label>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+                    <button type="button" onClick={submitWrapup} disabled={saving} style={btnPrimary(saving)}>
+                      {saving ? "Saving…" : notLastDay ? "Save and pick it up tomorrow" : "Save and close my week"}
+                    </button>
+                    {ok && <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>{ok}</span>}
+                  </div>
+                </>
               )}
-
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
-                <button type="button" onClick={save} disabled={saving} style={btnPrimary(saving)}>
-                  {saving ? "Saving…" : "Save wrap-up"}
-                </button>
-                {finished
-                  ? <button type="button" onClick={() => finish(false)} style={linkBtn}>Reopen it</button>
-                  : <button type="button" onClick={() => finish(true)} disabled={saving} style={linkBtn}>I'm done, nothing left to type</button>}
-                {finished
-                  ? <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>Finished</span>
-                  : (ok && <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>{ok}</span>)}
-              </div>
             </div>
           )}
 
