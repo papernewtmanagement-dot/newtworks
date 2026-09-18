@@ -3275,21 +3275,6 @@ const DANCERS = [
   { key: "woodpecker", label: "woodpecker", Art: WoodpeckerArt },
 ];
 
-// TEMPORARY, while Peter reviews the drawings (2026-09-17): the troupe runs
-// in a fixed rotation so he can step through them one at a time instead of
-// waiting for a random pick to land on the one he wants to see. It picks up
-// where it left off across refreshes. Put the random pick back when the
-// review is finished.
-const DANCER_TURN_KEY = "nw.dayDone.dancerTurn";
-
-function nextDancerKey() {
-  let i = 0;
-  try { i = Number(window.localStorage.getItem(DANCER_TURN_KEY)) || 0; } catch { /* private mode, no storage */ }
-  if (!(i >= 0 && i < DANCERS.length)) i = 0;
-  try { window.localStorage.setItem(DANCER_TURN_KEY, String((i + 1) % DANCERS.length)); } catch { /* ignore */ }
-  return DANCERS[i].key;
-}
-
 // delay offsets the whole animal so a row of them is not in lockstep.
 function Dancer({ which, size = 176, delay = 0 }) {
   const a = DANCERS.find(d => d.key === which) || DANCERS[0];
@@ -3309,10 +3294,10 @@ function DayDone({ stats, reduce, onBack, weekDone }) {
   // Same four lines either way; only the first one changes when the whole
   // week is closed out rather than just the day (Peter 2026-09-17).
   const lines = weekDone ? WEEK_LINES : DAY_LINES;
-  // The next animal in the rotation, taken in a state initialiser so it holds
-  // still for as long as the panel is showing and moves on the next time it
-  // opens. Back to a random pick once the review is done (Peter 2026-09-17).
-  const [which] = useState(() => nextDancerKey());
+  // A fresh animal at random every time the panel comes up. Picked in a state
+  // initialiser so it holds still for as long as the panel is showing and
+  // re-rolls the next time it opens (Peter 2026-09-17).
+  const [which] = useState(() => DANCERS[Math.floor(Math.random() * DANCERS.length)].key);
   const _vp = useViewport();
   const [line, setLine] = useState(0);
   const [confettiOn, setConfettiOn] = useState(!reduce);
