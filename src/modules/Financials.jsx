@@ -3,6 +3,7 @@ import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 import { fmtMoney, fmtMoneyR } from "../lib/format.jsx";
 import CashRegister from "./CashRegister.jsx";
 import Documents from "./Documents.jsx";
+import CopyButton from "../components/CopyButton.jsx";
 import MonthlyClose from "./MonthlyClose.jsx";
 import { mdToHtml } from "../lib/markdown.js";
 import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
@@ -2309,6 +2310,9 @@ const CompRecapSection = ({ data }) => {
 
   // Cell + subtotal builders
   const money = (n) => fmtMoney(n, { decimals: 2, dashOnZero: true });
+  // What the copy button puts on the clipboard: the bare number, two decimals,
+  // no dollar sign and no commas, so it pastes straight into a form or a sheet.
+  const plainNum = (n) => (Number.isFinite(Number(n)) ? Number(n) : 0).toFixed(2);
   const HeaderRow = ({ label, spans = 5 }) => (
     <tr>
       <td colSpan={spans} style={{ padding: "12px 8px 6px 8px", fontSize: 11, fontWeight: 700, color: T.slate900, background: T.slate50, textTransform: "uppercase", letterSpacing: "0.05em", borderTop: `2px solid ${T.slate200}` }}>{label}</td>
@@ -2321,14 +2325,33 @@ const CompRecapSection = ({ data }) => {
   );
   const LineRow = ({ r }) => (
     <tr style={{ borderBottom: `1px solid ${T.slate100}` }}>
-      <td style={{ padding: "7px 8px 7px 20px", fontSize: 12, color: T.slate800 }}>{r.description}</td>
+      <td style={{ padding: "7px 8px 7px 20px", fontSize: 12, color: T.slate800 }}>
+        <span style={{ display: "inline-flex", alignItems: "center" }}>
+          {r.description}
+          <CopyButton value={r.description} title="Copy line item name" />
+        </span>
+      </td>
       <td style={{ padding: "7px 8px", textAlign: "center" }}>
         {r.is_aipp_eligible
           ? <Pill type="success">AIPP</Pill>
           : <span style={{ fontSize: 11, color: T.slate400 }}>—</span>}
       </td>
-      <td style={{ padding: "7px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{r.h1 === 0 ? "—" : money(r.h1)}</td>
-      <td style={{ padding: "7px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{r.h2 === 0 ? "—" : money(r.h2)}</td>
+      <td style={{ padding: "7px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>
+        {r.h1 === 0 ? "—" : (
+          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end" }}>
+            {money(r.h1)}
+            <CopyButton value={plainNum(r.h1)} title="Copy check 1 amount" />
+          </span>
+        )}
+      </td>
+      <td style={{ padding: "7px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>
+        {r.h2 === 0 ? "—" : (
+          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end" }}>
+            {money(r.h2)}
+            <CopyButton value={plainNum(r.h2)} title="Copy check 2 amount" />
+          </span>
+        )}
+      </td>
       <td style={{ padding: "7px 8px", fontSize: 12, fontWeight: 600, color: T.slate900, textAlign: "right" }}>{money(r.total)}</td>
     </tr>
   );
@@ -3939,7 +3962,7 @@ export default function Financials() {
 
       {/* Operational financial tools (folded in from former top-nav items) */}
       {section === "cashregister" && <CashRegister />}
-      {section === "documents"    && <Documents />}
+      {section === "documents"    && <Documents scope="financial" tabParam="dtab" />}
       {section === "monthlyclose" && <MonthlyClose />}
       {section === "reconciliation" && <ReconciliationSection />}
 

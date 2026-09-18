@@ -49,7 +49,64 @@ const DOC_TYPES = {
   eo_insurance:   { label:"E&O Insurance",   color:T.red,    bg:T.redLt,    icon:"🛡️" },
   license:        { label:"License",         color:T.slate900,   bg:T.slate100, icon:"🪪" },
   contract:       { label:"Contract",        color:T.slate900,   bg:T.slate100, icon:"📜" },
+  deduction:      { label:"Deduction Stmt",  color:T.amber,  bg:T.amberLt,  icon:"📉" },
+  books:          { label:"Books (History)", color:T.teal,   bg:T.tealLt,   icon:"📚" },
+  receipt:        { label:"Receipt",         color:T.amber,  bg:T.amberLt,  icon:"🧾" },
+  assessment:     { label:"Assessment",      color:T.purple, bg:T.purpleLt, icon:"🧠" },
+  marketing:      { label:"Marketing Report",color:T.pink,   bg:T.pinkLt,   icon:"📣" },
+  archive:        { label:"Archive Bundle",  color:T.slate500,bg:T.slate100, icon:"🗄" },
+  unfiled:        { label:"Unfiled",         color:T.slate500,bg:T.slate100, icon:"❔" },
   other:          { label:"Other",           color:T.slate500,bg:T.slate100, icon:"📄" },
+};
+
+// ─── Document type resolver ───────────────────────────────────
+// The documents table has no doc_type column. The importer writes its label to
+// groq_classification instead, so reading doc.doc_type gave every live row the
+// "Other" badge and left the Overview type breakdown empty. One resolver, used
+// everywhere a document's type is needed.
+const CLASSIFICATION_TYPE = {
+  comp_recap_daily:                "comp_recap",
+  commission_report:               "comp_recap",
+  deduction_statement:             "deduction",
+  surepayroll_payroll:             "payroll_export",
+  payroll:                         "payroll_export",
+  bank_statement_primary:          "bank_statement",
+  bank_statement_secondary:        "bank_statement",
+  bank_statement_pfa:              "bank_statement",
+  bank_cc_statement:               "bank_statement",
+  books_historical_pnl:            "books",
+  books_historical_general_ledger: "books",
+  books_historical_balance_sheet:  "books",
+  receipts:                        "receipt",
+  resume_manual_batch:             "resume",
+  cts_assessment:                  "assessment",
+  cts_reference:                   "assessment",
+  everquote_monthly_review:        "marketing",
+  everquote_ytd_review:            "marketing",
+  archive_bundle:                  "archive",
+};
+export const docTypeOf = (doc) =>
+  CLASSIFICATION_TYPE[doc?.groq_classification]
+  || doc?.doc_type
+  || (doc?.groq_classification ? "other" : "unfiled");
+
+// Which types belong on the Financials module's Documents tab. Anything not
+// listed here — resumes, assessments, marketing reports, archive bundles —
+// stays out of the financial view.
+const SCOPE_TYPES = {
+  financial: new Set([
+    "comp_recap", "deduction", "payroll_export", "bank_statement",
+    "books", "receipt", "tax_document", "aipp_report", "unfiled",
+  ]),
+};
+
+// uploaded_at and processed_at arrive as full timestamps. Printing them raw put
+// "2026-09-10T14:22:03.918+00:00" on the card.
+const fmtStamp = (ts) => {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  if (!Number.isFinite(d.getTime())) return "—";
+  return d.toLocaleString("en-US", { month:"short", day:"numeric", year:"numeric", hour:"numeric", minute:"2-digit" });
 };
 
 // ─── Mock Data ────────────────────────────────────────────────
@@ -216,7 +273,7 @@ const DocCard = ({ doc, onNavigate }) => {
   const driveUrl = doc.drive_url || (doc.drive_file_id ? `https://drive.google.com/file/d/${doc.drive_file_id}/view` : null);
   const sc  = statusConfig(doc.processing_type === "archive" ? "archive" : doc.processing_status);
   const src = sourceConfig(doc.upload_source);
-  const dt  = DOC_TYPES[doc.doc_type] || DOC_TYPES.other;
+  const dt  = DOC_TYPES[docTypeOf(doc)] || DOC_TYPES.other;
 
   return (
     <div style={{
@@ -236,9 +293,9 @@ const DocCard = ({ doc, onNavigate }) => {
             {doc.file_name}
           </div>
           <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
-            <DocTypeBadge type={doc.doc_type} />
+            <DocTypeBadge type={docTypeOf(doc)} />
             <span style={{ fontSize:9, fontWeight:600, padding:"2px 6px", borderRadius:20, background:src.color+"20", color:src.color }}>{src.icon} {src.label}</span>
-            <span style={{ fontSize:10, color:T.slate400 }}>{doc.uploaded_at} · {doc.size}</span>
+            <span style={{ fontSize:10, color:T.slate400 }}>{fmtStamp(doc.uploaded_at)}</span>
           </div>
         </div>
 
@@ -258,8 +315,8 @@ const DocCard = ({ doc, onNavigate }) => {
             {[
               { label:"File Type",     value:(doc.file_type || "").toString().toUpperCase() || "—" },
               { label:"Source",        value:src.label },
-              { label:"Uploaded",      value:doc.uploaded_at },
-              { label:"Processed",     value:doc.processed_at },
+              { label:"Uploaded",      value:fmtStamp(doc.uploaded_at) },
+              { label:"Processed",     value:fmtStamp(doc.processed_at) },
               { label:"Import Type",   value:doc.processing_type === "database_import" ? "Database Import" : doc.processing_type === "archive" ? "Archived" : "External" },
               { label:"Records Created",value:(doc.records_created ?? 0).toString() },
             ].map((d,i) => (
@@ -330,7 +387,7 @@ const DocumentsOverview = ({ documents, onNavigate }) => {
   const total    = documents.length;
 
   const byType = Object.keys(DOC_TYPES).map(type => ({
-    type, count:documents.filter(d => d.doc_type === type).length,
+    type, count:documents.filter(d => docTypeOf(d) === type).length,
   })).filter(t => t.count > 0);
 
   const recent = documents.slice(0, 5);
@@ -369,14 +426,14 @@ const DocumentsOverview = ({ documents, onNavigate }) => {
             
           </div>
           {recent.map((doc,i) => {
-            const dt = DOC_TYPES[doc.doc_type] || DOC_TYPES.other;
+            const dt = DOC_TYPES[docTypeOf(doc)] || DOC_TYPES.other;
             const sc = statusConfig(doc.processing_type === "archive" ? "archive" : doc.processing_status);
             return (
               <div key={doc.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:i<recent.length-1?`1px solid ${T.slate100}`:"none" }}>
                 <span style={{ fontSize:20, flexShrink:0 }}>{dt.icon}</span>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontSize:12, fontWeight:500, color:T.slate800, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{doc.file_name}</div>
-                  <div style={{ fontSize:10, color:T.slate400 }}>{doc.uploaded_at} · {doc.size}</div>
+                  <div style={{ fontSize:10, color:T.slate400 }}>{fmtStamp(doc.uploaded_at)}</div>
                 </div>
                 <span style={{ fontSize:10, fontWeight:600, padding:"3px 8px", borderRadius:20, background:sc.bg, color:sc.color, flexShrink:0 }}>{sc.label}</span>
               </div>
@@ -418,7 +475,7 @@ const DocumentLibrary = ({ documents }) => {
   const [search,       setSearch]       = useState("");
 
   const filtered = useMemo(() => documents.filter(d => {
-    if (typeFilter   !== "all" && d.doc_type       !== typeFilter)   return false;
+    if (typeFilter   !== "all" && docTypeOf(d)     !== typeFilter)   return false;
     if (sourceFilter !== "all" && d.upload_source  !== sourceFilter) return false;
     if (statusFilter !== "all" && d.processing_status !== statusFilter) return false;
     if (search) {
@@ -427,6 +484,13 @@ const DocumentLibrary = ({ documents }) => {
     }
     return true;
   }), [documents, typeFilter, sourceFilter, statusFilter, search]);
+
+  // Only offer the types that are actually present, so the financial view does
+  // not list Resume and Assessment as choices that always come back empty.
+  const availableTypes = useMemo(
+    () => Object.keys(DOC_TYPES).filter(t => documents.some(d => docTypeOf(d) === t)),
+    [documents]
+  );
 
   return (
     <div>
@@ -437,7 +501,7 @@ const DocumentLibrary = ({ documents }) => {
         <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
           style={{ padding:"8px 10px", fontSize:12, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:8, background:T.white, outline:"none" }}>
           <option value="all">All Types</option>
-          {Object.keys(DOC_TYPES).map(t => <option key={t} value={t}>{DOC_TYPES[t].icon} {DOC_TYPES[t].label}</option>)}
+          {availableTypes.map(t => <option key={t} value={t}>{DOC_TYPES[t].icon} {DOC_TYPES[t].label}</option>)}
         </select>
         <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
           style={{ padding:"8px 10px", fontSize:12, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:8, background:T.white, outline:"none" }}>
@@ -641,19 +705,28 @@ const UploadSection = () => {
 };
 
 // ─── Main Documents Module ────────────────────────────────────
-export default function Documents() {
-  const [section, setSection, sectionHref] = useTabParam("tab", "overview", ["overview","intake","library","upload"]);
+export default function Documents({ scope = "all", tabParam = "tab" }) {
+  // tabParam: the Financials module already owns "tab" for its own section bar.
+  // It passes "dtab" here. Sharing one name meant clicking a sub-tab knocked the
+  // page off the Documents tab on the next refresh.
+  const [section, setSection, sectionHref] = useTabParam(tabParam, "overview", ["overview","intake","library","upload"]);
   const { data: liveDocs, loading: docsLoading, error: docsError, refetch: refetchDocs } = useSupabaseTable("documents", AGENCY_ID, { orderBy: "uploaded_at", ascending: false });
   const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
-  const documents = (liveDocs && liveDocs.length > 0)
+  const allDocuments = (liveDocs && liveDocs.length > 0)
     ? liveDocs
     : useMockData ? MOCK_DOCUMENTS : [];
+  const inScope = SCOPE_TYPES[scope] || null;
+  const documents = useMemo(
+    () => (inScope ? allDocuments.filter(d => inScope.has(docTypeOf(d))) : allDocuments),
+    [allDocuments, scope]
+  );
 
   // ── Derived: Intake Log rows from documents table ────────────
   // The intake log is just the documents table presented as a processing
   // timeline. We map field names to what the IntakeLog component expects.
   const intakeLog = useMemo(() => {
-    const src = (liveDocs && liveDocs.length > 0) ? liveDocs : [];
+    const all = (liveDocs && liveDocs.length > 0) ? liveDocs : [];
+    const src = inScope ? all.filter(d => inScope.has(docTypeOf(d))) : all;
     return src.map(d => {
       const dt = d.uploaded_at ? new Date(d.uploaded_at) : null;
       return {
@@ -668,7 +741,7 @@ export default function Documents() {
         status:  d.processing_status || "—",
       };
     });
-  }, [liveDocs]);
+  }, [liveDocs, scope]);
 
   const sections = [
     { id:"overview", label:"Overview"   },
@@ -695,9 +768,9 @@ export default function Documents() {
       {/* Module Header */}
       <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:16, flexWrap:"wrap", gap:10 }}>
         <div>
-          <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Documents</div>
+          <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>{inScope ? "Financial Documents" : "Documents"}</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>
-            {documents.length} documents · Auto-intake active · Groq processing · Google Drive filing
+            {documents.length} {inScope ? "financial documents" : "documents"} · Auto-intake active · Filed to Google Drive
           </div>
         </div>
         
