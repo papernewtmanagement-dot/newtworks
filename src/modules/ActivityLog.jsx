@@ -3067,8 +3067,10 @@ function GooseArt() {
       <path d="M90 128 q-8 -52 10 -66 q18 14 10 66 z" fill="#B5B0A2" />
       <ellipse cx="100" cy="56" rx="24" ry="21" fill="#B5B0A2" />
       <path d="M82 66 q18 14 36 0 q-18 10 -36 0 z" fill="#DCD7C8" />
-      <ellipse cx="100" cy="46" rx="9" ry="6" fill="#E8913A" />
-      <path d="M100 58 q14 3 14 9 q0 7 -14 9 q-14 -2 -14 -9 q0 -6 14 -9 z" fill="#E8913A" />
+      <path d="M100 54 q19 4 19 15 q0 13 -19 18 q-19 -5 -19 -18 q0 -11 19 -15 z" fill="#E8913A" />
+      <path d="M100 87 q-9 -3 -13 -9 q13 5 26 0 q-4 6 -13 9 z" fill="#C9762B" />
+      <circle cx="92" cy="68" r="2" fill="#C9762B" />
+      <circle cx="108" cy="68" r="2" fill="#C9762B" />
       <circle cx="88" cy="50" r="4.6" fill="#2A2422" />
       <circle cx="112" cy="50" r="4.6" fill="#2A2422" />
       <circle cx="89.6" cy="48" r="1.6" fill="#FFFFFF" />
@@ -3272,6 +3274,21 @@ const DANCERS = [
   { key: "woodpecker", label: "woodpecker", Art: WoodpeckerArt },
 ];
 
+// TEMPORARY, while Peter reviews the drawings (2026-09-17): the troupe runs
+// in a fixed rotation so he can step through them one at a time instead of
+// waiting for a random pick to land on the one he wants to see. It picks up
+// where it left off across refreshes. Put the random pick back when the
+// review is finished.
+const DANCER_TURN_KEY = "nw.dayDone.dancerTurn";
+
+function nextDancerKey() {
+  let i = 0;
+  try { i = Number(window.localStorage.getItem(DANCER_TURN_KEY)) || 0; } catch { /* private mode, no storage */ }
+  if (!(i >= 0 && i < DANCERS.length)) i = 0;
+  try { window.localStorage.setItem(DANCER_TURN_KEY, String((i + 1) % DANCERS.length)); } catch { /* ignore */ }
+  return DANCERS[i].key;
+}
+
 // delay offsets the whole animal so a row of them is not in lockstep.
 function Dancer({ which, size = 176, delay = 0 }) {
   const a = DANCERS.find(d => d.key === which) || DANCERS[0];
@@ -3291,10 +3308,10 @@ function DayDone({ stats, reduce, onBack, weekDone }) {
   // Same four lines either way; only the first one changes when the whole
   // week is closed out rather than just the day (Peter 2026-09-17).
   const lines = weekDone ? WEEK_LINES : DAY_LINES;
-  // A fresh animal every time the panel comes up, not one a day. Picked in a
-  // state initialiser so it holds still for as long as the panel is showing
-  // and re-rolls the next time it opens (Peter 2026-09-17).
-  const [which] = useState(() => DANCERS[Math.floor(Math.random() * DANCERS.length)].key);
+  // The next animal in the rotation, taken in a state initialiser so it holds
+  // still for as long as the panel is showing and moves on the next time it
+  // opens. Back to a random pick once the review is done (Peter 2026-09-17).
+  const [which] = useState(() => nextDancerKey());
   const _vp = useViewport();
   const [line, setLine] = useState(0);
   const [confettiOn, setConfettiOn] = useState(!reduce);
