@@ -2953,22 +2953,48 @@ function AxolotlArt() {
 function BeagleArt() {
   return (
     <>
+      {/* White beagle. Every brown marking sits on HIS right, which is the
+          left as you look at him: the big body patch and the big ear spots.
+          His left ear carries the small ones. The near-white coat is a shade
+          off pure white with a soft outline, or he vanishes into the card.
+          Peter 2026-09-17. */}
+      <defs>
+        <clipPath id="nwBeagleBody"><ellipse cx="100" cy="138" rx="43" ry="32" /></clipPath>
+        <clipPath id="nwBeagleEarHisR"><ellipse cx="63" cy="88" rx="14" ry="29" /></clipPath>
+        <clipPath id="nwBeagleEarHisL"><ellipse cx="137" cy="88" rx="14" ry="29" /></clipPath>
+      </defs>
       <g className="nw-wag" style={{ transformOrigin: "10% 90%" }}>
-        <path d="M140 128 q24 -10 28 -30" fill="none" stroke="#FBF6EE" strokeWidth="10" strokeLinecap="round" />
+        <path d="M140 128 q24 -10 28 -30" fill="none" stroke="#F4EFE6" strokeWidth="10" strokeLinecap="round" />
       </g>
-      <rect x="64" y="150" width="20" height="28" rx="9" fill="#FBF6EE" />
-      <rect x="116" y="150" width="20" height="28" rx="9" fill="#FBF6EE" />
-      <ellipse cx="100" cy="138" rx="43" ry="32" fill="#FBF6EE" />
-      <path d="M60 132 q10 -32 40 -32 q30 0 40 32 q-40 -16 -80 0 z" fill="#3A322C" />
-      <g className="nw-up"  style={{ transformOrigin: "50% 0%" }}><rect x="60" y="140" width="19" height="34" rx="9" fill="#FBF6EE" /></g>
-      <g className="nw-upB" style={{ transformOrigin: "50% 0%" }}><rect x="121" y="140" width="19" height="34" rx="9" fill="#FBF6EE" /></g>
-      <circle cx="100" cy="78" r="37" fill="#C98A4B" />
-      <path d="M88 44 q12 -6 24 0 l-4 46 q-8 4 -16 0 z" fill="#FBF6EE" />
-      <g className="nw-swayL" style={{ transformOrigin: "50% 6%" }}><ellipse cx="63" cy="88" rx="14" ry="29" fill="#8A5A2B" /></g>
-      <g className="nw-swayR" style={{ transformOrigin: "50% 6%" }}><ellipse cx="137" cy="88" rx="14" ry="29" fill="#8A5A2B" /></g>
-      <ellipse cx="100" cy="100" rx="17" ry="13" fill="#FBF6EE" />
+      <rect x="64" y="150" width="20" height="28" rx="9" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" />
+      <rect x="116" y="150" width="20" height="28" rx="9" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" />
+      <ellipse cx="100" cy="138" rx="43" ry="32" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" />
+      <g clipPath="url(#nwBeagleBody)">
+        <ellipse cx="74" cy="133" rx="27" ry="25" fill="#A06A33" />
+        <ellipse cx="92" cy="150" rx="12" ry="10" fill="#A06A33" />
+      </g>
+      <g className="nw-up"  style={{ transformOrigin: "50% 0%" }}><rect x="60" y="140" width="19" height="34" rx="9" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" /></g>
+      <g className="nw-upB" style={{ transformOrigin: "50% 0%" }}><rect x="121" y="140" width="19" height="34" rx="9" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" /></g>
+      <circle cx="100" cy="78" r="37" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" />
+      <g className="nw-swayL" style={{ transformOrigin: "50% 6%" }}>
+        <ellipse cx="63" cy="88" rx="14" ry="29" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" />
+        <g clipPath="url(#nwBeagleEarHisR)">
+          <ellipse cx="60" cy="71" rx="13" ry="14" fill="#A06A33" />
+          <ellipse cx="68" cy="101" rx="12" ry="13" fill="#A06A33" />
+        </g>
+      </g>
+      <g className="nw-swayR" style={{ transformOrigin: "50% 6%" }}>
+        <ellipse cx="137" cy="88" rx="14" ry="29" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" />
+        <g clipPath="url(#nwBeagleEarHisL)">
+          <circle cx="134" cy="72" r="4.5" fill="#A06A33" />
+          <circle cx="142" cy="84" r="3.5" fill="#A06A33" />
+          <circle cx="133" cy="95" r="4" fill="#A06A33" />
+          <circle cx="140" cy="106" r="3" fill="#A06A33" />
+        </g>
+      </g>
+      <ellipse cx="100" cy="100" rx="17" ry="13" fill="#F4EFE6" />
       <ellipse cx="100" cy="92" rx="8.5" ry="6.5" fill="#2A2422" />
-      <path d="M92 105 q8 8 16 0" fill="none" stroke="#5C4A36" strokeWidth="3" strokeLinecap="round" />
+      <path d="M92 105 q8 8 16 0" fill="none" stroke="#9A9184" strokeWidth="3" strokeLinecap="round" />
       <circle cx="84" cy="72" r="6.5" fill="#2A2422" />
       <circle cx="116" cy="72" r="6.5" fill="#2A2422" />
       <circle cx="86" cy="69.5" r="2.2" fill="#FFFFFF" />
