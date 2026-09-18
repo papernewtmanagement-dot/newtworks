@@ -1855,6 +1855,19 @@ export default function TimeOffRequests() {
     loadPolicy();
   }, []);
 
+  // Close the policy popup on Escape, and stop the page behind it scrolling.
+  useEffect(() => {
+    if (!policyOpen) return;
+    const onKey = e => { if (e.key === "Escape") setPolicyOpen(false); };
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [policyOpen]);
+
   // Hooks must run on every render — declare BEFORE any early returns.
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : 24;
@@ -1881,39 +1894,19 @@ export default function TimeOffRequests() {
   return (
     <div style={{ padding: _pad, maxWidth: 1200, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Time Off & Remote</h1>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Time Off & Remote</h1>
+          {/* Opens the handbook page in a popup. Reads live from public.manuals, so
+              the policy people read here is always the current handbook. */}
+          <button
+            onClick={() => setPolicyOpen(true)}
+            type="button"
+            style={{ padding: "5px 12px", borderRadius: 999, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", boxSizing: "border-box" }}
+          >
+            📖 Policy
+          </button>
+        </div>
         <div style={{ fontSize: 13, color: "#64748b" }}>{me?.first_name} {me?.last_name} · {me?.role_level || "—"}</div>
-      </div>
-
-      {/* Handbook policy reference — reads live from public.handbook (single source of truth). */}
-      <div style={{ marginBottom: 16, border: "1px solid #e2e8f0", borderRadius: 8, background: "#f8fafc", overflow: "hidden" }}>
-        <button
-          onClick={() => setPolicyOpen(!policyOpen)}
-          type="button"
-          style={{ width: "100%", padding: "12px 16px", background: "transparent", border: "none", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", fontSize: 14, fontWeight: 600, color: "#0f172a", textAlign: "left" }}
-        >
-          <span>📖 Hours & Time Off — Policy (from handbook)</span>
-          <span style={{ transform: policyOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", fontSize: 18, color: "#64748b", lineHeight: 1 }}>›</span>
-        </button>
-        {policyOpen && (
-          <div style={{ padding: "12px 20px 16px", borderTop: "1px solid #e2e8f0", background: "#fff", fontSize: 14, lineHeight: 1.55 }}>
-            {policy ? (
-              <>
-                <ManualBodyStyles />
-                <div className="newtworks-handbook-body" dangerouslySetInnerHTML={{ __html: policy.html }} />
-                <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid #f1f5f9", fontSize: 12, color: "#94a3b8" }}>
-                  From handbook · last updated {new Date(policy.updated_at).toLocaleDateString()}
-                </div>
-              </>
-            ) : policyError ? (
-              <div style={{ color: "#b45309" }}>
-                Couldn't load the Hours & Time Off page from the handbook. Open the handbook to read it there.
-              </div>
-            ) : (
-              <div style={{ color: "#94a3b8" }}>Loading policy…</div>
-            )}
-          </div>
-        )}
       </div>
 
       <div style={{ display: "flex", gap: 4, borderBottom: "1px solid #e2e8f0", marginBottom: 20 }}>
@@ -1935,6 +1928,49 @@ export default function TimeOffRequests() {
         {activeTab === "history" && <HistoryView me={me} />}
         {activeTab === "inbox" && isOwner && <InboxView me={me} onDecided={bumpRefresh} />}
       </div>
+
+      {policyOpen && (
+        <div
+          onClick={() => setPolicyOpen(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: _vp.isPhone ? 0 : 24, zIndex: 1000, boxSizing: "border-box" }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Hours and Time Off policy"
+            onClick={e => e.stopPropagation()}
+            style={{ background: "#fff", borderRadius: _vp.isPhone ? 0 : 10, width: "100%", maxWidth: 820, height: _vp.isPhone ? "100%" : "auto", maxHeight: _vp.isPhone ? "100%" : "88vh", display: "flex", flexDirection: "column", overflow: "hidden", boxSizing: "border-box", boxShadow: "0 20px 50px rgba(15,23,42,0.3)" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 18px", borderBottom: "1px solid #e2e8f0", flexShrink: 0, boxSizing: "border-box" }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#0f172a" }}>Hours & Time Off</div>
+              <button
+                onClick={() => setPolicyOpen(false)}
+                type="button"
+                aria-label="Close"
+                style={{ border: "none", background: "transparent", fontSize: 24, lineHeight: 1, color: "#64748b", cursor: "pointer", padding: "0 4px" }}
+              >×</button>
+            </div>
+            <div style={{ padding: "16px 20px 20px", overflowY: "auto", WebkitOverflowScrolling: "touch", fontSize: 14, lineHeight: 1.55, boxSizing: "border-box" }}>
+              {policy ? (
+                <>
+                  <ManualBodyStyles />
+                  <div className="newtworks-handbook-body" dangerouslySetInnerHTML={{ __html: policy.html }} />
+                  <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid #f1f5f9", fontSize: 12, color: "#94a3b8", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <span>From handbook · last updated {new Date(policy.updated_at).toLocaleDateString()}</span>
+                    <a href={`/handbook/${HOURS_TIME_OFF_PAGE_ID}`} style={{ color: "#2563eb", fontWeight: 600, textDecoration: "none" }}>Open in the handbook →</a>
+                  </div>
+                </>
+              ) : policyError ? (
+                <div style={{ color: "#b45309" }}>
+                  Couldn't load the Hours & Time Off page from the handbook. Open the handbook to read it there.
+                </div>
+              ) : (
+                <div style={{ color: "#94a3b8" }}>Loading policy…</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
