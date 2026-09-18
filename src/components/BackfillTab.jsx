@@ -33,11 +33,18 @@ export default function BackfillTab({ sources = [], roster = [] }) {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
+  const [box, setBox] = useState("");
+  const [search, setSearch] = useState("");
+  const [searching, setSearching] = useState(false);
 
-  const load = async (from) => {
+  const load = async (from, q) => {
     setLoading(true);
     setErr("");
-    const { data, error } = await supabase.rpc("rp_backfill_queue", { p_limit: PAGE, p_offset: from });
+    const { data, error } = await supabase.rpc("rp_backfill_queue", {
+      p_limit: PAGE,
+      p_offset: from,
+      p_search: (q ?? search) || null,
+    });
     if (error) {
       setErr(error.message || "Could not load the list.");
       setLoading(false);
@@ -45,11 +52,19 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     }
     setRows(Array.isArray(data?.rows) ? data.rows : []);
     setTotal(Number(data?.total_rows || 0));
+    setSearching(!!data?.searching);
     setEdits({});
     setLoading(false);
   };
 
   useEffect(() => { load(offset); }, [offset]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pull up a customer by name, whether or not anything is missing on them.
+  const runSearch = (q) => {
+    setSearch(q);
+    setOffset(0);
+    load(0, q);
+  };
 
   const srcLabel = useMemo(() => {
     const m = {};
@@ -190,8 +205,27 @@ export default function BackfillTab({ sources = [], roster = [] }) {
           Older records still missing something. Only what you type gets saved. Save a row on its own, or save everything you have touched. A phone fills the other rows with the same name.
         </div>
         <div style={{ fontSize: 13, color: T.slate500 }}>
-          {total == null ? "" : `${total} to go`}{offset ? ` · from ${offset + 1}` : ""}
+          {total == null ? "" : searching ? `${total} found` : `${total} to go`}{offset ? ` · from ${offset + 1}` : ""}
         </div>
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <input
+          value={box}
+          onChange={e => setBox(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); runSearch(box.trim()); } }}
+          placeholder="Find a customer by name"
+          autoComplete="off"
+          style={{ ...input, width: 240 }}
+        />
+        <button type="button" onClick={() => runSearch(box.trim())} disabled={saving || !box.trim()} style={{ ...btn(false), padding: "7px 14px", fontSize: 13 }}>
+          Find
+        </button>
+        {searching ? (
+          <button type="button" onClick={() => { setBox(""); runSearch(""); }} disabled={saving} style={{ ...btn(false), padding: "7px 14px", fontSize: 13 }}>
+            Back to the list
+          </button>
+        ) : null}
       </div>
 
       {err ? <div style={{ background: T.redLt, color: T.red, padding: "10px 12px", borderRadius: 8, fontSize: 13 }}>{err}</div> : null}
@@ -201,7 +235,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
         <div style={{ color: T.slate500, fontSize: 14 }}>Loading...</div>
       ) : rows.length === 0 ? (
         <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 18, fontSize: 14, color: T.slate600 }}>
-          Nothing left to fill in.
+          {searching ? "No records under that name." : "Nothing left to fill in."}
         </div>
       ) : (
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12 }}>
