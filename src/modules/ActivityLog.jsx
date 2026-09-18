@@ -361,6 +361,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           premium: x.premium == null ? "" : String(x.premium),
           vehicles: x.vehicle_count == null ? "" : String(x.vehicle_count),
           isNewLine: x.is_new_line !== false, addedToExisting: !!x.added_to_existing, autopay: !!x.autopay,
+          issuedPremium: x.issued_premium == null ? "" : String(x.issued_premium),
         })));
       } else if (d.kind === "cancelation") {
         setPolicies([{ id: newPolicyId(), dbId: null, line: d.policy_line, type: d.product_type || "",
@@ -588,7 +589,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
             premium: Number(p.premium), policy_count: 1,
             vehicle_count: hasCars(p.line, p.type) ? Number(p.vehicles) : null,
             added_to_existing: p.line === "auto" && !!p.addedToExisting,
-            is_new_line: !!p.isNewLine, autopay: !!p.autopay })) };
+            is_new_line: !!p.isNewLine, autopay: !!p.autopay,
+            issued_premium: p.issuedPremium === "" || p.issuedPremium == null ? null : Number(p.issuedPremium) })) };
       } else if (k === "quote") {
         fn = "rp_edit_quote";
         changes = { ...who, quote_date: date, relationship_type: relationship || undefined,
@@ -938,6 +940,14 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
                     <option value="new">A new policy</option>
                     <option value="added">Added to one they had</option>
                   </select>
+                </div>
+              )}
+              {isEdit && isSold(active) && (
+                <div style={field(150)}>
+                  <label style={labelStyle}>Issued premium <span style={hintStyle}>(what it issued at)</span></label>
+                  <input type="number" inputMode="decimal" min="0" step="0.01" style={moneyInput}
+                         value={active.issuedPremium || ""} placeholder="0.00"
+                         onChange={e => editPolicy(active.id, { issuedPremium: e.target.value })} />
                 </div>
               )}
               {isSold(active) && (
@@ -1798,7 +1808,7 @@ function AddAppointment({ roster, myTeamId, types, onClose, onSaved }) {
 // on the row has to survive (Peter 2026-09-14). Sales edit their policies
 // too; appointments and activities edit the customer, date and note.
 // ---------------------------------------------------------------------
-function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSaved }) {
+function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSaved, bare = false }) {
   const [f, setF] = useState(() => ({
     customer_first: row.customer_first_name || "",
     customer_last_initial: row.customer_last_initial || "",
@@ -1886,8 +1896,8 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
   };
 
   const titleWord = kind === "sale" ? "sale" : kind === "appointment" ? "appointment" : "entry";
-  return (
-    <Modal title={`Edit this ${titleWord}`} onClose={onClose}>
+  // bare drops the popup shell, for when this is opened inside one already.
+  const body = (
       <div style={{ ...cardStyle, display: "grid", gap: 12 }}>
         {err && <Notice kind="error">{err}</Notice>}
         {kind === "sale" && row.entry_source === "historical_backfill" && (
@@ -2049,8 +2059,8 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
           <button type="button" style={btnGhost} onClick={onClose}>Cancel</button>
         </div>
       </div>
-    </Modal>
   );
+  return bare ? body : <Modal title={`Edit this ${titleWord}`} onClose={onClose}>{body}</Modal>;
 }
 
 function IssuedTab({ values, sources, types, roster, nameOf, isOwner, isAdmin, myTeamId, refreshKey, onChanged }) {
@@ -2068,7 +2078,7 @@ function IssuedTab({ values, sources, types, roster, nameOf, isOwner, isAdmin, m
 
 function Modal({ title, onClose, children }) {
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 50, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "24px 8px", overflowY: "auto" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 160, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "24px 8px", overflowY: "auto" }}>
       <div onClick={e => e.stopPropagation()} style={{ background: T.slate50, borderRadius: 14, width: "min(980px, 100%)", boxShadow: "0 20px 60px rgba(0,0,0,0.25)", padding: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 8px 10px" }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>{title}</div>
@@ -3968,21 +3978,16 @@ function HistoryTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster
   const [flash, setFlash] = useState("");
   const [listKey, setListKey] = useState(0);
   const closeEdit = (msg) => { setEditing(null); setFlash(msg || ""); setListKey(k => k + 1); };
-  const openEdit = (target) => {
-    setFlash(""); setEditing(target);
-    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-  if (editing) {
-    return (
-      <div style={{ display: "grid", gap: 16 }}>
-        <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster}
-          onLogged={onLogged} refreshKey={refreshKey} allowCancel editing={editing} onCloseEdit={closeEdit} />
-      </div>
-    );
-  }
+  const openEdit = (target) => { setFlash(""); setEditing(target); };
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <RecentEntries isAdmin={isAdmin} roster={roster} refreshKey={refreshKey + listKey} onEdit={openEdit} flash={flash} />
+      {editing && (
+        <Modal title="Editing a record already on file" onClose={() => closeEdit("")}>
+          <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster}
+            onLogged={onLogged} refreshKey={refreshKey} allowCancel editing={editing} onCloseEdit={closeEdit} />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -4091,6 +4096,7 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
                 <th style={tableTh}>Customer</th>
                 {isAdmin && <th style={tableTh}>Who</th>}
                 <th style={tableTh}>Details</th>
+                <th style={tableTh}>Issued</th>
                 <th style={tableTh}></th>
               </tr>
             </thead>
@@ -4109,6 +4115,11 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
                   <td style={tableTd}>
                     {r.summary || "—"}
                     {r.amount != null && r.kind !== "scorecard" ? <span style={{ color: T.slate500 }}> · ${fmtPts(r.amount)}</span> : null}
+                  </td>
+                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
+                    {r.kind !== "sale" ? <span style={{ color: T.slate300 }}>—</span>
+                      : r.issued_amount != null ? `$${fmtPts(r.issued_amount)}`
+                      : <span style={{ color: T.slate400 }}>waiting</span>}
                   </td>
                   <td style={{ ...tableTd, whiteSpace: "nowrap", textAlign: "right" }}>
                     {r.can_change ? (
@@ -4131,13 +4142,22 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
 // =====================================================================
 // Customer account — one household's whole record, in a popup.
 // Peter 2026-09-18: click a customer's name on any tab and see everything
-// on file for them, newest first.
+// on file for them, newest first, and change any of it without leaving
+// the popup.
 //
 // Reads rp_customer_account, which matches on the same household key the
 // log uses: first name, last initial, last four of the phone. A record
 // logged before the phone rule has no phone and still matches. When more
 // than one phone turns up under one name the popup says so, because that
 // is two households sharing a name.
+//
+// Edit opens inside this popup, not somewhere else. The five logged kinds
+// open the one entry form, the same form the History tab uses, so there
+// is still only one place that knows how to edit an entry. An appointment
+// has its own editor and opens that, with its popup shell dropped since
+// this one is already open. The server decides per row whether this
+// person may change it, so Edit only shows where the change would go
+// through anyway.
 //
 // The name itself is <CustomerName> from lib/customerAccount.jsx. It reads
 // the provider set up in the shell below, so no tab passes anything down.
@@ -4151,10 +4171,14 @@ const ACCT_KIND = {
   appointment: { label: "Appointment",        color: T.amber },
 };
 
-function CustomerAccount({ token, types, onClose }) {
+function CustomerAccount({ token, values, sources, types, isOwner, roster, onLogged, onClose }) {
   const { label, phone4 } = parseAcctToken(token);
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+  const [flash, setFlash] = useState("");
+  const [reload, setReload] = useState(0);
+  const [editing, setEditing] = useState(null);   // { kind, id } — opens the entry form
+  const [apptRow, setApptRow] = useState(null);   // an appointment opens its own editor
 
   useEffect(() => {
     let alive = true;
@@ -4167,7 +4191,21 @@ function CustomerAccount({ token, types, onClose }) {
       setData(r.data && typeof r.data === "object" ? r.data : null);
     })();
     return () => { alive = false; };
-  }, [label, phone4]);
+  }, [label, phone4, reload]);
+
+  const closeEdit = (msg) => {
+    setEditing(null); setApptRow(null); setFlash(msg || "");
+    setReload(k => k + 1);
+    onLogged?.();
+  };
+
+  const openEdit = async (r) => {
+    setFlash(""); setErr("");
+    if (r.kind !== "appointment") { setEditing({ kind: r.kind, id: r.id }); return; }
+    const { data: row, error } = await supabase.from("appointment_log").select(APPT_SELECT).eq("id", r.id).maybeSingle();
+    if (error || !row) { setErr(errText(error || "that appointment is not on file any more")); return; }
+    setApptRow(row);
+  };
 
   const c = data?.customer || {};
   const t = data?.totals || {};
@@ -4176,14 +4214,29 @@ function CustomerAccount({ token, types, onClose }) {
   const phones = Array.isArray(c.phones) ? c.phones : [];
   const prod = (line, key) => typeLabel(types || {}, line, key) || PRODUCT_SHORT[line] || line || "—";
   const plain = (s) => s ? String(s).replace(/_/g, " ") : "";
-  const title = `${c.label || label}${c.phone_last4 ? ` · ${c.phone_last4}` : ""}`;
+  const editingSomething = !!editing || !!apptRow;
+  const title = editingSomething
+    ? `Editing a record on file for ${c.label || label}`
+    : `${c.label || label}${c.phone_last4 ? ` · ${c.phone_last4}` : ""}`;
 
   return (
-    <Modal title={title} onClose={onClose}>
+    <Modal title={title} onClose={editingSomething ? () => closeEdit("") : onClose}>
       {err && <Notice kind="error">{err}</Notice>}
-      {!data && !err && <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>}
-      {data && (
+
+      {editing && (
+        <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster}
+          onLogged={onLogged} refreshKey={reload} allowCancel editing={editing} onCloseEdit={closeEdit} />
+      )}
+      {apptRow && (
+        <EditRecord bare kind="appointment" row={apptRow} sources={sources} types={types} roster={roster}
+          isOwner={isOwner} onClose={() => closeEdit("")} onSaved={() => closeEdit("Saved.")} />
+      )}
+
+      {!editingSomething && !data && !err && <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>}
+
+      {!editingSomething && data && (
         <div style={{ display: "grid", gap: 12 }}>
+          {flash && <Notice kind="ok">{flash}</Notice>}
 
           <div style={{ ...cardStyle, padding: 14, display: "grid", gap: 10 }}>
             <div style={{ fontSize: 13, color: T.slate600 }}>
@@ -4217,7 +4270,8 @@ function CustomerAccount({ token, types, onClose }) {
                   <thead>
                     <tr>
                       <th style={tableTh}>Policy</th>
-                      <th style={tableTh}>Premium</th>
+                      <th style={tableTh}>Submitted at</th>
+                      <th style={tableTh}>Issued at</th>
                       <th style={tableTh}>Submitted</th>
                       <th style={tableTh}>Issued</th>
                       <th style={tableTh}>Standing</th>
@@ -4232,7 +4286,8 @@ function CustomerAccount({ token, types, onClose }) {
                           {p.vehicle_count ? <span style={{ color: T.slate500 }}> · {plural(p.vehicle_count, "car")}</span> : null}
                           {p.is_added_to_existing ? <div style={{ fontSize: 11, color: T.slate400 }}>added to one they had</div> : null}
                         </td>
-                        <td style={tableTd}>${fmtPts(p.issued_premium != null ? p.issued_premium : p.premium)}</td>
+                        <td style={tableTd}>${fmtPts(p.premium)}</td>
+                        <td style={tableTd}>{p.issued_premium != null ? `$${fmtPts(p.issued_premium)}` : <span style={{ color: T.slate400 }}>—</span>}</td>
                         <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{fmtDate(p.submitted_date)}</td>
                         <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{p.issued_date ? fmtDate(p.issued_date) : <span style={{ color: T.slate400 }}>waiting</span>}</td>
                         <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
@@ -4252,7 +4307,7 @@ function CustomerAccount({ token, types, onClose }) {
 
           <div style={{ ...cardStyle, padding: 14 }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>Everything logged</div>
-            <div style={{ fontSize: 12, color: T.slate500, marginBottom: 10 }}>Newest first.</div>
+            <div style={{ fontSize: 12, color: T.slate500, marginBottom: 10 }}>Newest first. Tap Edit on any of it.</div>
             {timeline.length === 0 ? (
               <div style={{ fontSize: 13, color: T.slate600 }}>Nothing on file for this household.</div>
             ) : (
@@ -4273,12 +4328,20 @@ function CustomerAccount({ token, types, onClose }) {
                       <div style={{ flex: "1 1 200px", minWidth: 0, fontSize: 13, color: T.slate800 }}>
                         {r.summary || "—"}
                         {r.amount != null && r.kind !== "scorecard" ? <span style={{ color: T.slate500 }}> · ${fmtPts(r.amount)}</span> : null}
+                        {r.issued_amount != null ? <span style={{ color: T.slate500 }}> · issued ${fmtPts(r.issued_amount)}</span> : null}
                         {m.reason ? <div style={{ fontSize: 11, color: T.slate500 }}>reason: {plain(m.reason)}</div> : null}
                         {m.save_reason ? <div style={{ fontSize: 11, color: T.slate500 }}>{m.save_reason}</div> : null}
                         {r.note ? <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>{r.note}</div> : null}
                         {r.ecrm_url ? <div><a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: T.blue }}>ECRM</a></div> : null}
                       </div>
-                      <div style={{ width: 90, flexShrink: 0, textAlign: "right", fontSize: 12, color: T.slate500 }}>{r.who}</div>
+                      <div style={{ width: 84, flexShrink: 0, textAlign: "right", fontSize: 12, color: T.slate500 }}>{r.who}</div>
+                      <div style={{ width: 56, flexShrink: 0, textAlign: "right" }}>
+                        {m.derived
+                          ? <span style={{ color: T.slate300, fontSize: 11 }}>auto</span>
+                          : r.can_change
+                            ? <button type="button" style={miniBtn} onClick={() => openEdit(r)}>Edit</button>
+                            : <span style={{ color: T.slate400, fontSize: 11 }}>closed</span>}
+                      </div>
                     </div>
                   );
                 })}
@@ -4396,7 +4459,8 @@ export default function ActivityLog({ userRole, userId }) {
   return (
     <AccountCtx.Provider value={account}>
     <div style={{ padding: _pad, display: "grid", gap: 16 }}>
-      {acct ? <CustomerAccount token={acct} types={types} onClose={() => setAcct("")} /> : null}
+      {acct ? <CustomerAccount token={acct} values={values} sources={sources} types={types} isOwner={isOwner}
+                roster={roster} onLogged={bump} onClose={() => setAcct("")} /> : null}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 800, color: T.slate900 }}>Dashboard</div>
