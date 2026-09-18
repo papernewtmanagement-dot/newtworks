@@ -2706,7 +2706,7 @@ const checklistRowBtn = {
   boxSizing: "border-box", border: `1px solid ${T.slate300}`, background: T.white, color: T.slate600,
 };
 
-function ChecklistRow({ item, checked, byLabel, busy, disabled, onToggle, openHelp, setOpenHelp, editMode, onEdit, onMove, children }) {
+function ChecklistRow({ item, checked, byLabel, byOwner, busy, disabled, onToggle, openHelp, setOpenHelp, editMode, onEdit, onMove, children }) {
   const open = openHelp === item.id;
   const off = !!busy || !!disabled;
   return (
@@ -2725,7 +2725,11 @@ function ChecklistRow({ item, checked, byLabel, busy, disabled, onToggle, openHe
           <a href={item.link_url} target="_blank" rel="noopener noreferrer" title="Open the link for this item"
              style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: T.blue, textDecoration: "none", marginTop: 1 }}>open ↗</a>
         )}
-        {byLabel && <span style={{ fontSize: 11, color: T.slate400, textAlign: "right", whiteSpace: editMode ? "nowrap" : "normal", flexShrink: 0 }}>{byLabel}</span>}
+        {byLabel && (
+          byOwner
+            ? <span title="The owner cleared this one for the team" style={{ fontSize: 11, fontWeight: 700, color: T.blue, background: T.blueLt, borderRadius: 999, padding: "1px 8px", whiteSpace: "nowrap", flexShrink: 0 }}>{byLabel} did this</span>
+            : <span style={{ fontSize: 11, color: T.slate400, textAlign: "right", whiteSpace: editMode ? "nowrap" : "normal", flexShrink: 0 }}>{byLabel}</span>
+        )}
         {editMode && (
           <>
             <button type="button" title="Move up" aria-label="Move up" onClick={() => onMove(item, "up")} style={checklistRowBtn}>↑</button>
@@ -3739,6 +3743,7 @@ function ChecklistTab() {
                   item={it}
                   checked={!!it.ticked_at}
                   byLabel={it.ticked_at ? it.ticked_by : null}
+                  byOwner={!!it.by_owner}
                   busy={busy}
                   onToggle={toggle}
                   openHelp={openHelp}

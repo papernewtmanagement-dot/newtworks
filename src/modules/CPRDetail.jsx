@@ -374,11 +374,23 @@ const OPP_LISTS_KEYS = [
 // Combined — used for hit/miss counting and the report-level booleans.
 const TEAM_CHECKLIST_KEYS = [...DAILY_OPS_KEYS, ...OPP_LISTS_KEYS];
 
+// Scorecard came off the personal checklist on Peter's ruling 2026-09-18: it is
+// always done once the team submits their log records, so it is not something a
+// person can miss. Weeks BEFORE the cutover still show it and still count it --
+// those misses fed carryover that has already been paid out.
+const SCORECARD_CUTOVER = "2026-09-19";
 const PERSONAL_CHECKLIST_KEYS = [
   ["wrapup_done", "Wrap-up"],
   ["inbox_done", "Inbox"],
+];
+const PERSONAL_CHECKLIST_KEYS_LEGACY = [
+  ...PERSONAL_CHECKLIST_KEYS,
   ["scorecard_done", "Scorecard"],
 ];
+const personalChecklistKeys = weekEnding =>
+  weekEnding && weekEnding >= SCORECARD_CUTOVER
+    ? PERSONAL_CHECKLIST_KEYS
+    : PERSONAL_CHECKLIST_KEYS_LEGACY;
 
 // ── Edit form hook ──────────────────────────────────────────
 // Manages a working copy of editable fields + dirty tracking. Initialized
@@ -636,6 +648,15 @@ function useCPRData(weekDate) {
               seenMemberIds.add(a.team_member_id);
             }
           }
+
+          // The Owner does not belong on the CPR (Peter 2026-09-18). He carries no
+          // quota, no requirement and no pay row here. He only has a detail row at
+          // all because the Checklist tab writes one for his own wrap-up and inbox
+          // tick, and that row was putting him into Requirements, Hours, Payroll,
+          // Team Activity, Personal Checklist and Code Reds. Drop him once, here,
+          // so no individual section has to know about it.
+          const ownerIds = new Set((teamRows || []).filter(t => t.role_level === "Owner").map(t => t.id));
+          detailRows = detailRows.filter(d => !ownerIds.has(d.team_member_id));
         }
 
         // 3b. Scorecard completion auto-verify — tenure-aware.
@@ -648,7 +669,7 @@ function useCPRData(weekDate) {
         // The RPC is SECURITY DEFINER (20260831134254) on purpose: it reads
         // weekly_cpr_team_detail, which is admin-or-own at the ROW level, so an
         // invoker-rights version handed a non-admin viewer only their own row.
-        if (detailRows.length > 0) {
+        if (detailRows.length > 0 && weekDate < SCORECARD_CUTOVER) {
           try {
             const { data: doneRows } = await supabase.rpc(
               "compute_scorecard_done_for_cpr_week",
@@ -1906,6 +1927,7 @@ function PersonalChecklistSection({ details, team, weekEnding, editMode, formDet
     );
   }
   const sorted = sortByTenure(present, team);
+  const keys = personalChecklistKeys(weekEnding);
   return (
     <div>
       <SectionHeader icon="🧍" title="Personal Checklist" />
@@ -1915,7 +1937,7 @@ function PersonalChecklistSection({ details, team, weekEnding, editMode, formDet
             <thead>
               <tr>
                 <Th align="left">Person</Th>
-                {PERSONAL_CHECKLIST_KEYS.map(([key, label]) => (
+                {keys.map(([key, label]) => (
                   <Th key={key} align="center">{label}</Th>
                 ))}
               </tr>
@@ -1924,7 +1946,7 @@ function PersonalChecklistSection({ details, team, weekEnding, editMode, formDet
               {sorted.map(d => (
                 <tr key={d.team_member_id}>
                   <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
-                  {PERSONAL_CHECKLIST_KEYS.map(([key]) => {
+                  {keys.map(([key]) => {
                     if (editMode) {
                       return (
                         <Td key={key} align="center" style={{ padding: 4 }}>
