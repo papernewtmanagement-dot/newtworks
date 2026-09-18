@@ -24,6 +24,7 @@ import Marketing from "./src/modules/Marketing.jsx";
 import ContentEditor from "./src/modules/ContentEditor.jsx";
 import CandidateAssessment from "./src/modules/CandidateAssessment.jsx";
 import InterviewScheduler from "./src/modules/InterviewScheduler.jsx";
+import OfferAccept from "./src/modules/OfferAccept.jsx";
 import ActivityLog from "./src/modules/ActivityLog.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
@@ -796,6 +797,18 @@ export default function NewtworksApp() {
       })()
     : null;
 
+  // /accept-offer/<token> — public contingent offer acceptance page.
+  // Same access model again: no auth gate, edge fn hiring-offer-accept is
+  // the sole DB gateway, the token is the auth. The link is single use and
+  // expires a day after the offer email goes out.
+  const _acceptOfferRoute = (typeof window !== "undefined")
+    ? (() => {
+        const p = (window.location.pathname || "").replace(/\/+$/, "") || "/";
+        const m = /^\/accept-offer\/([A-Za-z0-9._-]+)$/.exec(p);
+        return m ? { token: m[1] } : null;
+      })()
+    : null;
+
   // ── Auth gate state (Path 1) ──────────────────────────────────────────────
   // authState: "checking" | "out" | "in"
   const [authState, setAuthState] = useState("checking");
@@ -1037,6 +1050,10 @@ export default function NewtworksApp() {
 
   if (_scheduleRoute) {
     return <InterviewScheduler token={_scheduleRoute.token} />;
+  }
+
+  if (_acceptOfferRoute) {
+    return <OfferAccept token={_acceptOfferRoute.token} />;
   }
 
   // ── Auth gate render ───────────────────────────────────────────────────────

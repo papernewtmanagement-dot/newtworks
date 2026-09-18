@@ -1654,7 +1654,23 @@ async function sendOfferLetter(agencyId: string, candidateId: string): Promise<R
     .maybeSingle();
 
   const subject = tpl?.subject || "Reference Check & Next Steps";
-  const html = offerMarkdownToHtml(c.offer_letter_body);
+  // The acceptance link is minted here rather than when the letter is
+  // written, so its one-day clock starts when the email actually goes out and
+  // re-sending an offer always replaces a stale or already-used link.
+  let letterBody = c.offer_letter_body;
+  if (letterBody.includes("{{accept_link}}")) {
+    const { data: acceptToken, error: tokenErr } = await sb.rpc("hiring_issue_offer_accept_token", {
+      p_candidate_id: c.id,
+    });
+    if (tokenErr || !acceptToken) {
+      console.error("could not mint the offer acceptance token", tokenErr);
+      return jsonResponse({ ok: false, error: "could not create the acceptance link" }, 500);
+    }
+    const base = (await getSettingOrNull(agencyId, "app_base_url")) || "https://newtworks.vercel.app";
+    letterBody = letterBody.replaceAll("{{accept_link}}", `${base}/accept-offer/${acceptToken}`);
+  }
+
+  const html = offerMarkdownToHtml(letterBody);
 
   const gmailCreds = await getComposioGmailCreds(agencyId);
   if (!gmailCreds.ok) {

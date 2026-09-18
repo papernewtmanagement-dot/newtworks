@@ -94,8 +94,15 @@ export default function OfferLetterModal({ candidate, onClose, onSaved }) {
   const [payType, setPayType]         = useState(candidate?.offer_pay_type || "");
   const [amount, setAmount]           = useState(candidate?.offer_pay_amount != null ? String(candidate.offer_pay_amount) : "");
   const [startDate, setStartDate]     = useState(candidate?.offer_start_date || addDaysIso(14));
-  const [respondBy, setRespondBy]     = useState(candidate?.offer_respond_by || addDaysIso(5));
+  // One day to reply. Peter's ruling 2026-09-17, and the letter says so.
+  const [respondBy, setRespondBy]     = useState(candidate?.offer_respond_by || addDaysIso(1));
   const [reportsTo, setReportsTo]     = useState(candidate?.offer_reports_to || "Peter Story, Agent");
+  const [callerKind, setCallerKind]   = useState(candidate?.reference_caller_kind || "retention");
+  const [callerTeamId, setCallerTeamId] = useState(candidate?.reference_caller_team_id || "");
+  const [callerName, setCallerName]   = useState(candidate?.reference_caller_name || "");
+  const [callerEmail, setCallerEmail] = useState(candidate?.reference_caller_email || "");
+  const [callerPhone, setCallerPhone] = useState(candidate?.reference_caller_phone || "");
+  const [teamList, setTeamList]       = useState([]);
   const [licenseClause, setLicenseClause] = useState("");
   const [licenseTouched, setLicenseTouched] = useState(false);
 
@@ -103,13 +110,19 @@ export default function OfferLetterModal({ candidate, onClose, onSaved }) {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [payRes, tplRes] = await Promise.all([
+      const [payRes, tplRes, teamRes] = await Promise.all([
         supabase.from("role_pay_ranges").select("*")
           .eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("offer_letter_templates").select("*")
           .eq("agency_id", AGENCY_ID).eq("template_key", "standard").eq("is_active", true).maybeSingle(),
+        supabase.from("team").select("id, first_name, nickname, last_name")
+          .eq("agency_id", AGENCY_ID).eq("is_active", true).is("archived_at", null).order("first_name"),
       ]);
       if (cancelled) return;
+      setTeamList((teamRes.data || []).map(t => ({
+        id: t.id,
+        label: [t.nickname || t.first_name, t.last_name].filter(Boolean).join(" "),
+      })));
       if (payRes.error) setLoadError(payRes.error.message);
       else if (tplRes.error) setLoadError(tplRes.error.message);
       setPayRows(payRes.data || []);
@@ -204,9 +217,14 @@ export default function OfferLetterModal({ candidate, onClose, onSaved }) {
     });
   }, [template, fullName, candidate, jobTitle, reportsTo, startDate, respondBy, payLine, licenseClause]);
 
+  // Filled in by the sender, not by Peter. The acceptance link cannot exist
+  // until the email actually goes out, so it is left in the body on purpose.
+  const SEND_TIME_TOKENS = ["accept_link"];
+
   const stillBlank = useMemo(() => {
     const found = letter.match(/\{\{\s*([a-z0-9_]+)\s*\}\}/gi) || [];
-    return Array.from(new Set(found.map(s => s.replace(/[{}\s]/g, ""))));
+    return Array.from(new Set(found.map(s => s.replace(/[{}\s]/g, ""))))
+      .filter(t => !SEND_TIME_TOKENS.includes(t));
   }, [letter]);
 
   const canSave = Boolean(jobTitle) && Boolean(payType) && amount !== ""
@@ -232,6 +250,14 @@ export default function OfferLetterModal({ candidate, onClose, onSaved }) {
         offer_reports_to:  reportsTo || null,
         offer_letter_body: letter,
         offer_created_at:  candidate?.offer_created_at || nowIso,
+        reference_caller_kind:        callerKind,
+        reference_caller_team_id:     callerKind === "team" ? (callerTeamId || null) : null,
+        reference_caller_name:        callerKind === "outside" ? (callerName || null)
+                                      : callerKind === "team" ? (teamList.find(t => t.id === callerTeamId)?.label || null)
+                                      : null,
+        reference_caller_email:       callerKind === "outside" ? (callerEmail || null) : null,
+        reference_caller_phone:       callerKind === "outside" ? (callerPhone || null) : null,
+        reference_caller_assigned_at: nowIso,
       })
       .eq("id", candidate.id);
     setSaving(false);
@@ -408,6 +434,36 @@ export default function OfferLetterModal({ candidate, onClose, onSaved }) {
                 <label style={label}>Reply by</label>
                 <input style={input} type="date" value={respondBy} onChange={(e) => setRespondBy(e.target.value)} />
               </div>
+            </div>
+
+            {/* Who rings the references once the candidate accepts. Defaults to
+                the retention team, so this is one glance rather than a decision. */}
+            <div style={{ marginTop: 12 }}>
+              <label style={label}>Who calls the references</label>
+              <select style={input} value={callerKind} onChange={(e) => setCallerKind(e.target.value)}>
+                <option value="retention">The retention team</option>
+                <option value="team">Someone on the team</option>
+                <option value="outside">Someone outside the agency</option>
+              </select>
+
+              {callerKind === "team" && (
+                <select style={{ ...input, marginTop: 8 }} value={callerTeamId}
+                        onChange={(e) => setCallerTeamId(e.target.value)}>
+                  <option value="">Pick a person…</option>
+                  {teamList.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                </select>
+              )}
+
+              {callerKind === "outside" && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                  <input style={{ ...input, flex: "1 1 100%" }} placeholder="Name"
+                         value={callerName} onChange={(e) => setCallerName(e.target.value)} />
+                  <input style={{ ...input, flex: "1 1 45%" }} placeholder="Email"
+                         value={callerEmail} onChange={(e) => setCallerEmail(e.target.value)} />
+                  <input style={{ ...input, flex: "1 1 45%" }} placeholder="Phone"
+                         value={callerPhone} onChange={(e) => setCallerPhone(e.target.value)} />
+                </div>
+              )}
             </div>
 
             <div style={{ marginTop: 12 }}>
