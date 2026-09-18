@@ -5,14 +5,21 @@ import { T } from "../lib/theme.js";
 
 // Dashboard > Backfill. The imported history came in without the last four
 // phone digits, without the ECRM link on the sale, and on some rows without a
-// marketing source or the referral detail. This is the list of every record
-// still missing one of those, as rows you go straight down and save as a batch.
-// The phone is the household key, so a phone typed on one row fills the other
-// rows on screen with the same name, and on save it lands on every record
-// under that name that has none. Cancelations never appear here: each one is
-// matched to the sale product it cancels, so it takes its phone from that sale.
-// Reads rp_backfill_queue, writes rp_backfill_save. Nothing here touches
-// policies, points, or where a record came from. Owner and managers only.
+// marketing source, referral detail, or issued premium. This is the list of
+// every record still missing one of those, as rows you go down and save.
+//
+// The rule that matters: nothing is written unless you typed it. A box that
+// shows what is already on file is only showing it. The premium the policy was
+// submitted at sits under an empty issued premium box as a one-tap suggestion,
+// so accepting it is a deliberate tap, never something a Save sweeps up.
+//
+// Save the row you just did, or save every row you have touched. The phone is
+// the household key, so a phone typed on one row fills the other rows on screen
+// with the same name, and on save it lands on every record under that name that
+// has none. Cancelations never appear here: each takes its phone from the sale
+// product it cancels. Issuing goes through rp_mark_issued, same as the To Be
+// Issued tab. Reads rp_backfill_queue, writes rp_backfill_save. Owner and
+// managers only.
 
 const PAGE = 25;
 
@@ -36,19 +43,9 @@ export default function BackfillTab({ sources = [], roster = [] }) {
       setLoading(false);
       return;
     }
-    const list = Array.isArray(data?.rows) ? data.rows : [];
-    // The issued premium starts at the premium the policy was submitted at.
-    const seed = {};
-    list.forEach(r => {
-      if (Array.isArray(r.policies) && r.policies.length) {
-        const pol = {};
-        r.policies.forEach(p => { pol[p.id] = p.premium == null ? "" : String(p.premium); });
-        seed[r.id] = { policies: pol };
-      }
-    });
-    setRows(list);
+    setRows(Array.isArray(data?.rows) ? data.rows : []);
     setTotal(Number(data?.total_rows || 0));
-    setEdits(seed);
+    setEdits({});
     setLoading(false);
   };
 
@@ -60,7 +57,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     return m;
   }, [sources]);
 
-  const val = (r, field) => {
+  const typed = (r, field) => {
     const e = edits[r.id] || {};
     return e[field] !== undefined ? e[field] : "";
   };
@@ -69,30 +66,36 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     setEdits(prev => ({ ...prev, [r.id]: { ...(prev[r.id] || {}), [field]: value } }));
   };
 
-  const polVal = (r, pid) => {
-    const pol = (edits[r.id] || {}).policies || {};
-    return pol[pid] !== undefined ? pol[pid] : "";
+  const polTyped = (r, pid, field) => {
+    const pol = ((edits[r.id] || {}).policies || {})[pid] || {};
+    return pol[field] !== undefined ? pol[field] : "";
   };
 
-  const setPolicy = (r, pid, value) => {
-    setEdits(prev => ({
-      ...prev,
-      [r.id]: { ...(prev[r.id] || {}), policies: { ...((prev[r.id] || {}).policies || {}), [pid]: value } },
-    }));
+  const setPolicy = (r, pid, field, value) => {
+    setEdits(prev => {
+      const row = prev[r.id] || {};
+      const pols = row.policies || {};
+      return {
+        ...prev,
+        [r.id]: { ...row, policies: { ...pols, [pid]: { ...(pols[pid] || {}), [field]: value } } },
+      };
+    });
   };
 
-  // A phone belongs to the household, so fill every row on screen with the
-  // same name that still has none.
+  // A phone belongs to the household, so fill every row on screen with the same
+  // name that still has none.
   const setPhone = (r, value) => {
     const four = value.replace(/\D/g, "").slice(0, 4);
+    const was = (edits[r.id] || {}).phone_last4;
     setEdits(prev => {
       const next = { ...prev };
       rows.forEach(x => {
-        const already = (next[x.id] || {}).phone_last4;
-        const sameName = x.customer_label === r.customer_label;
         if (x.id === r.id) {
           next[x.id] = { ...(next[x.id] || {}), phone_last4: four };
-        } else if (sameName && !x.phone_last4 && (!already || already === (prev[r.id] || {}).phone_last4)) {
+          return;
+        }
+        const already = (next[x.id] || {}).phone_last4;
+        if (x.customer_label === r.customer_label && !x.phone_last4 && (!already || already === was)) {
           next[x.id] = { ...(next[x.id] || {}), phone_last4: four };
         }
       });
@@ -100,27 +103,36 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     });
   };
 
-  const effectiveSource = (r) => val(r, "marketing_source") || r.marketing_source || "";
+  const effectiveSource = (r) => typed(r, "marketing_source") || r.marketing_source || "";
 
-  const payload = () => rows.map(r => {
+  const rowPayload = (r) => {
     const e = edits[r.id] || {};
     const out = { kind: r.kind, id: r.id };
     let any = false;
-    if ((e.phone_last4 || "").trim() && e.phone_last4 !== r.phone_last4) { out.phone_last4 = e.phone_last4.trim(); any = true; }
+    if ((e.phone_last4 || "").trim()) { out.phone_last4 = e.phone_last4.trim(); any = true; }
     if ((e.ecrm || "").trim()) { out.ecrm = e.ecrm.trim(); any = true; }
     if ((e.marketing_source || "").trim()) { out.marketing_source = e.marketing_source.trim(); any = true; }
     if ((e.referred_by_customer || "").trim()) { out.referred_by_customer = e.referred_by_customer.trim(); any = true; }
     if ((e.sourced_by_team_member_id || "").trim()) { out.sourced_by_team_member_id = e.sourced_by_team_member_id.trim(); any = true; }
-    const pol = e.policies || {};
-    const plist = Object.keys(pol)
-      .filter(id => String(pol[id] ?? "").trim() !== "")
-      .map(id => ({ id, issued_premium: String(pol[id]).trim() }));
+    const pols = e.policies || {};
+    const plist = Object.keys(pols)
+      .map(id => {
+        const p = pols[id] || {};
+        const prem = String(p.issued_premium ?? "").trim();
+        if (!prem) return null;
+        const item = { id, issued_premium: prem };
+        const when = String(p.issued_date ?? "").trim();
+        if (when) item.issued_date = when;
+        return item;
+      })
+      .filter(Boolean);
     if (plist.length) { out.policies = plist; any = true; }
     return any ? out : null;
-  }).filter(Boolean);
+  };
 
-  const save = async () => {
-    const body = payload();
+  const allPayload = () => rows.map(rowPayload).filter(Boolean);
+
+  const send = async (body) => {
     if (!body.length) return;
     setSaving(true);
     setErr("");
@@ -128,9 +140,10 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     const { data, error } = await supabase.rpc("rp_backfill_save", { p_rows: body });
     setSaving(false);
     if (error) { setErr(error.message || "That did not save."); return; }
-    const filled = Number(data?.also_filled || 0);
     const issued = Number(data?.policies_issued || 0);
-    setMsg(`Saved ${Number(data?.rows_saved || 0)} record${Number(data?.rows_saved) === 1 ? "" : "s"}${issued ? `, ${issued} issued premium${issued === 1 ? "" : "s"}` : ""}${filled ? `, plus ${filled} more filled in from the same households` : ""}.`);
+    const filled = Number(data?.also_filled || 0);
+    const saved = Number(data?.rows_saved || 0);
+    setMsg(`Saved ${saved} record${saved === 1 ? "" : "s"}${issued ? `, ${issued} policy premium${issued === 1 ? "" : "s"}` : ""}${filled ? `, plus ${filled} more filled in from the same households` : ""}.`);
     load(offset);
   };
 
@@ -157,14 +170,24 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     cursor: "pointer",
     boxSizing: "border-box",
   });
+  const chip = {
+    border: "none",
+    background: "transparent",
+    color: T.blue,
+    fontSize: 11,
+    fontWeight: 700,
+    padding: 0,
+    textAlign: "left",
+    cursor: "pointer",
+  };
 
-  const pending = payload().length;
+  const pending = allPayload().length;
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "baseline", justifyContent: "space-between" }}>
-        <div style={{ fontSize: 13, color: T.slate600, maxWidth: 560 }}>
-          Older records still missing something. Fill what you can down the rows and save the batch. A phone fills the other rows with the same name. Issued premium starts at what the policy was submitted at.
+        <div style={{ fontSize: 13, color: T.slate600, maxWidth: 620 }}>
+          Older records still missing something. Only what you type gets saved. Save a row on its own, or save everything you have touched. A phone fills the other rows with the same name.
         </div>
         <div style={{ fontSize: 13, color: T.slate500 }}>
           {total == null ? "" : `${total} to go`}{offset ? ` · from ${offset + 1}` : ""}
@@ -182,34 +205,35 @@ export default function BackfillTab({ sources = [], roster = [] }) {
         </div>
       ) : (
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12 }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1040 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1120 }}>
             <thead>
               <tr>
                 <th style={th}>Date</th>
                 <th style={th}>Customer</th>
-                <th style={th}>What</th>
                 <th style={{ ...th, width: 90 }}>Phone</th>
-                <th style={{ ...th, minWidth: 220 }}>ECRM link</th>
-                <th style={{ ...th, minWidth: 170 }}>Marketing source</th>
-                <th style={{ ...th, minWidth: 130 }}>Issued premium</th>
+                <th style={{ ...th, minWidth: 210 }}>ECRM link</th>
+                <th style={{ ...th, minWidth: 165 }}>Marketing source</th>
+                <th style={{ ...th, minWidth: 210 }}>Policies</th>
+                <th style={th}></th>
               </tr>
             </thead>
             <tbody>
               {rows.map(r => {
                 const isReferral = effectiveSource(r) === "referral";
+                const rowReady = !!rowPayload(r);
                 return (
                   <tr key={`${r.kind}-${r.id}`}>
-                    <td style={{ ...td, whiteSpace: "nowrap", color: T.slate500 }}>{r.on_date}</td>
-                    <td style={{ ...td, fontWeight: 600, color: T.slate900, whiteSpace: "nowrap" }}>{r.customer_label}</td>
-                    <td style={{ ...td, color: T.slate500, fontSize: 12 }}>
-                      {r.kind === "quote" ? "quote" : r.detail}
+                    <td style={{ ...td, whiteSpace: "nowrap", color: T.slate500 }}>
+                      {r.on_date}
+                      {r.kind === "quote" ? <div style={{ fontSize: 11 }}>quote</div> : null}
                     </td>
+                    <td style={{ ...td, fontWeight: 600, color: T.slate900, whiteSpace: "nowrap" }}>{r.customer_label}</td>
                     <td style={td}>
                       {r.phone_last4 ? (
                         <span style={{ color: T.slate500 }}>{r.phone_last4}</span>
                       ) : (
                         <input
-                          value={val(r, "phone_last4")}
+                          value={typed(r, "phone_last4")}
                           onChange={e => setPhone(r, e.target.value)}
                           inputMode="numeric"
                           autoComplete="off"
@@ -225,7 +249,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                         <span style={{ color: T.slate500, fontSize: 12 }}>on file</span>
                       ) : (
                         <input
-                          value={val(r, "ecrm")}
+                          value={typed(r, "ecrm")}
                           onChange={e => setField(r, "ecrm", e.target.value)}
                           placeholder="https://"
                           autoComplete="off"
@@ -236,7 +260,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                     <td style={td}>
                       {r.needs_marketing ? (
                         <select
-                          value={val(r, "marketing_source")}
+                          value={typed(r, "marketing_source")}
                           onChange={e => setField(r, "marketing_source", e.target.value)}
                           style={input}
                         >
@@ -251,14 +275,14 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                       {isReferral && !r.referred_by_customer && !r.sourced_by_team_member_id ? (
                         <div style={{ display: "grid", gap: 5, marginTop: 6 }}>
                           <input
-                            value={val(r, "referred_by_customer")}
+                            value={typed(r, "referred_by_customer")}
                             onChange={e => setField(r, "referred_by_customer", e.target.value)}
                             placeholder="Referred by which customer"
                             autoComplete="off"
                             style={input}
                           />
                           <select
-                            value={val(r, "sourced_by_team_member_id")}
+                            value={typed(r, "sourced_by_team_member_id")}
                             onChange={e => setField(r, "sourced_by_team_member_id", e.target.value)}
                             style={input}
                           >
@@ -270,23 +294,60 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                     </td>
                     <td style={td}>
                       {(r.policies || []).length ? (
-                        <div style={{ display: "grid", gap: 6 }}>
-                          {r.policies.map(p => (
-                            <label key={p.id} style={{ display: "grid", gap: 2 }}>
-                              <span style={{ fontSize: 11, color: T.slate500 }}>{p.product_type}</span>
-                              <input
-                                value={polVal(r, p.id)}
-                                onChange={e => setPolicy(r, p.id, e.target.value)}
-                                inputMode="decimal"
-                                autoComplete="off"
-                                style={input}
-                              />
-                            </label>
-                          ))}
+                        <div style={{ display: "grid", gap: 10 }}>
+                          {r.policies.map(p => {
+                            const polEdit = ((edits[r.id] || {}).policies || {})[p.id] || {};
+                            // What is on file is shown, not staged. Only a typed value is sent.
+                            const premBox = polEdit.issued_premium !== undefined
+                              ? polEdit.issued_premium
+                              : (p.issued_premium != null ? String(p.issued_premium) : "");
+                            return (
+                              <div key={p.id} style={{ display: "grid", gap: 3 }}>
+                                <span style={{ fontSize: 11, color: T.slate500 }}>
+                                  {p.product_type} · submitted ${Number(p.premium || 0).toLocaleString()}
+                                </span>
+                                {!p.issued_date ? (
+                                  <input
+                                    value={polTyped(r, p.id, "issued_date")}
+                                    onChange={e => setPolicy(r, p.id, "issued_date", e.target.value)}
+                                    type="date"
+                                    style={input}
+                                  />
+                                ) : null}
+                                <input
+                                  value={premBox}
+                                  onChange={e => setPolicy(r, p.id, "issued_premium", e.target.value)}
+                                  inputMode="decimal"
+                                  autoComplete="off"
+                                  placeholder={p.issued_date ? "Issued premium" : "Issued premium once it issues"}
+                                  style={input}
+                                />
+                                {p.issued_premium == null && !premBox ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setPolicy(r, p.id, "issued_premium", String(p.premium ?? ""))}
+                                    style={chip}
+                                  >
+                                    use {Number(p.premium || 0).toLocaleString()}
+                                  </button>
+                                ) : null}
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : (
                         <span style={{ color: T.slate500, fontSize: 12 }}>—</span>
                       )}
+                    </td>
+                    <td style={td}>
+                      <button
+                        type="button"
+                        onClick={() => send([rowPayload(r)].filter(Boolean))}
+                        disabled={saving || !rowReady}
+                        style={{ ...btn(false), padding: "7px 12px", fontSize: 13, color: rowReady ? T.blue : T.slate500 }}
+                      >
+                        Save
+                      </button>
                     </td>
                   </tr>
                 );
@@ -297,8 +358,8 @@ export default function BackfillTab({ sources = [], roster = [] }) {
       )}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-        <button type="button" onClick={save} disabled={saving || !pending} style={btn(true)}>
-          {saving ? "Saving..." : pending ? `Save ${pending} row${pending === 1 ? "" : "s"}` : "Nothing to save yet"}
+        <button type="button" onClick={() => send(allPayload())} disabled={saving || !pending} style={btn(true)}>
+          {saving ? "Saving..." : pending ? `Save ${pending} touched row${pending === 1 ? "" : "s"}` : "Nothing typed yet"}
         </button>
         <button type="button" onClick={() => setOffset(o => o + PAGE)} disabled={saving} style={btn(false)}>
           Skip this page
