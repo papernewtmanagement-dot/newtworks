@@ -20,7 +20,6 @@ import { useViewport } from "../lib/hooks.js";
 //   4. Payroll         — Staff payroll history (blank rows for missing weeks)
 //   5. Bank Accounts   — Account balances and reconciliation
 //   6. Credit & Debt   — Cards, loans, lines of credit (one row per account)
-//   7. General Ledger  — Full transaction ledger
 //
 // DATA: Reads live from Supabase views/tables via useFinancialsData().
 // ============================================================
@@ -135,7 +134,7 @@ function useFinancialsData(entity) {
         const s11AsOf = cprLatest?.week_ending_date || new Date().toISOString().split("T")[0];
 
         const [
-          pnlOwnRes, pnlFullRes, compRows, bankRows, ccRows, glRows,
+          pnlOwnRes, pnlFullRes, compRows, bankRows, ccRows,
           payrollRunsRes, payrollDetailRows,
           aippRow,
           growthBudgetRes, growthCeilingRes,
@@ -182,21 +181,6 @@ function useFinancialsData(entity) {
             // finrebuild 2026-08-08: same remap as v_bank_balances above.
             .select("business_entity_id, account_name, current_balance:current_balance_derived, last_statement_closing_balance, institution, account_type, account_number_last4, alternate_last4s, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, is_overdue, last_statement_period_end, statement_close_day, next_statement_expected"),
 
-          // GL — Phase 6 (entity hierarchy): fetch without hardcoded PaperNewt
-          // filter; expose business_entity_id so GLSection can filter to the
-          // current entity's subtree (Option B — flat listing across whole
-          // subtree with per-row entity badge, same pattern as Bank/Credit/BS).
-          // Bumped limit 50 → 200 so subtree filter has headroom before
-          // starving the displayed list at 50.
-          // Entity now sourced from chart_of_accounts.business_entity_id (single
-          // source of truth), NOT from the redundant journal_lines column.
-          // 2026-08-08: journal_lines/journal_entries merged into public.ledger (finrebuild)
-          supabase.from("ledger")
-            .select(`
-              debit, credit, created_at, entry_date, reference_number, description, source,
-              chart_of_accounts!inner ( account_name, business_entity_id )
-            `)
-            .order("created_at", { ascending: false }).limit(200),
 
           // Payroll runs (header) — whole Financials module is PaperNewt-scoped
           supabase.from("payroll_runs")
@@ -668,16 +652,6 @@ function useFinancialsData(entity) {
             stmtOverdue:     b.is_overdue === true,
           })),
           creditAccounts,
-          glEntries: (glRows.data || []).map(g => ({
-            date:        g.entry_date,
-            ref:         g.reference_number,
-            description: g.description,
-            source:      g.source,
-            account:     g.chart_of_accounts?.account_name,
-            debit:       parseFloat(g.debit  || 0),
-            credit:      parseFloat(g.credit || 0),
-            businessEntityId: g.chart_of_accounts?.business_entity_id,   // Phase 6: subtree filter + entity badge — entity flows through the account, not the line
-          })),
           payroll,
           balanceSheet,
           growthBudget: (() => {
@@ -743,7 +717,7 @@ let MOCK = {
   compRecaps:[],
   aipp: { year: new Date().getFullYear(), target:0, earned:0, projected:0, priorYear:0, hasData:false, monthlyEarned: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map(m=>({month:m,amount:0})) },
   goalsPace: { pc:null, cc:null, smvc:null, aipp:null },
-  bankAccounts:[],creditAccounts:[],glEntries:[],payroll:[],
+  bankAccounts:[],creditAccounts:[],payroll:[],
   balanceSheet:{ assets:[], liabilities:[], equity:[], totalAssets:0, totalLiabilities:0, totalEquity:0, asOfLabel:"" },
 };
 
@@ -3168,79 +3142,6 @@ const CreditSection = ({ data }) => {
   );
 };
 
-// ─── Section: General Ledger ──────────────────────────────────
-const GLSection = ({ data }) => {
-  // Phase 6 (entity hierarchy): filter to current entity's subtree — Option B
-  // flat listing across whole subtree with per-row entity badge, same pattern
-  // as Bank / Credit / BalanceSheet sections from Phases 4-5. entitiesById +
-  // descendants derive client-side from the 5-entity map already fetched by
-  // the hook. Fetch pulls 200 most-recent lines to give the subtree filter
-  // headroom; display slices to 50 after filtering so mobile stays tight.
-  const allEntries = Array.isArray(data?.glEntries) ? data.glEntries : [];
-  const ctx = data?.entityContext || {};
-  const allEntities = Array.isArray(ctx.allEntities) ? ctx.allEntities : [];
-  const entitiesById = Object.fromEntries(allEntities.map(e => [e.id, e]));
-  const allow = descendantsOf(ctx.currentEntityId, allEntities);
-  const filtered = allEntities.length === 0
-    ? allEntries
-    : allEntries.filter(r => !r.businessEntityId || allow.has(r.businessEntityId));
-  const entries = filtered.slice(0, 50);
-
-  const subtreeLabel = allEntities.length > 0 && filtered.length !== allEntries.length
-    ? ` · ${entries.length} of ${filtered.length} matched (subtree)`
-    : ` · ${entries.length} most recent`;
-
-  return (
-    <Card>
-      <CardHeader
-        title="General Ledger — Recent Entries"
-        sub={`All accounts${subtreeLabel}`}
-      />
-      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr style={{ borderBottom: `1px solid ${T.slate200}` }}>
-            {["Date","Ref","Description","Account","Entity","Debit","Credit"].map((h,i) => (
-              <th key={i} style={{ padding: "8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: i >= 5 ? "right" : "left" }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((r,i) => {
-            const entName = r.businessEntityId ? entitiesById[r.businessEntityId]?.name : null;
-            return (
-              <tr key={i} style={{ borderBottom: `1px solid ${T.slate100}` }}>
-                <td style={{ padding: "8px", fontSize: 11, color: T.slate500 }}>{r.date}</td>
-                <td style={{ padding: "8px", fontSize: 11, color: T.blue, fontFamily: "monospace" }}>{r.ref}</td>
-                <td style={{ padding: "8px", fontSize: 12, color: T.slate800 }}>{r.description}</td>
-                <td style={{ padding: "8px", fontSize: 11, color: T.slate500, fontFamily: "monospace" }}>{r.account}</td>
-                <td style={{ padding: "8px", fontSize: 11 }}>
-                  {entName ? (
-                    <span style={{
-                      display: "inline-block",
-                      padding: "1px 6px",
-                      fontSize: 9,
-                      fontWeight: 600,
-                      color: T.slate700,
-                      background: T.slate100,
-                      border: `1px solid ${T.slate200}`,
-                      borderRadius: 999,
-                      letterSpacing: "0.02em",
-                    }}>{entName}</span>
-                  ) : <span style={{ color: T.slate400 }}>—</span>}
-                </td>
-                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.slate900, fontWeight: r.debit ? 500 : 400 }}>{r.debit ? fmtMoneyR(r.debit) : "—"}</td>
-                <td style={{ padding: "8px", fontSize: 12, textAlign: "right", color: T.green, fontWeight: r.credit ? 500 : 400 }}>{r.credit ? fmtMoneyR(r.credit) : "—"}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      </div>
-    </Card>
-  );
-};
-
 // ─── CPA-Style Print Package ──────────────────────────────────
 // Browser-native print: hidden on screen, shown only when printing.
 const PRINT_CSS = `
@@ -3824,7 +3725,7 @@ const ReconciliationSection = () => {
 };
 
 export default function Financials() {
-  const [section, setSection, sectionHref] = useTabParam("tab", "overview", ["overview","pl","comp","credit","bank","gl","payroll","monthlyclose","cashregister","documents","reconciliation"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "overview", ["overview","pl","comp","credit","bank","payroll","monthlyclose","cashregister","documents","reconciliation"]);
   const [period, setPeriod] = useState("mtd");
   // Phase 3 (entity hierarchy): which entity the Financials views are scoped
   // to. Persists in URL so refresh restores; default = Personal (root of tree).
@@ -3847,7 +3748,6 @@ export default function Financials() {
     { id: "payroll",   label: "Payroll"         },
     { id: "bank",      label: "Bank Accounts"   },
     { id: "credit",    label: "Credit & Debt"   },
-    { id: "gl",        label: "General Ledger"  },
   ];
   const toolSections = [
     { id: "cashregister", label: "Cash Register" },
@@ -3958,7 +3858,6 @@ export default function Financials() {
       {section === "payroll"  && <PayrollSection data={MOCK} />}
       {section === "bank"     && <BankSection data={MOCK} />}
       {section === "credit"   && <CreditSection data={MOCK} />}
-      {section === "gl"       && <GLSection data={MOCK} />}
 
       {/* Operational financial tools (folded in from former top-nav items) */}
       {section === "cashregister" && <CashRegister />}
