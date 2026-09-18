@@ -5,6 +5,7 @@ import { mdToHtml } from "../lib/markdown.js";
 import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 
 import { useTabParam, TabLink } from "../lib/routing.jsx";
+import { isManagerTier } from "../lib/roleLevels.js";
 // ============================================================
 // Time Off & Remote Request Module
 // Spec: persistent_memory id fcaa841a-68f0-481c-a348-9d07f1699a85
@@ -571,7 +572,7 @@ function SubmitView({ me, onSubmitted }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      {(me?.role_level === "Account Manager" || me?.role_level === "Unit Manager") && (
+      {isManagerTier(me?.role_level) && (
         <MyStandingPrefsPanel me={me} onSubmitted={onSubmitted} />
       )}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 24 }}>
