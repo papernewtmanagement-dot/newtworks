@@ -2970,7 +2970,7 @@ function BeagleArt() {
       <rect x="116" y="150" width="20" height="28" rx="9" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" />
       <ellipse cx="100" cy="138" rx="43" ry="32" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" />
       <g clipPath="url(#nwBeagleBody)">
-        <ellipse cx="76" cy="134" rx="18" ry="17" fill="#A06A33" />
+        <ellipse cx="76" cy="150" rx="18" ry="17" fill="#A06A33" />
       </g>
       <g className="nw-up"  style={{ transformOrigin: "50% 0%" }}><rect x="60" y="140" width="19" height="34" rx="9" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" /></g>
       <g className="nw-upB" style={{ transformOrigin: "50% 0%" }}><rect x="121" y="140" width="19" height="34" rx="9" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" /></g>
@@ -3005,27 +3005,31 @@ function BeagleArt() {
 function TurtleArt() {
   return (
     <>
+      {/* Shell goes on his BACK, so it is drawn first and shows as a rim
+          around him; the pale plastron is his front. Peter 2026-09-17. */}
       <g className="nw-wag" style={{ transformOrigin: "6% 50%" }}>
-        <path d="M150 142 q18 4 22 15" fill="none" stroke="#7FA86A" strokeWidth="9" strokeLinecap="round" />
+        <path d="M152 144 q19 4 23 16" fill="none" stroke="#7FA86A" strokeWidth="9" strokeLinecap="round" />
       </g>
-      <rect x="58" y="152" width="22" height="24" rx="10" fill="#7FA86A" />
-      <rect x="120" y="152" width="22" height="24" rx="10" fill="#7FA86A" />
-      <g className="nw-up"  style={{ transformOrigin: "50% 0%" }}><rect x="44" y="126" width="20" height="30" rx="9" fill="#7FA86A" /></g>
-      <g className="nw-upB" style={{ transformOrigin: "50% 0%" }}><rect x="136" y="126" width="20" height="30" rx="9" fill="#7FA86A" /></g>
-      <rect x="86" y="92" width="28" height="22" rx="8" fill="#8FBB77" />
-      <ellipse cx="100" cy="132" rx="56" ry="42" fill="#4E7A46" />
-      <ellipse cx="100" cy="134" rx="44" ry="32" fill="#6B9B5C" />
-      <path d="M100 110 l17 11 -6 20 h-22 l-6 -20 z" fill="#4E7A46" />
-      <circle cx="68" cy="130" r="9" fill="#4E7A46" />
-      <circle cx="132" cy="130" r="9" fill="#4E7A46" />
-      <circle cx="84" cy="156" r="8" fill="#4E7A46" />
-      <circle cx="116" cy="156" r="8" fill="#4E7A46" />
-      <ellipse cx="100" cy="72" rx="31" ry="27" fill="#8FBB77" />
-      <circle cx="88" cy="67" r="5.5" fill="#2A2422" />
-      <circle cx="112" cy="67" r="5.5" fill="#2A2422" />
-      <circle cx="90" cy="65" r="1.9" fill="#FFFFFF" />
-      <circle cx="114" cy="65" r="1.9" fill="#FFFFFF" />
-      <path d="M89 84 q11 9 22 0" fill="none" stroke="#3E6B2E" strokeWidth="3" strokeLinecap="round" />
+      <ellipse cx="100" cy="128" rx="58" ry="44" fill="#4E7A46" />
+      <ellipse cx="100" cy="126" rx="47" ry="34" fill="#6B9B5C" />
+      <path d="M100 100 l18 12 -7 21 h-23 l-7 -21 z" fill="#4E7A46" />
+      <circle cx="64" cy="124" r="9" fill="#4E7A46" />
+      <circle cx="136" cy="124" r="9" fill="#4E7A46" />
+      <circle cx="80" cy="150" r="8" fill="#4E7A46" />
+      <circle cx="120" cy="150" r="8" fill="#4E7A46" />
+      <rect x="58" y="152" width="24" height="26" rx="11" fill="#7FA86A" />
+      <rect x="118" y="152" width="24" height="26" rx="11" fill="#7FA86A" />
+      <g className="nw-up"  style={{ transformOrigin: "50% 0%" }}><rect x="42" y="128" width="21" height="32" rx="10" fill="#7FA86A" /></g>
+      <g className="nw-upB" style={{ transformOrigin: "50% 0%" }}><rect x="137" y="128" width="21" height="32" rx="10" fill="#7FA86A" /></g>
+      <ellipse cx="100" cy="146" rx="38" ry="30" fill="#C3D9A6" />
+      <path d="M78 130 h44 M76 146 h48 M80 162 h40" fill="none" stroke="#A8C489" strokeWidth="3" strokeLinecap="round" />
+      <rect x="86" y="96" width="28" height="24" rx="9" fill="#8FBB77" />
+      <ellipse cx="100" cy="74" rx="32" ry="28" fill="#8FBB77" />
+      <circle cx="88" cy="69" r="5.5" fill="#2A2422" />
+      <circle cx="112" cy="69" r="5.5" fill="#2A2422" />
+      <circle cx="90" cy="67" r="1.9" fill="#FFFFFF" />
+      <circle cx="114" cy="67" r="1.9" fill="#FFFFFF" />
+      <path d="M89 86 q11 9 22 0" fill="none" stroke="#4E7A46" strokeWidth="3" strokeLinecap="round" />
     </>
   );
 }
@@ -3180,21 +3184,25 @@ function RoosterArt() {
 function PuffinArt() {
   return (
     <>
-      <rect x="85" y="168" width="13" height="14" rx="4" fill="#E8913A" />
-      <rect x="102" y="168" width="13" height="14" rx="4" fill="#E8913A" />
-      <ellipse cx="100" cy="134" rx="44" ry="36" fill="#2A2422" />
-      <ellipse cx="100" cy="142" rx="30" ry="27" fill="#FBF6EE" />
-      <g className="nw-swayL" style={{ transformOrigin: "88% 14%" }}><ellipse cx="64" cy="132" rx="17" ry="26" fill="#1A1614" /></g>
-      <g className="nw-swayR" style={{ transformOrigin: "12% 14%" }}><ellipse cx="136" cy="132" rx="17" ry="26" fill="#1A1614" /></g>
-      <circle cx="100" cy="76" r="32" fill="#2A2422" />
-      <ellipse cx="100" cy="82" rx="23" ry="24" fill="#FBF6EE" />
-      <circle cx="88" cy="71" r="5" fill="#15100F" />
-      <circle cx="112" cy="71" r="5" fill="#15100F" />
-      <circle cx="89.6" cy="69" r="1.7" fill="#FFFFFF" />
-      <circle cx="113.6" cy="69" r="1.7" fill="#FFFFFF" />
-      <path d="M100 82 q21 4 19 16 q-2 12 -19 14 q-17 -2 -19 -14 q-2 -12 19 -16 z" fill="#E8913A" />
-      <path d="M100 82 q-17 4 -19 16 q0 7 6 11 q-2 -15 13 -27 z" fill="#C9C2B4" />
-      <path d="M91 97 q17 -2 27 2" fill="none" stroke="#D6602F" strokeWidth="3" strokeLinecap="round" />
+      {/* Side on, because the bill is the whole point: a deep triangle in
+          grey, yellow and orange bands. Peter 2026-09-17. */}
+      <path d="M62 150 q-16 10 -14 22 l22 -6 z" fill="#1A1614" />
+      <path d="M88 168 q-10 12 2 14 h22 q12 -2 2 -14 z" fill="#E8913A" />
+      <path d="M92 178 v6 M100 178 v6 M108 178 v6" fill="none" stroke="#C9762B" strokeWidth="2" />
+      <ellipse cx="100" cy="130" rx="40" ry="43" fill="#2A2422" />
+      <ellipse cx="114" cy="140" rx="26" ry="33" fill="#FBF6EE" />
+      <g className="nw-swayL" style={{ transformOrigin: "72% 10%" }}>
+        <ellipse cx="80" cy="132" rx="17" ry="28" fill="#1A1614" />
+      </g>
+      <circle cx="106" cy="68" r="30" fill="#2A2422" />
+      <ellipse cx="118" cy="70" rx="19" ry="22" fill="#FBF6EE" />
+      <circle cx="122" cy="58" r="5" fill="#15100F" />
+      <ellipse cx="122" cy="58" rx="8" ry="4" fill="none" stroke="#D6602F" strokeWidth="2" />
+      <path d="M130 52 L136 56 L136 90 L130 88 q-4 -18 0 -36 z" fill="#8F9BA2" />
+      <path d="M136 56 L143 59 L143 88 L136 90 z" fill="#E8C34A" />
+      <path d="M143 59 L167 74 L143 88 z" fill="#E8702F" />
+      <path d="M150 64 q4 10 0 20 M157 68 q3 7 0 13" fill="none" stroke="#C4501F" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M130 74 L165 74" fill="none" stroke="#C4501F" strokeWidth="2" />
     </>
   );
 }
@@ -3202,26 +3210,26 @@ function PuffinArt() {
 function WoodpeckerArt() {
   return (
     <>
-      <path d="M100 168 l-12 22 h24 z" fill="#1A1614" />
-      <rect x="84" y="164" width="11" height="12" rx="4" fill="#8A7A62" />
-      <rect x="105" y="164" width="11" height="12" rx="4" fill="#8A7A62" />
-      <ellipse cx="100" cy="138" rx="38" ry="40" fill="#2A2422" />
-      <ellipse cx="100" cy="146" rx="23" ry="29" fill="#FBF6EE" />
-      <circle cx="74" cy="124" r="4" fill="#FBF6EE" />
-      <circle cx="70" cy="140" r="4" fill="#FBF6EE" />
-      <circle cx="74" cy="156" r="4" fill="#FBF6EE" />
-      <circle cx="126" cy="124" r="4" fill="#FBF6EE" />
-      <circle cx="130" cy="140" r="4" fill="#FBF6EE" />
-      <circle cx="126" cy="156" r="4" fill="#FBF6EE" />
-      <g className="nw-peck" style={{ transformOrigin: "50% 72%" }}>
-        <circle cx="100" cy="74" r="30" fill="#2A2422" />
-        <path d="M78 54 q22 -31 44 0 q-22 -13 -44 0 z" fill="#D63B33" />
-        <ellipse cx="100" cy="86" rx="18" ry="14" fill="#FBF6EE" />
-        <circle cx="88" cy="70" r="5" fill="#FBF6EE" />
-        <circle cx="88" cy="70" r="2.4" fill="#15100F" />
-        <circle cx="112" cy="70" r="5" fill="#FBF6EE" />
-        <circle cx="112" cy="70" r="2.4" fill="#15100F" />
-        <path d="M100 88 l8 26 l-16 0 z" fill="#C9C2B4" />
+      {/* Side on, because a woodpecker is its silhouette: long chisel bill,
+          red crest, stiff tail braced under it. Peter 2026-09-17. */}
+      <path d="M80 158 l-16 36 l24 -8 z" fill="#1A1614" />
+      <rect x="90" y="168" width="11" height="13" rx="4" fill="#8A7A62" />
+      <rect x="106" y="168" width="11" height="13" rx="4" fill="#8A7A62" />
+      <ellipse cx="100" cy="130" rx="34" ry="43" fill="#2A2422" />
+      <ellipse cx="112" cy="140" rx="22" ry="32" fill="#FBF6EE" />
+      <g className="nw-swayL" style={{ transformOrigin: "70% 10%" }}>
+        <ellipse cx="82" cy="130" rx="17" ry="31" fill="#1A1614" />
+        <path d="M70 112 h20 M68 126 h22 M68 140 h22 M70 154 h18" fill="none" stroke="#FBF6EE" strokeWidth="5" strokeLinecap="round" />
+      </g>
+      <g className="nw-peck" style={{ transformOrigin: "34% 86%" }}>
+        <circle cx="106" cy="70" r="27" fill="#2A2422" />
+        <path d="M112 44 q-6 -22 10 -26 q-2 12 6 16 q-10 2 -16 10 z" fill="#D63B33" />
+        <path d="M84 60 q14 -22 36 -16 q-22 2 -36 16 z" fill="#D63B33" />
+        <path d="M118 82 q-24 6 -32 -4 q18 -9 32 -5 z" fill="#FBF6EE" />
+        <circle cx="119" cy="62" r="5" fill="#FBF6EE" />
+        <circle cx="119" cy="62" r="2.4" fill="#15100F" />
+        <path d="M130 66 L178 76 L130 84 z" fill="#C9C2B4" />
+        <path d="M130 76 L176 76" fill="none" stroke="#8F8A7B" strokeWidth="2" />
       </g>
     </>
   );
