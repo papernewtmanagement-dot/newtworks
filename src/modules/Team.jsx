@@ -5,6 +5,7 @@ import InterviewSlotsManager from "../components/InterviewSlotsManager.jsx";
 import HiringEmailTemplates from "../components/HiringEmailTemplates.jsx";
 import MemberAvatar from "../lib/MemberAvatar.jsx";
 import { fmtMoney } from "../lib/format.jsx";
+import { ROLE_LEVELS } from "../lib/roleLevels.js";
 
 
 // Returns true if a staff member holds any one of the three license types.
@@ -1792,12 +1793,7 @@ const StaffDirectory = ({ staff }) => {
               <label style={labelStyle}>Role level</label>
               <select style={inputStyle} value={addForm.role_level} onChange={e => setAddForm(f => ({ ...f, role_level: e.target.value }))}>
                 <option value="">—</option>
-                <option value="Owner">Owner</option>
-                <option value="Office Manager">Office Manager</option>
-                <option value="Unit Manager">Unit Manager</option>
-                <option value="Section Manager">Section Manager</option>
-                <option value="Account Manager">Account Manager</option>
-                <option value="Account Associate">Account Associate</option>
+                {ROLE_LEVELS.map(lvl => <option key={lvl} value={lvl}>{lvl}</option>)}
               </select>
             </div>
           </div>
@@ -2601,12 +2597,7 @@ const StaffDirectory = ({ staff }) => {
                   <div><label style={labelStyle}>Role level (position)</label>
                     <select style={inputStyle} value={form.role_level || ""} onChange={e=>setForm({...form, role_level:e.target.value})}>
                       <option value="">—</option>
-                      <option value="Owner">Owner</option>
-                      <option value="Office Manager">Office Manager</option>
-                      <option value="Unit Manager">Unit Manager</option>
-                      <option value="Section Manager">Section Manager</option>
-                      <option value="Account Manager">Account Manager</option>
-                      <option value="Account Associate">Account Associate</option>
+                      {ROLE_LEVELS.map(lvl => <option key={lvl} value={lvl}>{lvl}</option>)}
                     </select>
                   </div>
                   <div><label style={labelStyle}>Team category</label>
