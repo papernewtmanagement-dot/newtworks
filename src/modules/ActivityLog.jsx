@@ -2970,8 +2970,7 @@ function BeagleArt() {
       <rect x="116" y="150" width="20" height="28" rx="9" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" />
       <ellipse cx="100" cy="138" rx="43" ry="32" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" />
       <g clipPath="url(#nwBeagleBody)">
-        <ellipse cx="74" cy="133" rx="27" ry="25" fill="#A06A33" />
-        <ellipse cx="92" cy="150" rx="12" ry="10" fill="#A06A33" />
+        <ellipse cx="76" cy="134" rx="18" ry="17" fill="#A06A33" />
       </g>
       <g className="nw-up"  style={{ transformOrigin: "50% 0%" }}><rect x="60" y="140" width="19" height="34" rx="9" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" /></g>
       <g className="nw-upB" style={{ transformOrigin: "50% 0%" }}><rect x="121" y="140" width="19" height="34" rx="9" fill="#F4EFE6" stroke="#D8D1C2" strokeWidth="2" /></g>
