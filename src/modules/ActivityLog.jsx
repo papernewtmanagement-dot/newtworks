@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
-import { useTabParam, TabLink } from "../lib/routing.jsx";
+import { useTabParam, TabLink, hrefWithParam } from "../lib/routing.jsx";
+import { AccountCtx, CustomerName, parseAcctToken } from "../lib/customerAccount.jsx";
 import TimeHub from "./TimeHub.jsx";
 import PFA from "./PFA.jsx";
 import Development from "./Development.jsx";
@@ -1126,7 +1127,7 @@ function PendingSaves({ refreshKey }) {
             {(rows || []).map(r => (
               <tr key={r.id}>
                 <td style={tableTd}>{r.first_name || "\u2014"}</td>
-                <td style={tableTd}>{r.customer_label}</td>
+                <td style={tableTd}><CustomerName label={r.customer_label} /></td>
                 <td style={tableTd}>{PRODUCT_LABEL[r.save_line] || r.save_line}</td>
                 <td style={tableTd}>{fmtDate(r.occurred_on)}</td>
                 <td style={tableTd}>{fmtDate(r.credit_available_on)}</td>
@@ -1229,7 +1230,7 @@ function SpotCheck({ isAdmin }) {
                   <td style={tableTd}>{r.first_name || "\u2014"}</td>
                   <td style={tableTd}>{fmtDate(r.occurred_on)}</td>
                   <td style={tableTd}>{r.label || r.activity_key}</td>
-                  <td style={tableTd}>{r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}</td>
+                  <td style={tableTd}><CustomerName label={r.customer_label} />{r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue, fontSize: 11, marginLeft: 6 }}>ECRM</a> : null}</td>
                   <td style={{ ...tableTd, maxWidth: 260 }}>{r.note || "\u2014"}</td>
                   <td style={tableTd}>{fmtPts(r.points)}</td>
                   <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
@@ -1489,7 +1490,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                     <td style={tableTd}>
                       {nameOf(r.team_member_id)}
                     </td>
-                    <td style={tableTd}>{r.customer_label}{r.phone_last4 ? <div style={{ fontSize: 11, color: T.slate400 }}>·{r.phone_last4}</div> : null}</td>
+                    <td style={tableTd}><CustomerName label={r.customer_label} phone4={r.phone_last4} />{r.phone_last4 ? <div style={{ fontSize: 11, color: T.slate400 }}>·{r.phone_last4}</div> : null}</td>
                     <td style={tableTd}>
                       {relLabel(r.household_status)}
                       {r.on_file_answer && <div style={{ fontSize: 11, color: T.amber }}>{onFileLabel(r.on_file_answer)}</div>}
@@ -1571,7 +1572,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                       {escalated ? nameOf(r.escalated_to_team_member_id)
                         : <span style={{ color: T.slate400 }} title="An appointment you keep for yourself pays nothing here. It pays through the sale.">kept it</span>}
                     </td>
-                    <td style={tableTd}>{r.customer_label}{r.phone_last4 ? <div style={{ fontSize: 11, color: T.slate400 }}>·{r.phone_last4}</div> : null}</td>
+                    <td style={tableTd}><CustomerName label={r.customer_label} phone4={r.phone_last4} />{r.phone_last4 ? <div style={{ fontSize: 11, color: T.slate400 }}>·{r.phone_last4}</div> : null}</td>
                     <td style={tableTd}>
                       {r.line_of_business
                         ? (typeLabel(types || {}, r.line_of_business, r.product_type) || PRODUCT_SHORT[r.line_of_business] || r.line_of_business)
@@ -1619,7 +1620,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                 <tr key={r.id}>
                   <td style={tableTd}>{fmtDate(r.occurred_on)}</td>
                   <td style={tableTd}>{nameOf(r.team_member_id)}</td>
-                  <td style={tableTd}>{r.customer_label || "—"}{r.phone_last4 ? <div style={{ fontSize: 11, color: T.slate400 }}>·{r.phone_last4}</div> : null}</td>
+                  <td style={tableTd}><CustomerName label={r.customer_label} phone4={r.phone_last4} />{r.phone_last4 ? <div style={{ fontSize: 11, color: T.slate400 }}>·{r.phone_last4}</div> : null}</td>
                   <td style={tableTd}>{actLabel(r.activity_key)}{r.source !== "manual" && <div style={{ fontSize: 11, color: T.slate400 }}>from a sale</div>}</td>
                   <td style={tableTd}>
                     {r.policy_line
@@ -4103,7 +4104,7 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
                       <span style={{ marginLeft: 6, padding: "1px 7px", borderRadius: 999, background: T.slate100, color: T.slate600, fontSize: 11, fontWeight: 700 }}>Historical</span>
                     )}
                   </td>
-                  <td style={tableTd}>{r.customer_label || "—"}{r.phone_last4 ? <span style={{ color: T.slate400 }}> ·{r.phone_last4}</span> : null}</td>
+                  <td style={tableTd}><CustomerName label={r.customer_label} phone4={r.phone_last4} />{r.phone_last4 ? <span style={{ color: T.slate400 }}> ·{r.phone_last4}</span> : null}</td>
                   {isAdmin && <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{r.who}</td>}
                   <td style={tableTd}>
                     {r.summary || "—"}
@@ -4128,12 +4129,177 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
 }
 
 // =====================================================================
+// Customer account — one household's whole record, in a popup.
+// Peter 2026-09-18: click a customer's name on any tab and see everything
+// on file for them, newest first.
+//
+// Reads rp_customer_account, which matches on the same household key the
+// log uses: first name, last initial, last four of the phone. A record
+// logged before the phone rule has no phone and still matches. When more
+// than one phone turns up under one name the popup says so, because that
+// is two households sharing a name.
+//
+// The name itself is <CustomerName> from lib/customerAccount.jsx. It reads
+// the provider set up in the shell below, so no tab passes anything down.
+// =====================================================================
+const ACCT_KIND = {
+  sale:        { label: "Sale",               color: T.green },
+  quote:       { label: "Quote",              color: T.blue },
+  cancelation: { label: "Cancelation",        color: T.red },
+  activity:    { label: "Activity",           color: T.purple },
+  scorecard:   { label: "Conversation score", color: T.teal },
+  appointment: { label: "Appointment",        color: T.amber },
+};
+
+function CustomerAccount({ token, types, onClose }) {
+  const { label, phone4 } = parseAcctToken(token);
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    setData(null); setErr("");
+    (async () => {
+      const r = await supabase.rpc("rp_customer_account", { p_label: label, p_phone_last4: phone4 || null });
+      if (!alive) return;
+      if (r.error) { setErr(errText(r.error)); return; }
+      if (r.data && r.data.ok === false) { setErr(errText(r.data)); return; }
+      setData(r.data && typeof r.data === "object" ? r.data : null);
+    })();
+    return () => { alive = false; };
+  }, [label, phone4]);
+
+  const c = data?.customer || {};
+  const t = data?.totals || {};
+  const policies = Array.isArray(data?.policies) ? data.policies : [];
+  const timeline = Array.isArray(data?.timeline) ? data.timeline : [];
+  const phones = Array.isArray(c.phones) ? c.phones : [];
+  const prod = (line, key) => typeLabel(types || {}, line, key) || PRODUCT_SHORT[line] || line || "—";
+  const plain = (s) => s ? String(s).replace(/_/g, " ") : "";
+  const title = `${c.label || label}${c.phone_last4 ? ` · ${c.phone_last4}` : ""}`;
+
+  return (
+    <Modal title={title} onClose={onClose}>
+      {err && <Notice kind="error">{err}</Notice>}
+      {!data && !err && <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>}
+      {data && (
+        <div style={{ display: "grid", gap: 12 }}>
+
+          <div style={{ ...cardStyle, padding: 14, display: "grid", gap: 10 }}>
+            <div style={{ fontSize: 13, color: T.slate600 }}>
+              {c.relationship ? relLabel(c.relationship) : "Not set"}
+              {c.marketing_source ? ` · came from ${plain(c.marketing_source)}` : ""}
+              {c.first_seen ? ` · first on file ${fmtDate(c.first_seen)}` : ""}
+              {c.last_seen ? ` · last touched ${fmtDate(c.last_seen)}` : ""}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 8 }}>
+              <Stat label="Policies in force" value={`${Number(t.policies_in_force || 0)} of ${Number(t.policies || 0)}`} />
+              <Stat label="Premium in force" value={`$${fmtPts(t.premium_in_force || 0)}`} />
+              <Stat label="Quotes" value={Number(t.quotes || 0)} />
+              <Stat label="Cancelations" value={Number(t.cancelations || 0)} />
+              <Stat label="Activities" value={Number(t.activities || 0)} />
+              <Stat label="Appointments" value={Number(t.appointments || 0)} />
+            </div>
+            {phones.length > 1 && (
+              <div style={{ fontSize: 12, color: T.amber, fontWeight: 600 }}>
+                More than one phone is on file under this name ({phones.join(", ")}). Everything under the name is shown together.
+              </div>
+            )}
+          </div>
+
+          <div style={{ ...cardStyle, padding: 14 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900, marginBottom: 8 }}>Policies</div>
+            {policies.length === 0 ? (
+              <div style={{ fontSize: 13, color: T.slate600 }}>Nothing sold to this household yet.</div>
+            ) : (
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={tableTh}>Policy</th>
+                      <th style={tableTh}>Premium</th>
+                      <th style={tableTh}>Submitted</th>
+                      <th style={tableTh}>Issued</th>
+                      <th style={tableTh}>Standing</th>
+                      <th style={tableTh}>Sold by</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {policies.map(p => (
+                      <tr key={p.sale_product_id}>
+                        <td style={tableTd}>
+                          {prod(p.line_of_business, p.product_type)}
+                          {p.vehicle_count ? <span style={{ color: T.slate500 }}> · {plural(p.vehicle_count, "car")}</span> : null}
+                          {p.is_added_to_existing ? <div style={{ fontSize: 11, color: T.slate400 }}>added to one they had</div> : null}
+                        </td>
+                        <td style={tableTd}>${fmtPts(p.issued_premium != null ? p.issued_premium : p.premium)}</td>
+                        <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{fmtDate(p.submitted_date)}</td>
+                        <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{p.issued_date ? fmtDate(p.issued_date) : <span style={{ color: T.slate400 }}>waiting</span>}</td>
+                        <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
+                          {p.canceled_on
+                            ? <span style={{ color: T.red, fontWeight: 700 }}>canceled {fmtDate(p.canceled_on)}</span>
+                            : <span style={{ color: T.green, fontWeight: 700 }}>in force</span>}
+                          {p.autopay_enrolled ? <div style={{ fontSize: 11, color: T.slate500 }}>autopay</div> : null}
+                        </td>
+                        <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{p.sold_by}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div style={{ ...cardStyle, padding: 14 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>Everything logged</div>
+            <div style={{ fontSize: 12, color: T.slate500, marginBottom: 10 }}>Newest first.</div>
+            {timeline.length === 0 ? (
+              <div style={{ fontSize: 13, color: T.slate600 }}>Nothing on file for this household.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {timeline.map(r => {
+                  const k = ACCT_KIND[r.kind] || { label: r.kind, color: T.slate700 };
+                  const m = r.meta || {};
+                  return (
+                    <div key={`${r.kind}:${r.id}`} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 0", borderTop: `1px solid ${T.slate100}` }}>
+                      <div style={{ width: 78, flexShrink: 0, fontSize: 12, color: T.slate500, whiteSpace: "nowrap" }}>{fmtDate(r.occurred_on)}</div>
+                      <div style={{ width: 110, flexShrink: 0 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: k.color }}>{k.label}</span>
+                        {r.entry_source === "historical_backfill" && (
+                          <div style={{ fontSize: 10, color: T.slate400, fontWeight: 700 }}>Historical</div>
+                        )}
+                        {m.derived && <div style={{ fontSize: 10, color: T.slate400 }}>from a sale</div>}
+                      </div>
+                      <div style={{ flex: "1 1 200px", minWidth: 0, fontSize: 13, color: T.slate800 }}>
+                        {r.summary || "—"}
+                        {r.amount != null && r.kind !== "scorecard" ? <span style={{ color: T.slate500 }}> · ${fmtPts(r.amount)}</span> : null}
+                        {m.reason ? <div style={{ fontSize: 11, color: T.slate500 }}>reason: {plain(m.reason)}</div> : null}
+                        {m.save_reason ? <div style={{ fontSize: 11, color: T.slate500 }}>{m.save_reason}</div> : null}
+                        {r.note ? <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>{r.note}</div> : null}
+                        {r.ecrm_url ? <div><a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: T.blue }}>ECRM</a></div> : null}
+                      </div>
+                      <div style={{ width: 90, flexShrink: 0, textAlign: "right", fontSize: 12, color: T.slate500 }}>{r.who}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// =====================================================================
 // Module shell
 // =====================================================================
 export default function ActivityLog({ userRole, userId }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
   const [tab, setTab, tabHref] = useTabParam("tab", "log", [...TABS, "earnings", "history"]);
+  const [acct, setAcct] = useTabParam("acct", "");   // the customer account popup, open from any tab
   const [values, setValues] = useState([]);
   const [sources, setSources] = useState([]);
   const [types, setTypes] = useState({});
@@ -4220,8 +4386,17 @@ export default function ActivityLog({ userRole, userId }) {
     { id: "development", label: "Development" },
   ];
 
+  // One provider for the whole Dashboard. Every customer name on every tab
+  // reads it, including the tabs that live in their own file.
+  const account = useMemo(() => ({
+    open: (tok) => setAcct(tok),
+    hrefFor: (tok) => hrefWithParam("acct", tok, ""),
+  }), [setAcct]);
+
   return (
+    <AccountCtx.Provider value={account}>
     <div style={{ padding: _pad, display: "grid", gap: 16 }}>
+      {acct ? <CustomerAccount token={acct} types={types} onClose={() => setAcct("")} /> : null}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 800, color: T.slate900 }}>Dashboard</div>
@@ -4281,5 +4456,6 @@ export default function ActivityLog({ userRole, userId }) {
       {tab === "backfill" && isAdmin && <BackfillTab sources={sources} roster={roster} />}
       {tab === "history" && <HistoryTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} />}
     </div>
+    </AccountCtx.Provider>
   );
 }

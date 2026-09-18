@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { T } from "../lib/theme.js";
+import { CustomerName } from "../lib/customerAccount.jsx";
 
 // Dashboard > Backfill. The imported history came in without the last four
 // phone digits, without the ECRM link on the sale, and on some rows without a
@@ -261,7 +262,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                       {r.on_date}
                       {r.kind === "quote" ? <div style={{ fontSize: 11 }}>quote</div> : null}
                     </td>
-                    <td style={{ ...td, fontWeight: 600, color: T.slate900, whiteSpace: "nowrap" }}>{r.customer_label}</td>
+                    <td style={{ ...td, fontWeight: 600, color: T.slate900, whiteSpace: "nowrap" }}><CustomerName label={r.customer_label} phone4={r.phone_last4} /></td>
                     <td style={td}>
                       {r.phone_last4 ? (
                         <span style={{ color: T.slate500 }}>{r.phone_last4}</span>
