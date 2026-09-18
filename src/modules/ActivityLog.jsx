@@ -3101,11 +3101,12 @@ function LizardArt() {
       </g>
       <path d="M124 96 l7 -17 l6 15 l7 -13 l6 14 z" fill="#4C8038" />
       <path d="M122 94 Q148 85 166 93 Q183 100 183 107 L122 113 Z" fill="#6BA84F" />
+      <g className="nw-up" style={{ transformOrigin: "20% 0%" }}>
+        <path d="M130 116 Q128 146 146 146 Q163 144 163 116 Q147 124 130 116 Z" fill="#7FB061" />
+        <path d="M140 128 q1 12 4 15 M150 127 q0 12 -2 16" fill="none" stroke="#5A9342" strokeWidth="2.5" strokeLinecap="round" />
+      </g>
       <path d="M122 113 L183 107 Q182 117 164 121 Q142 126 122 120 Z" fill="#5A9342" />
       <path d="M124 113 L181 107" fill="none" stroke="#2F5223" strokeWidth="2.5" strokeLinecap="round" />
-      <g className="nw-up" style={{ transformOrigin: "20% 0%" }}>
-        <path d="M129 119 q8 26 30 10 q-18 16 -30 -10 z" fill="#E8913A" />
-      </g>
       <path d="M134 95 q14 -6 26 -1" fill="none" stroke="#4C8038" strokeWidth="4" strokeLinecap="round" />
       <circle cx="146" cy="101" r="8.5" fill="#F2D24E" />
       <ellipse cx="146" cy="101" rx="2" ry="5.5" fill="#15100F" />
