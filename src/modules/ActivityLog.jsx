@@ -3082,7 +3082,8 @@ function LizardArt() {
     <>
       {/* Side on. A ridge down the back cannot be seen at all on an animal
           facing you, which is why the spines kept reading as side fins.
-          Peter 2026-09-17. */}
+          The head is a tapering wedge with a separate lower jaw, not a
+          ball - a round head on a lizard reads as a frog. Peter 2026-09-17. */}
       <g className="nw-wag" style={{ transformOrigin: "92% 30%" }}>
         <path d="M54 138 q-30 8 -34 34" fill="none" stroke="#6BA84F" strokeWidth="13" strokeLinecap="round" />
         <path d="M50 143 l-6 -12 l-7 14 l-7 -11 l-7 14" fill="none" stroke="#4C8038" strokeWidth="5" strokeLinecap="round" />
@@ -3096,16 +3097,17 @@ function LizardArt() {
         <rect x="116" y="150" width="17" height="30" rx="8" fill="#6BA84F" />
         <path d="M112 178 h22 M114 172 h18" fill="none" stroke="#5A9342" strokeWidth="4" strokeLinecap="round" />
       </g>
-      <path d="M126 122 q14 -16 28 -14 l-4 30 q-16 4 -24 -4 z" fill="#6BA84F" />
-      <ellipse cx="152" cy="108" rx="28" ry="21" fill="#6BA84F" />
-      <path d="M126 112 q28 -12 54 -2" fill="none" stroke="#A8CF8A" strokeWidth="5" strokeLinecap="round" opacity="0.6" />
-      <path d="M134 118 q22 6 44 -2" fill="none" stroke="#3E6B2E" strokeWidth="3" strokeLinecap="round" />
-      <g className="nw-up" style={{ transformOrigin: "50% 0%" }}>
-        <path d="M138 122 q10 18 24 8 q-14 2 -24 -8 z" fill="#E8913A" />
+      <path d="M124 96 l7 -17 l6 15 l7 -13 l6 14 z" fill="#4C8038" />
+      <path d="M122 94 Q148 85 166 93 Q183 100 183 107 L122 113 Z" fill="#6BA84F" />
+      <path d="M122 113 L183 107 Q182 117 164 121 Q142 126 122 120 Z" fill="#5A9342" />
+      <path d="M124 113 L181 107" fill="none" stroke="#2F5223" strokeWidth="2.5" strokeLinecap="round" />
+      <g className="nw-up" style={{ transformOrigin: "20% 0%" }}>
+        <path d="M129 119 q8 26 30 10 q-18 16 -30 -10 z" fill="#E8913A" />
       </g>
-      <circle cx="158" cy="100" r="8.5" fill="#F2D24E" />
-      <circle cx="158" cy="100" r="3.6" fill="#15100F" />
-      <circle cx="174" cy="104" r="2" fill="#3E6B2E" />
+      <path d="M134 95 q14 -6 26 -1" fill="none" stroke="#4C8038" strokeWidth="4" strokeLinecap="round" />
+      <circle cx="146" cy="101" r="8.5" fill="#F2D24E" />
+      <ellipse cx="146" cy="101" rx="2" ry="5.5" fill="#15100F" />
+      <circle cx="176" cy="102" r="2.2" fill="#3E6B2E" />
     </>
   );
 }
