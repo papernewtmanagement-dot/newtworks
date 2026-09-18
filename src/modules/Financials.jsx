@@ -2308,7 +2308,7 @@ const CompRecapSection = ({ data }) => {
   const grandAippTot  = filtered.filter(r => r.is_aipp_eligible).reduce((s, r) => s + parseFloat(r.amount || 0), 0);
 
   // Cell + subtotal builders
-  const money = (n) => fmt(Math.round(n));
+  const money = (n) => fmtMoney(n, { decimals: 2, dashOnZero: true });
   const HeaderRow = ({ label, spans = 5 }) => (
     <tr>
       <td colSpan={spans} style={{ padding: "12px 8px 6px 8px", fontSize: 11, fontWeight: 700, color: T.slate900, background: T.slate50, textTransform: "uppercase", letterSpacing: "0.05em", borderTop: `2px solid ${T.slate200}` }}>{label}</td>
@@ -2432,7 +2432,7 @@ const CompRecapSection = ({ data }) => {
         <tfoot>
           <tr style={{ borderTop: `2px solid ${T.slate800}` }}>
             <td style={{ padding: "10px 8px 10px 20px", fontSize: 12, fontWeight: 700, color: T.slate900 }}>Grand total</td>
-            <td style={{ padding: "10px 8px", fontSize: 11, textAlign: "center", color: T.slate500 }}>AIPP: {fmtMoneyR(grandAippTot)}</td>
+            <td style={{ padding: "10px 8px", fontSize: 11, textAlign: "center", color: T.slate500 }}>AIPP: {fmtMoneyR(grandAippTot, { decimals: 2 })}</td>
             <td style={{ padding: "10px 8px", fontSize: 12, fontWeight: 700, color: T.slate900, textAlign: "right" }}>{money(grandH1)}</td>
             <td style={{ padding: "10px 8px", fontSize: 12, fontWeight: 700, color: T.slate900, textAlign: "right" }}>{money(grandH2)}</td>
             <td style={{ padding: "10px 8px", fontSize: 13, fontWeight: 700, color: T.blue, textAlign: "right" }}>{money(grandTotal)}</td>
