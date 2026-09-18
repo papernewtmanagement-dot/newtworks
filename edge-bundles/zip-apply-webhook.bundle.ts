@@ -394,17 +394,19 @@ Deno.serve(async (req) => {
     );
 
     let jobPostingId: string | null = null;
+    let jobTitle: string | null = null;
     let screenerCodes: string[] = [];
 
     if (jobId) {
       const { data: posting } = await supabase
         .from("job_postings")
-        .select("id, screener_codes")
+        .select("id, screener_codes, job_title")
         .eq("agency_id", AGENCY_ID)
         .eq("posting_slug", jobId)
         .maybeSingle();
       if (posting) {
         jobPostingId = posting.id;
+        jobTitle = posting.job_title || null;
         screenerCodes = posting.screener_codes || [];
       }
     }
@@ -449,37 +451,51 @@ Deno.serve(async (req) => {
       return new Response("Insert failed", { status: 500 });
     }
 
+    // Route to hiring_candidates when not knocked out.
+    //
+    // This goes through upsert_candidate_from_job_board rather than a direct
+    // insert. That function calls find_existing_candidate first, so somebody who
+    // already has a row gets their blank fields filled in instead of a second row.
+    // Matching and filling both live in the database so this webhook, the Indeed
+    // one and the careers page all behave identically.
+    //
+    // The job_applications row is already saved at this point, so a failure here
+    // is logged and the application is still kept.
     if (!knockoutReason && email) {
       const nowIso = new Date().toISOString();
-      const { data: cand } = await supabase
-        .from("hiring_candidates")
-        .insert({
-          agency_id: AGENCY_ID,
-          first_name: firstName,
-          last_name: lastName,
-          candidate_name: [firstName, lastName].filter(Boolean).join(" ") || null,
-          email,
-          phone,
-          resume_url: resumeUrl,
-          status: "applied",
-          status_updated_at: nowIso,
-          applied_at: nowIso,
-          source_channel: "zip_direct",
-          job_posting_id: jobPostingId,
-          ingestion_metadata: {
-            source: "zip_direct",
-            job_application_id: appRow.id,
-            zip_application_id: pickString(payload?.applicationId, payload?.application_id, payload?.id),
-            screener_answers: answers,
+      const { data: upsert, error: upsertErr } = await supabase.rpc(
+        "upsert_candidate_from_job_board",
+        {
+          p_agency_id: AGENCY_ID,
+          p_payload: {
+            first_name: firstName,
+            last_name: lastName,
+            email,
+            phone,
+            resume_url: resumeUrl,
+            position: jobTitle,
+            job_posting_id: jobPostingId,
+            source_channel: "zip_direct",
+            applied_at: nowIso,
+            ingestion_metadata: {
+              source: "zip_direct",
+              job_application_id: appRow.id,
+              zip_application_id: pickString(payload?.applicationId, payload?.application_id, payload?.id),
+              screener_answers: answers,
+            },
           },
-        })
-        .select("id")
-        .single();
+        },
+      );
 
-      if (cand) {
+      if (upsertErr) {
+        console.error("zip-apply-webhook: candidate upsert failed", upsertErr);
+      }
+
+      const candidateId = (upsert as any)?.candidate_id ?? null;
+      if (candidateId) {
         await supabase
           .from("job_applications")
-          .update({ hiring_candidate_id: cand.id, routed_at: nowIso })
+          .update({ hiring_candidate_id: candidateId, routed_at: nowIso })
           .eq("id", appRow.id);
       }
     }

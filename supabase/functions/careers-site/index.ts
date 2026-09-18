@@ -35,7 +35,7 @@ async function handleApply(slug: string, req: Request): Promise<Response> {
 
   const { data: posting } = await supabase
     .from("job_postings")
-    .select("id, screener_codes")
+    .select("id, screener_codes, job_title")
     .eq("agency_id", AGENCY_ID)
     .eq("posting_slug", slug)
     .eq("is_active", true)
@@ -96,37 +96,52 @@ async function handleApply(slug: string, req: Request): Promise<Response> {
   if (appErr) return new Response(`Application error: ${appErr.message}`, { status: 500 });
 
   // Route to hiring_candidates only if not knocked out.
+  //
+  // This goes through upsert_candidate_from_job_board rather than a direct
+  // insert. That function calls find_existing_candidate first, so somebody who
+  // already has a row gets their blank fields filled in instead of a second row.
+  // Matching and filling both live in the database so this page, the Indeed
+  // webhook and the ZipRecruiter webhook all behave identically.
+  //
   // assessment_date is intentionally NOT stamped here — it stays null until
   // the candidate actually completes the assessment.
+  //
+  // The job_applications row is already saved at this point, so a failure here
+  // is logged and the application is still kept.
   if (!knockoutReason && email) {
-    const { data: cand } = await supabase
-      .from("hiring_candidates")
-      .insert({
-        agency_id: AGENCY_ID,
-        first_name: firstName || null,
-        last_name: lastName || null,
-        candidate_name: [firstName, lastName].filter(Boolean).join(" ") || null,
-        email: email || null,
-        phone: phone || null,
-        resume_url: resumeUrl,
-        status: "applied",
-        status_updated_at: new Date().toISOString(),
-        applied_at: new Date().toISOString(),
-        source_channel: "careers_page",
-        job_posting_id: posting.id,
-        ingestion_metadata: {
-          source: "careers_page",
-          job_application_id: appRow.id,
-          screener_answers: screenerAnswers,
+    const nowIso = new Date().toISOString();
+    const { data: upsert, error: upsertErr } = await supabase.rpc(
+      "upsert_candidate_from_job_board",
+      {
+        p_agency_id: AGENCY_ID,
+        p_payload: {
+          first_name: firstName || null,
+          last_name: lastName || null,
+          email: email || null,
+          phone: phone || null,
+          resume_url: resumeUrl,
+          position: posting.job_title || null,
+          job_posting_id: posting.id,
+          source_channel: "careers_page",
+          applied_at: nowIso,
+          ingestion_metadata: {
+            source: "careers_page",
+            job_application_id: appRow.id,
+            screener_answers: screenerAnswers,
+          },
         },
-      })
-      .select("id")
-      .single();
+      },
+    );
 
-    if (cand) {
+    if (upsertErr) {
+      console.error("careers-site: candidate upsert failed", upsertErr);
+    }
+
+    const candidateId = (upsert as any)?.candidate_id ?? null;
+    if (candidateId) {
       await supabase
         .from("job_applications")
-        .update({ hiring_candidate_id: cand.id, routed_at: new Date().toISOString() })
+        .update({ hiring_candidate_id: candidateId, routed_at: nowIso })
         .eq("id", appRow.id);
     }
   }
