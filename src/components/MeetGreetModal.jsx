@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
+import { isManagerTier } from "../lib/roleLevels.js";
 
 // Meet & greet scheduler. Opens when a candidate is moved to the Meet & Greet
 // stage.
@@ -123,7 +124,7 @@ export default function MeetGreetModal({ candidate, onClose, onSaved }) {
       // forwarding address the scheduler adds, so he is not in the pick list.
       const rows = (data || []).filter((m) => m.role_level !== "Owner" && teamName(m));
       setTeam(rows);
-      setPicked(rows.filter((m) => m.role_level === "Unit Manager").map((m) => m.id));
+      setPicked(rows.filter((m) => isManagerTier(m.role_level)).map((m) => m.id));
       setLoading(false);
     })();
     return () => { cancelled = true; };
