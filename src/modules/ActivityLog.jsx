@@ -3080,21 +3080,32 @@ function GooseArt() {
 function LizardArt() {
   return (
     <>
-      <g className="nw-wag" style={{ transformOrigin: "3% 35%" }}>
-        <path d="M146 136 q34 -4 44 24" fill="none" stroke="#6BA84F" strokeWidth="13" strokeLinecap="round" />
+      {/* Side on. A ridge down the back cannot be seen at all on an animal
+          facing you, which is why the spines kept reading as side fins.
+          Peter 2026-09-17. */}
+      <g className="nw-wag" style={{ transformOrigin: "92% 30%" }}>
+        <path d="M54 138 q-30 8 -34 34" fill="none" stroke="#6BA84F" strokeWidth="13" strokeLinecap="round" />
+        <path d="M50 143 l-6 -12 l-7 14 l-7 -11 l-7 14" fill="none" stroke="#4C8038" strokeWidth="5" strokeLinecap="round" />
       </g>
-      <rect x="58" y="156" width="30" height="14" rx="7" fill="#5A9342" />
-      <rect x="112" y="156" width="30" height="14" rx="7" fill="#5A9342" />
-      <ellipse cx="100" cy="138" rx="50" ry="26" fill="#6BA84F" />
-      <path d="M58 122 l10 -14 l10 14 l10 -14 l10 14 l10 -14 l10 14 l10 -14 l10 14 l10 -14 l10 14 z" fill="#4C8038" />
-      <ellipse cx="100" cy="144" rx="33" ry="14" fill="#A8CF8A" />
-      <ellipse cx="100" cy="84" rx="37" ry="28" fill="#6BA84F" />
-      <path d="M67 74 q33 -15 66 0 q-33 -6 -66 0 z" fill="#A8CF8A" opacity="0.5" />
-      <circle cx="83" cy="78" r="8" fill="#F2D24E" />
-      <circle cx="83" cy="78" r="3.4" fill="#15100F" />
-      <circle cx="117" cy="78" r="8" fill="#F2D24E" />
-      <circle cx="117" cy="78" r="3.4" fill="#15100F" />
-      <path d="M84 98 q16 9 32 0" fill="none" stroke="#3E6B2E" strokeWidth="3" strokeLinecap="round" />
+      <path d="M52 124 l10 -26 l10 26 l10 -26 l10 26 l10 -26 l10 26 l10 -26 l10 26 z" fill="#4C8038" />
+      <ellipse cx="94" cy="136" rx="50" ry="27" fill="#6BA84F" />
+      <ellipse cx="94" cy="146" rx="36" ry="14" fill="#A8CF8A" />
+      <rect x="58" y="152" width="17" height="28" rx="8" fill="#5A9342" />
+      <path d="M56 178 h22 M58 172 h18" fill="none" stroke="#4C8038" strokeWidth="4" strokeLinecap="round" />
+      <g className="nw-up" style={{ transformOrigin: "50% 0%" }}>
+        <rect x="116" y="150" width="17" height="30" rx="8" fill="#6BA84F" />
+        <path d="M112 178 h22 M114 172 h18" fill="none" stroke="#5A9342" strokeWidth="4" strokeLinecap="round" />
+      </g>
+      <path d="M126 122 q14 -16 28 -14 l-4 30 q-16 4 -24 -4 z" fill="#6BA84F" />
+      <ellipse cx="152" cy="108" rx="28" ry="21" fill="#6BA84F" />
+      <path d="M126 112 q28 -12 54 -2" fill="none" stroke="#A8CF8A" strokeWidth="5" strokeLinecap="round" opacity="0.6" />
+      <path d="M134 118 q22 6 44 -2" fill="none" stroke="#3E6B2E" strokeWidth="3" strokeLinecap="round" />
+      <g className="nw-up" style={{ transformOrigin: "50% 0%" }}>
+        <path d="M138 122 q10 18 24 8 q-14 2 -24 -8 z" fill="#E8913A" />
+      </g>
+      <circle cx="158" cy="100" r="8.5" fill="#F2D24E" />
+      <circle cx="158" cy="100" r="3.6" fill="#15100F" />
+      <circle cx="174" cy="104" r="2" fill="#3E6B2E" />
     </>
   );
 }
@@ -3159,24 +3170,33 @@ function SlothArt() {
 function RoosterArt() {
   return (
     <>
-      <rect x="86" y="168" width="10" height="14" rx="3" fill="#E8B13A" />
-      <rect x="104" y="168" width="10" height="14" rx="3" fill="#E8B13A" />
-      <g className="nw-swayL" style={{ transformOrigin: "16% 92%" }}>
-        <path d="M142 142 q34 -8 34 -54 q-16 28 -42 34 z" fill="#2F5E4E" />
-        <path d="M140 148 q38 -2 44 -42 q-22 24 -48 28 z" fill="#3E7A63" />
+      {/* A rooster, not a turkey: three separate arching sickle feathers with
+          daylight between them instead of a fan, and a taller body than a
+          turkey's. Peter 2026-09-17. */}
+      <rect x="90" y="162" width="7" height="20" rx="3" fill="#E8B13A" />
+      <rect x="103" y="162" width="7" height="20" rx="3" fill="#E8B13A" />
+      <path d="M82 182 h18 M85 177 h15" fill="none" stroke="#C98A26" strokeWidth="4" strokeLinecap="round" />
+      <path d="M100 182 h18 M100 177 h15" fill="none" stroke="#C98A26" strokeWidth="4" strokeLinecap="round" />
+      <g className="nw-swayL" style={{ transformOrigin: "8% 96%" }}>
+        <path d="M126 148 q46 -6 52 -54" fill="none" stroke="#1C332E" strokeWidth="8" strokeLinecap="round" />
+        <path d="M126 142 q34 -22 30 -60" fill="none" stroke="#3E7A63" strokeWidth="7" strokeLinecap="round" />
+        <path d="M124 136 q20 -30 8 -56" fill="none" stroke="#2F5E4E" strokeWidth="7" strokeLinecap="round" />
       </g>
-      <ellipse cx="100" cy="136" rx="44" ry="34" fill="#B5502F" />
-      <ellipse cx="100" cy="146" rx="28" ry="22" fill="#D2703F" />
-      <g className="nw-swayR" style={{ transformOrigin: "12% 20%" }}><ellipse cx="128" cy="134" rx="22" ry="20" fill="#8E3B22" /></g>
-      <circle cx="100" cy="76" r="30" fill="#C05B34" />
-      <path d="M83 52 q5 -15 12 -6 q5 -17 12 -6 q6 -15 13 -3 q-19 9 -37 15 z" fill="#D63B33" />
-      <ellipse cx="94" cy="98" rx="5" ry="9" fill="#D63B33" />
-      <ellipse cx="106" cy="98" rx="5" ry="9" fill="#D63B33" />
-      <path d="M100 82 l11 9 l-22 0 z" fill="#E8B13A" />
-      <circle cx="90" cy="70" r="5.5" fill="#15100F" />
-      <circle cx="110" cy="70" r="5.5" fill="#15100F" />
-      <circle cx="92" cy="68" r="1.9" fill="#FFFFFF" />
-      <circle cx="112" cy="68" r="1.9" fill="#FFFFFF" />
+      <ellipse cx="97" cy="142" rx="33" ry="36" fill="#B5502F" />
+      <ellipse cx="94" cy="150" rx="23" ry="24" fill="#D2703F" />
+      <g className="nw-swayR" style={{ transformOrigin: "16% 18%" }}><ellipse cx="119" cy="140" rx="17" ry="16" fill="#8E3B22" /></g>
+      <path d="M87 114 q-4 -30 13 -40 q17 12 13 40 z" fill="#D98B3A" />
+      <circle cx="100" cy="66" r="23" fill="#C05B34" />
+      <path d="M85 48 q3 -15 9 -8 q3 -16 9 -8 q4 -15 10 -6 q3 -11 8 -3 q-18 10 -36 12 z" fill="#D63B33" />
+      <path d="M100 72 l12 9 l-24 0 z" fill="#E8B13A" />
+      <ellipse cx="95" cy="88" rx="4.5" ry="10" fill="#D63B33" />
+      <ellipse cx="105" cy="88" rx="4.5" ry="10" fill="#D63B33" />
+      <ellipse cx="85" cy="76" rx="4.5" ry="6.5" fill="#FBF6EE" />
+      <ellipse cx="115" cy="76" rx="4.5" ry="6.5" fill="#FBF6EE" />
+      <circle cx="91" cy="61" r="5" fill="#15100F" />
+      <circle cx="109" cy="61" r="5" fill="#15100F" />
+      <circle cx="92.6" cy="59" r="1.8" fill="#FFFFFF" />
+      <circle cx="110.6" cy="59" r="1.8" fill="#FFFFFF" />
     </>
   );
 }
