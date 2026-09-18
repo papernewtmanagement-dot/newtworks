@@ -1785,6 +1785,11 @@ function InboxView({ me, onDecided }) {
   );
 }
 
+// The handbook page this panel shows. Matched on confluence_page_id, never on
+// title: handbook titles get renamed and a title filter silently matches
+// nothing when they do.
+const HOURS_TIME_OFF_PAGE_ID = "newtworks-native-handbook-02-hours";
+
 // MAIN ================================================
 export default function TimeOffRequests() {
   const [me, setMe] = useState(null);
@@ -1793,6 +1798,7 @@ export default function TimeOffRequests() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [policyOpen, setPolicyOpen] = useState(false);
   const [policy, setPolicy] = useState(null); // { title, html, updated_at }
+  const [policyError, setPolicyError] = useState(false);
 
   useEffect(() => {
     async function loadMe() {
@@ -1818,28 +1824,33 @@ export default function TimeOffRequests() {
     loadMe();
   }, []);
 
-  // Load the "02 Hours & Time Off" handbook page live so the policy below
-  // always reflects the current handbook (no duplication). Re-renders on
-  // next page load whenever the handbook row is updated.
+  // Load the Hours & Time Off handbook page live so the policy below always
+  // reflects the current handbook (no duplication). Re-renders on next page
+  // load whenever the handbook row is updated.
   useEffect(() => {
     async function loadPolicy() {
       try {
-        if (!supabase) return;
-        const { data } = await supabase.from("manuals")
+        if (!supabase) { setPolicyError(true); return; }
+        const { data, error } = await supabase.from("manuals")
           .select("title, content, updated_at")
           .eq("agency_id", AGENCY_ID)
-          .eq("manual_type", "handbook")
-          .eq("title", "02 Hours & Time Off")
+          .eq("confluence_page_id", HOURS_TIME_OFF_PAGE_ID)
           .eq("is_active", true)
           .maybeSingle();
-        if (data) {
-          setPolicy({
-            title: data.title,
-            html: mdToHtml(data.content),
-            updated_at: data.updated_at
-          });
+        if (error || !data) {
+          console.error("Time Off — policy page not found", error);
+          setPolicyError(true);
+          return;
         }
-      } catch (e) { console.error("Time Off — policy load error", e); }
+        setPolicy({
+          title: data.title,
+          html: mdToHtml(data.content),
+          updated_at: data.updated_at
+        });
+      } catch (e) {
+        console.error("Time Off — policy load error", e);
+        setPolicyError(true);
+      }
     }
     loadPolicy();
   }, []);
@@ -1894,6 +1905,10 @@ export default function TimeOffRequests() {
                   From handbook · last updated {new Date(policy.updated_at).toLocaleDateString()}
                 </div>
               </>
+            ) : policyError ? (
+              <div style={{ color: "#b45309" }}>
+                Couldn't load the Hours & Time Off page from the handbook. Open the handbook to read it there.
+              </div>
             ) : (
               <div style={{ color: "#94a3b8" }}>Loading policy…</div>
             )}
