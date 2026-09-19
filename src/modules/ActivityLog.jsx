@@ -362,6 +362,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           vehicles: x.vehicle_count == null ? "" : String(x.vehicle_count),
           isNewLine: x.is_new_line !== false, addedToExisting: !!x.added_to_existing, autopay: !!x.autopay,
           issuedPremium: x.issued_premium == null ? "" : String(x.issued_premium),
+          issuedDate: x.issued_date || "",
         })));
       } else if (d.kind === "cancelation") {
         setPolicies([{ id: newPolicyId(), dbId: null, line: d.policy_line, type: d.product_type || "",
@@ -590,7 +591,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
             vehicle_count: hasCars(p.line, p.type) ? Number(p.vehicles) : null,
             added_to_existing: p.line === "auto" && !!p.addedToExisting,
             is_new_line: !!p.isNewLine, autopay: !!p.autopay,
-            issued_premium: p.issuedPremium === "" || p.issuedPremium == null ? null : Number(p.issuedPremium) })) };
+            issued_premium: p.issuedPremium === "" || p.issuedPremium == null ? null : Number(p.issuedPremium),
+            issued_date: p.issuedDate || null })) };
       } else if (k === "quote") {
         fn = "rp_edit_quote";
         changes = { ...who, quote_date: date, relationship_type: relationship || undefined,
@@ -948,6 +950,14 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
                   <input type="number" inputMode="decimal" min="0" step="0.01" style={moneyInput}
                          value={active.issuedPremium || ""} placeholder="0.00"
                          onChange={e => editPolicy(active.id, { issuedPremium: e.target.value })} />
+                </div>
+              )}
+              {isEdit && isSold(active) && (
+                <div style={field(150)}>
+                  <label style={labelStyle}>Issued date</label>
+                  <input type="date" max={todayCentral()} style={inputBase}
+                         value={active.issuedDate || ""}
+                         onChange={e => editPolicy(active.id, { issuedDate: e.target.value })} />
                 </div>
               )}
               {isSold(active) && (
@@ -2079,7 +2089,7 @@ function IssuedTab({ values, sources, types, roster, nameOf, isOwner, isAdmin, m
 function Modal({ title, onClose, children }) {
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 160, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "24px 8px", overflowY: "auto" }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: T.slate50, borderRadius: 14, width: "min(980px, 100%)", boxShadow: "0 20px 60px rgba(0,0,0,0.25)", padding: 12 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: T.slate50, borderRadius: 14, width: "min(980px, 100%)", maxWidth: "100%", minWidth: 0, boxSizing: "border-box", boxShadow: "0 20px 60px rgba(0,0,0,0.25)", padding: 12, overflowX: "hidden" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 8px 10px" }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>{title}</div>
           <button type="button" style={btnGhost} onClick={onClose}>Close</button>
@@ -4184,6 +4194,7 @@ function CustomerAccount({ token, values, sources, types, isOwner, roster, onLog
   const [reload, setReload] = useState(0);
   const [editing, setEditing] = useState(null);   // { kind, id } — opens the entry form
   const [apptRow, setApptRow] = useState(null);   // an appointment opens its own editor
+  const [busyId, setBusyId] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -4223,6 +4234,18 @@ function CustomerAccount({ token, values, sources, types, isOwner, roster, onLog
   const title = editingSomething
     ? `Editing a record on file for ${c.label || label}`
     : `${c.label || label}${c.phone_last4 ? ` · ${c.phone_last4}` : ""}`;
+
+  const remove = async (r) => {
+    const what = (ACCT_KIND[r.kind]?.label || r.kind).toLowerCase();
+    if (!window.confirm(`Delete this ${what} for ${c.label || label}? It stops counting straight away.`)) return;
+    setBusyId(r.id); setErr(""); setFlash("");
+    try {
+      const { data: res, error } = await supabase.rpc("rp_delete_record", { p_kind: r.kind, p_id: r.id, p_reason: null });
+      if (error) { setErr(errText(error)); return; }
+      if (res && res.ok === false) { setErr(errText(res)); return; }
+      setFlash("Deleted."); setReload(k => k + 1); onLogged?.();
+    } catch (e) { setErr(errText(e)); } finally { setBusyId(null); }
+  };
 
   return (
     <Modal title={title} onClose={editingSomething ? () => closeEdit("") : onClose}>
@@ -4321,7 +4344,7 @@ function CustomerAccount({ token, values, sources, types, isOwner, roster, onLog
                   const k = ACCT_KIND[r.kind] || { label: r.kind, color: T.slate700 };
                   const m = r.meta || {};
                   return (
-                    <div key={`${r.kind}:${r.id}`} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 0", borderTop: `1px solid ${T.slate100}` }}>
+                    <div key={`${r.kind}:${r.id}`} style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-start", padding: "8px 0", borderTop: `1px solid ${T.slate100}` }}>
                       <div style={{ width: 78, flexShrink: 0, fontSize: 12, color: T.slate500, whiteSpace: "nowrap" }}>{fmtDate(r.occurred_on)}</div>
                       <div style={{ width: 110, flexShrink: 0 }}>
                         <span style={{ fontSize: 12, fontWeight: 700, color: k.color }}>{k.label}</span>
@@ -4340,12 +4363,15 @@ function CustomerAccount({ token, values, sources, types, isOwner, roster, onLog
                         {r.ecrm_url ? <div><a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: T.blue }}>ECRM</a></div> : null}
                       </div>
                       <div style={{ width: 84, flexShrink: 0, textAlign: "right", fontSize: 12, color: T.slate500 }}>{r.who}</div>
-                      <div style={{ width: 56, flexShrink: 0, textAlign: "right" }}>
+                      <div style={{ width: 110, flexShrink: 0, textAlign: "right", whiteSpace: "nowrap" }}>
                         {m.derived
                           ? <span style={{ color: T.slate300, fontSize: 11 }}>auto</span>
-                          : r.can_change
-                            ? <button type="button" style={miniBtn} onClick={() => openEdit(r)}>Edit</button>
-                            : <span style={{ color: T.slate400, fontSize: 11 }}>closed</span>}
+                          : r.can_change ? (
+                            <>
+                              <button type="button" style={{ ...miniBtn, marginRight: 6 }} disabled={busyId === r.id} onClick={() => openEdit(r)}>Edit</button>
+                              <button type="button" style={{ ...miniBtn, color: T.red }} disabled={busyId === r.id} onClick={() => remove(r)}>Delete</button>
+                            </>
+                          ) : <span style={{ color: T.slate400, fontSize: 11 }}>closed</span>}
                       </div>
                     </div>
                   );
