@@ -282,8 +282,6 @@ const EDIT_FIELDS = {
     "campaign_single_line_date", "campaign_af_renewals_date",
     // EUR notes (free-form, weekly)
     "eur",
-    // Whiteboard Errors (free-form, weekly) — each line adds +1 to team requirements count
-    "whiteboard_errors",
     // Territory top-ranked lapse, auto + fire (Peter 2026-09-06: the benchmark is the best
     // agency in the territory, not the median). Hand-entered weekly benchmark that drives the
     // retention floor. Stored per week so it cannot drift; prefilled from the most recent
@@ -3180,34 +3178,161 @@ function EURSection({ report, editMode, formReport, isReportDirty, onReportChang
   );
 }
 
-// 13.6 — Whiteboard Errors — free-form text, to the right of EUR.
-// Each line entered adds +1 to the team requirements count (get_weekly_cpr_requirements).
-function WhiteboardErrorsSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
-  if (editMode) {
-    return (
-      <div>
-        <SectionHeader icon="⚠️" title="Whiteboard Errors" />
-        <Card>
-          <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6, lineHeight: 1.4 }}>
-            One error per line. Each line adds +1 to the team requirements count for this week.
-          </div>
-          <TextArea
-            value={formReport.whiteboard_errors}
-            onChange={v => onReportChange("whiteboard_errors", v)}
-            dirty={isReportDirty("whiteboard_errors")}
-            rows={4}
-          />
-        </Card>
-      </div>
-    );
-  }
+// 13.6 — Log Changes — every edit or removal made to the production logs during
+// the week, grouped by the person who made it. Replaced the Whiteboard Errors
+// box 2026-09-19 on Peter's instruction. Reads production_changes_for_range —
+// the same function behind the daily change alert and the Activity Log Changes
+// tab, so the three surfaces can never disagree about what moved.
+const CHANGE_FIELD_LABELS = {
+  ecrm_opportunity_url: "eCRM link",
+  total_premium: "total premium",
+  issued_premium: "issued premium",
+  issued_date: "issued date",
+  vehicle_count: "vehicle count",
+  multiline_credit_id: "multiline credit",
+  is_new_line: "new line",
+  is_added_to_existing: "added to existing",
+  product_type: "product",
+  line_of_business: "line",
+  policy_line: "line",
+  entry_source: "entry source",
+  marketing_source: "marketing source",
+  phone_last4: "phone",
+  team_member_id: "credited teammate",
+  sourced_by_team_member_id: "sourced by",
+  referred_by_customer: "referred by",
+  window_fraction_left: "window left",
+  credit_available_on: "credit date",
+  canceled_on: "cancelation date",
+  activity_key: "activity type",
+  average_score: "score",
+};
+
+function prettyChangeField(f) {
+  if (!f) return "";
+  if (CHANGE_FIELD_LABELS[f]) return CHANGE_FIELD_LABELS[f];
+  return String(f).replace(/_id$/, "").replace(/_/g, " ");
+}
+
+function changeFieldSummary(fields) {
+  const out = [];
+  (Array.isArray(fields) ? fields : []).forEach(f => {
+    const label = prettyChangeField(f);
+    if (label && !out.includes(label)) out.push(label);
+  });
+  return out.join(", ");
+}
+
+function changeWhen(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (!Number.isFinite(d.getTime())) return "";
+  return d.toLocaleString("en-US", {
+    timeZone: "America/Chicago", weekday: "short", hour: "numeric", minute: "2-digit",
+  });
+}
+
+function LogChangesSection({ weekDate, team }) {
+  const [rows, setRows] = useState(null);
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    if (!weekDate) { setRows([]); return undefined; }
+    setRows(null);
+    setLoadError("");
+    (async () => {
+      const { data, error } = await supabase.rpc("production_changes_for_range", {
+        p_agency_id: AGENCY_ID,
+        p_start: addDaysISO(weekDate, -6),
+        p_end: weekDate,
+      });
+      if (!alive) return;
+      if (error) { setLoadError(error.message || "Could not load log changes."); setRows([]); return; }
+      setRows(Array.isArray(data) ? data : []);
+    })();
+    return () => { alive = false; };
+  }, [weekDate]);
+
+  // Owner stays off the CPR page, here as everywhere else on it.
+  const ownerIds = new Set((team || []).filter(t => t.role_level === "Owner").map(t => t.id));
+  const nameById = new Map((team || []).map(t => [
+    t.id,
+    [t.first_name, t.last_name].filter(Boolean).join(" ") || t.nickname || "Teammate",
+  ]));
+
+  const visible = (rows || []).filter(r => !ownerIds.has(r.team_member_id));
+  const groups = [];
+  const byKey = new Map();
+  visible.forEach(r => {
+    const key = r.team_member_id || `who:${r.who || "Unknown"}`;
+    if (!byKey.has(key)) {
+      const g = {
+        key,
+        name: r.team_member_id ? (nameById.get(r.team_member_id) || r.who || "Teammate") : (r.who || "Unknown"),
+        isTeam: !!r.team_member_id,
+        rows: [],
+      };
+      byKey.set(key, g);
+      groups.push(g);
+    }
+    byKey.get(key).rows.push(r);
+  });
+  groups.sort((a, b) => (a.isTeam === b.isTeam ? a.name.localeCompare(b.name) : (a.isTeam ? -1 : 1)));
+  groups.forEach(g => g.rows.sort((a, b) => String(a.changed_at).localeCompare(String(b.changed_at))));
+
   return (
     <div>
-      <SectionHeader icon="⚠️" title="Whiteboard Errors" />
+      <SectionHeader
+        icon="📝"
+        title="Log Changes"
+        accessory={rows === null ? null : (visible.length === 1 ? "1 this week" : `${visible.length} this week`)}
+      />
       <Card>
-        {report?.whiteboard_errors
-          ? <div style={{ fontSize: 13, color: T.slate800, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{report.whiteboard_errors}</div>
-          : <div style={{ fontSize: 13, color: T.slate400, fontStyle: "italic" }}>No whiteboard errors for this week.</div>}
+        <div style={{ fontSize: 11, color: T.slate500, marginBottom: 10, lineHeight: 1.4 }}>
+          Every edit or removal made to a sale, quote, cancelation or activity entry this week, by the person who made it. Adding a brand new entry is not a change and is not listed here.
+        </div>
+        {loadError ? (
+          <div style={{ fontSize: 13, color: T.red }}>{loadError}</div>
+        ) : rows === null ? (
+          <div style={{ fontSize: 13, color: T.slate400, fontStyle: "italic" }}>Loading…</div>
+        ) : groups.length === 0 ? (
+          <div style={{ fontSize: 13, color: T.slate400, fontStyle: "italic" }}>No log changes this week.</div>
+        ) : (
+          <div style={{ maxHeight: 380, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+            {groups.map(g => (
+              <div key={g.key} style={{ marginBottom: 14 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 8, marginBottom: 5 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{g.name}</span>
+                  <span style={{ fontSize: 11, color: T.slate500 }}>
+                    {g.rows.length === 1 ? "1 change" : `${g.rows.length} changes`}
+                  </span>
+                </div>
+                {g.rows.map(r => (
+                  <div
+                    key={r.txid}
+                    style={{
+                      fontSize: 12, color: T.slate700, lineHeight: 1.5,
+                      paddingLeft: 10, marginBottom: 3,
+                      borderLeft: `2px solid ${T.slate200}`, boxSizing: "border-box",
+                    }}
+                  >
+                    <span style={{ color: T.slate500 }}>{changeWhen(r.changed_at)}</span>
+                    {" · "}
+                    <span style={{ fontWeight: 700, color: r.what === "removed" ? T.red : T.slate800 }}>
+                      {r.what === "removed" ? "Removed" : "Edited"}
+                    </span>
+                    {` a ${String(r.item || "record").toLowerCase()}`}
+                    {r.subject ? ` — ${r.subject}` : ""}
+                    {r.what !== "removed" && changeFieldSummary(r.changed_fields)
+                      ? <span style={{ color: T.slate500 }}>{` (${changeFieldSummary(r.changed_fields)})`}</span>
+                      : null}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
     </div>
   );
@@ -7050,12 +7175,13 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         </div>
       </Section>
 
-      {/* 13.5. EUR (left) + Whiteboard Errors (right) — same row, single column each.
-          Stacks vertically on narrow screens via grid auto-fit. Whiteboard Errors added 2026-08-07. */}
+      {/* 13.5. EUR (left) + Log Changes (right) — same row, single column each.
+          Stacks vertically on narrow screens via grid auto-fit. Log Changes
+          replaced Whiteboard Errors 2026-09-19. */}
       <Section>
         <div style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
           gap: 16, alignItems: "start",
         }}>
           <div>
@@ -7068,13 +7194,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
             />
           </div>
           <div>
-            <WhiteboardErrorsSection
-              report={data.report}
-              editMode={edit.active}
-              formReport={edit.form.report}
-              isReportDirty={edit.isReportDirty}
-              onReportChange={edit.setReportField}
-            />
+            <LogChangesSection weekDate={weekDate} team={data.team} />
           </div>
         </div>
       </Section>
