@@ -1173,7 +1173,7 @@ function PendingSaves({ refreshKey }) {
 // historical records Peter seeded himself are never checked back.
 // Verify stamps verified_at; Remove is the same void the tables use.
 // =====================================================================
-function SpotCheck({ isAdmin }) {
+function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   const thisWeek = weekEndOf(todayCentral());
   const [weeks, setWeeks] = useState([]);
   const [week, setWeek] = useState(thisWeek);
@@ -1182,6 +1182,7 @@ function SpotCheck({ isAdmin }) {
   const [busyId, setBusyId] = useState(null);
   const [err, setErr] = useState("");
   const [tick, setTick] = useState(0);
+  const [editing, setEditing] = useState(null);   // { kind, id } of the entry being changed
 
   // Which weeks the picker offers, and which one we land on. A week stays in
   // the list once it is cleared, so the week being worked does not disappear
@@ -1254,6 +1255,7 @@ function SpotCheck({ isAdmin }) {
                   <td style={{ ...tableTd, maxWidth: 260 }}>{r.note || "\u2014"}</td>
                   <td style={tableTd}>{fmtPts(r.points)}</td>
                   <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
+                    <button style={{ ...btnGhost, marginRight: 6 }} disabled={busyId === r.id} onClick={() => setEditing({ kind: "activity", id: r.id })}>Edit</button>
                     <button style={{ ...btnGhost, color: T.green, marginRight: 6 }} disabled={busyId === r.id} onClick={() => act(() => supabase.rpc("rp_verify_activity", { p_id: r.id }), r.id)}>Verified</button>
                     <button style={{ ...btnGhost, color: T.red }} disabled={busyId === r.id} onClick={() => { if (window.confirm(`Remove ${r.label || r.activity_key} for ${r.customer_label}? It will not be paid.`)) act(() => supabase.rpc("rp_void_activity", { p_id: r.id, p_reason: "spot-check: could not verify" }), r.id); }}>Remove</button>
                   </td>
@@ -1262,6 +1264,13 @@ function SpotCheck({ isAdmin }) {
             </tbody>
           </table>
         </div>
+      )}
+      {editing && (
+        <Modal title="Editing a record already on file" onClose={() => { setEditing(null); setTick(t => t + 1); }}>
+          <RecordEditor target={editing} values={values} sources={sources} types={types} isOwner={isOwner}
+            roster={roster} onLogged={() => setTick(t => t + 1)} refreshKey={tick}
+            onClose={() => { setEditing(null); setTick(t => t + 1); }} />
+        </Modal>
       )}
       <Notice kind="error">{err}</Notice>
     </div>
@@ -4570,7 +4579,8 @@ export default function ActivityLog({ userRole, userId }) {
       {tab === "development" && <Development userRole={userRole} userId={userId} embedded />}
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
       {tab === "changes" && isAdmin && <ChangesTab roster={roster} nameOf={nameOf} values={values} types={types} onChanged={bump} />}
-      {tab === "spotcheck" && isAdmin && <SpotCheck isAdmin={isAdmin} />}
+      {tab === "spotcheck" && isAdmin && <SpotCheck isAdmin={isAdmin} values={values} sources={sources}
+        types={types} isOwner={isOwner} roster={roster} />}
       {tab === "backfill" && isAdmin && <BackfillTab sources={sources} roster={roster} />}
       {tab === "history" && <HistoryTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} />}
     </div>
