@@ -4118,9 +4118,6 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
           <div style={{ fontSize: 13, color: T.slate500 }}>The last two weeks. Search a name, or set a From date, to go further back.</div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          <select value={recKind} onChange={e => setRecKind(e.target.value)} style={selectStyle}>
-            {ENTRY_KIND_FILTERS.map(k => <option key={k.key} value={k.key}>{k.label}</option>)}
-          </select>
           <input type="date" value={from} max={to || todayCentral()} title="From"
             onChange={e => setFrom(e.target.value)} style={selectStyle} />
           <input type="date" value={to} min={from || undefined} max={todayCentral()} title="To"
@@ -4137,6 +4134,13 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
           <input style={{ ...selectStyle, width: 190 }} value={q} placeholder="Search a customer"
             onChange={e => setQ(e.target.value)} {...noPwManager("r1")} />
         </div>
+      </div>
+      {/* Same toggle as the Score page. Tap a kind to see only that. */}
+      <div style={{ ...chipRow, marginBottom: 12 }}>
+        {ENTRY_KIND_FILTERS.map(k => (
+          <span key={k.key} onClick={() => setRecKind(k.key)}
+                style={{ ...chip(recKind === k.key), padding: "6px 12px", fontSize: 12 }}>{k.label}</span>
+        ))}
       </div>
       {flash && <Notice kind="ok">{flash}</Notice>}
       {err && <Notice kind="error">{err}</Notice>}
