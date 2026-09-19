@@ -1173,6 +1173,134 @@ function PendingSaves({ refreshKey }) {
 // historical records Peter seeded himself are never checked back.
 // Verify stamps verified_at; Remove is the same void the tables use.
 // =====================================================================
+// ---------------------------------------------------------------------
+// Turning a flagged spot-check entry into the cancelation it really was.
+// The household's policies on file come back ticked, with their line and
+// premium already known. Anything sold before the log existed has to have
+// its line typed, because nothing on the entry records it — a note saying
+// "cancelled both auto and home" names two lines and no premium.
+// The server does the rest: chargeback, voided saves and the 0.50 logging
+// credit all behave exactly as they do on the normal cancelation screen.
+// ---------------------------------------------------------------------
+function CancelationConvert({ row, types, onClose, onDone }) {
+  const [onFile, setOnFile] = useState([]);
+  const [picked, setPicked] = useState({});
+  const [extras, setExtras] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data, error } = await supabase.rpc("rp_sold_on_file2", {
+        p_customer_first: row.customer_first_name,
+        p_customer_last_initial: row.customer_last_initial,
+        p_phone_last4: row.phone_last4 || null,
+      });
+      if (!alive) return;
+      if (error) { setErr(errText(error)); return; }
+      const list = (Array.isArray(data) ? data : []).filter(p => !p.already_canceled);
+      setOnFile(list);
+      setPicked(Object.fromEntries(list.map(p => [p.sale_product_id, true])));
+    })();
+    return () => { alive = false; };
+  }, [row.id]);
+
+  const addExtra = () => setExtras(x => [...x, { key: `x${x.length}${Date.now()}`, line: "", type: "", premium: "" }]);
+  const editExtra = (k, patch) => setExtras(x => x.map(e => e.key === k ? { ...e, ...patch } : e));
+  const dropExtra = (k) => setExtras(x => x.filter(e => e.key !== k));
+
+  const save = async () => {
+    const policies = [
+      ...onFile.filter(p => picked[p.sale_product_id]).map(p => ({
+        policy_line: p.line_of_business,
+        product_type: p.product_type,
+        premium: p.premium == null ? "" : String(p.premium),
+        vehicle_count: p.vehicle_count == null ? "" : String(p.vehicle_count),
+        matched_sale_product_id: p.sale_product_id,
+      })),
+      ...extras.filter(e => e.line).map(e => ({
+        policy_line: e.line,
+        product_type: e.type || null,
+        premium: e.premium || "",
+      })),
+    ];
+    if (!policies.length) { setErr("Tick at least one policy that canceled."); return; }
+    setBusy(true); setErr("");
+    try {
+      const { data, error } = await supabase.rpc("rp_convert_activity_to_cancelation",
+        { p_activity_id: row.id, p_policies: policies });
+      if (error) { setErr(errText(error)); return; }
+      if (data && data.ok === false) { setErr(errText(data)); return; }
+      const n = Number(data?.count || policies.length);
+      onDone(`${row.customer_label}: ${n} cancelation${n === 1 ? "" : "s"} logged, and the ${row.label || row.activity_key} removed.`);
+    } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title={`Cancelation for ${row.customer_label}`} onClose={onClose}>
+      <div style={{ ...cardStyle, display: "grid", gap: 12 }}>
+        {err && <Notice kind="error">{err}</Notice>}
+        <div style={{ fontSize: 13, color: T.slate600 }}>
+          Canceled {fmtDate(row.occurred_on)}, credited to {row.first_name}. The note said: {row.note || "—"}
+        </div>
+
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>Policies on file</div>
+          {onFile.length === 0 ? (
+            <div style={{ fontSize: 13, color: T.slate600 }}>Nothing in force on file for this household. Add what canceled below.</div>
+          ) : onFile.map(p => (
+            <label key={p.sale_product_id} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, padding: "4px 0" }}>
+              <input type="checkbox" checked={!!picked[p.sale_product_id]}
+                     onChange={e => setPicked(s => ({ ...s, [p.sale_product_id]: e.target.checked }))} />
+              <span>
+                {typeLabel(types, p.line_of_business, p.product_type) || PRODUCT_SHORT[p.line_of_business] || p.line_of_business}
+                {" · $"}{fmtPts(p.premium)}{" · sold "}{fmtDate(p.submitted_date)}
+              </span>
+            </label>
+          ))}
+        </div>
+
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>Not on file</div>
+          {extras.map(e => (
+            <div key={e.key} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end", marginBottom: 6 }}>
+              <div style={field(130)}>
+                <label style={labelStyle}>Line</label>
+                <select style={inputBase} value={e.line} onChange={ev => editExtra(e.key, { line: ev.target.value, type: "" })}>
+                  <option value="">Pick one</option>
+                  {PRODUCTS.map(pr => <option key={pr.key} value={pr.key}>{pr.label}</option>)}
+                </select>
+              </div>
+              {(types[e.line] || []).length > 0 && (
+                <div style={field(150)}>
+                  <label style={labelStyle}>Type</label>
+                  <select style={inputBase} value={e.type} onChange={ev => editExtra(e.key, { type: ev.target.value })}>
+                    <option value="">Pick one</option>
+                    {(types[e.line] || []).map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
+                  </select>
+                </div>
+              )}
+              <div style={field(120)}>
+                <label style={labelStyle}>Premium <span style={hintStyle}>(if known)</span></label>
+                <input type="number" inputMode="decimal" min="0" step="0.01" style={moneyInput} value={e.premium}
+                       placeholder="0.00" onChange={ev => editExtra(e.key, { premium: ev.target.value })} />
+              </div>
+              <button type="button" style={{ ...btnGhost, color: T.red, marginBottom: 10 }} onClick={() => dropExtra(e.key)}>Remove</button>
+            </div>
+          ))}
+          <button type="button" style={btnGhost} onClick={addExtra}>Add a policy</button>
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="button" style={btnPrimary(busy)} disabled={busy} onClick={save}>{busy ? "Saving…" : "Log the cancelation"}</button>
+          <button type="button" style={btnGhost} disabled={busy} onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   const thisWeek = weekEndOf(todayCentral());
   const [weeks, setWeeks] = useState([]);
@@ -1184,6 +1312,8 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   const [tick, setTick] = useState(0);
   const [editing, setEditing] = useState(null);   // { kind, id } of the entry being changed
   const [flags, setFlags] = useState([]);         // entries this week whose note says cancel
+  const [converting, setConverting] = useState(null);  // the flagged entry being turned into a cancelation
+  const [msg, setMsg] = useState("");
 
   // Which weeks the picker offers, and which one we land on. A week stays in
   // the list once it is cleared, so the week being worked does not disappear
@@ -1234,6 +1364,10 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   const weekLabel = (iso) => `Week of ${fmtDate(addDays(iso, -6))} \u2013 ${fmtDate(iso)}`;
   const rowActions = (r) => (
     <>
+      {flags.find(f => f.id === r.id) && (
+        <button style={{ ...btnGhost, color: T.amber, marginRight: 6 }} disabled={busyId === r.id}
+                onClick={() => { setMsg(""); setConverting(flags.find(f => f.id === r.id)); }}>This was a cancelation</button>
+      )}
       <button style={{ ...btnGhost, marginRight: 6 }} disabled={busyId === r.id} onClick={() => setEditing({ kind: "activity", id: r.id })}>Edit</button>
       <button style={{ ...btnGhost, color: T.green, marginRight: 6 }} disabled={busyId === r.id} onClick={() => act(() => supabase.rpc("rp_verify_activity", { p_id: r.id }), r.id)}>Verified</button>
       <button style={{ ...btnGhost, color: T.red }} disabled={busyId === r.id} onClick={() => { if (window.confirm(`Remove ${r.label || r.activity_key} for ${r.customer_label}? It will not be paid.`)) act(() => supabase.rpc("rp_void_activity", { p_id: r.id, p_reason: "spot-check: could not verify" }), r.id); }}>Remove</button>
@@ -1317,6 +1451,11 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
             roster={roster} onLogged={() => setTick(t => t + 1)} refreshKey={tick}
             onClose={() => { setEditing(null); setTick(t => t + 1); }} />
         </Modal>
+      )}
+      {msg && <Notice kind="ok">{msg}</Notice>}
+      {converting && (
+        <CancelationConvert row={converting} types={types} onClose={() => setConverting(null)}
+          onDone={(mm) => { setConverting(null); setMsg(mm); setTick(t => t + 1); }} />
       )}
       <Notice kind="error">{err}</Notice>
     </div>
