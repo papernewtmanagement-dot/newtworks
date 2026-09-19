@@ -901,35 +901,36 @@ function useCPRData(weekDate) {
         }
 
         // 8b. Prior-week Sales Points per member — drives WoW delta indicator in Team Activity.
-        // Focused fetch: prior week's report id → its team_detail rows.
+        // Sales Points, quarter-to-date, for this week and for last week — both
+        // through get_sales_points_qtd, the one server resolver (frozen, then live
+        // production, then a CPR override, then self-reported). The page used to read
+        // the stored weekly_cpr_team_detail.sales_points column straight off the row.
+        // That column stays blank until the week is filled in or frozen, so the live
+        // production figure never showed and the week-over-week delta never rendered
+        // at all (Peter 2026-09-18). The resolver is SECURITY DEFINER so a staff
+        // viewer sees the same numbers an admin does.
         const lastWeekDate = addDaysISO(weekDate, -7);
+        let salesPointsByMember = {};
+        let salesPointsSourceByMember = {};
         let lastWeekSalesPointsByMember = {};
         try {
-          const { data: prevWeekReport } = await supabase
-            .from("weekly_cpr_reports")
-            .select("id")
-            .eq("agency_id", AGENCY_ID)
-            .eq("week_ending_date", lastWeekDate)
-            .maybeSingle();
-          if (prevWeekReport?.id) {
-            // weekly_cpr_team_detail_activity — same RLS-row-scope issue as
-            // the main detail fetch above: sales_points alone is not comp
-            // data, but the base table's admin-or-own-row policy still
-            // dropped every non-viewer row wholesale, silently zeroing the
-            // WoW delta indicator for everyone but the viewer.
-            const { data: prevDetail } = await supabase
-              .from("weekly_cpr_team_detail_activity")
-              .select("team_member_id, sales_points")
-              .eq("agency_id", AGENCY_ID)
-              .eq("weekly_cpr_report_id", prevWeekReport.id);
-            (prevDetail || []).forEach(d => {
-              if (d.sales_points != null) {
-                lastWeekSalesPointsByMember[d.team_member_id] = Number(d.sales_points);
-              }
-            });
-          }
+          const { data: spNow } = await supabase.rpc("get_sales_points_qtd", {
+            p_agency_id: AGENCY_ID, p_week_end: weekDate,
+          });
+          (spNow || []).forEach(r => {
+            if (!r?.team_id) return;
+            salesPointsByMember[r.team_id] = Number(r.sales_points) || 0;
+            salesPointsSourceByMember[r.team_id] = r.source || null;
+          });
+          const { data: spPrev } = await supabase.rpc("get_sales_points_qtd", {
+            p_agency_id: AGENCY_ID, p_week_end: lastWeekDate,
+          });
+          (spPrev || []).forEach(r => {
+            if (!r?.team_id) return;
+            lastWeekSalesPointsByMember[r.team_id] = Number(r.sales_points) || 0;
+          });
         } catch (e) {
-          console.warn("lastWeekSalesPoints fetch failed:", e);
+          console.warn("sales points QTD fetch failed:", e);
         }
 
         // 9. Runtime hours — get_weekly_cpr_hours blends TimeClock + work_location
@@ -1265,6 +1266,8 @@ function useCPRData(weekDate) {
           campaignPriors,
           reportPrefills,
           lastWeekSalesPointsByMember,
+          salesPointsByMember,
+          salesPointsSourceByMember,
           cycleStartISO,
           cycleEndISO,
           currentCycleStartISO,
@@ -3411,7 +3414,7 @@ function HoursWorkedSection({ details, team, runtimeHours, weekDate }) {
 const _TINT_1PCT = "#eef2ff";  // indigo-50
 const _TINT_HIST = "#f0fdfa";  // teal-50
 
-function TeamActivitySection({ details, team, runtimeReqs, report, editMode, formDetails, isDirty, onChange, weekDate, lastWeekSalesPointsByMember, cycleStartISO, priorQuartersAvgSP, cycleWeeklyDetails = [] }) {
+function TeamActivitySection({ details, team, runtimeReqs, report, editMode, formDetails, isDirty, onChange, weekDate, lastWeekSalesPointsByMember, salesPointsByMember = {}, cycleStartISO, priorQuartersAvgSP, cycleWeeklyDetails = [] }) {
   // Per-person expansion — accordion (one open at a time). Sparkline is inline
   // in the collapsed row and computed from cycleWeeklyDetails (sales_points trend).
   const [expandedPersonId, setExpandedPersonId] = useState(null);
@@ -3436,6 +3439,11 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
   // non-null per person across the cycle). Applied to everyone, not only leavers, so the
   // page and the server agree.
   const effSalesPts = (d) => {
+    // get_sales_points_qtd already resolves frozen / live production / override /
+    // self-reported in that order, so its answer wins. The two fallbacks below only
+    // run if that call failed.
+    const live = salesPointsByMember?.[d.team_member_id];
+    if (live != null) return Number(live) || 0;
     if (d.sales_points != null) return Number(d.sales_points) || 0;
     const mine = (cycleWeeklyDetails || [])
       .filter(x => x.team_member_id === d.team_member_id
@@ -3620,40 +3628,36 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                     ) : (
                       <Td align="right">
                         {(() => {
+                          // Quarter-to-date, live. The delta is this week's quarter total
+                          // minus last week's, which is what the person actually wrote this
+                          // week. Suppressed across a cycle boundary, where the quarter
+                          // counter restarts and the subtraction would be meaningless.
                           const eff = effSalesPts(d);
-                          if (d.sales_points != null) return eff.toFixed(2);
-                          if (eff > 0) {
-                            return (
-                              <span
-                                title="Carried forward — no new production recorded this week"
-                                style={{ color: T.slate500 }}
-                              >{eff.toFixed(2)}</span>
-                            );
-                          }
-                          return "—";
-                        })()}
-
-                        {(() => {
-                          // WoW delta: this week's sales_points vs last week's, suppressed across cycle boundary.
-                          if (d.sales_points == null) return null;
                           const last = lastWeekSalesPointsByMember?.[d.team_member_id];
-                          if (last == null) return null;
-                          // Suppress at start of a new cycle (last week belongs to prior quarter)
+                          let crossesCycle = false;
                           if (cycleStartISO && weekDate) {
-                            const lastWeekDate = (() => {
+                            const priorWeekISO = (() => {
                               const dt = new Date(weekDate + "T00:00:00Z");
                               dt.setUTCDate(dt.getUTCDate() - 7);
                               return dt.toISOString().slice(0, 10);
                             })();
-                            if (lastWeekDate < cycleStartISO) return null;
+                            crossesCycle = priorWeekISO < cycleStartISO;
                           }
-                          const delta = Number(d.sales_points) - Number(last);
-                          if (Math.abs(delta) < 0.005) return null;
-                          const up = delta > 0;
+                          const delta = (last == null || crossesCycle) ? null : eff - Number(last);
+                          const moved = delta != null && Math.abs(delta) >= 0.005;
+                          if (eff <= 0 && !moved) return "—";
                           return (
-                            <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 400, color: up ? T.green : T.red }}>
-                              {up ? "▲" : "▼"}{Math.abs(delta).toFixed(2)}
-                            </span>
+                            <Fragment>
+                              <span
+                                title={moved ? undefined : "Carried forward — no new production recorded this week"}
+                                style={moved ? undefined : { color: T.slate500 }}
+                              >{eff.toFixed(2)}</span>
+                              {moved && (
+                                <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 400, color: delta > 0 ? T.green : T.red }}>
+                                  {delta > 0 ? "▲" : "▼"}{Math.abs(delta).toFixed(2)}
+                                </span>
+                              )}
+                            </Fragment>
                           );
                         })()}
                       </Td>
@@ -7000,7 +7004,8 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           formDetails={edit.form.details}
           isDirty={edit.isDetailDirty}
           onChange={edit.setDetailField}
-          weekDate={weekDate} lastWeekSalesPointsByMember={data.lastWeekSalesPointsByMember} cycleStartISO={data.cycleStartISO}
+          weekDate={weekDate} lastWeekSalesPointsByMember={data.lastWeekSalesPointsByMember}
+          salesPointsByMember={data.salesPointsByMember} cycleStartISO={data.cycleStartISO}
           priorQuartersAvgSP={data.priorQuartersAvgSP} cycleWeeklyDetails={data.cycleWeeklyDetails} />
       </Section>
 
