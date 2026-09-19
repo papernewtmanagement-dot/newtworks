@@ -1272,6 +1272,18 @@ const COMMIT_BTN = {
 const COMMIT_BTN_PRIMARY = { ...COMMIT_BTN, background: T.blue, borderColor: T.blue, color: T.white, fontWeight: 700 };
 const COMMIT_CARD = { background: "#F8FAF3", borderRadius: 7, padding: "10px 12px", margin: "8px 0 14px 0" };
 
+// The explanation behind a commit option. The option itself is a short line so it
+// reads cleanly on the Telegram messages; anything that needs more words sits in
+// here (Peter 2026-09-19).
+function CommitNote({ note }) {
+  return (
+    <details style={{ margin: "2px 0 0 24px" }}>
+      <summary style={{ cursor: "pointer", fontSize: 12, color: T.slate500, listStyle: "none" }}>What this means</summary>
+      <div style={{ fontSize: 13, color: "#334155", marginTop: 4 }}>{note}</div>
+    </details>
+  );
+}
+
 function KickoffCommits({ hosts, week }) {
   const [info, setInfo] = useState(null);      // { member_id, today_date, today }
   const [error, setError] = useState(null);
@@ -1283,7 +1295,12 @@ function KickoffCommits({ hosts, week }) {
     const raw = hosts.pick && typeof hosts.pick.getAttribute === "function" ? hosts.pick.getAttribute("data-nw-items") : null;
     try {
       const v = JSON.parse(raw || "[]");
-      return Array.isArray(v) ? v.map((x) => String(x)) : [];
+      if (!Array.isArray(v)) return [];
+      return v
+        .map((x) => (x && typeof x === "object"
+          ? { text: String(x.text || ""), note: String(x.note || "") }
+          : { text: String(x), note: "" }))
+        .filter((x) => x.text);
     } catch { return []; }
   }, [hosts.pick]);
 
@@ -1295,7 +1312,7 @@ function KickoffCommits({ hosts, week }) {
   useEffect(() => { load(); }, [load]);
 
   const save = async () => {
-    const text = choice === "other" ? other.trim() : (choice != null ? items[choice] : "");
+    const text = choice === "other" ? other.trim() : (choice != null ? (items[choice] && items[choice].text) || "" : "");
     if (!text) { setError("Pick a commit or write one."); return; }
     setBusy(true); setError(null);
     const { data, error: e } = await supabase.rpc("kickoff_commit_save", {
@@ -1315,7 +1332,12 @@ function KickoffCommits({ hosts, week }) {
   let pick;
   if (!canSave) {
     pick = items.length ? (
-      <ul>{items.map((t, i) => <li key={i}>{t}</li>)}</ul>
+      <ul>{items.map((t, i) => (
+        <li key={i}>
+          {t.text}
+          {t.note ? <CommitNote note={t.note} /> : null}
+        </li>
+      ))}</ul>
     ) : null;
   } else if (today) {
     pick = (
@@ -1329,10 +1351,13 @@ function KickoffCommits({ hosts, week }) {
     pick = (
       <div style={COMMIT_CARD}>
         {items.map((t, i) => (
-          <label key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, margin: "4px 0", cursor: "pointer" }}>
-            <input type="radio" name="nw-commit" checked={choice === i} onChange={() => setChoice(i)} style={{ marginTop: 5, flexShrink: 0 }} />
-            <span>{t}</span>
-          </label>
+          <div key={i} style={{ margin: "4px 0" }}>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
+              <input type="radio" name="nw-commit" checked={choice === i} onChange={() => setChoice(i)} style={{ marginTop: 5, flexShrink: 0 }} />
+              <span>{t.text}</span>
+            </label>
+            {t.note ? <CommitNote note={t.note} /> : null}
+          </div>
         ))}
         <label style={{ display: "flex", alignItems: "flex-start", gap: 8, margin: "4px 0", cursor: "pointer" }}>
           <input type="radio" name="nw-commit" checked={choice === "other"} onChange={() => setChoice("other")} style={{ marginTop: 5, flexShrink: 0 }} />

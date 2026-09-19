@@ -1229,6 +1229,17 @@ const COMMITS_END_RE = /^[ \t]*\*?\[Commits end\]\*?[ \t]*$/i;
 const COMMIT_BRIDGE_RE = /\{\{commit-bridge\}\}/gi;
 const COMMIT_ITEM_RE = /^[ \t]*(?:[-*]|\d+\.)\s+(.+?)\s*$/;
 
+// A commit line is written "short summary | the longer explanation"
+// (Peter 2026-09-19). The short summary is what gets saved and what shows on
+// the Telegram messages, so it has to stay one readable line. The explanation
+// is optional and sits behind an expander on the page. A line with no pipe is
+// all summary and has no explanation.
+function parseCommitItem(raw) {
+  const i = raw.indexOf("|");
+  if (i === -1) return { text: raw.trim(), note: "" };
+  return { text: raw.slice(0, i).trim(), note: raw.slice(i + 1).trim() };
+}
+
 function renderCommitHost(kind, items) {
   return `<div class="nw-commit-host" data-nw-commit="${kind}" data-nw-items="${escapeAttr(JSON.stringify(items || []))}"></div>`;
 }
@@ -1250,7 +1261,7 @@ function expandCommits(md, slots) {
       continue;
     }
     const m = COMMIT_ITEM_RE.exec(line);
-    if (m) items.push(m[1]);
+    if (m) items.push(parseCommitItem(m[1]));
   }
   if (items !== null) {
     slots.push(renderCommitHost("pick", items));
