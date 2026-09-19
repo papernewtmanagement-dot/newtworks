@@ -3955,10 +3955,10 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, ret
   const retentionBucketPool = Math.max(0, weeklyRetentionPool - teamGuarantee);
   const salesBucketPool     = weeklySalesPool / 2;
   const floorApplied        = diag.qtd_pools?.retention_floor_applied === true;
-  // d.bonus still carries the whole residual-pool bonus (sales share + retention share, guarantee
-  // included) so the digest email and every prior reader keep working. The page shows the guarantee
-  // on its own Retention Points line and the Team Bonus row net of it; the sums are unchanged.
-  const teamBonusNet        = d => Number(d.bonus || 0) - Number(d.retention_points_pay || 0);
+  // d.bonus is the whole residual-pool bonus: sales share plus retention share, the
+  // retention points guarantee included. Retention points come out of the retention
+  // third (Peter 2026-09-18), so the Team Bonus row shows the whole thing and the
+  // points are explained inside its Retention split, not on a row of their own.
 
   // v2 pay components — every element that hits a check under the residual-pool structure.
   // Base + Commission are payroll-cycle earnings.
@@ -3966,11 +3966,6 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, ret
   // Marketing is the separate marketing pool share. Manager + Health Goal are pre-pool carveouts.
   const ROWS = [
     ["base_salary",                   "Base"],
-    // Retention Points sits above Commission at Peter's direction (2026-09-18).
-    // Net points x $1, guaranteed, after the requirements-adjustment scale.
-    // Written to the row by write_weekly_comp_v2. Reads $0 until the go-live key is set.
-    // It is part of d.bonus, which is why the Team Bonus row below is shown net of it.
-    ["retention_points_pay",          "Retention Points"],
     ["commission",                    "Commission"],
     // Team Bonus row: shows the sum (d.bonus = sales_pool_share + retention_pool_share).
     // Expandable → 3 sales/retention split sub-rows + Requirements Adjustment sub-row (folded in
@@ -4163,7 +4158,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, ret
                         )}
                       </Td>
                       {sorted.map(d => (
-                        <Td key={d.team_member_id} align="right">{fmtMoneyCentsR(teamBonusNet(d))}</Td>
+                        <Td key={d.team_member_id} align="right">{fmtMoneyCentsR(d.bonus)}</Td>
                       ))}
                     </tr>
                   );
@@ -4225,85 +4220,63 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, ret
                       })}
                     </tr>
                   ) : null;
+                  // Retention split. Retention points are paid out of the retention third,
+                  // so they are explained here rather than on a row of their own next to
+                  // Commission (Peter 2026-09-18). Click the line for where the points came
+                  // from: hours, calls, logged activity and what was logged.
+                  const retShare  = d => Number(d.retention_pool_share || 0);
+                  const retPoints = d => Number(d.retention_points_pay || 0);
+                  const retSplitRow = (
+                    <tr key={`${key}-ret`} onClick={() => setRetentionPointsExpanded(v => !v)} style={{ cursor: "pointer" }}>
+                      <Td style={{ paddingLeft: 32, color: T.slate500, fontSize: 12, fontStyle: "italic", userSelect: "none" }}>
+                        {retentionPointsExpanded ? "▾" : "▸"} Retention split
+                      </Td>
+                      {sorted.map(d => (
+                        <Td key={d.team_member_id} align="right" style={{ color: T.slate500, fontSize: 12 }}>
+                          {fmtMoneyCentsR(retShare(d))}
+                        </Td>
+                      ))}
+                    </tr>
+                  );
+                  const rpDetail = (subKey, subLabel, pick) => (
+                    <tr key={`${key}-rp-${subKey}`} style={{ background: T.slate50 }}>
+                      <Td style={{ paddingLeft: 48, color: T.slate500, fontSize: 12 }}>{subLabel}</Td>
+                      {sorted.map(d => (
+                        <Td key={d.team_member_id} align="right" style={{ color: T.slate600, fontSize: 12 }}>
+                          {pick(d, retentionPointsByMember?.[d.team_member_id])}
+                        </Td>
+                      ))}
+                    </tr>
+                  );
+                  const n2 = v => (Number(v) || 0).toFixed(2);
+                  const em = "—";
+                  const pointKeys = Array.from(new Set(
+                    sorted.flatMap(d => Object.keys(retentionPointsByMember?.[d.team_member_id]?.detail?.counts_by_key || {}))
+                  )).sort();
+                  const prettyKey = k => k.replace(/_/g, " ").replace(/^./, c => c.toUpperCase());
+                  const retentionRows = retentionPointsExpanded
+                    ? [
+                        retSplitRow,
+                        rpDetail("points",  "Retention points, $1 each",      d => fmtMoneyCentsR(retPoints(d))),
+                        rpDetail("share",   "Share of the rest of the third", d => fmtMoneyCentsR(retShare(d) - retPoints(d))),
+                        rpDetail("hours",   "Hours in office",  (d, r) => r ? `${n2(r.hours_in_office)} h → ${n2(r.hour_points)}` : em),
+                        rpDetail("calls",   "Calls answered",   (d, r) => r ? `${Number(r.calls_answered) || 0} → ${n2(r.call_points)}` : em),
+                        rpDetail("logged",  "Logged activity",  (d, r) => r ? n2(r.logged_points) : em),
+                        ...pointKeys.map(k => rpDetail(`cnt-${k}`, `\u00a0\u00a0\u00a0${prettyKey(k)}`,
+                          (d, r) => (r?.detail?.counts_by_key?.[k] ? String(r.detail.counts_by_key[k]) : em))),
+                        rpDetail("derived", "Derived from sales", (d, r) => r ? n2(r.derived_points) : em),
+                        rpDetail("gross",   "Gross points",       (d, r) => r ? n2(r.gross_points) : em),
+                        rpDetail("reduce",  "Missed-call reduction", (d, r) => r ? `−${n2(r.reduction_pct)}%` : em),
+                        rpDetail("net",     "Net points",         (d, r) => r ? n2(r.net_points) : em),
+                      ]
+                    : [retSplitRow];
                   return [
                     mainRow,
                     subRow("sp13", "13-wk sales split", "sp13_share_ratio_pct", salesBucketPool),
                     subRow("sp4",  "4-wk sales split",  "sp4_share_ratio_pct",  salesBucketPool),
-                    // Retention split only exists while there is a retention third to
-                    // share. From the week ending 2026-09-19 retention points come off the
-                    // envelope before the pool (Peter 2026-09-18), so the third is zero and
-                    // this sub-row would be a permanent row of zeros.
-                    ...(retentionBucketPool > 0
-                        ? [subRow("ret", "Retention split", "ret_share_ratio_pct", retentionBucketPool)]
-                        : []),
+                    ...retentionRows,
                     ...(adjRow ? [adjRow] : []),
                   ];
-                }
-                // Retention Points: expandable row → where each person's points came
-                // from. Reads compute_weekly_retention_points, the same function the
-                // residual pool pays off, so the breakdown can never drift from the
-                // dollars on the row above it.
-                if (key === "retention_points_pay") {
-                  const anyRp = sorted.some(d => retentionPointsByMember?.[d.team_member_id]);
-                  const rpMain = (
-                    <tr
-                      key={key}
-                      onClick={anyRp ? () => setRetentionPointsExpanded(v => !v) : undefined}
-                      style={{ cursor: anyRp ? "pointer" : "default" }}
-                    >
-                      <Td style={{ paddingLeft: 14, color: T.slate700, userSelect: "none" }}>
-                        {anyRp ? (retentionPointsExpanded ? "▾ " : "▸ ") : ""}{label}
-                      </Td>
-                      {sorted.map(d => (
-                        <Td key={d.team_member_id} align="right">{fmtMoneyCentsR(d[key])}</Td>
-                      ))}
-                    </tr>
-                  );
-                  if (!anyRp || !retentionPointsExpanded) return [rpMain];
-
-                  const rpSub = (subKey, subLabel, pick, note) => (
-                    <tr key={`${key}-${subKey}`} style={{ background: T.slate50 }}>
-                      <Td style={{ paddingLeft: 32, color: T.slate500, fontSize: 12 }}>
-                        {subLabel}
-                        {note && <span style={{ color: T.slate400 }}> {note}</span>}
-                      </Td>
-                      {sorted.map(d => {
-                        const r = retentionPointsByMember?.[d.team_member_id];
-                        return (
-                          <Td key={d.team_member_id} align="right" style={{ color: T.slate600, fontSize: 12 }}>
-                            {r ? pick(r) : "—"}
-                          </Td>
-                        );
-                      })}
-                    </tr>
-                  );
-                  const n2 = v => (Number(v) || 0).toFixed(2);
-
-                  // The logged half is the part that comes from what the team entered.
-                  // Show what those entries were, one line per activity kind, so the
-                  // number is traceable back to the work.
-                  const allKeys = Array.from(new Set(
-                    sorted.flatMap(d => Object.keys(retentionPointsByMember?.[d.team_member_id]?.detail?.counts_by_key || {}))
-                  )).sort();
-                  const prettyKey = k => k.replace(/_/g, " ").replace(/^./, c => c.toUpperCase());
-
-                  const rows = [
-                    rpMain,
-                    rpSub("hours", "Hours in office", r => `${n2(r.hours_in_office)} h → ${n2(r.hour_points)}`),
-                    rpSub("calls", "Calls answered", r => `${Number(r.calls_answered) || 0} → ${n2(r.call_points)}`),
-                    rpSub("logged", "Logged activity", r => n2(r.logged_points)),
-                    ...allKeys.map(k => rpSub(
-                      `cnt-${k}`,
-                      `   ${prettyKey(k)}`,
-                      r => (r.detail?.counts_by_key?.[k] ? String(r.detail.counts_by_key[k]) : "—"),
-                    )),
-                    rpSub("derived", "Derived from sales", r => n2(r.derived_points)),
-                    rpSub("gross", "Gross points", r => n2(r.gross_points)),
-                    rpSub("reduction", "Missed-call reduction", r => `−${n2(r.reduction_pct)}%`,
-                          `(team missed ${n2(sorted.map(d => retentionPointsByMember?.[d.team_member_id]).find(Boolean)?.missed_pct)}%)`),
-                    rpSub("net", "Net points → dollars", r => n2(r.net_points)),
-                  ];
-                  return rows;
                 }
                 // Commission: expandable row → combined cycle-view chart (one line per teammate).
                 // Reads cycleWeeklyDetails (weekly commission per person across the cycle so far).
@@ -4487,7 +4460,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, ret
               <tr>
                 <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>Week Total</Td>
                 {sorted.map(d => {
-                  const compsTotal = ROWS.reduce((sum, [k]) => sum + (Number(k === "team_bonus" ? teamBonusNet(d) : d[k]) || 0), 0);
+                  const compsTotal = ROWS.reduce((sum, [k]) => sum + (Number(k === "team_bonus" ? d.bonus : d[k]) || 0), 0);
                   const member = (team || []).find(t => t.id === d.team_member_id);
                   const weeklyBenefits = leftDuringWeek(d.__left, weekDate) ? 0 : Number(member?.annual_benefits_value || 0) / 52;
                   const total = compsTotal + weeklyBenefits;
