@@ -7,7 +7,6 @@ import Automations from "./src/modules/Automations.jsx";
 import SocialMedia from "./src/modules/SocialMedia.jsx";
 import TasksGoals from "./src/modules/TasksGoals.jsx";
 import AlertsNotifications from "./src/modules/AlertsNotifications.jsx";
-import Documents from "./src/modules/Documents.jsx";
 import Team from "./src/modules/Team.jsx";
 import Book from "./src/modules/Book.jsx";
 import Settings from "./src/modules/Settings.jsx";
