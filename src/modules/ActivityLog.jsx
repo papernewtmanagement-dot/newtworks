@@ -1183,6 +1183,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   const [err, setErr] = useState("");
   const [tick, setTick] = useState(0);
   const [editing, setEditing] = useState(null);   // { kind, id } of the entry being changed
+  const [flags, setFlags] = useState([]);         // entries this week whose note says cancel
 
   // Which weeks the picker offers, and which one we land on. A week stays in
   // the list once it is cleared, so the week being worked does not disappear
@@ -1209,11 +1210,16 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
     if (!isAdmin || !week) return undefined;
     let alive = true;
     (async () => {
-      const { data, error } = await supabase.rpc("rp_spot_check_sample", { p_week_end: week, p_limit: 10 });
+      const [sample, cancels] = await Promise.all([
+        supabase.rpc("rp_spot_check_sample", { p_week_end: week, p_limit: 10 }),
+        supabase.rpc("rp_cancel_word_review", { p_week_end: week }),
+      ]);
       if (!alive) return;
-      if (error) { setErr(errText(error)); return; }
-      const list = Array.isArray(data) ? data : [];
+      if (sample.error) { setErr(errText(sample.error)); return; }
+      if (cancels.error) { setErr(errText(cancels.error)); return; }
+      const list = Array.isArray(sample.data) ? sample.data : [];
       setRows(list); setRemaining(list.length ? Number(list[0].remaining) : 0);
+      setFlags(Array.isArray(cancels.data) ? cancels.data : []);
     })();
     return () => { alive = false; };
   }, [isAdmin, week, tick]);
@@ -1226,6 +1232,16 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
     } finally { setBusyId(null); }
   };
   const weekLabel = (iso) => `Week of ${fmtDate(addDays(iso, -6))} \u2013 ${fmtDate(iso)}`;
+  const rowActions = (r) => (
+    <>
+      <button style={{ ...btnGhost, marginRight: 6 }} disabled={busyId === r.id} onClick={() => setEditing({ kind: "activity", id: r.id })}>Edit</button>
+      <button style={{ ...btnGhost, color: T.green, marginRight: 6 }} disabled={busyId === r.id} onClick={() => act(() => supabase.rpc("rp_verify_activity", { p_id: r.id }), r.id)}>Verified</button>
+      <button style={{ ...btnGhost, color: T.red }} disabled={busyId === r.id} onClick={() => { if (window.confirm(`Remove ${r.label || r.activity_key} for ${r.customer_label}? It will not be paid.`)) act(() => supabase.rpc("rp_void_activity", { p_id: r.id, p_reason: "spot-check: could not verify" }), r.id); }}>Remove</button>
+    </>
+  );
+  // Flagged entries already in the ten below are marked there instead, so
+  // the same entry never gets two sets of buttons.
+  const flagsAbove = flags.filter(f => !rows.some(r => r.id === f.id));
 
   if (!isAdmin) return null;
   return (
@@ -1241,6 +1257,35 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
       <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
         Ten random self-logged entries from the week, the same ten until you clear them. Open the ECRM link, check the note, tap Verified. {remaining > 10 ? `${remaining} still unverified this week.` : remaining > 0 ? `${remaining} left this week.` : "Nothing left to check this week."}
       </div>
+      {flagsAbove.length > 0 && (
+        <div style={{ border: `1px solid ${T.amber}`, background: "#fffbeb", borderRadius: 10, padding: 12, marginBottom: 14 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>
+            {flagsAbove.length} {flagsAbove.length === 1 ? "entry" : "entries"} this week say cancel in the note
+          </div>
+          <div style={{ fontSize: 12, color: T.slate600, marginBottom: 10 }}>
+            None of these were logged as a Cancelation Saved. Decide whether each one was a policy change or a cancelation.
+          </div>
+          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead><tr><th style={tableTh}>Who</th><th style={tableTh}>Date</th><th style={tableTh}>Logged as</th><th style={tableTh}>Customer</th><th style={tableTh}>Note</th><th style={tableTh}>Points</th><th style={tableTh}>Cancelation on file</th><th style={tableTh}></th></tr></thead>
+              <tbody>
+                {flagsAbove.map(r => (
+                  <tr key={r.id}>
+                    <td style={tableTd}>{r.first_name || "\u2014"}</td>
+                    <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{fmtDate(r.occurred_on)}</td>
+                    <td style={tableTd}>{r.label || r.activity_key}</td>
+                    <td style={tableTd}>{r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}</td>
+                    <td style={{ ...tableTd, maxWidth: 260 }}>{r.note || "\u2014"}</td>
+                    <td style={tableTd}>{fmtPts(r.points)}</td>
+                    <td style={{ ...tableTd, whiteSpace: "nowrap", fontWeight: 700, color: r.has_cancelation ? T.green : T.red }}>{r.has_cancelation ? "Yes" : "No"}</td>
+                    <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{rowActions(r)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       {rows.length > 0 && (
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -1252,13 +1297,14 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                   <td style={tableTd}>{fmtDate(r.occurred_on)}</td>
                   <td style={tableTd}>{r.label || r.activity_key}</td>
                   <td style={tableTd}>{r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}</td>
-                  <td style={{ ...tableTd, maxWidth: 260 }}>{r.note || "\u2014"}</td>
-                  <td style={tableTd}>{fmtPts(r.points)}</td>
-                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
-                    <button style={{ ...btnGhost, marginRight: 6 }} disabled={busyId === r.id} onClick={() => setEditing({ kind: "activity", id: r.id })}>Edit</button>
-                    <button style={{ ...btnGhost, color: T.green, marginRight: 6 }} disabled={busyId === r.id} onClick={() => act(() => supabase.rpc("rp_verify_activity", { p_id: r.id }), r.id)}>Verified</button>
-                    <button style={{ ...btnGhost, color: T.red }} disabled={busyId === r.id} onClick={() => { if (window.confirm(`Remove ${r.label || r.activity_key} for ${r.customer_label}? It will not be paid.`)) act(() => supabase.rpc("rp_void_activity", { p_id: r.id, p_reason: "spot-check: could not verify" }), r.id); }}>Remove</button>
+                  <td style={{ ...tableTd, maxWidth: 260 }}>
+                    {r.note || "\u2014"}
+                    {flags.some(f => f.id === r.id) && (
+                      <div style={{ fontSize: 11, fontWeight: 700, color: T.amber }}>Note says cancel \u2014 policy change or cancelation?</div>
+                    )}
                   </td>
+                  <td style={tableTd}>{fmtPts(r.points)}</td>
+                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{rowActions(r)}</td>
                 </tr>
               ))}
             </tbody>
