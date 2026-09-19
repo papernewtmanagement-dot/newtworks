@@ -1401,7 +1401,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
           </div>
           <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr><th style={tableTh}>Who</th><th style={tableTh}>Date</th><th style={tableTh}>Logged as</th><th style={tableTh}>Customer</th><th style={tableTh}>Note</th><th style={tableTh}>Points</th><th style={tableTh}>Cancelation on file</th><th style={tableTh}></th></tr></thead>
+              <thead><tr><th style={tableTh}>Who</th><th style={tableTh}>Date</th><th style={tableTh}>Logged as</th><th style={tableTh}>Customer</th><th style={tableTh}>Note</th><th style={tableTh}>ECRM</th><th style={tableTh}>Points</th><th style={tableTh}>Cancelation on file</th><th style={tableTh}></th></tr></thead>
               <tbody>
                 {flagsAbove.map(r => (
                   <tr key={r.id}>
@@ -1410,6 +1410,10 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                     <td style={tableTd}>{r.label || r.activity_key}</td>
                     <td style={tableTd}>{r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}</td>
                     <td style={{ ...tableTd, maxWidth: 260 }}>{r.note || "\u2014"}</td>
+                    <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
+                      {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
+                        : <span style={{ color: T.slate300 }}>—</span>}
+                    </td>
                     <td style={tableTd}>{fmtPts(r.points)}</td>
                     <td style={{ ...tableTd, whiteSpace: "nowrap", fontWeight: 700, color: r.has_cancelation ? T.green : T.red }}>{r.has_cancelation ? "Yes" : "No"}</td>
                     <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{rowActions(r)}</td>
@@ -1423,7 +1427,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
       {rows.length > 0 && (
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><th style={tableTh}>Who</th><th style={tableTh}>Date</th><th style={tableTh}>What</th><th style={tableTh}>Customer</th><th style={tableTh}>Note</th><th style={tableTh}>Points</th><th style={tableTh}></th></tr></thead>
+            <thead><tr><th style={tableTh}>Who</th><th style={tableTh}>Date</th><th style={tableTh}>What</th><th style={tableTh}>Customer</th><th style={tableTh}>Note</th><th style={tableTh}>ECRM</th><th style={tableTh}>Points</th><th style={tableTh}></th></tr></thead>
             <tbody>
               {rows.map(r => (
                 <tr key={r.id}>
@@ -1436,6 +1440,10 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                     {flags.some(f => f.id === r.id) && (
                       <div style={{ fontSize: 11, fontWeight: 700, color: T.amber }}>Note says cancel \u2014 policy change or cancelation?</div>
                     )}
+                  </td>
+                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
+                    {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
+                      : <span style={{ color: T.slate300 }}>—</span>}
                   </td>
                   <td style={tableTd}>{fmtPts(r.points)}</td>
                   <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{rowActions(r)}</td>
@@ -4414,6 +4422,7 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
                 {isAdmin && <th style={tableTh}>Who</th>}
                 <th style={tableTh}>Details</th>
                 <th style={tableTh}>Issued</th>
+                <th style={tableTh}>ECRM</th>
                 <th style={tableTh}></th>
               </tr>
             </thead>
@@ -4437,6 +4446,10 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
                     {r.kind !== "sale" ? <span style={{ color: T.slate300 }}>—</span>
                       : r.issued_amount != null ? `$${fmtPts(r.issued_amount)}`
                       : <span style={{ color: T.slate400 }}>waiting</span>}
+                  </td>
+                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
+                    {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
+                      : <span style={{ color: T.slate300 }}>—</span>}
                   </td>
                   <td style={{ ...tableTd, whiteSpace: "nowrap", textAlign: "right" }}>
                     {r.can_change ? (
