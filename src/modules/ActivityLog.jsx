@@ -3988,6 +3988,39 @@ function LogTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, na
 // tab now; it used to sit under the entry form on Log. Editing takes over
 // the tab: one record, one form, nothing else to trip over.
 // =====================================================================
+// ---------------------------------------------------------------------
+// Opening a record to edit it. The five logged kinds share the one entry
+// form; an appointment has its own editor and needs its row fetched first.
+// History and the customer popup both come through here, so neither has to
+// know which kind goes where.
+// ---------------------------------------------------------------------
+function RecordEditor({ target, values, sources, types, isOwner, roster, onLogged, refreshKey, onClose }) {
+  const [apptRow, setApptRow] = useState(null);
+  const [err, setErr] = useState("");
+  const isAppt = target?.kind === "appointment";
+  useEffect(() => {
+    if (!isAppt) { setApptRow(null); return undefined; }
+    let alive = true;
+    setErr(""); setApptRow(null);
+    (async () => {
+      const { data, error } = await supabase.from("appointment_log").select(APPT_SELECT).eq("id", target.id).maybeSingle();
+      if (!alive) return;
+      if (error || !data) { setErr(errText(error || "that appointment is not on file any more")); return; }
+      setApptRow(data);
+    })();
+    return () => { alive = false; };
+  }, [isAppt, target?.id]);
+
+  if (err) return <Notice kind="error">{err}</Notice>;
+  if (isAppt) {
+    if (!apptRow) return <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>;
+    return <EditRecord bare kind="appointment" row={apptRow} sources={sources} types={types} roster={roster}
+      isOwner={isOwner} onClose={() => onClose("")} onSaved={() => onClose("Saved.")} />;
+  }
+  return <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster}
+    onLogged={onLogged} refreshKey={refreshKey} allowCancel editing={target} onCloseEdit={onClose} />;
+}
+
 function HistoryTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, onLogged, refreshKey }) {
   const [editing, setEditing] = useState(null);
   const [flash, setFlash] = useState("");
@@ -3999,8 +4032,8 @@ function HistoryTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster
       <RecentEntries isAdmin={isAdmin} roster={roster} refreshKey={refreshKey + listKey} onEdit={openEdit} flash={flash} />
       {editing && (
         <Modal title="Editing a record already on file" onClose={() => closeEdit("")}>
-          <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster}
-            onLogged={onLogged} refreshKey={refreshKey} allowCancel editing={editing} onCloseEdit={closeEdit} />
+          <RecordEditor target={editing} values={values} sources={sources} types={types} isOwner={isOwner}
+            roster={roster} onLogged={onLogged} refreshKey={refreshKey} onClose={closeEdit} />
         </Modal>
       )}
     </div>
@@ -4014,8 +4047,17 @@ function HistoryTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster
 // Typing in the search box reaches all the way back, which is how the
 // historical load gets edited: editing one moves it into the production log.
 // =====================================================================
-const KIND_LABEL = { sale: "Sale", quote: "Quote", cancelation: "Cancelation", activity: "Activity", scorecard: "Conversation score" };
-const KIND_COLOR = { sale: T.green, quote: T.blue, cancelation: T.red, activity: T.purple, scorecard: T.teal };
+// One name and one colour per kind of record. Every screen that lists them
+// reads this, so History and the customer popup never drift apart.
+const KIND_META = {
+  sale:        { label: "Sale",               color: T.green },
+  quote:       { label: "Quote",              color: T.blue },
+  cancelation: { label: "Cancelation",        color: T.red },
+  activity:    { label: "Activity",           color: T.purple },
+  scorecard:   { label: "Conversation score", color: T.teal },
+  appointment: { label: "Appointment",        color: T.amber },
+};
+const kindMeta = (k) => KIND_META[k] || { label: String(k || ""), color: T.slate700 };
 
 const ENTRY_KIND_FILTERS = [
   { key: "", label: "Everything" },
@@ -4023,6 +4065,7 @@ const ENTRY_KIND_FILTERS = [
   { key: "quote", label: "Quotes" },
   { key: "cancelation", label: "Cancelations" },
   { key: "activity", label: "Activities" },
+  { key: "appointment", label: "Appointments" },
   { key: "scorecard", label: "Conversation scores" },
 ];
 
@@ -4055,7 +4098,7 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
   }, [who, term, from, to, recKind, refreshKey]);
 
   const remove = async (row) => {
-    const what = (KIND_LABEL[row.kind] || row.kind).toLowerCase();
+    const what = kindMeta(row.kind).label.toLowerCase();
     if (!window.confirm(`Delete this ${what} for ${row.customer_label || "this customer"}? It stops counting straight away.`)) return;
     setBusyId(row.id); setErr("");
     try {
@@ -4120,7 +4163,7 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
                 <tr key={`${r.kind}:${r.id}`}>
                   <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{fmtDate(r.occurred_on)}</td>
                   <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
-                    <span style={{ fontWeight: 700, color: KIND_COLOR[r.kind] || T.slate700 }}>{KIND_LABEL[r.kind] || r.kind}</span>
+                    <span style={{ fontWeight: 700, color: kindMeta(r.kind).color }}>{kindMeta(r.kind).label}</span>
                     {r.entry_source === "historical_backfill" && (
                       <span style={{ marginLeft: 6, padding: "1px 7px", borderRadius: 999, background: T.slate100, color: T.slate600, fontSize: 11, fontWeight: 700 }}>Historical</span>
                     )}
@@ -4177,23 +4220,13 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
 // The name itself is <CustomerName> from lib/customerAccount.jsx. It reads
 // the provider set up in the shell below, so no tab passes anything down.
 // =====================================================================
-const ACCT_KIND = {
-  sale:        { label: "Sale",               color: T.green },
-  quote:       { label: "Quote",              color: T.blue },
-  cancelation: { label: "Cancelation",        color: T.red },
-  activity:    { label: "Activity",           color: T.purple },
-  scorecard:   { label: "Conversation score", color: T.teal },
-  appointment: { label: "Appointment",        color: T.amber },
-};
-
 function CustomerAccount({ token, values, sources, types, isOwner, roster, onLogged, onClose }) {
   const { label, phone4 } = parseAcctToken(token);
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [flash, setFlash] = useState("");
   const [reload, setReload] = useState(0);
-  const [editing, setEditing] = useState(null);   // { kind, id } — opens the entry form
-  const [apptRow, setApptRow] = useState(null);   // an appointment opens its own editor
+  const [editing, setEditing] = useState(null);   // { kind, id } of the record being changed
   const [busyId, setBusyId] = useState(null);
 
   useEffect(() => {
@@ -4210,18 +4243,12 @@ function CustomerAccount({ token, values, sources, types, isOwner, roster, onLog
   }, [label, phone4, reload]);
 
   const closeEdit = (msg) => {
-    setEditing(null); setApptRow(null); setFlash(msg || "");
+    setEditing(null); setFlash(msg || "");
     setReload(k => k + 1);
     onLogged?.();
   };
 
-  const openEdit = async (r) => {
-    setFlash(""); setErr("");
-    if (r.kind !== "appointment") { setEditing({ kind: r.kind, id: r.id }); return; }
-    const { data: row, error } = await supabase.from("appointment_log").select(APPT_SELECT).eq("id", r.id).maybeSingle();
-    if (error || !row) { setErr(errText(error || "that appointment is not on file any more")); return; }
-    setApptRow(row);
-  };
+  const openEdit = (r) => { setFlash(""); setErr(""); setEditing({ kind: r.kind, id: r.id }); };
 
   const c = data?.customer || {};
   const t = data?.totals || {};
@@ -4230,13 +4257,13 @@ function CustomerAccount({ token, values, sources, types, isOwner, roster, onLog
   const phones = Array.isArray(c.phones) ? c.phones : [];
   const prod = (line, key) => typeLabel(types || {}, line, key) || PRODUCT_SHORT[line] || line || "—";
   const plain = (s) => s ? String(s).replace(/_/g, " ") : "";
-  const editingSomething = !!editing || !!apptRow;
+  const editingSomething = !!editing;
   const title = editingSomething
     ? `Editing a record on file for ${c.label || label}`
     : `${c.label || label}${c.phone_last4 ? ` · ${c.phone_last4}` : ""}`;
 
   const remove = async (r) => {
-    const what = (ACCT_KIND[r.kind]?.label || r.kind).toLowerCase();
+    const what = kindMeta(r.kind).label.toLowerCase();
     if (!window.confirm(`Delete this ${what} for ${c.label || label}? It stops counting straight away.`)) return;
     setBusyId(r.id); setErr(""); setFlash("");
     try {
@@ -4252,12 +4279,8 @@ function CustomerAccount({ token, values, sources, types, isOwner, roster, onLog
       {err && <Notice kind="error">{err}</Notice>}
 
       {editing && (
-        <EntryPage values={values} sources={sources} types={types} isOwner={isOwner} roster={roster}
-          onLogged={onLogged} refreshKey={reload} allowCancel editing={editing} onCloseEdit={closeEdit} />
-      )}
-      {apptRow && (
-        <EditRecord bare kind="appointment" row={apptRow} sources={sources} types={types} roster={roster}
-          isOwner={isOwner} onClose={() => closeEdit("")} onSaved={() => closeEdit("Saved.")} />
+        <RecordEditor target={editing} values={values} sources={sources} types={types} isOwner={isOwner}
+          roster={roster} onLogged={onLogged} refreshKey={reload} onClose={closeEdit} />
       )}
 
       {!editingSomething && !data && !err && <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>}
@@ -4341,7 +4364,7 @@ function CustomerAccount({ token, values, sources, types, isOwner, roster, onLog
             ) : (
               <div style={{ display: "grid", gap: 8 }}>
                 {timeline.map(r => {
-                  const k = ACCT_KIND[r.kind] || { label: r.kind, color: T.slate700 };
+                  const k = kindMeta(r.kind);
                   const m = r.meta || {};
                   return (
                     <div key={`${r.kind}:${r.id}`} style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-start", padding: "8px 0", borderTop: `1px solid ${T.slate100}` }}>
