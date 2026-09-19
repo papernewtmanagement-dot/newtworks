@@ -37,14 +37,20 @@ export default function BackfillTab({ sources = [], roster = [] }) {
   const [box, setBox] = useState("");
   const [search, setSearch] = useState("");
   const [searching, setSearching] = useState(false);
+  // The list is paged on the server, so the sort has to be too. Otherwise
+  // "sort by name" only sorts the 25 rows on screen.
+  const [sort, setSort] = useState({ by: "date", dir: "desc" });
 
-  const load = async (from, q) => {
+  const load = async (from, q, s) => {
     setLoading(true);
     setErr("");
+    const order = s ?? sort;
     const { data, error } = await supabase.rpc("rp_backfill_queue", {
       p_limit: PAGE,
       p_offset: from,
       p_search: (q ?? search) || null,
+      p_sort: order.by,
+      p_dir: order.dir,
     });
     if (error) {
       setErr(error.message || "Could not load the list.");
@@ -66,6 +72,17 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     setOffset(0);
     load(0, q);
   };
+
+  // Click a heading to sort by it. The same heading again flips the direction.
+  const sortBy = (by) => {
+    const next = sort.by === by
+      ? { by, dir: sort.dir === "asc" ? "desc" : "asc" }
+      : { by, dir: by === "date" ? "desc" : "asc" };
+    setSort(next);
+    setOffset(0);
+    load(0, undefined, next);
+  };
+  const sortArrow = (by) => sort.by !== by ? "" : sort.dir === "asc" ? " \u25B2" : " \u25BC";
 
   const srcLabel = useMemo(() => {
     const m = {};
@@ -186,6 +203,17 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     cursor: "pointer",
     boxSizing: "border-box",
   });
+  const sortBtn = {
+    border: "none",
+    background: "transparent",
+    padding: 0,
+    font: "inherit",
+    fontSize: 11,
+    fontWeight: 700,
+    color: T.slate500,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  };
   const chip = {
     border: "none",
     background: "transparent",
@@ -240,15 +268,16 @@ export default function BackfillTab({ sources = [], roster = [] }) {
         </div>
       ) : (
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12 }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1120 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1190 }}>
             <thead>
               <tr>
-                <th style={th}>Date</th>
-                <th style={th}>Customer</th>
+                <th style={th}><button type="button" style={sortBtn} onClick={() => sortBy("date")}>Date{sortArrow("date")}</button></th>
+                <th style={th}><button type="button" style={sortBtn} onClick={() => sortBy("customer")}>Customer{sortArrow("customer")}</button></th>
                 <th style={{ ...th, width: 90 }}>Phone</th>
                 <th style={{ ...th, minWidth: 210 }}>ECRM link</th>
                 <th style={{ ...th, minWidth: 165 }}>Marketing source</th>
                 <th style={{ ...th, minWidth: 210 }}>Policies</th>
+                <th style={{ ...th, width: 70 }}><button type="button" style={sortBtn} onClick={() => sortBy("missing")}>Missing{sortArrow("missing")}</button></th>
                 <th style={th}></th>
               </tr>
             </thead>
@@ -374,6 +403,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                         <span style={{ color: T.slate500, fontSize: 12 }}>—</span>
                       )}
                     </td>
+                    <td style={{ ...td, textAlign: "center", color: T.slate500 }}>{r.missing_count ?? ""}</td>
                     <td style={td}>
                       <button
                         type="button"

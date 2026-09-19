@@ -2334,6 +2334,26 @@ const RESTORE_KIND = {
   appointment_log: "appointment",
   cancelation_log: "cancelation",
 };
+// Which record a change belongs to, so Edit can open the original (Peter
+// 2026-09-19). A change on a policy line opens the sale it sits on; a change on
+// a quoted product opens the quote. The change history itself is never editable
+// by anyone; editing the original writes a fresh change of its own.
+const EDIT_TARGET = (r) => {
+  const nw = r.new_row || {};
+  const od = r.old_row || {};
+  switch (r.table_name) {
+    case "sales_log":              return { kind: "sale", id: r.row_id };
+    case "sales_log_products":     return { kind: "sale", id: nw.sales_log_id || od.sales_log_id || null };
+    case "quote_log":              return { kind: "quote", id: r.row_id };
+    case "quote_log_products":     return { kind: "quote", id: nw.quote_log_id || od.quote_log_id || null };
+    case "retention_activity_log": return { kind: "activity", id: r.row_id };
+    case "cancelation_log":        return { kind: "cancelation", id: r.row_id };
+    case "appointment_log":        return { kind: "appointment", id: r.row_id };
+    case "fit_scorecards":         return { kind: "scorecard", id: r.row_id };
+    default:                       return null;
+  }
+};
+const sortHead = { border: "none", background: "transparent", padding: 0, font: "inherit", fontWeight: 700, color: "inherit", cursor: "pointer", whiteSpace: "nowrap" };
 
 function changeWhen(ts) {
   const d = new Date(ts);
@@ -2422,7 +2442,7 @@ function ChangeDay({ day, setDay }) {
   );
 }
 
-function ChangesTab({ roster, nameOf, values, types, onChanged }) {
+function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKey, onChanged }) {
   const [day, setDay] = useTabParam("day", "");
   const [view, setView] = useState("day");
   const [days, setDays] = useState(30);
@@ -2431,6 +2451,10 @@ function ChangesTab({ roster, nameOf, values, types, onChanged }) {
   const [err, setErr] = useState("");
   const [busyId, setBusyId] = useState(null);
   const [reload, setReload] = useState(0);
+  const [editing, setEditing] = useState(null);
+  const [flash, setFlash] = useState("");
+  // Newest first is how the list reads by default. Click a heading to sort.
+  const [sort, setSort] = useState({ by: "", dir: "desc" });
   const labelOf = useMemo(() => Object.fromEntries((values || []).map(v => [v.activity_key, v.label])), [values]);
   const ctx = useMemo(() => ({ nameOf, labelOf, types: types || {} }), [nameOf, labelOf, types]);
 
@@ -2477,6 +2501,34 @@ function ChangesTab({ roster, nameOf, values, types, onChanged }) {
     if (onChanged) onChanged();
   };
 
+  const closeEdit = (msg) => {
+    setEditing(null);
+    setFlash(msg || "");
+    setReload(n => n + 1);
+    if (msg && onChanged) onChanged();
+  };
+
+  const sortBy = (by) => setSort(s => s.by === by
+    ? { by, dir: s.dir === "asc" ? "desc" : "asc" }
+    : { by, dir: by === "when" ? "desc" : "asc" });
+  const sortArrow = (by) => sort.by !== by ? "" : sort.dir === "asc" ? " \u25B2" : " \u25BC";
+
+  const shown = useMemo(() => {
+    const list = rows || [];
+    if (!sort.by) return list;
+    const keyOf = (r) => {
+      if (sort.by === "when") return String(r.changed_at || "");
+      if (sort.by === "who") return String(r.who || "").toLowerCase();
+      if (sort.by === "what") return `${r.item || ""} ${r.action || ""}`.toLowerCase();
+      return String(r.subject || "").toLowerCase();
+    };
+    const dir = sort.dir === "asc" ? 1 : -1;
+    return [...list].sort((a, b) => {
+      const x = keyOf(a), y = keyOf(b);
+      return x < y ? -dir : x > y ? dir : 0;
+    });
+  }, [rows, sort]);
+
   if (view === "day") {
     return (
       <div style={{ display: "grid", gap: 12 }}>
@@ -2504,6 +2556,7 @@ function ChangesTab({ roster, nameOf, values, types, onChanged }) {
           </select>
         </div>
       </div>
+      {flash && <Notice kind="ok">{flash}</Notice>}
       {err && <Notice kind="error">{err}</Notice>}
       {rows === null ? (
         <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>
@@ -2514,18 +2567,22 @@ function ChangesTab({ roster, nameOf, values, types, onChanged }) {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                <th style={tableTh}>When</th>
-                <th style={tableTh}>Who</th>
-                <th style={tableTh}>What</th>
-                <th style={tableTh}>Customer</th>
+                <th style={tableTh}><button type="button" style={sortHead} onClick={() => sortBy("when")}>When{sortArrow("when")}</button></th>
+                <th style={tableTh}><button type="button" style={sortHead} onClick={() => sortBy("who")}>Who{sortArrow("who")}</button></th>
+                <th style={tableTh}><button type="button" style={sortHead} onClick={() => sortBy("what")}>What{sortArrow("what")}</button></th>
+                <th style={tableTh}><button type="button" style={sortHead} onClick={() => sortBy("customer")}>Customer{sortArrow("customer")}</button></th>
                 <th style={tableTh}>Details</th>
                 <th style={tableTh} />
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => {
-                const sameClick = i > 0 && rows[i - 1].txid === r.txid;
+              {shown.map((r, i) => {
+                // The "same click" marks only make sense while the list is in
+                // its own order, so they drop away once a heading is sorted.
+                const sameClick = !sort.by && i > 0 && shown[i - 1].txid === r.txid;
                 const fields = (r.changed_fields || []).filter(k => !CHANGE_HIDE.test(k));
+                const target = EDIT_TARGET(r);
+                const canEdit = !!(target && target.id && r.action !== "delete" && statusNow.get(r.row_id) !== "void");
                 return (
                   <tr key={r.id} style={sameClick ? { background: T.slate50 } : undefined}>
                     <td style={{ ...tableTd, whiteSpace: "nowrap", color: sameClick ? T.slate300 : T.slate800 }}>{sameClick ? "〃" : changeWhen(r.changed_at)}</td>
@@ -2545,11 +2602,13 @@ function ChangesTab({ roster, nameOf, values, types, onChanged }) {
                       ) : changeSummary(r, ctx)}
                     </td>
                     <td style={{ ...tableTd, textAlign: "right", whiteSpace: "nowrap" }}>
-                      {removedHere(r) && (
+                      {removedHere(r) ? (
                         <button type="button" style={miniBtn} disabled={busyId === r.id} onClick={() => restore(r)}>
                           {busyId === r.id ? "Putting back…" : "Restore"}
                         </button>
-                      )}
+                      ) : canEdit ? (
+                        <button type="button" style={miniBtn} onClick={() => { setFlash(""); setEditing(target); }}>Edit</button>
+                      ) : null}
                     </td>
                   </tr>
                 );
@@ -2557,6 +2616,12 @@ function ChangesTab({ roster, nameOf, values, types, onChanged }) {
             </tbody>
           </table>
         </div>
+      )}
+      {editing && (
+        <Modal title="Editing a record already on file" onClose={() => closeEdit("")}>
+          <RecordEditor target={editing} values={values} sources={sources} types={types} isOwner={isOwner}
+            roster={roster} onLogged={onChanged} refreshKey={refreshKey} onClose={closeEdit} />
+        </Modal>
       )}
     </div>
   );
@@ -4763,7 +4828,8 @@ export default function ActivityLog({ userRole, userId }) {
       {tab === "deposits" && <PFA userRole={userRole} embedded />}
       {tab === "development" && <Development userRole={userRole} userId={userId} embedded />}
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
-      {tab === "changes" && isAdmin && <ChangesTab roster={roster} nameOf={nameOf} values={values} types={types} onChanged={bump} />}
+      {tab === "changes" && isAdmin && <ChangesTab roster={roster} nameOf={nameOf} values={values} sources={sources}
+        types={types} isOwner={isOwner} refreshKey={refreshKey} onChanged={bump} />}
       {tab === "spotcheck" && isAdmin && <SpotCheck isAdmin={isAdmin} values={values} sources={sources}
         types={types} isOwner={isOwner} roster={roster} />}
       {tab === "backfill" && isAdmin && <BackfillTab sources={sources} roster={roster} />}
