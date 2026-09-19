@@ -59,6 +59,7 @@ ORDER = [
     # hand-maintained statement-writer twins are now one function.
     "../_shared/statement_writer.ts",
     "lib/composio.ts",
+    "lib/docx.ts",
     "lib/llm.ts",
     "lib/text_recovery.ts",
     "classifier.ts",
@@ -165,7 +166,7 @@ def strip_imports(text: str, externals_seen: "dict[str, str]") -> str:
 
 
 def check_order_covers_parsers(source_dir: Path) -> None:
-    """Every parser on disk must be listed in ORDER.
+    """Every parser and lib file on disk must be listed in ORDER.
 
     ORDER is hand-maintained, so a parser added to the directory and imported
     by index.ts is NOT automatically in the bundle. The result is the worst
@@ -176,10 +177,15 @@ def check_order_covers_parsers(source_dir: Path) -> None:
     silent omission into a build error.
     """
     on_disk = {f"parsers/{p.name}" for p in sorted((source_dir / "parsers").glob("*.ts"))}
+    # lib/ carries the same risk and had no check until 2026-09-19, when
+    # lib/docx.ts was added. A lib file left out of ORDER fails exactly the
+    # same way a parser does: builds clean, deploys ACTIVE, then throws
+    # "X is not defined" the first time its code path runs.
+    on_disk |= {f"lib/{p.name}" for p in sorted((source_dir / "lib").glob("*.ts"))}
     missing = sorted(on_disk - set(ORDER))
     if missing:
         raise ValueError(
-            f"parser files not listed in ORDER: {missing} — add them to ORDER "
+            f"source files not listed in ORDER: {missing} — add them to ORDER "
             f"(before index.ts) or they will be missing from the bundle"
         )
 

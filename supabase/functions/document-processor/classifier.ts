@@ -193,7 +193,7 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
   //       it to a lightweight handler (see index.ts). -----
   { docType: "careerplug_applicant",
     test: (i) => /careerplug/i.test(i.fromEmail) &&
-                 /\.pdf$/i.test(i.fileName) &&
+                 /\.(pdf|docx)$/i.test(i.fileName) &&
                  /resume|cv|applicant/i.test(i.fileName + " " + i.subject) },
 
   // ----- HAND-FORWARDED RESUME BATCH (2026-08-03) — a bare resume PDF
@@ -244,8 +244,13 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
                  (/cts\s*profile|sales\s*profile(\s*report)?/i.test(filenameBase(i.fileName)) ||
                   /\bcts\b/i.test(i.subject)) },
 
+  // .docx added 2026-09-19. Every resume route used to require .pdf, so a Word
+  // resume matched nothing and fell through to "skip" -- Ramon Alonzo's, sent
+  // 2026-09-10, was dropped that way and never reached hiring_candidates. The
+  // reader that makes this safe is lib/docx.ts; do not widen this to .doc,
+  // which is a different (binary) format nothing here can read.
   { docType: "resume_manual_batch",
-    test: (i) => /\.pdf$/i.test(i.fileName) &&
+    test: (i) => /\.(pdf|docx)$/i.test(i.fileName) &&
                  /resume|curriculum[\s_-]?vitae|\bcv\b/i.test(filenameBase(i.fileName)) },
 
   // ----- FROST PFA STATEMENT (2026-07-09) — must come BEFORE the generic

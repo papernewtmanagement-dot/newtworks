@@ -39,6 +39,7 @@ import { BlobReader, ZipReader, Uint8ArrayWriter } from "jsr:@zip-js/zip-js@2";
 import { getDocumentProxy, extractText as unpdfExtractText } from "npm:unpdf@1.3.2";
 import { sb, getSetting, jsonResponse } from "../_shared/supabase.ts";
 import { callComposio, fetchWithTimeout } from "./lib/composio.ts";
+import { extractDocxText, isDocxAttachment, DOCX_MIME_TYPE } from "./lib/docx.ts";
 import { S3_FETCH_TIMEOUT_MS } from "../_shared/composio.ts";
 import { writeParsedStatement } from "../_shared/statement_writer.ts";
 import {
@@ -453,6 +454,7 @@ function guessMime(name: string): string {
   if (n.endsWith(".txt")) return "text/plain";
   if (n.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   if (n.endsWith(".xls")) return "application/vnd.ms-excel";
+  if (n.endsWith(".docx")) return DOCX_MIME_TYPE;
   if (n.endsWith(".zip")) return "application/zip";
   return "application/octet-stream";
 }
@@ -830,6 +832,12 @@ async function extractText(
   if (att.mimeType.startsWith("text/") || att.fileName.endsWith(".txt") || att.fileName.endsWith(".csv")) {
     try { return { ok: true, text: atob(bytesB64) }; }
     catch (e) { return { ok: false, error: `text decode failed: ${String(e)}` }; }
+  }
+  // Word files are a zip of XML parts, not a PDF, so they never reach unpdf.
+  // The reader lives in lib/docx.ts and is the SAME one the resume parser
+  // calls -- see that file's header (2026-09-19).
+  if (isDocxAttachment(att.fileName, att.mimeType)) {
+    return await extractDocxText(bytesB64);
   }
   // v4: unpdf (pure JS, edge-runtime-compatible). Image-based PDFs
   // return empty text -> route to Drive OCR folder for manual review.

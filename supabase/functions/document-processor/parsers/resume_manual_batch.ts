@@ -58,6 +58,7 @@ import { sb } from "../../_shared/supabase.ts";
 import { parseWithLLM } from "../lib/llm.ts";
 import { extractPdfTextColumnAware, extractPdfTextPlain } from "./pdf_columnar.ts";
 import { reformatResumeSeparators } from "./resume_reformat.ts";
+import { extractDocxText, isDocxAttachment } from "../lib/docx.ts";
 import { writeResumeTextIfEmpty } from "./resume_ingest.ts";
 import { recoverTextFromScannedFile, type TextRecoveryDeps } from "../lib/text_recovery.ts";
 
@@ -105,7 +106,7 @@ export interface RmbResult {
   identitySource: "llm" | "deterministic" | "none";
   // Where the resume text came from: the file's own text layer, or Drive text
   // recognition after the file proved to be a scan.
-  textSource?: "pdf" | "text_recognition";
+  textSource?: "pdf" | "docx" | "text_recognition";
   // Set when text recognition ran. This converted document is the Drive copy
   // these resumes have otherwise never had, so the caller stores it.
   recoveredDriveFileId?: string | null;
@@ -189,8 +190,20 @@ function rmbCleanIdentity(raw: any): RmbIdentity {
   };
 }
 
-async function rmbExtractResumeText(bytesB64: string): Promise<string | null> {
+async function rmbExtractResumeText(bytesB64: string, fileName: string): Promise<string | null> {
   try {
+    // Word resume. Same reader index.ts uses -- one copy, in lib/docx.ts
+    // (2026-09-19). Before this, every resume route required a .pdf name and a
+    // Word resume was classified "skip" and lost.
+    if (isDocxAttachment(fileName)) {
+      const docx = await extractDocxText(bytesB64);
+      if (!docx.ok) {
+        console.warn(`[resume_manual_batch] ${fileName}: ${docx.error}`);
+        return null;
+      }
+      return reformatResumeSeparators(docx.text);
+    }
+
     const bin = atob(bytesB64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -222,8 +235,9 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
   });
 
   // ---- 1. Resume text --------------------------------------------------
-  let resumeText = await rmbExtractResumeText(args.bytesB64);
-  let textSource: "pdf" | "text_recognition" = "pdf";
+  let resumeText = await rmbExtractResumeText(args.bytesB64, args.fileName);
+  let textSource: "pdf" | "docx" | "text_recognition" =
+    isDocxAttachment(args.fileName) ? "docx" : "pdf";
   let recoveredDriveFileId: string | null = null;
   let recoveredDriveUrl: string | null = null;
   let recoveryFailure: string | null = null;
