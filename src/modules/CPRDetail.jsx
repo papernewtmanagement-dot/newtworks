@@ -4229,7 +4229,13 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, ret
                     mainRow,
                     subRow("sp13", "13-wk sales split", "sp13_share_ratio_pct", salesBucketPool),
                     subRow("sp4",  "4-wk sales split",  "sp4_share_ratio_pct",  salesBucketPool),
-                    subRow("ret",  "Retention split",   "ret_share_ratio_pct",  retentionBucketPool),
+                    // Retention split only exists while there is a retention third to
+                    // share. From the week ending 2026-09-19 retention points come off the
+                    // envelope before the pool (Peter 2026-09-18), so the third is zero and
+                    // this sub-row would be a permanent row of zeros.
+                    ...(retentionBucketPool > 0
+                        ? [subRow("ret", "Retention split", "ret_share_ratio_pct", retentionBucketPool)]
+                        : []),
                     ...(adjRow ? [adjRow] : []),
                   ];
                 }
