@@ -898,6 +898,39 @@ function useCPRData(weekDate) {
           } catch (e) {
             console.warn("cycleWeeklyDetails fetch failed:", e);
           }
+
+          // Weeks past the State Farm producer report's coverage have no imported
+          // prod_* row, so the per-person production expander was empty for the week
+          // in progress (Peter 2026-09-18). production_by_week_for returns exactly
+          // those weeks, straight from the production log, in the same shape.
+          try {
+            const { data: liveProd } = await supabase.rpc("production_by_week_for", {
+              p_agency_id: AGENCY_ID, p_from: cycleStartISO, p_through: weekDate,
+            });
+            (liveProd || []).forEach(r => {
+              const live = {
+                prod_issued_count: Number(r.issued_count) || 0,
+                prod_issued_premium: Number(r.issued_premium) || 0,
+                prod_total_count: Number(r.issued_count) || 0,
+                prod_total_premium: Number(r.issued_premium) || 0,
+                prod_auto: Number(r.auto) || 0,
+                prod_fire: Number(r.fire) || 0,
+                prod_life: Number(r.life) || 0,
+                prod_health: Number(r.health) || 0,
+                prod_bank: Number(r.bank) || 0,
+              };
+              const idx = cycleWeeklyDetails.findIndex(
+                x => x.team_member_id === r.team_member_id && x.week_ending_date === r.week_ending_date);
+              if (idx >= 0) cycleWeeklyDetails[idx] = { ...cycleWeeklyDetails[idx], ...live };
+              else cycleWeeklyDetails.push({
+                team_member_id: r.team_member_id,
+                week_ending_date: r.week_ending_date,
+                commission: 0, sales_points: 0, sales_points_raw: null, ...live,
+              });
+            });
+          } catch (e) {
+            console.warn("production_by_week_for fetch failed:", e);
+          }
         }
 
         // 8b. Prior-week Sales Points per member — drives WoW delta indicator in Team Activity.
@@ -1197,6 +1230,21 @@ function useCPRData(weekDate) {
         // current_cycle_info like everything else. This used to build a CALENDAR quarter
         // start (first of Jan/Apr/Jul/Oct) locally, which is up to a week adrift of the
         // real cycle start and pulled the wrong weeks into the quarter-to-date total.
+        // Retention Points breakdown for the Payroll expander: hours in office,
+        // calls answered, logged activity (with the counts behind it), derived
+        // points, and the missed-call reduction applied to the lot.
+        let retentionPointsByMember = {};
+        try {
+          const { data: rpBreakdown } = await supabase.rpc("compute_weekly_retention_points", {
+            p_agency_id: AGENCY_ID, p_week_end_date: weekDate,
+          });
+          (rpBreakdown || []).forEach(r => {
+            if (r?.team_member_id) retentionPointsByMember[r.team_member_id] = r;
+          });
+        } catch (e) {
+          console.warn("retention points breakdown fetch failed:", e);
+        }
+
         let marketingByTeammate = {};
         try {
           const qStartISO = cycleStartISO;
@@ -1268,6 +1316,7 @@ function useCPRData(weekDate) {
           lastWeekSalesPointsByMember,
           salesPointsByMember,
           salesPointsSourceByMember,
+          retentionPointsByMember,
           cycleStartISO,
           cycleEndISO,
           currentCycleStartISO,
@@ -3794,7 +3843,7 @@ function PayLockBadge({ lock }) {
 // + MVP on weekly_cpr_reports then invokes write_weekly_comp_v2 to populate
 // base_salary, commission, bonus, marketing_pool_earned_weekly, and
 // manager_bonus from the residual pool + carveouts wire.
-function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onRefresh, canEdit = false, isOwner = false, cycleStartISO = null, cycleWeeklyDetails = [] }) {
+function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, retentionPointsByMember = {}, onRefresh, canEdit = false, isOwner = false, cycleStartISO = null, cycleWeeklyDetails = [] }) {
   // Commission row expander — shows per-teammate cycle-view commission chart (small multiples).
   const [commissionExpanded, setCommissionExpanded] = useState(false);
   // Locked means the payroll summary for this week has arrived and these figures
@@ -3822,6 +3871,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
   const [showMarketing, setShowMarketing] = useState(false);
   const [teamBonusExpanded, setTeamBonusExpanded] = useState(false);
   const [goalsExpanded, setGoalsExpanded] = useState(false);
+  const [retentionPointsExpanded, setRetentionPointsExpanded] = useState(false);
   const [marketingDrafts, setMarketingDrafts] = useState({}); // {team_member_id: {points, notes}}
 
   // When entering edit mode, seed drafts from current values
@@ -3916,6 +3966,11 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
   // Marketing is the separate marketing pool share. Manager + Health Goal are pre-pool carveouts.
   const ROWS = [
     ["base_salary",                   "Base"],
+    // Retention Points sits above Commission at Peter's direction (2026-09-18).
+    // Net points x $1, guaranteed, after the requirements-adjustment scale.
+    // Written to the row by write_weekly_comp_v2. Reads $0 until the go-live key is set.
+    // It is part of d.bonus, which is why the Team Bonus row below is shown net of it.
+    ["retention_points_pay",          "Retention Points"],
     ["commission",                    "Commission"],
     // Team Bonus row: shows the sum (d.bonus = sales_pool_share + retention_pool_share).
     // Expandable → 3 sales/retention split sub-rows + Requirements Adjustment sub-row (folded in
@@ -3923,9 +3978,6 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
     // ALREADY net of this reduction via write_weekly_comp_v2's scale factor, so the sub-row is
     // purely informational and must never be summed separately in Week Total / OT Annual below).
     ["team_bonus",                    `Team Bonus (${fmtMoneyCents(weeklyBonusPool)} pool)`],
-    // Retention Points: net points x $1, guaranteed, after the requirements-adjustment scale.
-    // Written to the row by write_weekly_comp_v2. Reads $0 until the go-live key is set.
-    ["retention_points_pay",          "Retention Points"],
     ["marketing_pool_earned_weekly",  "Marketing"],
     // Goals: expandable row displaying goals_bonus + health_bonus.
     // Expands to 6 sub-rows (5 goals_bonus $10 buckets from residual_pool_diag.goals_detail,
@@ -4180,6 +4232,72 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, onR
                     subRow("ret",  "Retention split",   "ret_share_ratio_pct",  retentionBucketPool),
                     ...(adjRow ? [adjRow] : []),
                   ];
+                }
+                // Retention Points: expandable row → where each person's points came
+                // from. Reads compute_weekly_retention_points, the same function the
+                // residual pool pays off, so the breakdown can never drift from the
+                // dollars on the row above it.
+                if (key === "retention_points_pay") {
+                  const anyRp = sorted.some(d => retentionPointsByMember?.[d.team_member_id]);
+                  const rpMain = (
+                    <tr
+                      key={key}
+                      onClick={anyRp ? () => setRetentionPointsExpanded(v => !v) : undefined}
+                      style={{ cursor: anyRp ? "pointer" : "default" }}
+                    >
+                      <Td style={{ paddingLeft: 14, color: T.slate700, userSelect: "none" }}>
+                        {anyRp ? (retentionPointsExpanded ? "▾ " : "▸ ") : ""}{label}
+                      </Td>
+                      {sorted.map(d => (
+                        <Td key={d.team_member_id} align="right">{fmtMoneyCentsR(d[key])}</Td>
+                      ))}
+                    </tr>
+                  );
+                  if (!anyRp || !retentionPointsExpanded) return [rpMain];
+
+                  const rpSub = (subKey, subLabel, pick, note) => (
+                    <tr key={`${key}-${subKey}`} style={{ background: T.slate50 }}>
+                      <Td style={{ paddingLeft: 32, color: T.slate500, fontSize: 12 }}>
+                        {subLabel}
+                        {note && <span style={{ color: T.slate400 }}> {note}</span>}
+                      </Td>
+                      {sorted.map(d => {
+                        const r = retentionPointsByMember?.[d.team_member_id];
+                        return (
+                          <Td key={d.team_member_id} align="right" style={{ color: T.slate600, fontSize: 12 }}>
+                            {r ? pick(r) : "—"}
+                          </Td>
+                        );
+                      })}
+                    </tr>
+                  );
+                  const n2 = v => (Number(v) || 0).toFixed(2);
+
+                  // The logged half is the part that comes from what the team entered.
+                  // Show what those entries were, one line per activity kind, so the
+                  // number is traceable back to the work.
+                  const allKeys = Array.from(new Set(
+                    sorted.flatMap(d => Object.keys(retentionPointsByMember?.[d.team_member_id]?.detail?.counts_by_key || {}))
+                  )).sort();
+                  const prettyKey = k => k.replace(/_/g, " ").replace(/^./, c => c.toUpperCase());
+
+                  const rows = [
+                    rpMain,
+                    rpSub("hours", "Hours in office", r => `${n2(r.hours_in_office)} h → ${n2(r.hour_points)}`),
+                    rpSub("calls", "Calls answered", r => `${Number(r.calls_answered) || 0} → ${n2(r.call_points)}`),
+                    rpSub("logged", "Logged activity", r => n2(r.logged_points)),
+                    ...allKeys.map(k => rpSub(
+                      `cnt-${k}`,
+                      `   ${prettyKey(k)}`,
+                      r => (r.detail?.counts_by_key?.[k] ? String(r.detail.counts_by_key[k]) : "—"),
+                    )),
+                    rpSub("derived", "Derived from sales", r => n2(r.derived_points)),
+                    rpSub("gross", "Gross points", r => n2(r.gross_points)),
+                    rpSub("reduction", "Missed-call reduction", r => `−${n2(r.reduction_pct)}%`,
+                          `(team missed ${n2(sorted.map(d => retentionPointsByMember?.[d.team_member_id]).find(Boolean)?.missed_pct)}%)`),
+                    rpSub("net", "Net points → dollars", r => n2(r.net_points)),
+                  ];
+                  return rows;
                 }
                 // Commission: expandable row → combined cycle-view chart (one line per teammate).
                 // Reads cycleWeeklyDetails (weekly commission per person across the cycle so far).
@@ -7010,7 +7128,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 19. Payroll */}
-      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} marketingByTeammate={data.marketingByTeammate} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} cycleStartISO={data.cycleStartISO} cycleWeeklyDetails={data.cycleWeeklyDetails} /></Section>
+      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} marketingByTeammate={data.marketingByTeammate} retentionPointsByMember={data.retentionPointsByMember} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} cycleStartISO={data.cycleStartISO} cycleWeeklyDetails={data.cycleWeeklyDetails} /></Section>
 
       {/* 21. Leaderboards (merged: Gold/Silver/Bronze slots + All-Star floor + Trailblazer + running counts) — this-week crossings surface in the top MVP banner */}
       <Section><LeaderboardsSection
