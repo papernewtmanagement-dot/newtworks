@@ -503,6 +503,11 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const hasSale = sold.length > 0;
   const hasCxl = canceled.length > 0;
   const hasCard = cardChosen > 0;
+  // Peter 2026-09-19: a sale already needed the ECRM link. A cancelation needs
+  // one too, and so does any activity marked for it in the point values table
+  // (Policy Change, to start with).
+  const needsEcrm = hasSale || hasCxl
+    || activities.some(a => (values || []).some(v => v.activity_key === a.key && v.requires_ecrm));
   const needsCard = hasQuote || hasSale || cardChosen > 0;
   const hasAnything = hasActivity || hasQuote || hasSale || hasCxl || hasCard;
   const customerOk = !!first.trim() && /^[A-Za-z]$/.test(initial.trim());
@@ -534,7 +539,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   if (hasReview && !note.trim()) problems.push("The policy review needs a note on what you covered.");
   if (!relationship) problems.push("Pick the relationship.");
   if ((hasSale || hasQuote) && !source) problems.push("Pick the marketing source.");
-  if (hasSale && !ecrm.trim()) problems.push("A sale needs the ECRM opportunity link.");
+  if (needsEcrm && !ecrm.trim()) problems.push("This needs the ECRM opportunity link.");
   if (needsCard && cardChosen < CARD_PARTS.length) problems.push("Score every part of the scorecard. Tap x on a part you did not do.");
   if (activities.some(a => a.key === "autopay_enrollment" && (!a.line || (needsType(a.line) && !a.type) || a.premium === "" || !(Number(a.premium) >= 0)))) problems.push("Each autopay needs the policy line, type, and premium.");
   if (flagged.some(p => !onFileAnswer[p.id])) problems.push("Say whether the new policy replaces the one on file, is added to it, or is a different household.");
@@ -1012,7 +1017,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         {/* ---- bottom row: ECRM link (sale), marketing source (quote or sale), lead source (referral), note ---- */}
         {showBottomRow && (
         <div style={{ ...wrapRow, ...blockStyle }}>
-          {hasSale && (
+          {needsEcrm && (
             <div style={field(200)}>
               <label style={labelStyle}>ECRM link <span style={{ color: T.red }}>(required)</span></label>
               <input style={inputBase} value={ecrm} onChange={e => setEcrm(e.target.value)} placeholder="https://…" />
@@ -1186,6 +1191,7 @@ function CancelationConvert({ row, types, onClose, onDone }) {
   const [onFile, setOnFile] = useState([]);
   const [picked, setPicked] = useState({});
   const [extras, setExtras] = useState([]);
+  const [ecrm, setEcrm] = useState(row.ecrm_url || "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -1226,10 +1232,11 @@ function CancelationConvert({ row, types, onClose, onDone }) {
       })),
     ];
     if (!policies.length) { setErr("Tick at least one policy that canceled."); return; }
+    if (!ecrm.trim()) { setErr("A cancelation needs the ECRM link."); return; }
     setBusy(true); setErr("");
     try {
       const { data, error } = await supabase.rpc("rp_convert_activity_to_cancelation",
-        { p_activity_id: row.id, p_policies: policies });
+        { p_activity_id: row.id, p_policies: policies, p_ecrm_url: ecrm.trim() || null });
       if (error) { setErr(errText(error)); return; }
       if (data && data.ok === false) { setErr(errText(data)); return; }
       const n = Number(data?.count || policies.length);
@@ -1243,6 +1250,11 @@ function CancelationConvert({ row, types, onClose, onDone }) {
         {err && <Notice kind="error">{err}</Notice>}
         <div style={{ fontSize: 13, color: T.slate600 }}>
           Canceled {fmtDate(row.occurred_on)}, credited to {row.first_name}. The note said: {row.note || "—"}
+        </div>
+
+        <div style={field(240)}>
+          <label style={labelStyle}>ECRM link <span style={{ color: T.red }}>(required)</span></label>
+          <input style={inputBase} value={ecrm} onChange={e => setEcrm(e.target.value)} placeholder="https://…" />
         </div>
 
         <div>
@@ -1408,7 +1420,10 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                     <td style={tableTd}>{r.first_name || "\u2014"}</td>
                     <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{fmtDate(r.occurred_on)}</td>
                     <td style={tableTd}>{r.label || r.activity_key}</td>
-                    <td style={tableTd}>{r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}</td>
+                    <td style={tableTd}>
+                      {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}
+                      {r.phone_last4 ? <span style={{ color: T.slate400 }}> ·{r.phone_last4}</span> : null}
+                    </td>
                     <td style={{ ...tableTd, maxWidth: 260 }}>{r.note || "\u2014"}</td>
                     <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
                       {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
@@ -1434,7 +1449,10 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                   <td style={tableTd}>{r.first_name || "\u2014"}</td>
                   <td style={tableTd}>{fmtDate(r.occurred_on)}</td>
                   <td style={tableTd}>{r.label || r.activity_key}</td>
-                  <td style={tableTd}>{r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}</td>
+                  <td style={tableTd}>
+                      {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}
+                      {r.phone_last4 ? <span style={{ color: T.slate400 }}> ·{r.phone_last4}</span> : null}
+                    </td>
                   <td style={{ ...tableTd, maxWidth: 260 }}>
                     {r.note || "\u2014"}
                     {flags.some(f => f.id === r.id) && (
@@ -4714,7 +4732,7 @@ export default function ActivityLog({ userRole, userId }) {
     let alive = true;
     (async () => {
       const [v, s, pt, r, me] = await Promise.all([
-        supabase.from("retention_point_values").select("activity_key, label, points, category, requires_note, sort_order, description").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
+        supabase.from("retention_point_values").select("activity_key, label, points, category, requires_note, requires_ecrm, sort_order, description").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("sales_marketing_sources").select("source_key, label, sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("product_types").select("line_of_business, type_key, label, sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("team_directory").select("id, first_name, role_category, is_admin_backoffice, is_test_user, archived_at, category, is_active").eq("agency_id", AGENCY_ID).order("first_name"),
