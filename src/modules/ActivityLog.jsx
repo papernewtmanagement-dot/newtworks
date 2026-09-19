@@ -1250,7 +1250,7 @@ function SpotCheck({ isAdmin }) {
                   <td style={tableTd}>{r.first_name || "\u2014"}</td>
                   <td style={tableTd}>{fmtDate(r.occurred_on)}</td>
                   <td style={tableTd}>{r.label || r.activity_key}</td>
-                  <td style={tableTd}><CustomerName label={r.customer_label} />{r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue, fontSize: 11, marginLeft: 6 }}>ECRM</a> : null}</td>
+                  <td style={tableTd}>{r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}</td>
                   <td style={{ ...tableTd, maxWidth: 260 }}>{r.note || "\u2014"}</td>
                   <td style={tableTd}>{fmtPts(r.points)}</td>
                   <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
