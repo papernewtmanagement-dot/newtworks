@@ -11450,6 +11450,92 @@ function retryableDocumentId(
   return existing.id;
 }
 
+/**
+ * Every attachment the Gmail fetcher offers has to pass ONE gate, whichever
+ * shape Composio handed it back in. Both call sites used to run their own copy
+ * of this lookup, which is how the skip case below stayed missing from one of
+ * them for as long as it did — one gate, one place to change it.
+ *
+ * Two ways an attachment is already handled:
+ *   1. It has a documents row that is finished (and not eligible for retry).
+ *   2. It is a KNOWN CLASSIFIER SKIP — see the note on loadKnownSkipKeys.
+ */
+async function attachmentAlreadyHandled(
+  ctx: RunCtx,
+  msgId: string,
+  fileName: string,
+  knownSkips: Set<string> | null,
+): Promise<{ handled: boolean; retryDocumentId: string | null; retryCount: number }> {
+  if (knownSkips?.has(skipKey(msgId, fileName))) {
+    return { handled: true, retryDocumentId: null, retryCount: 0 };
+  }
+  const { data: existing } = await sb
+    .from("documents")
+    .select("id, processing_status, retry_count")
+    .eq("agency_id", ctx.agencyId)
+    .eq("gmail_message_id", msgId)
+    .eq("file_name", fileName)
+    .maybeSingle();
+  const retryId = retryableDocumentId(existing, fileName);
+  if (existing?.id && !retryId) {
+    return { handled: true, retryDocumentId: null, retryCount: 0 };
+  }
+  return {
+    handled: false,
+    retryDocumentId: retryId,
+    retryCount: existing?.retry_count ?? 0,
+  };
+}
+
+/** Key shape for the known-skip set. NUL cannot appear in either half. */
+function skipKey(msgId: string, fileName: string): string {
+  return `${msgId}\u0000${fileName}`;
+}
+
+/**
+ * KNOWN-SKIP SUPPRESSION — added 2026-09-19.
+ *
+ * A classifier "skip" writes NO documents row. It only writes a trace row in
+ * document_classifier_skips. The gate above was reading documents alone, so a
+ * skipped attachment was never remembered: the 7-day lookback re-offered it on
+ * every hourly tick, it got downloaded, classified, skipped and forgotten
+ * again, forever. On 2026-09-19 that was 50 attachments re-read every hour for
+ * zero work, and the trace table showed 3,370 reads across 88 attachments —
+ * one of them 78 times — on a free-plan box that has already been starved into
+ * signing Peter out once (2026-09-07).
+ *
+ * So the routine run now consults the trace and leaves known skips alone.
+ *
+ * ONLY the routine run. An explicit body.gmail_query is the documented door for
+ * pushing a specific message back through the real pipeline — after a
+ * classifier sender-rule change, that is exactly when a previously-skipped
+ * attachment SHOULD be re-read. Passing a query returns null here, so the
+ * override re-reads everything, same as it always did.
+ *
+ * A read failure returns null too: suppression is an optimisation, and losing
+ * it must never stop intake.
+ */
+async function loadKnownSkipKeys(ctx: RunCtx): Promise<Set<string> | null> {
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await sb
+    .from("document_classifier_skips")
+    .select("gmail_message_id, file_name")
+    .eq("agency_id", ctx.agencyId)
+    .neq("gmail_message_id", "")
+    .gt("last_seen_at", since)
+    .limit(5000);
+  if (error) {
+    console.error(`[gmail-intake] could not read classifier skips: ${error.message}`);
+    return null;
+  }
+  const keys = new Set<string>();
+  for (const r of data ?? []) {
+    keys.add(skipKey(String((r as any).gmail_message_id), String((r as any).file_name)));
+  }
+  console.log(`[gmail-intake] known-skip suppression active: ${keys.size} attachment(s)`);
+  return keys;
+}
+
 async function fetchNewGmailAttachments(
   ctx: RunCtx,
   opts?: { query?: string; maxResults?: number },
@@ -11465,6 +11551,9 @@ async function fetchNewGmailAttachments(
   // someone typing statement figures in by hand. Default behaviour unchanged.
   const lookback = opts?.query ?? "newer_than:7d has:attachment";
   const maxResults = opts?.maxResults ?? 50;
+
+  // Routine run only — an explicit query means "re-read it anyway".
+  const knownSkips = opts?.query ? null : await loadKnownSkipKeys(ctx);
 
   const listRes = await callComposio({
     apiKey: ctx.composioApiKey,
@@ -11507,19 +11596,12 @@ async function fetchNewGmailAttachments(
         // collided with a legacy row from a prior week). Attachment IDs are
         // NOT stable across Gmail API calls, so cannot be part of the key.
         const msgId = m.messageId ?? m.id;
-        const { data: existing } = await sb
-          .from("documents")
-          .select("id, processing_status, retry_count")
-          .eq("agency_id", ctx.agencyId)
-          .eq("gmail_message_id", msgId)
-          .eq("file_name", filename)
-          .maybeSingle();
-        const retryId = retryableDocumentId(existing, filename);
-        if (existing?.id && !retryId) continue;
+        const gate = await attachmentAlreadyHandled(ctx, msgId, filename, knownSkips);
+        if (gate.handled) continue;
 
         attachments.push({
-          retryDocumentId: retryId,
-          retryCount: existing?.retry_count ?? 0,
+          retryDocumentId: gate.retryDocumentId,
+          retryCount: gate.retryCount,
           messageId: m.messageId ?? m.id,
           threadId: m.threadId ?? m.thread_id ?? m.messageId ?? m.id,
           fromEmail, subject, receivedAt,
@@ -11542,19 +11624,12 @@ async function fetchNewGmailAttachments(
 
       // Idempotency: same as above — (gmail_message_id, file_name).
       const msgId = m.id;
-      const { data: existing } = await sb
-        .from("documents")
-        .select("id, processing_status, retry_count")
-        .eq("agency_id", ctx.agencyId)
-        .eq("gmail_message_id", msgId)
-        .eq("file_name", filename)
-        .maybeSingle();
-      const retryId = retryableDocumentId(existing, filename);
-      if (existing?.id && !retryId) continue;
+      const gate = await attachmentAlreadyHandled(ctx, msgId, filename, knownSkips);
+      if (gate.handled) continue;
 
       attachments.push({
-        retryDocumentId: retryId,
-        retryCount: existing?.retry_count ?? 0,
+        retryDocumentId: gate.retryDocumentId,
+        retryCount: gate.retryCount,
         messageId: m.id,
         threadId: m.threadId ?? m.thread_id ?? m.id,
         fromEmail, subject, receivedAt,
