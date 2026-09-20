@@ -1501,7 +1501,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
         </select>
       </div>
       <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
-        Ten random households from the week, with everything logged on each one, the same ten until you clear them. Open the ECRM link, check the notes, tap Verified. {housesLeft > 10 ? `${housesLeft} households still unchecked this week, ${remaining} entries in all.` : housesLeft > 0 ? `${housesLeft} households left this week.` : "Nothing left to check this week."}
+        Ten households from the week, with everything logged on each one. Clear a household and the next one takes its place, so the list refills until the week is done. A verified entry never comes back unless it gets changed. Open the ECRM link, check the notes, tap Verified. {housesLeft > 10 ? `${housesLeft} households still unchecked this week, ${remaining} entries in all.` : housesLeft > 0 ? `${housesLeft} households left this week.` : "Nothing left to check this week."}
       </div>
       {flagsAbove.length > 0 && (
         <div style={{ border: `1px solid ${T.amber}`, background: "#fffbeb", borderRadius: 10, padding: 12, marginBottom: 14 }}>
