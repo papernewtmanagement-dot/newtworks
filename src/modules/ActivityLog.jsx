@@ -1544,7 +1544,6 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                   {h.label}
                   {h.phone ? <span style={{ color: T.slate400, fontWeight: 400 }}> ·{h.phone}</span> : null}
                 </div>
-                <CustomerName label={h.label} phone4={h.phone} style={{ fontSize: 12 }}>Whole account</CustomerName>
                 <div style={{ fontSize: 12, color: h.entries.length > 2 ? T.amber : T.slate500, fontWeight: h.entries.length > 2 ? 700 : 400 }}>
                   {h.entries.length} {h.entries.length === 1 ? "entry" : "entries"} this week
                 </div>
