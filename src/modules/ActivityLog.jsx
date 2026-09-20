@@ -513,6 +513,17 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   // (Policy Change, to start with).
   const needsEcrm = hasSale || hasCxl
     || activities.some(a => (values || []).some(v => v.activity_key === a.key && v.requires_ecrm));
+  // The rules that hold both when something is logged and when it is edited
+  // later. Logging and editing each used to carry their own copy of these and
+  // drifted apart, so a review could be edited without naming the site.
+  const sharedGate = (saleBackfill) => {
+    const out = [];
+    if (needsEcrm && !ecrm.trim()) out.push(saleBackfill
+      ? "Moving this into the production log needs the ECRM opportunity link."
+      : "This needs the ECRM opportunity link.");
+    if (activities.some(a => needsSite(a.key) && !a.site)) out.push("Say where the review was left: Google, Facebook or Yelp.");
+    return out;
+  };
   const needsCard = hasQuote || hasSale || cardChosen > 0;
   const hasAnything = hasActivity || hasQuote || hasSale || hasCxl || hasCard;
   const customerOk = !!first.trim() && /^[A-Za-z]$/.test(initial.trim());
@@ -544,10 +555,9 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   if (hasReview && !note.trim()) problems.push("The policy review needs a note on what you covered.");
   if (!relationship) problems.push("Pick the relationship.");
   if ((hasSale || hasQuote) && !source) problems.push("Pick the marketing source.");
-  if (needsEcrm && !ecrm.trim()) problems.push("This needs the ECRM opportunity link.");
+  sharedGate(false).forEach(m => problems.push(m));
   if (needsCard && cardChosen < CARD_PARTS.length) problems.push("Score every part of the scorecard. Tap x on a part you did not do.");
   if (activities.some(a => a.key === "autopay_enrollment" && (!a.line || (needsType(a.line) && !a.type) || a.premium === "" || !(Number(a.premium) >= 0)))) problems.push("Each autopay needs the policy line, type, and premium.");
-  if (activities.some(a => needsSite(a.key) && !a.site)) problems.push("Say where the review was left: Google, Facebook or Yelp.");
   if (flagged.some(p => !onFileAnswer[p.id])) problems.push("Say whether the new policy replaces the one on file, is added to it, or is a different household.");
   if (hasSale && hasCxl) {
     const soldLines = new Set(sold.map(p => p.line));
@@ -584,9 +594,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     if (k === "quote" && quoted.length === 0) gate.push("A quote needs at least one quoted policy.");
     if (k === "cancelation" && policies.length !== 1) gate.push("A cancelation is one policy. Log a second one separately.");
     if (k === "sale" && sold.some(p => p.premium === "" || !(Number(p.premium) >= 0))) gate.push("Every sold policy needs a premium.");
-    if (k === "sale" && !ecrm.trim()) gate.push(editRec.entry_source === "historical_backfill"
-      ? "Moving this into the production log needs the ECRM opportunity link."
-      : "A sale needs the ECRM opportunity link.");
+    sharedGate(k === "sale" && editRec.entry_source === "historical_backfill").forEach(m => gate.push(m));
     if (gate.length) { setErr(gate.join(" ")); return; }
     setBusy(true);
     try {
