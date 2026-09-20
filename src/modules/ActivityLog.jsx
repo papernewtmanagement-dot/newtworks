@@ -523,6 +523,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       ? "Moving this into the production log needs the ECRM opportunity link."
       : "This needs the ECRM opportunity link.");
     if (activities.some(a => needsSite(a.key) && !a.site)) out.push("Say where the review was left: Google, Facebook or Yelp.");
+    if (hasSale && !note.trim()) out.push("A sale needs a note on what happened.");
     return out;
   };
   const needsCard = hasQuote || hasSale || cardChosen > 0;
@@ -1470,9 +1471,17 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   // and the sales that issued in the week. Every button sends the kind along
   // so the server hands the work to the function that owns that table.
   const kindOf = (r) => r.kind || "activity";
+  // The household now arrives whole: prior weeks, backfill, and the credits a
+  // sale wrote on its own all show for context. Only the rows still open to
+  // checking carry buttons and a note box.
+  const canCheck = (r) => !!r.in_scope && !r.verified_at;
   // A sale carries a premium where an entry carries points.
   const worth = (r) => (kindOf(r) === "sale" ? fmtMoney(r.premium) : fmtPts(r.points));
-  const rowActions = (r) => (
+  const rowActions = (r) => (!canCheck(r) ? (
+    <span style={{ color: r.verified_at ? T.green : T.slate400, fontWeight: r.verified_at ? 700 : 400 }}>
+      {r.verified_at ? "Verified" : "\u2014"}
+    </span>
+  ) : (
     <>
       {flags.find(f => f.id === r.id) && (
         <button style={{ ...btnGhost, color: T.amber, marginRight: 6 }} disabled={busyId === r.id}
@@ -1482,7 +1491,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
       <button style={{ ...btnGhost, color: T.green, marginRight: 6 }} disabled={busyId === r.id} onClick={() => act(() => supabase.rpc("rp_spot_check_verify", { p_kind: kindOf(r), p_id: r.id, p_note: noteFor(r) || null }), r.id)}>Verified</button>
       <button style={{ ...btnGhost, color: T.red }} disabled={busyId === r.id} onClick={() => { if (window.confirm(`Remove ${r.label || r.activity_key} for ${r.customer_label}? It will not be paid.`)) act(() => supabase.rpc("rp_spot_check_remove", { p_kind: kindOf(r), p_id: r.id, p_reason: "spot-check: could not verify" }), r.id); }}>Remove</button>
     </>
-  );
+  ));
   // Flagged entries already in the ten below are marked there instead, so
   // the same entry never gets two sets of buttons.
   const flagsAbove = flags.filter(f => !rows.some(r => r.id === f.id));
@@ -1496,6 +1505,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
     else households.push({ key, label: r.customer_label, phone: r.phone_last4,
                            first: r.customer_first_name, initial: r.customer_last_initial, entries: [r] });
   });
+  households.forEach(h => { h.toCheck = h.entries.filter(canCheck).length; });
 
   if (!isAdmin) return null;
   return (
@@ -1509,7 +1519,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
         </select>
       </div>
       <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
-        Ten households from the week, with everything on each one: the entries logged, and the sales that issued. Clear a household and the next one takes its place, so the list refills until the week is done. A verified entry never comes back unless it gets changed. Open the ECRM link, check the notes, tap Verified. {housesLeft > 10 ? `${housesLeft} households still unchecked this week, ${remaining} entries in all.` : housesLeft > 0 ? `${housesLeft} households left this week.` : "Nothing left to check this week."}
+        Ten households from the week, with their whole file: this week's entries and sales, plus prior weeks, backfill, and the credits a sale wrote on its own. Only the rows still open to checking have buttons. Clear a household and the next one takes its place, so the list refills until the week is done. A verified entry never comes back unless it gets changed. Open the ECRM link, check the notes, tap Verified. {housesLeft > 10 ? `${housesLeft} households still unchecked this week, ${remaining} entries in all.` : housesLeft > 0 ? `${housesLeft} households left this week.` : "Nothing left to check this week."}
       </div>
       {flagsAbove.length > 0 && (
         <div style={{ border: `1px solid ${T.amber}`, background: "#fffbeb", borderRadius: 10, padding: 12, marginBottom: 14 }}>
@@ -1529,7 +1539,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                     <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{fmtDate(r.occurred_on)}</td>
                     <td style={tableTd}>{r.label || r.activity_key}</td>
                     <td style={tableTd}>
-                      {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}
+                      {r.ecrm_url ? <a href={r.ecrm_url} target="ecrm" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}
                       {r.phone_last4 ? <span style={{ color: T.slate400 }}> ·{r.phone_last4}</span> : null}
                     </td>
                     <td style={{ ...tableTd, maxWidth: 260 }}>
@@ -1545,7 +1555,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                       </div>
                     </td>
                     <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
-                      {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
+                      {r.ecrm_url ? <a href={r.ecrm_url} target="ecrm" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
                         : <span style={{ color: T.slate300 }}>—</span>}
                     </td>
                     <td style={tableTd}>{worth(r)}</td>
@@ -1567,8 +1577,8 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                   <CustomerName label={h.label} phone4={h.phone} />
                   {h.phone ? <span style={{ color: T.slate400, fontWeight: 400 }}> ·{h.phone}</span> : null}
                 </div>
-                <div style={{ fontSize: 12, color: h.entries.length > 2 ? T.amber : T.slate500, fontWeight: h.entries.length > 2 ? 700 : 400 }}>
-                  {h.entries.length} {h.entries.length === 1 ? "entry" : "entries"} this week
+                <div style={{ fontSize: 12, color: h.toCheck > 2 ? T.amber : T.slate500, fontWeight: h.toCheck > 2 ? 700 : 400 }}>
+                  {h.entries.length} {h.entries.length === 1 ? "record" : "records"} on file \u00b7 {h.toCheck} to check
                 </div>
               </div>
               <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
@@ -1585,6 +1595,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                           {flags.some(f => f.id === r.id) && (
                             <div style={{ fontSize: 11, fontWeight: 700, color: T.amber }}>Note says cancel — policy change or cancelation?</div>
                           )}
+                          {canCheck(r) && (
                           <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
                             <input style={{ ...inputBase, fontSize: 12, padding: "4px 6px" }}
                                    value={noteFor(r)} placeholder="Spot-check note (goes on the change report)"
@@ -1594,9 +1605,10 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                                       onClick={() => act(() => supabase.rpc("rp_spot_check_note", { p_kind: kindOf(r), p_id: r.id, p_note: noteFor(r) }), r.id)}>Save note</button>
                             )}
                           </div>
+                          )}
                         </td>
                         <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
-                          {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
+                          {r.ecrm_url ? <a href={r.ecrm_url} target="ecrm" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
                             : <span style={{ color: T.slate300 }}>—</span>}
                         </td>
                         <td style={tableTd}>{worth(r)}</td>
@@ -4572,7 +4584,7 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
                       : <span style={{ color: T.slate400 }}>waiting</span>}
                   </td>
                   <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
-                    {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
+                    {r.ecrm_url ? <a href={r.ecrm_url} target="ecrm" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
                       : <span style={{ color: T.slate300 }}>—</span>}
                   </td>
                   <td style={{ ...tableTd, whiteSpace: "nowrap", textAlign: "right" }}>
@@ -4779,7 +4791,7 @@ function CustomerAccount({ token, values, sources, types, isOwner, roster, onLog
                         {m.reason ? <div style={{ fontSize: 11, color: T.slate500 }}>reason: {plain(m.reason)}</div> : null}
                         {m.save_reason ? <div style={{ fontSize: 11, color: T.slate500 }}>{m.save_reason}</div> : null}
                         {r.note ? <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>{r.note}</div> : null}
-                        {r.ecrm_url ? <div><a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: T.blue }}>ECRM</a></div> : null}
+                        {r.ecrm_url ? <div><a href={r.ecrm_url} target="ecrm" rel="noreferrer" style={{ fontSize: 11, color: T.blue }}>ECRM</a></div> : null}
                       </div>
                       <div style={{ width: 84, flexShrink: 0, textAlign: "right", fontSize: 12, color: T.slate500 }}>{r.who}</div>
                       <div style={{ width: 110, flexShrink: 0, textAlign: "right", whiteSpace: "nowrap" }}>
