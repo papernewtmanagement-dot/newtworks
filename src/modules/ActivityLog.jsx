@@ -1233,6 +1233,10 @@ function CancelationConvert({ row, types, onClose, onDone }) {
     ];
     if (!policies.length) { setErr("Tick at least one policy that canceled."); return; }
     if (!ecrm.trim()) { setErr("A cancelation needs the ECRM link."); return; }
+    // A line that has types needs one picked, the same as the cancelation screen.
+    if (extras.some(e => e.line && (types[e.line] || []).length > 0 && !e.type)) {
+      setErr("Pick the policy type for each line you added."); return;
+    }
     setBusy(true); setErr("");
     try {
       const { data, error } = await supabase.rpc("rp_convert_activity_to_cancelation",
