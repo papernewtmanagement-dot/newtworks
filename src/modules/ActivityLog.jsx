@@ -1322,7 +1322,8 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   const [weeks, setWeeks] = useState([]);
   const [week, setWeek] = useState(thisWeek);
   const [rows, setRows] = useState([]);
-  const [remaining, setRemaining] = useState(0);
+  const [remaining, setRemaining] = useState(0);        // entries still unverified this week
+  const [housesLeft, setHousesLeft] = useState(0);      // households still unchecked this week
   const [busyId, setBusyId] = useState(null);
   const [err, setErr] = useState("");
   const [tick, setTick] = useState(0);
@@ -1364,7 +1365,9 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
       if (sample.error) { setErr(errText(sample.error)); return; }
       if (cancels.error) { setErr(errText(cancels.error)); return; }
       const list = Array.isArray(sample.data) ? sample.data : [];
-      setRows(list); setRemaining(list.length ? Number(list[0].remaining) : 0);
+      setRows(list);
+      setRemaining(list.length ? Number(list[0].remaining) : 0);
+      setHousesLeft(list.length ? Number(list[0].households_left) : 0);
       setFlags(Array.isArray(cancels.data) ? cancels.data : []);
     })();
     return () => { alive = false; };
@@ -1392,6 +1395,16 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   // Flagged entries already in the ten below are marked there instead, so
   // the same entry never gets two sets of buttons.
   const flagsAbove = flags.filter(f => !rows.some(r => r.id === f.id));
+  // The sample comes back as entries, ordered by household. Walking it in order
+  // keeps each household together without sorting it again here.
+  const households = [];
+  rows.forEach(r => {
+    const key = `${r.customer_label || ""}|${r.phone_last4 || ""}`;
+    const last = households[households.length - 1];
+    if (last && last.key === key) last.entries.push(r);
+    else households.push({ key, label: r.customer_label, phone: r.phone_last4,
+                           first: r.customer_first_name, initial: r.customer_last_initial, entries: [r] });
+  });
 
   if (!isAdmin) return null;
   return (
@@ -1405,7 +1418,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
         </select>
       </div>
       <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
-        Ten random self-logged entries from the week, the same ten until you clear them. Open the ECRM link, check the note, tap Verified. {remaining > 10 ? `${remaining} still unverified this week.` : remaining > 0 ? `${remaining} left this week.` : "Nothing left to check this week."}
+        Ten random households from the week, with everything logged on each one, the same ten until you clear them. Open the ECRM link, check the notes, tap Verified. {housesLeft > 10 ? `${housesLeft} households still unchecked this week, ${remaining} entries in all.` : housesLeft > 0 ? `${housesLeft} households left this week.` : "Nothing left to check this week."}
       </div>
       {flagsAbove.length > 0 && (
         <div style={{ border: `1px solid ${T.amber}`, background: "#fffbeb", borderRadius: 10, padding: 12, marginBottom: 14 }}>
@@ -1444,35 +1457,47 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
         </div>
       )}
       {rows.length > 0 && (
-        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><th style={tableTh}>Who</th><th style={tableTh}>Date</th><th style={tableTh}>What</th><th style={tableTh}>Customer</th><th style={tableTh}>Note</th><th style={tableTh}>ECRM</th><th style={tableTh}>Points</th><th style={tableTh}></th></tr></thead>
-            <tbody>
-              {rows.map(r => (
-                <tr key={r.id}>
-                  <td style={tableTd}>{r.first_name || "\u2014"}</td>
-                  <td style={tableTd}>{fmtDate(r.occurred_on)}</td>
-                  <td style={tableTd}>{r.label || r.activity_key}</td>
-                  <td style={tableTd}>
-                      {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}
-                      {r.phone_last4 ? <span style={{ color: T.slate400 }}> ·{r.phone_last4}</span> : null}
-                    </td>
-                  <td style={{ ...tableTd, maxWidth: 260 }}>
-                    {r.note || "\u2014"}
-                    {flags.some(f => f.id === r.id) && (
-                      <div style={{ fontSize: 11, fontWeight: 700, color: T.amber }}>Note says cancel \u2014 policy change or cancelation?</div>
-                    )}
-                  </td>
-                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
-                    {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
-                      : <span style={{ color: T.slate300 }}>—</span>}
-                  </td>
-                  <td style={tableTd}>{fmtPts(r.points)}</td>
-                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{rowActions(r)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div style={{ display: "grid", gap: 12 }}>
+          {households.map(h => (
+            <div key={h.key} style={{ border: `1px solid ${T.slate200}`, borderRadius: 10, padding: 12, background: T.white }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline", marginBottom: 8 }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>
+                  {h.label}
+                  {h.phone ? <span style={{ color: T.slate400, fontWeight: 400 }}> ·{h.phone}</span> : null}
+                </div>
+                <CustomerName label={h.label} phone4={h.phone} style={{ fontSize: 12 }}>Whole account</CustomerName>
+                <div style={{ fontSize: 12, color: h.entries.length > 2 ? T.amber : T.slate500, fontWeight: h.entries.length > 2 ? 700 : 400 }}>
+                  {h.entries.length} {h.entries.length === 1 ? "entry" : "entries"} this week
+                </div>
+              </div>
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr><th style={tableTh}>Who</th><th style={tableTh}>Date</th><th style={tableTh}>What</th><th style={tableTh}>Note</th><th style={tableTh}>ECRM</th><th style={tableTh}>Points</th><th style={tableTh}></th></tr></thead>
+                  <tbody>
+                    {h.entries.map(r => (
+                      <tr key={r.id}>
+                        <td style={tableTd}>{r.first_name || "—"}</td>
+                        <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{fmtDate(r.occurred_on)}</td>
+                        <td style={tableTd}>{r.label || r.activity_key}</td>
+                        <td style={{ ...tableTd, maxWidth: 260 }}>
+                          {r.note || "—"}
+                          {flags.some(f => f.id === r.id) && (
+                            <div style={{ fontSize: 11, fontWeight: 700, color: T.amber }}>Note says cancel — policy change or cancelation?</div>
+                          )}
+                        </td>
+                        <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
+                          {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
+                            : <span style={{ color: T.slate300 }}>—</span>}
+                        </td>
+                        <td style={tableTd}>{fmtPts(r.points)}</td>
+                        <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{rowActions(r)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
         </div>
       )}
       {editing && (

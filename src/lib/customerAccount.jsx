@@ -27,11 +27,13 @@ export function parseAcctToken(tok) {
   return { label: s.slice(0, i).trim(), phone4: s.slice(i + 1).trim() };
 }
 
-export function CustomerName({ label, phone4, style, empty = "—" }) {
+// children let a caller label the link something other than the name, for a
+// screen where the name itself is already a link to somewhere else.
+export function CustomerName({ label, phone4, style, empty = "—", children }) {
   const ctx = useContext(AccountCtx);
   const name = String(label || "").trim();
   if (!name) return <span style={style}>{empty}</span>;
-  if (!ctx) return <span style={style}>{name}</span>;
+  if (!ctx) return <span style={style}>{children || name}</span>;
   const tok = acctToken(name, phone4);
   return (
     <a
@@ -40,7 +42,7 @@ export function CustomerName({ label, phone4, style, empty = "—" }) {
       onClick={(e) => handleModuleLinkClick(e, () => ctx.open(tok))}
       style={{ color: T.blue, textDecoration: "none", fontWeight: 600, cursor: "pointer", ...style }}
     >
-      {name}
+      {children || name}
     </a>
   );
 }
