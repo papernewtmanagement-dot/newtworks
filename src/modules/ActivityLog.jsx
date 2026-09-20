@@ -2465,32 +2465,15 @@ function Modal({ title, onClose, children }) {
 // and maintenance SQL all land here. Rows written by one Log click share a
 // txid and are shown as one group.
 // =====================================================================
-const CHANGE_LABEL = {
-  premium: "premium", total_premium: "total premium", issued_date: "issued", status: "status", void_reason: "void reason",
-  note: "note", customer_label: "customer", customer_first_name: "first name", customer_last_initial: "last initial",
-  marketing_source: "source", marketing_source_import: "source as imported", household_status: "relationship",
-  relationship_type: "relationship", submitted_date: "submitted", quote_date: "quote date", occurred_on: "date",
-  canceled_on: "canceled on", vehicle_count: "cars", policy_count: "policies", line_of_business: "line", policy_line: "line",
-  save_line: "line", product_type: "product", is_new_line: "new line", points: "points", activity_key: "activity",
-  save_reason: "save reason", reason: "reason", week_end_date: "week", credited_week_end_date: "credited week",
-  credit_available_on: "clears on", products_discussed: "products discussed", is_existing_customer: "existing customer",
-  ecrm_opportunity_url: "ECRM link", ecrm_url: "ECRM link", team_member_id: "person",
-  saves_voided: "saves voided", chargeback_points: "chargeback",
-  is_added_to_existing: "added to a policy they had",
-  window_fraction_left: "window left", verified_at: "verified", scorecard_date: "date", average_score: "average",
-  recording_turned_in: "recording turned in", recording_url: "recording", opportunity_ref: "opportunity",
-};
-// Bookkeeping columns that say nothing a person needs to read.
-const CHANGE_HIDE = /^(id|agency_id|created_by|created_by_user_id|created_at|updated_at|voided_by|voided_at|verified_by|source|source_id|sales_log_id|quote_log_id|multiline_credit_id|matched_sale_product_id|chargeback_activity_id|entry_source|tenure_tier_at_entry|entry_type)$/;
+// How a field is named and how a value is written now lives in the database,
+// in change_field_label and change_value_text, and comes back on every row as
+// `changes`. Keeping a second copy here is what made the two drift apart.
 const CHANGE_WINDOWS = [
   { days: 7,  label: "Last 7 days" },
   { days: 30, label: "Last 30 days" },
   { days: 90, label: "Last 90 days" },
 ];
 
-function changeLabel(key) {
-  return CHANGE_LABEL[key] || key.replace(/_score$/, "").replace(/_/g, " ");
-}
 const RESTORE_KIND = {
   sales_log: "sale",
   quote_log: "quote",
@@ -2522,19 +2505,6 @@ const sortHead = { border: "none", background: "transparent", padding: 0, font: 
 function changeWhen(ts) {
   const d = new Date(ts);
   return isNaN(d) ? "—" : d.toLocaleString("en-US", { timeZone: "America/Chicago", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
-function ChangeVal({ k, v, ctx }) {
-  if (v === null || v === undefined || v === "") return "—";
-  if (typeof v === "boolean") return v ? "yes" : "no";
-  if (/team_member_id$/.test(k)) return ctx.nameOf(v);
-  if (/(premium|points)$/.test(k)) return `$${fmtPts(v)}`;
-  if (k === "window_fraction_left") return `${Math.round(Number(v) * 100)}%`;
-  if (k === "activity_key") return ctx.labelOf[v] || v;
-  if (Array.isArray(v)) return v.map(x => PRODUCT_SHORT[x] || x).join(", ") || "—";
-  if (/^(line_of_business|policy_line|save_line)$/.test(k)) return PRODUCT_SHORT[v] || v;
-  if (k === "household_status" || k === "relationship_type") return (RELATIONSHIPS.find(r => r.key === v) || {}).label || v;
-  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return fmtDate(v.slice(0, 10));
-  return String(v);
 }
 // One line that says what the row is, for adds and removals.
 function changeSummary(r, ctx) {
@@ -2744,7 +2714,7 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
                 // The "same click" marks only make sense while the list is in
                 // its own order, so they drop away once a heading is sorted.
                 const sameClick = !sort.by && i > 0 && shown[i - 1].txid === r.txid;
-                const fields = (r.changed_fields || []).filter(k => !CHANGE_HIDE.test(k));
+                const diffs = Array.isArray(r.changes) ? r.changes : [];
                 const target = EDIT_TARGET(r);
                 const canEdit = !!(target && target.id && r.action !== "delete" && statusNow.get(r.row_id) !== "void");
                 return (
@@ -2757,12 +2727,12 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
                     <td style={tableTd}>{r.subject || "—"}</td>
                     <td style={{ ...tableTd, maxWidth: 420 }}>
                       {r.action === "update" ? (
-                        fields.length ? fields.map(k => (
-                          <div key={k}>
-                            <span style={{ color: T.slate500 }}>{changeLabel(k)}:</span>{" "}
-                            <ChangeVal k={k} v={(r.old_row || {})[k]} ctx={ctx} /> → <ChangeVal k={k} v={(r.new_row || {})[k]} ctx={ctx} />
+                        diffs.length ? diffs.map(d => (
+                          <div key={d.field}>
+                            <span style={{ color: T.slate500 }}>{d.label}:</span>{" "}
+                            {d.before} → {d.after}
                           </div>
-                        )) : <span style={{ color: T.slate500 }}>{(r.changed_fields || []).map(changeLabel).join(", ") || "—"}</span>
+                        )) : <span style={{ color: T.slate500 }}>—</span>
                       ) : changeSummary(r, ctx)}
                     </td>
                     <td style={{ ...tableTd, textAlign: "right", whiteSpace: "nowrap" }}>
