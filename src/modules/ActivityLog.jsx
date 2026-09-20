@@ -169,6 +169,22 @@ const removeBtn = { ...btnGhost, color: T.red, borderColor: T.slate300, alignSel
 const wrapRow = { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end" };
 const linkBtn = { background: "none", border: "none", padding: 0, color: T.blue, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };
 const field = (min = 150) => ({ flex: `1 1 ${min}px`, minWidth: 0 });
+
+// The person / organization switch. ONE component, used by the logging form,
+// the appointment form and the edit form. Do not write this markup out again.
+function KindToggle({ value, onChange }) {
+  return (
+    <div style={{ display: "flex", border: `1px solid ${T.slate200}`, borderRadius: 8, overflow: "hidden" }}>
+      {[["person", "Person"], ["org", "Organization"]].map(([k, lbl]) => (
+        <button key={k} type="button" onClick={() => onChange(k)}
+          style={{ padding: "9px 12px", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13,
+                   background: value === k ? T.blue : T.white,
+                   color: value === k ? T.white : T.slate600,
+                   fontWeight: value === k ? 700 : 400 }}>{lbl}</button>
+      ))}
+    </div>
+  );
+}
 const addSelect = {
   ...inputBase, width: 190, flex: "0 0 190px", color: T.blue, fontWeight: 700,
   border: `1px dashed ${T.blue}`, background: T.blueLt, cursor: "pointer",
@@ -789,15 +805,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           )}
           <div style={{ flex: "0 0 auto" }}>
             <label style={labelStyle}>Customer</label>
-            <div style={{ display: "flex", border: `1px solid ${T.slate200}`, borderRadius: 8, overflow: "hidden" }}>
-              {[["person", "Person"], ["org", "Organization"]].map(([k, lbl]) => (
-                <button key={k} type="button" onClick={() => { setCustKind(k); if (k === "org") setInitial(""); }}
-                  style={{ padding: "9px 12px", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13,
-                           background: custKind === k ? T.blue : T.white,
-                           color: custKind === k ? T.white : T.slate600,
-                           fontWeight: custKind === k ? 700 : 400 }}>{lbl}</button>
-              ))}
-            </div>
+            <KindToggle value={custKind} onChange={k => { setCustKind(k); if (k === "org") setInitial(""); }} />
           </div>
           <div ref={nameBoxRef} style={{ ...field(isOrg ? 228 : 150), position: "relative" }}>
             <label style={labelStyle}>{isOrg ? "Organization" : "First name"}</label>
@@ -2130,7 +2138,12 @@ function AddAppointment({ roster, myTeamId, types, onClose, onSaved }) {
         {err && <Notice kind="error">{err}</Notice>}
         <div style={gridForm}>
           <div>
-            <label style={labelStyle}>First name</label>
+            <label style={labelStyle}>Customer</label>
+            <KindToggle value={f.customer_kind}
+              onChange={k => setF(d => ({ ...d, customer_kind: k, customer_last_initial: k === "org" ? "" : d.customer_last_initial }))} />
+          </div>
+          <div>
+            <label style={labelStyle}>{f.customer_kind === "org" ? "Organization" : "First name"}</label>
             <input value={f.customer_first} onChange={e => set("customer_first", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("afn")} />
           </div>
           {f.customer_kind !== "org" && (
@@ -2314,16 +2327,8 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
         <div style={gridForm}>
           <div>
             <label style={labelStyle}>Customer</label>
-            <div style={{ display: "flex", border: `1px solid ${T.slate200}`, borderRadius: 8, overflow: "hidden" }}>
-              {[["person", "Person"], ["org", "Organization"]].map(([k, lbl]) => (
-                <button key={k} type="button"
-                  onClick={() => setF(d => ({ ...d, customer_kind: k, customer_last_initial: k === "org" ? "" : d.customer_last_initial }))}
-                  style={{ padding: "9px 12px", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13,
-                           background: f.customer_kind === k ? T.blue : T.white,
-                           color: f.customer_kind === k ? T.white : T.slate600,
-                           fontWeight: f.customer_kind === k ? 700 : 400 }}>{lbl}</button>
-              ))}
-            </div>
+            <KindToggle value={f.customer_kind}
+              onChange={k => setF(d => ({ ...d, customer_kind: k, customer_last_initial: k === "org" ? "" : d.customer_last_initial }))} />
           </div>
           <div>
             <label style={labelStyle}>{f.customer_kind === "org" ? "Organization" : "First name"}</label>
