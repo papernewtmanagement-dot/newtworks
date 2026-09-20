@@ -3,6 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T, BAND } from "../lib/theme.js";
 import { fmtMoney as _fmtMoney, fmtMoneyR as _fmtMoneyR } from "../lib/format.jsx";
 import { addDaysISO, currentWeekSaturdayCT } from "../lib/weeks.js";
+import { ChangeDiffs, changeDiffList } from "../lib/changeLog.jsx";
 
 
 // Sales Points band badge colours (Peter 2026-08-28). The badge shows the
@@ -3183,46 +3184,10 @@ function EURSection({ report, editMode, formReport, isReportDirty, onReportChang
 // box 2026-09-19 on Peter's instruction. Reads production_changes_for_range —
 // the same function behind the daily change alert and the Activity Log Changes
 // tab, so the three surfaces can never disagree about what moved.
-const CHANGE_FIELD_LABELS = {
-  ecrm_opportunity_url: "eCRM link",
-  total_premium: "total premium",
-  issued_premium: "issued premium",
-  issued_date: "issued date",
-  vehicle_count: "vehicle count",
-  multiline_credit_id: "multiline credit",
-  is_new_line: "new line",
-  is_added_to_existing: "added to existing",
-  product_type: "product",
-  line_of_business: "line",
-  policy_line: "line",
-  entry_source: "entry source",
-  marketing_source: "marketing source",
-  phone_last4: "phone",
-  team_member_id: "credited teammate",
-  sourced_by_team_member_id: "sourced by",
-  referred_by_customer: "referred by",
-  window_fraction_left: "window left",
-  credit_available_on: "credit date",
-  canceled_on: "cancelation date",
-  activity_key: "activity type",
-  average_score: "score",
-};
-
-function prettyChangeField(f) {
-  if (!f) return "";
-  if (CHANGE_FIELD_LABELS[f]) return CHANGE_FIELD_LABELS[f];
-  return String(f).replace(/_id$/, "").replace(/_/g, " ");
-}
-
-function changeFieldSummary(fields) {
-  const out = [];
-  (Array.isArray(fields) ? fields : []).forEach(f => {
-    const label = prettyChangeField(f);
-    if (label && !out.includes(label)) out.push(label);
-  });
-  return out.join(", ");
-}
-
+// The field names and the readable values come back from
+// production_changes_for_range already done, in its `changes` column, built
+// by change_field_label / change_value_text in the database. ChangeDiffs
+// draws them, the same way the Activity Log Changes tab does.
 function changeWhen(ts) {
   if (!ts) return "";
   const d = new Date(ts);
@@ -3324,8 +3289,8 @@ function LogChangesSection({ weekDate, team }) {
                     </span>
                     {` a ${String(r.item || "record").toLowerCase()}`}
                     {r.subject ? ` — ${r.subject}` : ""}
-                    {r.what !== "removed" && changeFieldSummary(r.changed_fields)
-                      ? <span style={{ color: T.slate500 }}>{` (${changeFieldSummary(r.changed_fields)})`}</span>
+                    {r.what !== "removed" && changeDiffList(r.changes).length
+                      ? <ChangeDiffs changes={r.changes} inline />
                       : null}
                   </div>
                 ))}

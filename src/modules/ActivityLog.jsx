@@ -3,6 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink, hrefWithParam } from "../lib/routing.jsx";
 import { AccountCtx, CustomerName, parseAcctToken } from "../lib/customerAccount.jsx";
+import { ChangeDiffs, changeDiffList } from "../lib/changeLog.jsx";
 import TimeHub from "./TimeHub.jsx";
 import PFA from "./PFA.jsx";
 import Development from "./Development.jsx";
@@ -2465,9 +2466,10 @@ function Modal({ title, onClose, children }) {
 // and maintenance SQL all land here. Rows written by one Log click share a
 // txid and are shown as one group.
 // =====================================================================
-// How a field is named and how a value is written now lives in the database,
-// in change_field_label and change_value_text, and comes back on every row as
-// `changes`. Keeping a second copy here is what made the two drift apart.
+// The plain-English field names, the bookkeeping columns that are hidden, and
+// the way a stored value reads are all decided in the database by
+// change_field_label, change_field_hidden and change_value_text. They arrive
+// already done in the `changes` column and are drawn by ChangeDiffs.
 const CHANGE_WINDOWS = [
   { days: 7,  label: "Last 7 days" },
   { days: 30, label: "Last 30 days" },
@@ -2714,7 +2716,6 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
                 // The "same click" marks only make sense while the list is in
                 // its own order, so they drop away once a heading is sorted.
                 const sameClick = !sort.by && i > 0 && shown[i - 1].txid === r.txid;
-                const diffs = Array.isArray(r.changes) ? r.changes : [];
                 const target = EDIT_TARGET(r);
                 const canEdit = !!(target && target.id && r.action !== "delete" && statusNow.get(r.row_id) !== "void");
                 return (
@@ -2727,12 +2728,9 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
                     <td style={tableTd}>{r.subject || "—"}</td>
                     <td style={{ ...tableTd, maxWidth: 420 }}>
                       {r.action === "update" ? (
-                        diffs.length ? diffs.map(d => (
-                          <div key={d.field}>
-                            <span style={{ color: T.slate500 }}>{d.label}:</span>{" "}
-                            {d.before} → {d.after}
-                          </div>
-                        )) : <span style={{ color: T.slate500 }}>—</span>
+                        changeDiffList(r.changes).length
+                          ? <ChangeDiffs changes={r.changes} />
+                          : <span style={{ color: T.slate500 }}>&mdash;</span>
                       ) : changeSummary(r, ctx)}
                     </td>
                     <td style={{ ...tableTd, textAlign: "right", whiteSpace: "nowrap" }}>
