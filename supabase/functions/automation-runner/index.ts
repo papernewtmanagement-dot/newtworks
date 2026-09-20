@@ -35,7 +35,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { callComposio } from "../_shared/composio.ts";
 import { sb, jsonResponse, getSetting, AGENCY_ID_DEFAULT } from "../_shared/supabase.ts";
-import { insertAlert } from "../_shared/alerts.ts";
 
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -731,14 +730,7 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
       const parserReturnedNothing = recordIds.length === 0 && unparsedIds.length > 0;
       const skippedIds = parserReturnedNothing ? [] : unparsedIds;
       if (parserReturnedNothing) {
-        await insertAlert({
-          agencyId,
-          alertType: "gmail_parser_returned_nothing",
-          severity: "warning",
-          title: `Parser returned no records for ${unparsedIds.length} email(s) — ${recipe.recipe_name}`,
-          message: `Nothing was archived and the emails are still in the inbox. A whole batch parsing to nothing almost always means the message body is arriving in a shape the parser cannot read. Gmail message ids: ${unparsedIds.slice(0, 20).join(", ")}`,
-          moduleReference: "automation-runner",
-        });
+        console.error(`[automation-runner] ${recipe.recipe_name}: parser returned no records for ${unparsedIds.length} fetched email(s); left in the inbox. Gmail message ids: ${unparsedIds.slice(0, 20).join(", ")}`);
         await telegram(agencyId, `🔴 ${recipe.recipe_name}: parser returned no records for ${unparsedIds.length} fetched email(s). Left in the inbox rather than archived — check the body shape.`);
       }
       const allIds = Array.from(new Set<string>([...handled, ...skippedIds]));
@@ -754,14 +746,7 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
         await telegram(agencyId, `🟡 Post-parse archive failed for ${recipe.recipe_name}\n${(ar.error ?? "").slice(0,400)}`);
       }
       if (skippedIds.length > 0) {
-        await insertAlert({
-          agencyId,
-          alertType: "gmail_parser_skipped_message",
-          severity: "info",
-          title: `${skippedIds.length} email(s) filed with no record — ${recipe.recipe_name}`,
-          message: `The parser returned no record for ${skippedIds.length} fetched message(s). They have been labelled and archived so they are not re-parsed on every run. Gmail message ids: ${skippedIds.slice(0, 20).join(", ")}`,
-          moduleReference: "automation-runner",
-        });
+        console.warn(`[automation-runner] ${recipe.recipe_name}: ${skippedIds.length} email(s) filed with no record. Gmail message ids: ${skippedIds.slice(0, 20).join(", ")}`);
       }
       return note;
     };

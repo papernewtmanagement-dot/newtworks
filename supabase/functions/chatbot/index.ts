@@ -341,10 +341,6 @@ async function loadFreshContext(): Promise<string> {
     .order("snapshot_date", { ascending: false }).limit(1).maybeSingle();
   if (smvc) lines.push(`Latest SMVC (${smvc.snapshot_date}): period ${smvc.smvc_period ?? "?"}.`);
 
-  const { count: openAlerts } = await sb.from("alerts").select("*", { count: "exact", head: true })
-    .eq("agency_id", AGENCY_ID).eq("is_resolved", false);
-  lines.push(`Open alerts: ${openAlerts ?? 0}.`);
-
   const { count: openTasks } = await sb.from("tasks").select("*", { count: "exact", head: true })
     .eq("agency_id", AGENCY_ID).neq("status", "done");
   lines.push(`Open tasks: ${openTasks ?? 0}.`);
@@ -417,7 +413,7 @@ Even though internal, the State Farm Agent's Agreement governs:
 
 You have two tools. Call them when the answer needs live data or specific stored knowledge — do not guess.
 
-- read_sql(sql): SELECT or WITH-prefixed CTE against the Newtworks Postgres. Read-only, capped at 1000 rows. Filter multi-tenant tables by agency_id = '126794dd-25ff-47d2-a436-724499733365'. Useful tables: agency, team, comp_recap, book_snapshot, smvc_history, alerts, tasks, ledger, payroll_runs, persistent_memory, core_principles, manuals, automation_recipes, automation_run_log, settings, and ~70 others.
+- read_sql(sql): SELECT or WITH-prefixed CTE against the Newtworks Postgres. Read-only, capped at 1000 rows. Filter multi-tenant tables by agency_id = '126794dd-25ff-47d2-a436-724499733365'. Useful tables: agency, team, comp_recap, book_snapshot, smvc_history, tasks, ledger, payroll_runs, persistent_memory, core_principles, manuals, automation_recipes, automation_run_log, settings, and ~70 others.
 - search_knowledge(query, max_per_table): keyword search across persistent_memory, core_principles, handbook, and processes simultaneously.
 
 IMPORTANT: When you call a tool, use the structured tool_calls format the API expects. Do not write tool calls inline as text or in custom syntax — emit them through the standard function-calling channel.
@@ -843,16 +839,10 @@ async function handleWebhook(update: any): Promise<Response> {
     error_message: reply.error || (sendResult.error ? `sendMessage: ${sendResult.error}` : undefined),
   });
 
-  // If sendMessage failed, surface that as an alert so silent failures don't recur
+  // A failed send is already captured on the conversation row above
+  // (error_message) and in the function logs. Say it out loud there.
   if (sendResult.error) {
-    await sb.from("alerts").insert({
-      agency_id: AGENCY_ID,
-      module_reference: "chatbot",
-      severity: "warning",
-      title: "Chatbot sendMessage failed",
-      description: `Failed to send reply to chat ${chatId}: ${sendResult.error}`,
-      is_resolved: false,
-    }).then(() => {}, () => {});
+    console.error(`[chatbot] sendMessage failed for chat ${chatId}: ${sendResult.error}`);
   }
 
   return jsonResponse({

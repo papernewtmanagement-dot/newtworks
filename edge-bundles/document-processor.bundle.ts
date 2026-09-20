@@ -141,69 +141,83 @@ export function stripFences(s: string): string {
     .trim();
 }
 
-// ==================== ../_shared/alerts.ts ====================
+// ==================== ../_shared/watchers.ts ====================
 // =========================================================================
-// _shared/alerts.ts
+// _shared/watchers.ts
 // =========================================================================
-// Canonical alerts writer for ALL Newtworks edge functions.
+// Canonical "something needs a human" writer for ALL Newtworks edge
+// functions. Replaces the retired _shared/alerts.ts.
 //
-// Why this exists: the alerts table takes (alert_type NOT NULL, severity,
-// title, message, module_reference, related_id, is_resolved). Hand-written
-// inserts have shipped with a `body:` column that does not exist and with
-// alert_type missing — both fail silently when the insert result isn't
-// checked. Going through this helper makes that class of bug impossible.
+// Why this exists: the alerts table was retired 2026-09-16 because nothing
+// read it. A condition that genuinely needs Peter to act now becomes an
+// ordinary row in tasks, so it gets scored, gets hours, and lands in a week
+// like every other piece of work. Both helpers wrap the SQL functions
+// ensure_watcher_task / close_watcher_task so the shaping lives in exactly
+// one place, database side and edge side alike.
+//
+// Dedupe is on created_by ('watcher:' || source) plus related_id, open rows
+// only. related_id must be a uuid or null. When the thing repeats per period
+// and has no uuid of its own, PUT THE PERIOD IN THE SOURCE STRING
+// (e.g. "wrapup_parser_stuck:2026-09-12") and leave relatedId null.
 // =========================================================================
 
 
-export async function insertAlert(opts: {
-  agencyId: string;
-  alertType: string;
-  severity: "info" | "warning" | "high" | "critical" | string;
-  title: string;
-  message: string;
-  moduleReference?: string;
-  relatedId?: string | null;
-}): Promise<{ ok: boolean; error: string | null }> {
-  const row: Record<string, unknown> = {
-    agency_id: opts.agencyId,
-    alert_type: opts.alertType,
-    severity: opts.severity,
-    title: opts.title,
-    message: opts.message,
-    is_read: false,
-    is_resolved: false,
-  };
-  if (opts.moduleReference != null) row.module_reference = opts.moduleReference;
-  if (opts.relatedId != null) row.related_id = opts.relatedId;
+// tasks_priority_check allows exactly these four. "urgent" is NOT one of them.
+export type WatcherPriority = "low" | "medium" | "high" | "critical";
 
-  const { error } = await sb.from("alerts").insert(row);
+// tasks.task_category is a fixed check-constrained list. Anything outside it
+// fails the insert.
+export type WatcherCategory =
+  | "web_app"
+  | "admin"
+  | "marketing"
+  | "team_development"
+  | "handbook"
+  | "processes"
+  | "finances";
+
+export async function ensureWatcherTask(opts: {
+  agencyId: string;
+  source: string;
+  relatedId?: string | null;
+  title: string;
+  description: string;
+  priority?: WatcherPriority;
+  category?: WatcherCategory;
+}): Promise<{ ok: boolean; created: boolean; error: string | null }> {
+  const { data, error } = await sb.rpc("ensure_watcher_task", {
+    p_agency_id: opts.agencyId,
+    p_source: opts.source,
+    p_related_id: opts.relatedId ?? null,
+    p_title: opts.title,
+    p_description: opts.description,
+    p_priority: opts.priority ?? "medium",
+    p_category: opts.category ?? "admin",
+  });
   if (error) {
-    // Never throw — alerting must not mask the underlying failure being
-    // reported. But do surface the miss to whoever reads the function logs.
-    console.error(`insertAlert failed (${opts.alertType}): ${error.message}`);
-    return { ok: false, error: error.message };
+    // Never throw — reporting a problem must not mask the problem being
+    // reported. Surface the miss to whoever reads the function logs.
+    console.error(`ensureWatcherTask failed (${opts.source}): ${error.message}`);
+    return { ok: false, created: false, error: error.message };
   }
-  return { ok: true, error: null };
+  return { ok: true, created: data === true, error: null };
 }
 
-// Resolve all open alerts carrying a given module_reference (the standard
-// "this condition cleared" pattern used by surepayroll + pfa flows).
-export async function resolveAlerts(opts: {
+export async function closeWatcherTask(opts: {
   agencyId: string;
-  moduleReference: string;
-}): Promise<{ ok: boolean; resolved: number; error: string | null }> {
-  const { data, error } = await sb
-    .from("alerts")
-    .update({ is_resolved: true, resolved_at: new Date().toISOString() })
-    .eq("agency_id", opts.agencyId)
-    .eq("module_reference", opts.moduleReference)
-    .eq("is_resolved", false)
-    .select("id");
+  source: string;
+  relatedId?: string | null;
+}): Promise<{ ok: boolean; closed: boolean; error: string | null }> {
+  const { data, error } = await sb.rpc("close_watcher_task", {
+    p_agency_id: opts.agencyId,
+    p_source: opts.source,
+    p_related_id: opts.relatedId ?? null,
+  });
   if (error) {
-    console.error(`resolveAlerts failed (${opts.moduleReference}): ${error.message}`);
-    return { ok: false, resolved: 0, error: error.message };
+    console.error(`closeWatcherTask failed (${opts.source}): ${error.message}`);
+    return { ok: false, closed: false, error: error.message };
   }
-  return { ok: true, resolved: (data ?? []).length, error: null };
+  return { ok: true, closed: data === true, error: null };
 }
 
 // ==================== ../_shared/composio.ts ====================
@@ -245,34 +259,25 @@ export const COMPOSIO_TIMEOUT_MS = 25000;
  *  silently change the other. */
 export const S3_FETCH_TIMEOUT_MS = 25000;
 
-/** Where a timeout should be reported, if anywhere. Omit entirely and a
- *  timeout returns a clean failed result without writing an alert — correct
- *  for callers that already record their own failures (automation-runner logs
- *  every recipe failure to automation_run_log and Telegram). */
-export interface TimeoutAlertTarget {
+/** Where a timeout should be reported. A timeout is a transient external
+ *  failure the caller already handles as a clean failed result, so this goes
+ *  to the function log and nowhere else — callers that need a durable record
+ *  already keep one (automation-runner logs every recipe failure to
+ *  automation_run_log and Telegram). */
+export interface TimeoutReportTarget {
   agencyId?: string;
   moduleReference: string;
   context: string;
 }
 
-export async function writeTimeoutAlert(
+export function writeTimeoutReport(
   service: string,
   elapsedMs: number,
-  target: TimeoutAlertTarget,
-): Promise<void> {
-  try {
-    await insertAlert({
-      agencyId: target.agencyId ?? AGENCY_ID_DEFAULT,
-      alertType: "external_call_timeout",
-      severity: "warning",
-      title: `${service} call timed out`,
-      message: `${service} call did not respond within ${elapsedMs}ms and was aborted. Context: ${target.context}`,
-      moduleReference: target.moduleReference,
-    });
-  } catch (_e) {
-    // Best-effort. Must never mask the original timeout or throw a second
-    // uncaught exception on the way out.
-  }
+  target: TimeoutReportTarget,
+): void {
+  console.error(
+    `[${target.moduleReference}] ${service} call timed out after ${elapsedMs}ms and was aborted. Context: ${target.context}`,
+  );
 }
 
 /**
@@ -287,7 +292,7 @@ export async function _sharedFetchWithTimeout(
   timeoutMs: number,
   service: string,
   context: string,
-  alertTarget?: TimeoutAlertTarget,
+  reportTarget?: TimeoutReportTarget,
 ): Promise<{ res: Response | null; timedOut: boolean; elapsedMs: number }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -298,8 +303,8 @@ export async function _sharedFetchWithTimeout(
   } catch (e) {
     const elapsedMs = Date.now() - startedAt;
     const timedOut = e instanceof Error && e.name === "AbortError";
-    if (timedOut && alertTarget) {
-      await writeTimeoutAlert(service, elapsedMs, alertTarget);
+    if (timedOut && reportTarget) {
+      writeTimeoutReport(service, elapsedMs, reportTarget);
     } else if (!timedOut) {
       console.error(`[${service}] fetch threw after ${elapsedMs}ms (${context}): ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -364,7 +369,7 @@ export async function _sharedCallComposio(opts: {
    */
   toolkitVersion?: string;
   timeoutMs?: number;
-  alertTarget?: TimeoutAlertTarget;
+  reportTarget?: TimeoutReportTarget;
 }): Promise<ComposioCallResult> {
   const { res, timedOut, elapsedMs } = await _sharedFetchWithTimeout(
     `${COMPOSIO_BASE}/${opts.toolSlug}`,
@@ -384,7 +389,7 @@ export async function _sharedCallComposio(opts: {
     opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS,
     `composio:${opts.toolSlug}`,
     `tool=${opts.toolSlug}`,
-    opts.alertTarget,
+    opts.reportTarget,
   );
   if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
   return unwrapComposio(await res.text(), res.ok, res.status);
@@ -396,7 +401,7 @@ export async function _sharedCallComposioNoAuth(opts: {
   toolSlug: string;
   toolArguments: Record<string, any>;
   timeoutMs?: number;
-  alertTarget?: TimeoutAlertTarget;
+  reportTarget?: TimeoutReportTarget;
 }): Promise<ComposioCallResult> {
   const { res, timedOut, elapsedMs } = await _sharedFetchWithTimeout(
     `${COMPOSIO_BASE}/${opts.toolSlug}`,
@@ -414,7 +419,7 @@ export async function _sharedCallComposioNoAuth(opts: {
     opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS,
     `composio:${opts.toolSlug}`,
     `tool=${opts.toolSlug} (no connected account)`,
-    opts.alertTarget,
+    opts.reportTarget,
   );
   if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
   return unwrapComposio(await res.text(), res.ok, res.status);
@@ -541,17 +546,14 @@ export async function writeParsedStatement(
         notes: reason,
         processed_at: nowIso(),
       }).eq("id", opts.documentId);
-      await sb.from("alerts").insert({
-        agency_id: opts.agencyId,
-        alert_type: "duplicate_statement_ingest",
-        severity: "low",
+      await ensureWatcherTask({
+        agencyId: opts.agencyId,
+        source: `duplicate_statement_ingest:${moduleRef(opts.source)}`,
+        relatedId: opts.documentId,
         title: `Duplicate statement skipped — ${opts.accountCode} period ending ${opts.period.end}`,
-        message: reason,
-        module_reference: moduleRef(opts.source),
-        related_id: opts.documentId,
-        is_read: false,
-        is_resolved: false,
-        created_at: nowIso(),
+        description: reason,
+        priority: "low",
+        category: "finances",
       });
       return { ok: false, held: "duplicate_ingest", reason, priorDocumentId: priorBal.source_document_id };
     }
@@ -616,19 +618,16 @@ export async function writeParsedStatement(
       notes: heldNotes,
       processed_at: nowIso(),
     }).eq("id", opts.documentId);
-    await sb.from("alerts").insert({
-      agency_id: opts.agencyId,
-      alert_type: "reconciliation_mismatch",
-      severity: "high",
+    await ensureWatcherTask({
+      agencyId: opts.agencyId,
+      source: `reconciliation_mismatch:${moduleRef(opts.source)}`,
+      relatedId: opts.documentId,
       title: `Statement reconciliation mismatch — ${opts.accountCode} period ending ${opts.period.end}`,
-      message:
+      description:
         `Parsed statement for account ${opts.accountCode} does not tie to the printed ` +
         `statement summary. ${reconHeldReason}. Held for review — nothing written.`,
-      module_reference: moduleRef(opts.source),
-      related_id: opts.documentId,
-      is_read: false,
-      is_resolved: false,
-      created_at: nowIso(),
+      priority: "high",
+      category: "finances",
     });
     console.warn(`[statement_writer] reconciliation_mismatch doc=${opts.documentId} account=${opts.accountCode}: ${reconHeldReason}`);
     return { ok: false, held: "reconciliation_mismatch", reason: reconHeldReason, delta: reconDelta };
@@ -752,20 +751,20 @@ export async function writeParsedStatement(
 // =========================================================================
 // Consolidated 2026-08-11. The HTTP request, timeout, and response-unwrapping
 // logic used to be fully duplicated here (this file used to be ~150 lines
-// mirroring _shared/composio.ts almost exactly, plus a hand-rolled
-// writeTimeoutAlert). That duplication is why the 2026-08-06 timeout fix
+// mirroring _shared/composio.ts almost exactly, plus a hand-rolled timeout
+// reporter). That duplication is why the 2026-08-06 timeout fix
 // landed here first and took five more days to reach automation-runner. The
 // mechanism now lives in exactly one place: _shared/composio.ts.
 //
-// WHY THIS FILE STILL EXISTS AT ALL: document-processor has always written an
-// alerts-table row on EVERY timeout, unconditionally — that was the original
-// fork's behavior since 2026-08-06. _shared/composio.ts makes alerting
-// opt-in per call (alertTarget?), because other consumers (automation-runner)
-// deliberately do NOT want a duplicate alerts-table row on top of their own
+// WHY THIS FILE STILL EXISTS AT ALL: document-processor has always reported
+// EVERY timeout, unconditionally — that was the original fork's behavior
+// since 2026-08-06. _shared/composio.ts makes the report
+// opt-in per call (reportTarget?), because other consumers (automation-runner)
+// deliberately do NOT want a second record on top of their own
 // automation_run_log + Telegram failure recording. Rather than touch this
-// function's 30+ call sites to pass an alertTarget by hand, this shim
+// function's 30+ call sites to pass a reportTarget by hand, this shim
 // supplies the same default the old duplicated implementation hardcoded, so
-// deleting the duplication changed NOTHING about runtime alerting behavior.
+// deleting the duplication changed NOTHING about runtime reporting behavior.
 // Every existing `callComposio(...)`, `callComposioNoAuth(...)` and
 // `fetchWithTimeout(...)` call in this function keeps working with its
 // existing arguments, unchanged.
@@ -784,7 +783,7 @@ export async function writeParsedStatement(
 // the same name, a boot failure esbuild caught and the project's own
 // validator does not, since it only checks `const`, not `export {}`.)
 
-function dpAlertTarget(service: string, context: string): TimeoutAlertTarget {
+function dpReportTarget(service: string, context: string): TimeoutReportTarget {
   return { moduleReference: `document-processor:${service}_timeout`, context };
 }
 
@@ -793,7 +792,7 @@ export async function callComposio(
 ): ReturnType<typeof _sharedCallComposio> {
   return _sharedCallComposio({
     ...opts,
-    alertTarget: opts.alertTarget ?? dpAlertTarget("composio", `tool=${opts.toolSlug}`),
+    reportTarget: opts.reportTarget ?? dpReportTarget("composio", `tool=${opts.toolSlug}`),
   });
 }
 
@@ -802,7 +801,7 @@ export async function callComposioNoAuth(
 ): ReturnType<typeof _sharedCallComposioNoAuth> {
   return _sharedCallComposioNoAuth({
     ...opts,
-    alertTarget: opts.alertTarget ?? dpAlertTarget("composio", `tool=${opts.toolSlug}`),
+    reportTarget: opts.reportTarget ?? dpReportTarget("composio", `tool=${opts.toolSlug}`),
   });
 }
 
@@ -813,7 +812,7 @@ export async function fetchWithTimeout(
   service: string,
   context: string,
 ): ReturnType<typeof _sharedFetchWithTimeout> {
-  return _sharedFetchWithTimeout(url, init, timeoutMs, service, context, dpAlertTarget(service, context));
+  return _sharedFetchWithTimeout(url, init, timeoutMs, service, context, dpReportTarget(service, context));
 }
 
 // ==================== lib/docx.ts ====================
@@ -1043,20 +1042,10 @@ const GROQ_TIMEOUT_MS = 25000;
 // applies here: a stuck Groq call should fail fast and catchably instead of
 // riding the invocation to the platform's own wall-clock kill (observed as
 // an uncaught-exception 546 after ~105-113s). No retry added on purpose.
-async function writeGroqTimeoutAlert(elapsedMs: number, context: string): Promise<void> {
-  try {
-    await sb.from("alerts").insert({
-      alert_type: "external_call_timeout",
-      severity: "warning",
-      title: "Groq call timed out",
-      message: `Groq call did not respond within ${elapsedMs}ms and was aborted. Context: ${context}`,
-      module_reference: "document-processor:groq_timeout",
-      is_read: false,
-      is_resolved: false,
-    });
-  } catch (_e) {
-    // Best-effort; never let a failed alert insert mask the original timeout.
-  }
+function writeGroqTimeoutReport(elapsedMs: number, context: string): void {
+  console.error(
+    `[document-processor:groq_timeout] Groq call did not respond within ${elapsedMs}ms and was aborted. Context: ${context}`,
+  );
 }
 
 // Reads settings.groq_model_default for the agency; falls back to LLM_MODEL_FALLBACK
@@ -1152,7 +1141,7 @@ async function callGroqDirect(opts: {
   } catch (e) {
     const elapsedMs = Date.now() - startedAt;
     const timedOut = e instanceof Error && e.name === "AbortError";
-    if (timedOut) await writeGroqTimeoutAlert(elapsedMs, opts.context);
+    if (timedOut) writeGroqTimeoutReport(elapsedMs, opts.context);
     const error = timedOut
       ? `Groq call timed out after ${elapsedMs}ms`
       : `Groq fetch failed: ${(e as Error).message}`;
@@ -3251,7 +3240,7 @@ export async function parseProductionReport(opts: {
 // (right-to-left reading, no whitespace between amounts and labels).
 // Writes payroll_runs + payroll_detail with full jsonb per-item breakdowns,
 // denormalizes into weekly_cpr_team_detail for the CPR week ending the first
-// Saturday >= check_date, auto-resolves pending payroll_run alerts, stars the
+// Saturday >= check_date, stars the
 // source email. Consolidated from standalone `payroll-email-parser` v9 (2026-07-07).
 // =========================================================================
 
@@ -3661,7 +3650,6 @@ interface SPProcessResult {
   employees_written?: number;
   unmatched_employees?: string[];
   cpr_week_updated?: string;
-  alerts_resolved?: number;
 }
 
 export async function processSurePayrollParsed(opts: {
@@ -3840,10 +3828,9 @@ export async function processSurePayrollParsed(opts: {
 
   // Fix 2026-07-20: module_reference is stored as "payroll_run:<pay_period_end>"
   // (per payroll_weekly_nag), not the bare literal "payroll_run" this code
-  // previously matched — the .eq comparison never hit anything, so alerts
+  // previously matched — the .eq comparison never hit anything, so nothing
   // stayed open silently after every successful import. Match on the exact
   // pay_period_end this ingest closes.
-  const { data: alertsResolved } = await sb.from("alerts").update({ is_resolved: true, resolved_at: new Date().toISOString() }).eq("agency_id", opts.agencyId).eq("module_reference", `payroll_run:${parsed.pay_period_end}`).eq("is_resolved", false).select("id");
 
   await callComposio({
     apiKey: opts.composioApiKey, userId: opts.composioUserId, connectedAccountId: opts.gmailAccountId,
@@ -3855,7 +3842,6 @@ export async function processSurePayrollParsed(opts: {
     ok: true, payroll_run_id: runRowId, merged_existing: mergedExisting,
     employees_written: detailRows.length, unmatched_employees: unmatched,
     cpr_week_updated: cprReport?.id ? cprWeekEnd : undefined,
-    alerts_resolved: alertsResolved?.length ?? 0,
   };
 }
 
@@ -4527,7 +4513,7 @@ export async function processPfaStatement(opts: {
     unmatchedLines.push(line);
   }
 
-  // 6) Alert if anything was unmatched
+  // 6) Raise a task if anything was unmatched
   if (unmatchedLines.length > 0) {
     const previewLines = unmatchedLines.slice(0, 8).map(l =>
       `- $${l.amount.toFixed(2)} ${l.type} on ${l.date}` +
@@ -4535,16 +4521,14 @@ export async function processPfaStatement(opts: {
       `: ${l.description.slice(0, 60)}`
     ).join("\n");
     const overflow = unmatchedLines.length > 8 ? `\n... and ${unmatchedLines.length - 8} more` : "";
-    await sb.from("alerts").insert({
-      agency_id: opts.agencyId,
-      alert_type: "pfa_statement_unmatched",
-      severity: "warning",
+    await ensureWatcherTask({
+      agencyId: opts.agencyId,
+      source: `pfa_statement_unmatched:${parsed.statement_period_end}`,
+      relatedId: statementId,
       title: `PFA statement ${parsed.statement_period_end}: ${unmatchedLines.length} unmatched line${unmatchedLines.length === 1 ? "" : "s"}`,
-      message: `The Frost PFA statement for period ending ${parsed.statement_period_end} had ${unmatchedLines.length} transaction line(s) that couldn't be matched to existing pfa_transactions rows. New rows were auto-inserted (customer name null) so the reconciliation can balance — but you should review them in Deposits → Ledger and confirm they're right.\n\nFirst few:\n${previewLines}${overflow}`,
-      module_reference: `pfa_statement_unmatched:${statementId}`,
-      is_read: false,
-      is_resolved: false,
-      created_at: new Date().toISOString(),
+      description: `The Frost PFA statement for period ending ${parsed.statement_period_end} had ${unmatchedLines.length} transaction line(s) that couldn't be matched to existing pfa_transactions rows. New rows were auto-inserted (customer name null) so the reconciliation can balance — but you should review them in Deposits → Ledger and confirm they're right.\n\nFirst few:\n${previewLines}${overflow}`,
+      priority: "medium",
+      category: "finances",
     });
   }
 
@@ -8780,20 +8764,17 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
 
 async function rmbAlert(args: RmbArgs, message: string): Promise<void> {
   try {
-    await sb.from("alerts").insert({
-      agency_id: args.agencyId,
-      alert_type: "resume_ingest_failed",
-      severity: "warning",
+    await ensureWatcherTask({
+      agencyId: args.agencyId,
+      source: "resume_ingest_failed",
+      relatedId: args.documentId,
       title: `Resume could not be ingested — ${args.fileName}`,
-      message: `${message}\n\nFrom: ${args.fromEmail}\nSubject: "${args.subject}"\nFile: ${args.fileName}`,
-      module_reference: "document-processor",
-      related_id: args.documentId,
-      is_read: false,
-      is_resolved: false,
-      created_at: new Date().toISOString(),
+      description: `${message}\n\nFrom: ${args.fromEmail}\nSubject: "${args.subject}"\nFile: ${args.fileName}`,
+      priority: "medium",
+      category: "team_development",
     });
   } catch (e) {
-    console.warn("[resume_manual_batch] alert insert failed (non-fatal):", e);
+    console.warn("[resume_manual_batch] watcher task failed (non-fatal):", e);
   }
 }
 
@@ -9968,22 +9949,21 @@ export async function processWrapupNoSendMode(
       const scanMsgs: any[] = (gmailScan.data as any)?.messages ?? (gmailScan.data as any)?.response_data?.messages ?? [];
       if (scanMsgs.length > 0) {
         console.warn(`[no_send_check] ${tm.first_name}: wrapup_text empty on ${targetWeek} row BUT ${scanMsgs.length} wrap-up-shaped email(s) found in Gmail — parser may have silently failed. Skipping nag.`);
-        // Fire an alert so Peter knows to investigate
+        // Raise a task so Peter knows to investigate. One per teammate per
+        // week: the week is in the source string because there is no uuid to
+        // dedupe on here.
         try {
-          // FIXED 2026-08-04: alerts has `message` (not `body`) and alert_type
-          // is NOT NULL — this insert had been failing silently since ship.
-          const { error: alertErr } = await sb.from("alerts").insert({
-            agency_id: ctx.agencyId,
-            alert_type: "wrapup_parser_stuck",
-            module_reference: "wrapup_ingest",
-            severity: "warning",
+          await ensureWatcherTask({
+            agencyId: ctx.agencyId,
+            source: `wrapup_parser_stuck:${tm.id}:${targetWeek}`,
+            relatedId: null,
             title: `Wrap-up parser possibly stuck — ${tm.first_name}`,
-            message: `No-send checker found ${scanMsgs.length} wrap-up-shaped email(s) from ${tm.first_name} in the last 4 days but wrapup_text is empty on the ${targetWeek} team_detail row. Nag suppressed. Investigate wrapup_ingest recipe logs.`,
-            is_resolved: false,
+            description: `No-send checker found ${scanMsgs.length} wrap-up-shaped email(s) from ${tm.first_name} in the last 4 days but wrapup_text is empty on the ${targetWeek} team_detail row. Nag suppressed. Investigate wrapup_ingest recipe logs.`,
+            priority: "medium",
+            category: "processes",
           });
-          if (alertErr) console.warn(`[no_send_check] alert insert error for ${tm.first_name}: ${alertErr.message}`);
         } catch (e) {
-          console.warn(`[no_send_check] alert insert failed for ${tm.first_name}:`, e);
+          console.warn(`[no_send_check] watcher task failed for ${tm.first_name}:`, e);
         }
         emailResults.push({ team_member_id: tm.id, first_name: tm.first_name, skipped: "gmail_shows_wrapup_present", gmail_count: scanMsgs.length });
         continue;
@@ -10431,20 +10411,22 @@ async function processOneReferenceMessage(
     return { status: "error", message_id: messageId, candidate_name: candidateName, candidate_id: candidateId, reference_number: resolvedNumber, note: `insert: ${insErr.message}` };
   }
 
-  // A reference is a hiring-gate artifact — its arrival should be loud.
-  await sb.from("alerts").insert({
-    agency_id: ctx.agencyId,
-    alert_type: candidateId ? "reference_received" : "reference_unmatched",
-    severity: candidateId ? "info" : "warning",
-    title: candidateId
-      ? `Reference${resolvedNumber ? ` ${resolvedNumber}` : ""} received: ${candidateName}`
-      : `Reference received for UNMATCHED name: ${candidateName}`,
-    message: candidateId
-      ? `Reference write-up ingested from ${sender} and linked to the candidate record.`
-      : `Reference write-up ingested from ${sender}, but "${candidateName}" matched ${candidates.length} candidate records instead of exactly one. Stored unlinked — link it by hand.`,
-    module_reference: "hiring",
-    related_id: candidateId,
-  });
+  // A matched reference lands on the candidate page by itself and needs no
+  // separate notice. An UNMATCHED one is stuck until someone links it, so
+  // that is the one that becomes a task.
+  if (candidateId) {
+    console.log(`[reference_ingest] reference${resolvedNumber ? ` ${resolvedNumber}` : ""} from ${sender} linked to ${candidateName}.`);
+  } else {
+    await ensureWatcherTask({
+      agencyId: ctx.agencyId,
+      source: `reference_unmatched:${messageId}`,
+      relatedId: null,
+      title: `Reference received for UNMATCHED name: ${candidateName}`,
+      description: `Reference write-up ingested from ${sender}, but "${candidateName}" matched ${candidates.length} candidate records instead of exactly one. Stored unlinked — link it by hand.`,
+      priority: "medium",
+      category: "team_development",
+    });
+  }
 
   // A thread only leaves the inbox once the reference is linked to a real
   // candidate. The subject gate is generic now, so an unmatched name is more
@@ -12183,20 +12165,7 @@ async function uploadToDrive(
 
   if (!res.ok) {
     // Say so. A silent null here is exactly what hid this for weeks.
-    console.error(`[document-processor] drive_upload_failed: ${att.fileName} docType=${docType} reason="${res.error}"`);
-    try {
-      await sb.from("alerts").insert({
-        agency_id: ctx.agencyId,
-        alert_type: "drive_upload_failed",
-        severity: "warning",
-        title: `Could not file ${att.fileName} to Drive`,
-        message: `The Drive upload was rejected: ${res.error}\n\nThe document was still processed; only its Drive copy is missing.`,
-        module_reference: "document-processor",
-        is_read: false,
-        is_resolved: false,
-        created_at: new Date().toISOString(),
-      });
-    } catch (_e) { /* alerting must never break processing */ }
+    console.error(`[document-processor] drive_upload_failed: ${att.fileName} docType=${docType} reason="${res.error}" — the document was still processed; only its Drive copy is missing.`);
     return null;
   }
 
@@ -12289,20 +12258,19 @@ async function ctsNeedsHandAlert(
   reason: string, driveUrl: string | null,
 ): Promise<void> {
   try {
-    await sb.from("alerts").insert({
-      agency_id: agencyId,
-      alert_type: "cts_result_needs_hand_entry",
-      severity: "warning",
+    await ensureWatcherTask({
+      agencyId,
+      source: `cts_result_needs_hand_entry:${fileName}`,
+      relatedId: null,
       title: `CTS result could not be read: ${candidateName ?? fileName}`,
-      message:
+      description:
         `${reason}\n\nThe PDF is filed${driveUrl ? ` at ${driveUrl}` : ""}. ` +
         `Open it and use Record CTS Result on the candidate page. ` +
         `The interview invite does not go out until a result is recorded.`,
-      module_reference: "hiring",
-      is_read: false,
-      is_resolved: false,
+      priority: "high",
+      category: "team_development",
     });
-  } catch (_e) { /* alerting must never break processing */ }
+  } catch (_e) { /* reporting must never break processing */ }
 }
 
 // ---- Text extraction -------------------------------------------------------
@@ -13212,7 +13180,7 @@ async function processOneAttachment(
           const unm = res.unmatchedLines.length;
           const note = `PFA statement: ${res.totalLines} lines · ${res.matched} matched · ${res.inserted} inserted` + (unm > 0 ? ` · ${unm} unmatched` : "");
           await markDocument(documentId, "processed", res.totalLines,
-            (unm > 0 ? ["pfa_bank_statements", "pfa_transactions", "alerts"] : ["pfa_bank_statements", "pfa_transactions"]), note);
+            ["pfa_bank_statements", "pfa_transactions"], note);
           await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
@@ -13277,9 +13245,9 @@ async function processOneAttachment(
           const unmatchedNote = (r.unmatched_employees?.length ?? 0) > 0
             ? `, unmatched: ${r.unmatched_employees!.join(",")}` : "";
           const mergeNote = r.merged_existing ? " (merged existing row)" : "";
-          const note = `SurePayroll: ${r.employees_written} employees, CPR week ${r.cpr_week_updated ?? "n/a"}, ${r.alerts_resolved} alerts resolved${mergeNote}${unmatchedNote}`;
+          const note = `SurePayroll: ${r.employees_written} employees, CPR week ${r.cpr_week_updated ?? "n/a"}${mergeNote}${unmatchedNote}`;
           await markDocument(documentId, "processed", r.employees_written ?? 0,
-            ["payroll_runs", "payroll_detail", "weekly_cpr_team_detail", "alerts"], note);
+            ["payroll_runs", "payroll_detail", "weekly_cpr_team_detail"], note);
           await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
@@ -13538,24 +13506,9 @@ async function processOneAttachment(
         await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
 
         // The interview invite fires off the trigger on cts_completed_at, not
-        // from here. This alert is so Peter sees the score arrive.
-        try {
-          await sb.from("alerts").insert({
-            agency_id: ctx.agencyId,
-            alert_type: "cts_result_recorded",
-            severity: "info",
-            title: `CTS result recorded: ${name}`,
-            message:
-              `CTS score ${parsed.payload.cts_score ?? "n/a"}, ego drive ${parsed.payload.ego_drive ?? "n/a"}, ` +
-              `empathy ${parsed.payload.empathy ?? "n/a"}. Reliability ${parsed.payload.reliability ?? "n/a"}, ` +
-              `response distortion ${parsed.payload.response_distortion ?? "n/a"}.` +
-              (action === "skipped" ? "\n\nA result was already on this candidate, so nothing changed." : ""),
-            module_reference: "hiring",
-            related_id: match.candidateId,
-            is_read: false,
-            is_resolved: false,
-          });
-        } catch (_e) { /* alerting must never break processing */ }
+        // from here, and the score is on the candidate page the moment it
+        // lands — so a clean arrival needs no separate notice.
+        console.log(`[document-processor] CTS result ${action} for ${name}: score ${parsed.payload.cts_score ?? "n/a"}, ego drive ${parsed.payload.ego_drive ?? "n/a"}, empathy ${parsed.payload.empathy ?? "n/a"}.`);
 
         results.push({
           documentId, fileName: att.fileName, fromEmail: att.fromEmail,

@@ -292,7 +292,7 @@ export async function processPfaStatement(opts: {
     unmatchedLines.push(line);
   }
 
-  // 6) Alert if anything was unmatched
+  // 6) Raise a task if anything was unmatched
   if (unmatchedLines.length > 0) {
     const previewLines = unmatchedLines.slice(0, 8).map(l =>
       `- $${l.amount.toFixed(2)} ${l.type} on ${l.date}` +
@@ -300,16 +300,14 @@ export async function processPfaStatement(opts: {
       `: ${l.description.slice(0, 60)}`
     ).join("\n");
     const overflow = unmatchedLines.length > 8 ? `\n... and ${unmatchedLines.length - 8} more` : "";
-    await sb.from("alerts").insert({
-      agency_id: opts.agencyId,
-      alert_type: "pfa_statement_unmatched",
-      severity: "warning",
+    await ensureWatcherTask({
+      agencyId: opts.agencyId,
+      source: `pfa_statement_unmatched:${parsed.statement_period_end}`,
+      relatedId: statementId,
       title: `PFA statement ${parsed.statement_period_end}: ${unmatchedLines.length} unmatched line${unmatchedLines.length === 1 ? "" : "s"}`,
-      message: `The Frost PFA statement for period ending ${parsed.statement_period_end} had ${unmatchedLines.length} transaction line(s) that couldn't be matched to existing pfa_transactions rows. New rows were auto-inserted (customer name null) so the reconciliation can balance — but you should review them in Deposits → Ledger and confirm they're right.\n\nFirst few:\n${previewLines}${overflow}`,
-      module_reference: `pfa_statement_unmatched:${statementId}`,
-      is_read: false,
-      is_resolved: false,
-      created_at: new Date().toISOString(),
+      description: `The Frost PFA statement for period ending ${parsed.statement_period_end} had ${unmatchedLines.length} transaction line(s) that couldn't be matched to existing pfa_transactions rows. New rows were auto-inserted (customer name null) so the reconciliation can balance — but you should review them in Deposits → Ledger and confirm they're right.\n\nFirst few:\n${previewLines}${overflow}`,
+      priority: "medium",
+      category: "finances",
     });
   }
 

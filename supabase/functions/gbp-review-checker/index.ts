@@ -87,27 +87,16 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body, null, 2), { status, headers: { "Content-Type": "application/json" } });
 }
 
-async function insertAlert(opts: { agencyId: string; alertType: string; severity: string; title: string; message: string; moduleReference?: string; relatedId?: string | null; }): Promise<{ ok: boolean; error: string | null }> {
-  const row: Record<string, unknown> = { agency_id: opts.agencyId, alert_type: opts.alertType, severity: opts.severity, title: opts.title, message: opts.message, is_read: false, is_resolved: false };
-  if (opts.moduleReference != null) row.module_reference = opts.moduleReference;
-  if (opts.relatedId != null) row.related_id = opts.relatedId;
-  const { error } = await sb.from("alerts").insert(row);
-  if (error) { console.error(`insertAlert failed (${opts.alertType}): ${error.message}`); return { ok: false, error: error.message }; }
-  return { ok: true, error: null };
-}
-
 const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
 const COMPOSIO_TIMEOUT_MS = 25000;
 
-interface TimeoutAlertTarget { agencyId?: string; moduleReference: string; context: string; }
+interface TimeoutReportTarget { agencyId?: string; moduleReference: string; context: string; }
 
-async function writeTimeoutAlert(service: string, elapsedMs: number, target: TimeoutAlertTarget): Promise<void> {
-  try {
-    await insertAlert({ agencyId: target.agencyId ?? AGENCY_ID_DEFAULT, alertType: "external_call_timeout", severity: "warning", title: `${service} call timed out`, message: `${service} call did not respond within ${elapsedMs}ms and was aborted. Context: ${target.context}`, moduleReference: target.moduleReference });
-  } catch (_e) { /* best-effort */ }
+function writeTimeoutReport(service: string, elapsedMs: number, target: TimeoutReportTarget): void {
+  console.error(`[${target.moduleReference}] ${service} call timed out after ${elapsedMs}ms and was aborted. Context: ${target.context}`);
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, service: string, context: string, alertTarget?: TimeoutAlertTarget): Promise<{ res: Response | null; timedOut: boolean; elapsedMs: number }> {
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, service: string, context: string, reportTarget?: TimeoutReportTarget): Promise<{ res: Response | null; timedOut: boolean; elapsedMs: number }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const startedAt = Date.now();
@@ -117,7 +106,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   } catch (e) {
     const elapsedMs = Date.now() - startedAt;
     const timedOut = e instanceof Error && e.name === "AbortError";
-    if (timedOut && alertTarget) { await writeTimeoutAlert(service, elapsedMs, alertTarget); }
+    if (timedOut && reportTarget) { writeTimeoutReport(service, elapsedMs, reportTarget); }
     else if (!timedOut) { console.error(`[${service}] fetch threw after ${elapsedMs}ms (${context}): ${e instanceof Error ? e.message : String(e)}`); }
     return { res: null, timedOut, elapsedMs };
   } finally { clearTimeout(timer); }
@@ -138,11 +127,11 @@ function composioTimeoutResult(slug: string, timedOut: boolean, elapsedMs: numbe
   return { ok: false, data: null, httpStatus: 0, error: timedOut ? `Composio ${slug} did not respond within ${elapsedMs}ms and was aborted` : `Composio ${slug} fetch failed after ${elapsedMs}ms` };
 }
 
-async function callComposio(opts: { apiKey: string; userId: string; connectedAccountId: string; toolSlug: string; toolArguments: Record<string, any>; toolkitVersion?: string; timeoutMs?: number; alertTarget?: TimeoutAlertTarget; }): Promise<ComposioCallResult> {
+async function callComposio(opts: { apiKey: string; userId: string; connectedAccountId: string; toolSlug: string; toolArguments: Record<string, any>; toolkitVersion?: string; timeoutMs?: number; reportTarget?: TimeoutReportTarget; }): Promise<ComposioCallResult> {
   const { res, timedOut, elapsedMs } = await fetchWithTimeout(
     `${COMPOSIO_BASE}/${opts.toolSlug}`,
     { method: "POST", headers: { "x-api-key": opts.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ user_id: opts.userId, connected_account_id: opts.connectedAccountId, arguments: opts.toolArguments, ...(opts.toolkitVersion ? { version: opts.toolkitVersion } : {}) }) },
-    opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS, `composio:${opts.toolSlug}`, `tool=${opts.toolSlug}`, opts.alertTarget,
+    opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS, `composio:${opts.toolSlug}`, `tool=${opts.toolSlug}`, opts.reportTarget,
   );
   if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
   return unwrapComposio(await res.text(), res.ok, res.status);
@@ -356,15 +345,7 @@ async function micrositePass(ctx: { agencyId: string; groqApiKey: string; recent
         const { data: inserted } = await sb.from("gbp_review_tracker").insert({ agency_id: ctx.agencyId, place_id: PLACE_ID, google_review_name: key ?? `microsite:${rv.author}:${rv.dateISO ?? "unknown"}`, author_display_name: rv.author, rating: rv.rating, review_text: rv.text, publish_time: rv.dateISO ? rv.dateISO + "T12:00:00Z" : null, drafted_response: null, task_id: null, status: "draft_failed" }).select("id").maybeSingle();
         relatedId = inserted?.id ?? null;
       }
-      await insertAlert({
-        agencyId: ctx.agencyId,
-        alertType: "gbp_review_draft_failed",
-        severity: "warning",
-        title: `Google review reply could not be drafted (${rv.author})`,
-        message: `An unanswered Google review (from the microsite reviews feed) failed reply drafting. Reason: ${g.error ?? "unknown"}. Stored as draft_failed; the hourly run retries automatically.`,
-        moduleReference: "gbp_reviews",
-        relatedId,
-      });
+      console.warn(`[gbp-review-checker] microsite review from ${rv.author} failed reply drafting (${g.error ?? "unknown"}); stored as draft_failed on gbp_review_tracker ${relatedId ?? "?"}, the hourly run retries automatically.`);
     }
   }
 
@@ -377,7 +358,7 @@ async function micrositePass(ctx: { agencyId: string; groqApiKey: string; recent
 // Places userRatingCount is the listing's true total and moves the moment any
 // review or star rating lands \u2014 days before the microsite sync catches up.
 // Stored total lives in settings (gbp_last_known_rating_count); a rise without
-// a matching readable review alerts + pings the team to reply by hand.
+// a matching readable review pings the team to reply by hand.
 // Removed reviews (count drops) just resync silently.
 const RATING_COUNT_KEY = "gbp_last_known_rating_count";
 
@@ -395,14 +376,7 @@ async function ratingCountWatch(opts: { agencyId: string; totalRatingCount: numb
   const missed = totalRatingCount - stored - newInserted;
   if (missed <= 0) return { baseline_seeded: false, missed: 0 };
 
-  await insertAlert({
-    agencyId,
-    alertType: "gbp_review_not_retrievable",
-    severity: "warning",
-    title: `Google shows ${missed} new review(s) not yet readable`,
-    message: `The listing's total rating count rose from ${stored} to ${totalRatingCount}, but ${missed} of the new reviews are not yet readable (Places shows only 5 relevance-ranked reviews; the microsite feed syncs on a delay). Someone should reply manually at business.google.com > Reviews; the microsite feed will pick it up automatically within a few days if not. Durable fix: Google Business Profile API access.`,
-    moduleReference: "gbp_reviews",
-  });
+  console.warn(`[gbp-review-checker] rating count rose ${stored} -> ${totalRatingCount}; ${missed} new review(s) not yet readable. The team is pinged on Telegram below.`);
 
   if (opts.botToken && opts.chatId) {
     const tagHtml = opts.alviTelegramUserId ? `<a href="tg://user?id=${opts.alviTelegramUserId}">Alvi</a>` : "Alvi";
@@ -565,15 +539,7 @@ Deno.serve(async (req: Request) => {
     // Telegram message. Without this alert that failure is completely silent \u2014
     // which is exactly how five reviews sat undrafted and unnoticed.
     if (!draftedResponse) {
-      await insertAlert({
-        agencyId,
-        alertType: "gbp_review_draft_failed",
-        severity: "warning",
-        title: `Google review reply could not be drafted (${authorName})`,
-        message: `A new Google review was captured but the reply draft failed, so no task and no Telegram message were created. Reason: ${groqResult.error ?? "unknown"}. Review is stored in gbp_review_tracker with status draft_failed; the hourly run retries it automatically.`,
-        moduleReference: "gbp_reviews",
-        relatedId: inserted?.id ?? null,
-      });
+      console.warn(`[gbp-review-checker] new review from ${authorName} captured but reply drafting failed (${groqResult.error ?? "unknown"}); stored as draft_failed on gbp_review_tracker ${inserted?.id ?? "?"}, the hourly run retries it automatically.`);
     }
 
     if (draftedResponse) recentOpenings.unshift(draftedResponse.split(" ").slice(0, 5).join(" "));

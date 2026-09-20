@@ -8,6 +8,211 @@
 import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
+// ==================== _shared/composio.ts ====================
+// =========================================================================
+// _shared/composio.ts
+// =========================================================================
+// Canonical Composio HTTP wrapper for Newtworks edge functions.
+//
+// This file used to CLAIM to be "the one true copy" while three others
+// existed: document-processor/lib/composio.ts (a fork that had timeout
+// handling this one lacked), plus inline copies in automation-runner and
+// generate-custom-probes. The 2026-08-06 fix for hung calls therefore landed
+// in exactly one of the four, and automation-runner — which drives every
+// scheduled Gmail parser — went five days still able to die as an uncaught
+// exception. Consolidated 2026-08-11: the timeout handling lives HERE now, so
+// a fix applied once is a fix applied everywhere.
+//
+// TIMEOUTS, and why they are not optional. An external call that hangs is not
+// an error the calling code can catch. It runs until the Supabase platform's
+// own wall-clock limit kills the whole invocation, surfacing as status 546
+// with no stack and no log line. On a cron path that is close to invisible:
+// the run simply never reports. Every call through this file is bounded, and a
+// timeout comes back as an ordinary {ok:false} result the caller can handle.
+//
+// NO RETRIES here, on purpose. Retrying a hang doubles the wait and can push
+// an otherwise-healthy invocation over the platform limit too. Retry is a
+// separate decision belonging to the caller.
+// =========================================================================
+
+
+const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
+
+/** Default ceiling for any single Composio call. Well under the platform
+ *  wall-clock limit so a stuck call fails fast AND catchably. */
+const COMPOSIO_TIMEOUT_MS = 25000;
+
+/** Same number, separate name: storage/S3 downloads are a distinct concern
+ *  that happens to want the same ceiling. Kept apart so changing one does not
+ *  silently change the other. */
+const S3_FETCH_TIMEOUT_MS = 25000;
+
+/** Where a timeout should be reported. A timeout is a transient external
+ *  failure the caller already handles as a clean failed result, so this goes
+ *  to the function log and nowhere else — callers that need a durable record
+ *  already keep one (automation-runner logs every recipe failure to
+ *  automation_run_log and Telegram). */
+interface TimeoutReportTarget {
+  agencyId?: string;
+  moduleReference: string;
+  context: string;
+}
+
+function writeTimeoutReport(
+  service: string,
+  elapsedMs: number,
+  target: TimeoutReportTarget,
+): void {
+  console.error(
+    `[${target.moduleReference}] ${service} call timed out after ${elapsedMs}ms and was aborted. Context: ${target.context}`,
+  );
+}
+
+/**
+ * fetch() with a hard time limit. Returns res:null on timeout or throw, never
+ * rejects. Use this for ANY outbound call in an edge function, not just
+ * Composio ones — a bare fetch() to Google, Groq or storage carries exactly
+ * the same hang risk.
+ */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  service: string,
+  context: string,
+  reportTarget?: TimeoutReportTarget,
+): Promise<{ res: Response | null; timedOut: boolean; elapsedMs: number }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const startedAt = Date.now();
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    return { res, timedOut: false, elapsedMs: Date.now() - startedAt };
+  } catch (e) {
+    const elapsedMs = Date.now() - startedAt;
+    const timedOut = e instanceof Error && e.name === "AbortError";
+    if (timedOut && reportTarget) {
+      writeTimeoutReport(service, elapsedMs, reportTarget);
+    } else if (!timedOut) {
+      console.error(`[${service}] fetch threw after ${elapsedMs}ms (${context}): ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return { res: null, timedOut, elapsedMs };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function unwrapComposio(text: string, httpOk: boolean, status: number): ComposioCallResult {
+  let parsed: any = {};
+  try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
+  const ok = httpOk && !!parsed?.successful;
+  const data = parsed?.data?.response_data ?? parsed?.data ?? null;
+  const error = ok
+    ? null
+    : parsed?.error?.message || parsed?.error || text.slice(0, 400);
+  return { ok, data, error, httpStatus: status };
+}
+
+function composioTimeoutResult(slug: string, timedOut: boolean, elapsedMs: number): ComposioCallResult {
+  return {
+    ok: false,
+    data: null,
+    httpStatus: 0,
+    error: timedOut
+      ? `Composio ${slug} did not respond within ${elapsedMs}ms and was aborted`
+      : `Composio ${slug} fetch failed after ${elapsedMs}ms`,
+  };
+}
+
+interface ComposioCallResult {
+  ok: boolean;
+  data: any;
+  error: string | null;
+  httpStatus: number;
+}
+
+async function callComposio(opts: {
+  apiKey: string;
+  userId: string;
+  connectedAccountId: string;
+  toolSlug: string;
+  toolArguments: Record<string, any>;
+  /**
+   * Which published set of tools to use. LEAVE THIS UNSET unless you have a
+   * reason not to.
+   *
+   * Composio publishes its tools in dated sets. A request that does not name a
+   * set gets the oldest one, which holds far fewer tools than the account
+   * actually has — 51 Google Drive tools instead of 90. Anything missing from
+   * that oldest set answers "Tool ... not found", which reads exactly like a
+   * permission problem and is not one. Two months of Drive filing and every
+   * scanned resume were lost to this, and four rounds of fixing went at the
+   * wrong layer, because a tool tested by hand goes through a connection that
+   * DOES name a set and therefore always worked.
+   *
+   * It is set per request on purpose. Naming a newer set changes the shape of
+   * what comes back, and the payroll, bank statement and comp parsers all read
+   * those shapes. So each caller opts in where it has been checked, rather than
+   * one flip changing everything at once.
+   */
+  toolkitVersion?: string;
+  timeoutMs?: number;
+  reportTarget?: TimeoutReportTarget;
+}): Promise<ComposioCallResult> {
+  const { res, timedOut, elapsedMs } = await fetchWithTimeout(
+    `${COMPOSIO_BASE}/${opts.toolSlug}`,
+    {
+      method: "POST",
+      headers: {
+        "x-api-key": opts.apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        user_id: opts.userId,
+        connected_account_id: opts.connectedAccountId,
+        arguments: opts.toolArguments,
+        ...(opts.toolkitVersion ? { version: opts.toolkitVersion } : {}),
+      }),
+    },
+    opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS,
+    `composio:${opts.toolSlug}`,
+    `tool=${opts.toolSlug}`,
+    opts.reportTarget,
+  );
+  if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
+  return unwrapComposio(await res.text(), res.ok, res.status);
+}
+
+async function callComposioNoAuth(opts: {
+  apiKey: string;
+  userId: string;
+  toolSlug: string;
+  toolArguments: Record<string, any>;
+  timeoutMs?: number;
+  reportTarget?: TimeoutReportTarget;
+}): Promise<ComposioCallResult> {
+  const { res, timedOut, elapsedMs } = await fetchWithTimeout(
+    `${COMPOSIO_BASE}/${opts.toolSlug}`,
+    {
+      method: "POST",
+      headers: {
+        "x-api-key": opts.apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        user_id: opts.userId,
+        arguments: opts.toolArguments,
+      }),
+    },
+    opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS,
+    `composio:${opts.toolSlug}`,
+    `tool=${opts.toolSlug} (no connected account)`,
+    opts.reportTarget,
+  );
+  if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
+  return unwrapComposio(await res.text(), res.ok, res.status);
+}
+
 // ==================== _shared/supabase.ts ====================
 // =========================================================================
 // _shared/supabase.ts
@@ -137,285 +342,6 @@ function stripFences(s: string): string {
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```\s*$/i, "")
     .trim();
-}
-
-// ==================== _shared/alerts.ts ====================
-// =========================================================================
-// _shared/alerts.ts
-// =========================================================================
-// Canonical alerts writer for ALL Newtworks edge functions.
-//
-// Why this exists: the alerts table takes (alert_type NOT NULL, severity,
-// title, message, module_reference, related_id, is_resolved). Hand-written
-// inserts have shipped with a `body:` column that does not exist and with
-// alert_type missing — both fail silently when the insert result isn't
-// checked. Going through this helper makes that class of bug impossible.
-// =========================================================================
-
-
-async function insertAlert(opts: {
-  agencyId: string;
-  alertType: string;
-  severity: "info" | "warning" | "high" | "critical" | string;
-  title: string;
-  message: string;
-  moduleReference?: string;
-  relatedId?: string | null;
-}): Promise<{ ok: boolean; error: string | null }> {
-  const row: Record<string, unknown> = {
-    agency_id: opts.agencyId,
-    alert_type: opts.alertType,
-    severity: opts.severity,
-    title: opts.title,
-    message: opts.message,
-    is_read: false,
-    is_resolved: false,
-  };
-  if (opts.moduleReference != null) row.module_reference = opts.moduleReference;
-  if (opts.relatedId != null) row.related_id = opts.relatedId;
-
-  const { error } = await sb.from("alerts").insert(row);
-  if (error) {
-    // Never throw — alerting must not mask the underlying failure being
-    // reported. But do surface the miss to whoever reads the function logs.
-    console.error(`insertAlert failed (${opts.alertType}): ${error.message}`);
-    return { ok: false, error: error.message };
-  }
-  return { ok: true, error: null };
-}
-
-// Resolve all open alerts carrying a given module_reference (the standard
-// "this condition cleared" pattern used by surepayroll + pfa flows).
-async function resolveAlerts(opts: {
-  agencyId: string;
-  moduleReference: string;
-}): Promise<{ ok: boolean; resolved: number; error: string | null }> {
-  const { data, error } = await sb
-    .from("alerts")
-    .update({ is_resolved: true, resolved_at: new Date().toISOString() })
-    .eq("agency_id", opts.agencyId)
-    .eq("module_reference", opts.moduleReference)
-    .eq("is_resolved", false)
-    .select("id");
-  if (error) {
-    console.error(`resolveAlerts failed (${opts.moduleReference}): ${error.message}`);
-    return { ok: false, resolved: 0, error: error.message };
-  }
-  return { ok: true, resolved: (data ?? []).length, error: null };
-}
-
-// ==================== _shared/composio.ts ====================
-// =========================================================================
-// _shared/composio.ts
-// =========================================================================
-// Canonical Composio HTTP wrapper for Newtworks edge functions.
-//
-// This file used to CLAIM to be "the one true copy" while three others
-// existed: document-processor/lib/composio.ts (a fork that had timeout
-// handling this one lacked), plus inline copies in automation-runner and
-// generate-custom-probes. The 2026-08-06 fix for hung calls therefore landed
-// in exactly one of the four, and automation-runner — which drives every
-// scheduled Gmail parser — went five days still able to die as an uncaught
-// exception. Consolidated 2026-08-11: the timeout handling lives HERE now, so
-// a fix applied once is a fix applied everywhere.
-//
-// TIMEOUTS, and why they are not optional. An external call that hangs is not
-// an error the calling code can catch. It runs until the Supabase platform's
-// own wall-clock limit kills the whole invocation, surfacing as status 546
-// with no stack and no log line. On a cron path that is close to invisible:
-// the run simply never reports. Every call through this file is bounded, and a
-// timeout comes back as an ordinary {ok:false} result the caller can handle.
-//
-// NO RETRIES here, on purpose. Retrying a hang doubles the wait and can push
-// an otherwise-healthy invocation over the platform limit too. Retry is a
-// separate decision belonging to the caller.
-// =========================================================================
-
-
-const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
-
-/** Default ceiling for any single Composio call. Well under the platform
- *  wall-clock limit so a stuck call fails fast AND catchably. */
-const COMPOSIO_TIMEOUT_MS = 25000;
-
-/** Same number, separate name: storage/S3 downloads are a distinct concern
- *  that happens to want the same ceiling. Kept apart so changing one does not
- *  silently change the other. */
-const S3_FETCH_TIMEOUT_MS = 25000;
-
-/** Where a timeout should be reported, if anywhere. Omit entirely and a
- *  timeout returns a clean failed result without writing an alert — correct
- *  for callers that already record their own failures (automation-runner logs
- *  every recipe failure to automation_run_log and Telegram). */
-interface TimeoutAlertTarget {
-  agencyId?: string;
-  moduleReference: string;
-  context: string;
-}
-
-async function writeTimeoutAlert(
-  service: string,
-  elapsedMs: number,
-  target: TimeoutAlertTarget,
-): Promise<void> {
-  try {
-    await insertAlert({
-      agencyId: target.agencyId ?? AGENCY_ID_DEFAULT,
-      alertType: "external_call_timeout",
-      severity: "warning",
-      title: `${service} call timed out`,
-      message: `${service} call did not respond within ${elapsedMs}ms and was aborted. Context: ${target.context}`,
-      moduleReference: target.moduleReference,
-    });
-  } catch (_e) {
-    // Best-effort. Must never mask the original timeout or throw a second
-    // uncaught exception on the way out.
-  }
-}
-
-/**
- * fetch() with a hard time limit. Returns res:null on timeout or throw, never
- * rejects. Use this for ANY outbound call in an edge function, not just
- * Composio ones — a bare fetch() to Google, Groq or storage carries exactly
- * the same hang risk.
- */
-async function fetchWithTimeout(
-  url: string,
-  init: RequestInit,
-  timeoutMs: number,
-  service: string,
-  context: string,
-  alertTarget?: TimeoutAlertTarget,
-): Promise<{ res: Response | null; timedOut: boolean; elapsedMs: number }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const startedAt = Date.now();
-  try {
-    const res = await fetch(url, { ...init, signal: controller.signal });
-    return { res, timedOut: false, elapsedMs: Date.now() - startedAt };
-  } catch (e) {
-    const elapsedMs = Date.now() - startedAt;
-    const timedOut = e instanceof Error && e.name === "AbortError";
-    if (timedOut && alertTarget) {
-      await writeTimeoutAlert(service, elapsedMs, alertTarget);
-    } else if (!timedOut) {
-      console.error(`[${service}] fetch threw after ${elapsedMs}ms (${context}): ${e instanceof Error ? e.message : String(e)}`);
-    }
-    return { res: null, timedOut, elapsedMs };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function unwrapComposio(text: string, httpOk: boolean, status: number): ComposioCallResult {
-  let parsed: any = {};
-  try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
-  const ok = httpOk && !!parsed?.successful;
-  const data = parsed?.data?.response_data ?? parsed?.data ?? null;
-  const error = ok
-    ? null
-    : parsed?.error?.message || parsed?.error || text.slice(0, 400);
-  return { ok, data, error, httpStatus: status };
-}
-
-function composioTimeoutResult(slug: string, timedOut: boolean, elapsedMs: number): ComposioCallResult {
-  return {
-    ok: false,
-    data: null,
-    httpStatus: 0,
-    error: timedOut
-      ? `Composio ${slug} did not respond within ${elapsedMs}ms and was aborted`
-      : `Composio ${slug} fetch failed after ${elapsedMs}ms`,
-  };
-}
-
-interface ComposioCallResult {
-  ok: boolean;
-  data: any;
-  error: string | null;
-  httpStatus: number;
-}
-
-async function callComposio(opts: {
-  apiKey: string;
-  userId: string;
-  connectedAccountId: string;
-  toolSlug: string;
-  toolArguments: Record<string, any>;
-  /**
-   * Which published set of tools to use. LEAVE THIS UNSET unless you have a
-   * reason not to.
-   *
-   * Composio publishes its tools in dated sets. A request that does not name a
-   * set gets the oldest one, which holds far fewer tools than the account
-   * actually has — 51 Google Drive tools instead of 90. Anything missing from
-   * that oldest set answers "Tool ... not found", which reads exactly like a
-   * permission problem and is not one. Two months of Drive filing and every
-   * scanned resume were lost to this, and four rounds of fixing went at the
-   * wrong layer, because a tool tested by hand goes through a connection that
-   * DOES name a set and therefore always worked.
-   *
-   * It is set per request on purpose. Naming a newer set changes the shape of
-   * what comes back, and the payroll, bank statement and comp parsers all read
-   * those shapes. So each caller opts in where it has been checked, rather than
-   * one flip changing everything at once.
-   */
-  toolkitVersion?: string;
-  timeoutMs?: number;
-  alertTarget?: TimeoutAlertTarget;
-}): Promise<ComposioCallResult> {
-  const { res, timedOut, elapsedMs } = await fetchWithTimeout(
-    `${COMPOSIO_BASE}/${opts.toolSlug}`,
-    {
-      method: "POST",
-      headers: {
-        "x-api-key": opts.apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        user_id: opts.userId,
-        connected_account_id: opts.connectedAccountId,
-        arguments: opts.toolArguments,
-        ...(opts.toolkitVersion ? { version: opts.toolkitVersion } : {}),
-      }),
-    },
-    opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS,
-    `composio:${opts.toolSlug}`,
-    `tool=${opts.toolSlug}`,
-    opts.alertTarget,
-  );
-  if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
-  return unwrapComposio(await res.text(), res.ok, res.status);
-}
-
-async function callComposioNoAuth(opts: {
-  apiKey: string;
-  userId: string;
-  toolSlug: string;
-  toolArguments: Record<string, any>;
-  timeoutMs?: number;
-  alertTarget?: TimeoutAlertTarget;
-}): Promise<ComposioCallResult> {
-  const { res, timedOut, elapsedMs } = await fetchWithTimeout(
-    `${COMPOSIO_BASE}/${opts.toolSlug}`,
-    {
-      method: "POST",
-      headers: {
-        "x-api-key": opts.apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        user_id: opts.userId,
-        arguments: opts.toolArguments,
-      }),
-    },
-    opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS,
-    `composio:${opts.toolSlug}`,
-    `tool=${opts.toolSlug} (no connected account)`,
-    opts.alertTarget,
-  );
-  if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
-  return unwrapComposio(await res.text(), res.ok, res.status);
 }
 
 // ==================== automation-runner/index.ts ====================
@@ -1148,14 +1074,7 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
       const parserReturnedNothing = recordIds.length === 0 && unparsedIds.length > 0;
       const skippedIds = parserReturnedNothing ? [] : unparsedIds;
       if (parserReturnedNothing) {
-        await insertAlert({
-          agencyId,
-          alertType: "gmail_parser_returned_nothing",
-          severity: "warning",
-          title: `Parser returned no records for ${unparsedIds.length} email(s) — ${recipe.recipe_name}`,
-          message: `Nothing was archived and the emails are still in the inbox. A whole batch parsing to nothing almost always means the message body is arriving in a shape the parser cannot read. Gmail message ids: ${unparsedIds.slice(0, 20).join(", ")}`,
-          moduleReference: "automation-runner",
-        });
+        console.error(`[automation-runner] ${recipe.recipe_name}: parser returned no records for ${unparsedIds.length} fetched email(s); left in the inbox. Gmail message ids: ${unparsedIds.slice(0, 20).join(", ")}`);
         await telegram(agencyId, `🔴 ${recipe.recipe_name}: parser returned no records for ${unparsedIds.length} fetched email(s). Left in the inbox rather than archived — check the body shape.`);
       }
       const allIds = Array.from(new Set<string>([...handled, ...skippedIds]));
@@ -1171,14 +1090,7 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
         await telegram(agencyId, `🟡 Post-parse archive failed for ${recipe.recipe_name}\n${(ar.error ?? "").slice(0,400)}`);
       }
       if (skippedIds.length > 0) {
-        await insertAlert({
-          agencyId,
-          alertType: "gmail_parser_skipped_message",
-          severity: "info",
-          title: `${skippedIds.length} email(s) filed with no record — ${recipe.recipe_name}`,
-          message: `The parser returned no record for ${skippedIds.length} fetched message(s). They have been labelled and archived so they are not re-parsed on every run. Gmail message ids: ${skippedIds.slice(0, 20).join(", ")}`,
-          moduleReference: "automation-runner",
-        });
+        console.warn(`[automation-runner] ${recipe.recipe_name}: ${skippedIds.length} email(s) filed with no record. Gmail message ids: ${skippedIds.slice(0, 20).join(", ")}`);
       }
       return note;
     };

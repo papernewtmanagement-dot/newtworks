@@ -19,11 +19,11 @@
 //   8. Sends the email to Peter's State Farm address via Composio Gmail.
 //   9. Kicks the user from the team Telegram group (ban + unban → no permanent
 //      ban list).
-//  10. Logs everything to automation_run_log; failures land in alerts so Peter
+//  10. Logs everything to automation_run_log; failures land in tasks so Peter
 //      can see + retry.
 //
 // Email, calendar and Telegram are best-effort: the DB state is the source of
-// truth for whether the termination happened. External failures create alerts
+// truth for whether the termination happened. External failures create tasks
 // but do not roll back the archive.
 
 // deno-lint-ignore-file no-explicit-any
@@ -127,14 +127,14 @@ interface TerminateBody {
 
 async function logAlert(severity: string, title: string, message: string): Promise<void> {
   try {
-    await sb.from("alerts").insert({
-      agency_id: AGENCY_ID,
-      alert_type: "termination_partial_failure",
-      severity,
+    await ensureWatcherTask({
+      agencyId: AGENCY_ID,
+      source: `termination_partial_failure:${title}`,
+      relatedId: null,
       title,
-      message,
-      module_reference: "hr_people",
-      is_resolved: false,
+      description: message,
+      priority: severity === "critical" || severity === "high" ? "high" : "medium",
+      category: "team_development",
     });
   } catch (e) {
     console.error("logAlert failed:", e);

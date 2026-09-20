@@ -333,20 +333,22 @@ async function processOneReferenceMessage(
     return { status: "error", message_id: messageId, candidate_name: candidateName, candidate_id: candidateId, reference_number: resolvedNumber, note: `insert: ${insErr.message}` };
   }
 
-  // A reference is a hiring-gate artifact — its arrival should be loud.
-  await sb.from("alerts").insert({
-    agency_id: ctx.agencyId,
-    alert_type: candidateId ? "reference_received" : "reference_unmatched",
-    severity: candidateId ? "info" : "warning",
-    title: candidateId
-      ? `Reference${resolvedNumber ? ` ${resolvedNumber}` : ""} received: ${candidateName}`
-      : `Reference received for UNMATCHED name: ${candidateName}`,
-    message: candidateId
-      ? `Reference write-up ingested from ${sender} and linked to the candidate record.`
-      : `Reference write-up ingested from ${sender}, but "${candidateName}" matched ${candidates.length} candidate records instead of exactly one. Stored unlinked — link it by hand.`,
-    module_reference: "hiring",
-    related_id: candidateId,
-  });
+  // A matched reference lands on the candidate page by itself and needs no
+  // separate notice. An UNMATCHED one is stuck until someone links it, so
+  // that is the one that becomes a task.
+  if (candidateId) {
+    console.log(`[reference_ingest] reference${resolvedNumber ? ` ${resolvedNumber}` : ""} from ${sender} linked to ${candidateName}.`);
+  } else {
+    await ensureWatcherTask({
+      agencyId: ctx.agencyId,
+      source: `reference_unmatched:${messageId}`,
+      relatedId: null,
+      title: `Reference received for UNMATCHED name: ${candidateName}`,
+      description: `Reference write-up ingested from ${sender}, but "${candidateName}" matched ${candidates.length} candidate records instead of exactly one. Stored unlinked — link it by hand.`,
+      priority: "medium",
+      category: "team_development",
+    });
+  }
 
   // A thread only leaves the inbox once the reference is linked to a real
   // candidate. The subject gate is generic now, so an unmatched name is more

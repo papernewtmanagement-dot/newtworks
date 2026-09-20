@@ -24,8 +24,6 @@
 // separate decision belonging to the caller.
 // =========================================================================
 
-import { insertAlert } from "./alerts.ts";
-import { AGENCY_ID_DEFAULT } from "./supabase.ts";
 
 const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
 
@@ -38,34 +36,25 @@ export const COMPOSIO_TIMEOUT_MS = 25000;
  *  silently change the other. */
 export const S3_FETCH_TIMEOUT_MS = 25000;
 
-/** Where a timeout should be reported, if anywhere. Omit entirely and a
- *  timeout returns a clean failed result without writing an alert — correct
- *  for callers that already record their own failures (automation-runner logs
- *  every recipe failure to automation_run_log and Telegram). */
-export interface TimeoutAlertTarget {
+/** Where a timeout should be reported. A timeout is a transient external
+ *  failure the caller already handles as a clean failed result, so this goes
+ *  to the function log and nowhere else — callers that need a durable record
+ *  already keep one (automation-runner logs every recipe failure to
+ *  automation_run_log and Telegram). */
+export interface TimeoutReportTarget {
   agencyId?: string;
   moduleReference: string;
   context: string;
 }
 
-export async function writeTimeoutAlert(
+export function writeTimeoutReport(
   service: string,
   elapsedMs: number,
-  target: TimeoutAlertTarget,
-): Promise<void> {
-  try {
-    await insertAlert({
-      agencyId: target.agencyId ?? AGENCY_ID_DEFAULT,
-      alertType: "external_call_timeout",
-      severity: "warning",
-      title: `${service} call timed out`,
-      message: `${service} call did not respond within ${elapsedMs}ms and was aborted. Context: ${target.context}`,
-      moduleReference: target.moduleReference,
-    });
-  } catch (_e) {
-    // Best-effort. Must never mask the original timeout or throw a second
-    // uncaught exception on the way out.
-  }
+  target: TimeoutReportTarget,
+): void {
+  console.error(
+    `[${target.moduleReference}] ${service} call timed out after ${elapsedMs}ms and was aborted. Context: ${target.context}`,
+  );
 }
 
 /**
@@ -80,7 +69,7 @@ export async function fetchWithTimeout(
   timeoutMs: number,
   service: string,
   context: string,
-  alertTarget?: TimeoutAlertTarget,
+  reportTarget?: TimeoutReportTarget,
 ): Promise<{ res: Response | null; timedOut: boolean; elapsedMs: number }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -91,8 +80,8 @@ export async function fetchWithTimeout(
   } catch (e) {
     const elapsedMs = Date.now() - startedAt;
     const timedOut = e instanceof Error && e.name === "AbortError";
-    if (timedOut && alertTarget) {
-      await writeTimeoutAlert(service, elapsedMs, alertTarget);
+    if (timedOut && reportTarget) {
+      writeTimeoutReport(service, elapsedMs, reportTarget);
     } else if (!timedOut) {
       console.error(`[${service}] fetch threw after ${elapsedMs}ms (${context}): ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -157,7 +146,7 @@ export async function callComposio(opts: {
    */
   toolkitVersion?: string;
   timeoutMs?: number;
-  alertTarget?: TimeoutAlertTarget;
+  reportTarget?: TimeoutReportTarget;
 }): Promise<ComposioCallResult> {
   const { res, timedOut, elapsedMs } = await fetchWithTimeout(
     `${COMPOSIO_BASE}/${opts.toolSlug}`,
@@ -177,7 +166,7 @@ export async function callComposio(opts: {
     opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS,
     `composio:${opts.toolSlug}`,
     `tool=${opts.toolSlug}`,
-    opts.alertTarget,
+    opts.reportTarget,
   );
   if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
   return unwrapComposio(await res.text(), res.ok, res.status);
@@ -189,7 +178,7 @@ export async function callComposioNoAuth(opts: {
   toolSlug: string;
   toolArguments: Record<string, any>;
   timeoutMs?: number;
-  alertTarget?: TimeoutAlertTarget;
+  reportTarget?: TimeoutReportTarget;
 }): Promise<ComposioCallResult> {
   const { res, timedOut, elapsedMs } = await fetchWithTimeout(
     `${COMPOSIO_BASE}/${opts.toolSlug}`,
@@ -207,7 +196,7 @@ export async function callComposioNoAuth(opts: {
     opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS,
     `composio:${opts.toolSlug}`,
     `tool=${opts.toolSlug} (no connected account)`,
-    opts.alertTarget,
+    opts.reportTarget,
   );
   if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
   return unwrapComposio(await res.text(), res.ok, res.status);

@@ -167,22 +167,21 @@ export async function processWrapupNoSendMode(
       const scanMsgs: any[] = (gmailScan.data as any)?.messages ?? (gmailScan.data as any)?.response_data?.messages ?? [];
       if (scanMsgs.length > 0) {
         console.warn(`[no_send_check] ${tm.first_name}: wrapup_text empty on ${targetWeek} row BUT ${scanMsgs.length} wrap-up-shaped email(s) found in Gmail — parser may have silently failed. Skipping nag.`);
-        // Fire an alert so Peter knows to investigate
+        // Raise a task so Peter knows to investigate. One per teammate per
+        // week: the week is in the source string because there is no uuid to
+        // dedupe on here.
         try {
-          // FIXED 2026-08-04: alerts has `message` (not `body`) and alert_type
-          // is NOT NULL — this insert had been failing silently since ship.
-          const { error: alertErr } = await sb.from("alerts").insert({
-            agency_id: ctx.agencyId,
-            alert_type: "wrapup_parser_stuck",
-            module_reference: "wrapup_ingest",
-            severity: "warning",
+          await ensureWatcherTask({
+            agencyId: ctx.agencyId,
+            source: `wrapup_parser_stuck:${tm.id}:${targetWeek}`,
+            relatedId: null,
             title: `Wrap-up parser possibly stuck — ${tm.first_name}`,
-            message: `No-send checker found ${scanMsgs.length} wrap-up-shaped email(s) from ${tm.first_name} in the last 4 days but wrapup_text is empty on the ${targetWeek} team_detail row. Nag suppressed. Investigate wrapup_ingest recipe logs.`,
-            is_resolved: false,
+            description: `No-send checker found ${scanMsgs.length} wrap-up-shaped email(s) from ${tm.first_name} in the last 4 days but wrapup_text is empty on the ${targetWeek} team_detail row. Nag suppressed. Investigate wrapup_ingest recipe logs.`,
+            priority: "medium",
+            category: "processes",
           });
-          if (alertErr) console.warn(`[no_send_check] alert insert error for ${tm.first_name}: ${alertErr.message}`);
         } catch (e) {
-          console.warn(`[no_send_check] alert insert failed for ${tm.first_name}:`, e);
+          console.warn(`[no_send_check] watcher task failed for ${tm.first_name}:`, e);
         }
         emailResults.push({ team_member_id: tm.id, first_name: tm.first_name, skipped: "gmail_shows_wrapup_present", gmail_count: scanMsgs.length });
         continue;

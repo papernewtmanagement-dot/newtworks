@@ -6,7 +6,7 @@
 // (right-to-left reading, no whitespace between amounts and labels).
 // Writes payroll_runs + payroll_detail with full jsonb per-item breakdowns,
 // denormalizes into weekly_cpr_team_detail for the CPR week ending the first
-// Saturday >= check_date, auto-resolves pending payroll_run alerts, stars the
+// Saturday >= check_date, stars the
 // source email. Consolidated from standalone `payroll-email-parser` v9 (2026-07-07).
 // =========================================================================
 
@@ -418,7 +418,6 @@ interface SPProcessResult {
   employees_written?: number;
   unmatched_employees?: string[];
   cpr_week_updated?: string;
-  alerts_resolved?: number;
 }
 
 export async function processSurePayrollParsed(opts: {
@@ -597,10 +596,9 @@ export async function processSurePayrollParsed(opts: {
 
   // Fix 2026-07-20: module_reference is stored as "payroll_run:<pay_period_end>"
   // (per payroll_weekly_nag), not the bare literal "payroll_run" this code
-  // previously matched — the .eq comparison never hit anything, so alerts
+  // previously matched — the .eq comparison never hit anything, so nothing
   // stayed open silently after every successful import. Match on the exact
   // pay_period_end this ingest closes.
-  const { data: alertsResolved } = await sb.from("alerts").update({ is_resolved: true, resolved_at: new Date().toISOString() }).eq("agency_id", opts.agencyId).eq("module_reference", `payroll_run:${parsed.pay_period_end}`).eq("is_resolved", false).select("id");
 
   await callComposio({
     apiKey: opts.composioApiKey, userId: opts.composioUserId, connectedAccountId: opts.gmailAccountId,
@@ -612,6 +610,5 @@ export async function processSurePayrollParsed(opts: {
     ok: true, payroll_run_id: runRowId, merged_existing: mergedExisting,
     employees_written: detailRows.length, unmatched_employees: unmatched,
     cpr_week_updated: cprReport?.id ? cprWeekEnd : undefined,
-    alerts_resolved: alertsResolved?.length ?? 0,
   };
 }

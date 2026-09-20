@@ -702,20 +702,7 @@ async function uploadToDrive(
 
   if (!res.ok) {
     // Say so. A silent null here is exactly what hid this for weeks.
-    console.error(`[document-processor] drive_upload_failed: ${att.fileName} docType=${docType} reason="${res.error}"`);
-    try {
-      await sb.from("alerts").insert({
-        agency_id: ctx.agencyId,
-        alert_type: "drive_upload_failed",
-        severity: "warning",
-        title: `Could not file ${att.fileName} to Drive`,
-        message: `The Drive upload was rejected: ${res.error}\n\nThe document was still processed; only its Drive copy is missing.`,
-        module_reference: "document-processor",
-        is_read: false,
-        is_resolved: false,
-        created_at: new Date().toISOString(),
-      });
-    } catch (_e) { /* alerting must never break processing */ }
+    console.error(`[document-processor] drive_upload_failed: ${att.fileName} docType=${docType} reason="${res.error}" — the document was still processed; only its Drive copy is missing.`);
     return null;
   }
 
@@ -808,20 +795,19 @@ async function ctsNeedsHandAlert(
   reason: string, driveUrl: string | null,
 ): Promise<void> {
   try {
-    await sb.from("alerts").insert({
-      agency_id: agencyId,
-      alert_type: "cts_result_needs_hand_entry",
-      severity: "warning",
+    await ensureWatcherTask({
+      agencyId,
+      source: `cts_result_needs_hand_entry:${fileName}`,
+      relatedId: null,
       title: `CTS result could not be read: ${candidateName ?? fileName}`,
-      message:
+      description:
         `${reason}\n\nThe PDF is filed${driveUrl ? ` at ${driveUrl}` : ""}. ` +
         `Open it and use Record CTS Result on the candidate page. ` +
         `The interview invite does not go out until a result is recorded.`,
-      module_reference: "hiring",
-      is_read: false,
-      is_resolved: false,
+      priority: "high",
+      category: "team_development",
     });
-  } catch (_e) { /* alerting must never break processing */ }
+  } catch (_e) { /* reporting must never break processing */ }
 }
 
 // ---- Text extraction -------------------------------------------------------
@@ -1731,7 +1717,7 @@ async function processOneAttachment(
           const unm = res.unmatchedLines.length;
           const note = `PFA statement: ${res.totalLines} lines · ${res.matched} matched · ${res.inserted} inserted` + (unm > 0 ? ` · ${unm} unmatched` : "");
           await markDocument(documentId, "processed", res.totalLines,
-            (unm > 0 ? ["pfa_bank_statements", "pfa_transactions", "alerts"] : ["pfa_bank_statements", "pfa_transactions"]), note);
+            ["pfa_bank_statements", "pfa_transactions"], note);
           await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
@@ -1796,9 +1782,9 @@ async function processOneAttachment(
           const unmatchedNote = (r.unmatched_employees?.length ?? 0) > 0
             ? `, unmatched: ${r.unmatched_employees!.join(",")}` : "";
           const mergeNote = r.merged_existing ? " (merged existing row)" : "";
-          const note = `SurePayroll: ${r.employees_written} employees, CPR week ${r.cpr_week_updated ?? "n/a"}, ${r.alerts_resolved} alerts resolved${mergeNote}${unmatchedNote}`;
+          const note = `SurePayroll: ${r.employees_written} employees, CPR week ${r.cpr_week_updated ?? "n/a"}${mergeNote}${unmatchedNote}`;
           await markDocument(documentId, "processed", r.employees_written ?? 0,
-            ["payroll_runs", "payroll_detail", "weekly_cpr_team_detail", "alerts"], note);
+            ["payroll_runs", "payroll_detail", "weekly_cpr_team_detail"], note);
           await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
           results.push({
             documentId, fileName: att.fileName, fromEmail: att.fromEmail,
@@ -2057,24 +2043,9 @@ async function processOneAttachment(
         await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
 
         // The interview invite fires off the trigger on cts_completed_at, not
-        // from here. This alert is so Peter sees the score arrive.
-        try {
-          await sb.from("alerts").insert({
-            agency_id: ctx.agencyId,
-            alert_type: "cts_result_recorded",
-            severity: "info",
-            title: `CTS result recorded: ${name}`,
-            message:
-              `CTS score ${parsed.payload.cts_score ?? "n/a"}, ego drive ${parsed.payload.ego_drive ?? "n/a"}, ` +
-              `empathy ${parsed.payload.empathy ?? "n/a"}. Reliability ${parsed.payload.reliability ?? "n/a"}, ` +
-              `response distortion ${parsed.payload.response_distortion ?? "n/a"}.` +
-              (action === "skipped" ? "\n\nA result was already on this candidate, so nothing changed." : ""),
-            module_reference: "hiring",
-            related_id: match.candidateId,
-            is_read: false,
-            is_resolved: false,
-          });
-        } catch (_e) { /* alerting must never break processing */ }
+        // from here, and the score is on the candidate page the moment it
+        // lands — so a clean arrival needs no separate notice.
+        console.log(`[document-processor] CTS result ${action} for ${name}: score ${parsed.payload.cts_score ?? "n/a"}, ego drive ${parsed.payload.ego_drive ?? "n/a"}, empathy ${parsed.payload.empathy ?? "n/a"}.`);
 
         results.push({
           documentId, fileName: att.fileName, fromEmail: att.fromEmail,

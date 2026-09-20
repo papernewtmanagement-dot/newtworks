@@ -3,20 +3,20 @@
 // =========================================================================
 // Consolidated 2026-08-11. The HTTP request, timeout, and response-unwrapping
 // logic used to be fully duplicated here (this file used to be ~150 lines
-// mirroring _shared/composio.ts almost exactly, plus a hand-rolled
-// writeTimeoutAlert). That duplication is why the 2026-08-06 timeout fix
+// mirroring _shared/composio.ts almost exactly, plus a hand-rolled timeout
+// reporter). That duplication is why the 2026-08-06 timeout fix
 // landed here first and took five more days to reach automation-runner. The
 // mechanism now lives in exactly one place: _shared/composio.ts.
 //
-// WHY THIS FILE STILL EXISTS AT ALL: document-processor has always written an
-// alerts-table row on EVERY timeout, unconditionally — that was the original
-// fork's behavior since 2026-08-06. _shared/composio.ts makes alerting
-// opt-in per call (alertTarget?), because other consumers (automation-runner)
-// deliberately do NOT want a duplicate alerts-table row on top of their own
+// WHY THIS FILE STILL EXISTS AT ALL: document-processor has always reported
+// EVERY timeout, unconditionally — that was the original fork's behavior
+// since 2026-08-06. _shared/composio.ts makes the report
+// opt-in per call (reportTarget?), because other consumers (automation-runner)
+// deliberately do NOT want a second record on top of their own
 // automation_run_log + Telegram failure recording. Rather than touch this
-// function's 30+ call sites to pass an alertTarget by hand, this shim
+// function's 30+ call sites to pass a reportTarget by hand, this shim
 // supplies the same default the old duplicated implementation hardcoded, so
-// deleting the duplication changed NOTHING about runtime alerting behavior.
+// deleting the duplication changed NOTHING about runtime reporting behavior.
 // Every existing `callComposio(...)`, `callComposioNoAuth(...)` and
 // `fetchWithTimeout(...)` call in this function keeps working with its
 // existing arguments, unchanged.
@@ -26,7 +26,7 @@ import {
   callComposio as _sharedCallComposio,
   callComposioNoAuth as _sharedCallComposioNoAuth,
   fetchWithTimeout as _sharedFetchWithTimeout,
-  type TimeoutAlertTarget,
+  type TimeoutReportTarget,
 } from "../../_shared/composio.ts";
 
 // S3_FETCH_TIMEOUT_MS, COMPOSIO_TIMEOUT_MS and the ComposioCallResult type
@@ -41,7 +41,7 @@ import {
 // the same name, a boot failure esbuild caught and the project's own
 // validator does not, since it only checks `const`, not `export {}`.)
 
-function dpAlertTarget(service: string, context: string): TimeoutAlertTarget {
+function dpReportTarget(service: string, context: string): TimeoutReportTarget {
   return { moduleReference: `document-processor:${service}_timeout`, context };
 }
 
@@ -50,7 +50,7 @@ export async function callComposio(
 ): ReturnType<typeof _sharedCallComposio> {
   return _sharedCallComposio({
     ...opts,
-    alertTarget: opts.alertTarget ?? dpAlertTarget("composio", `tool=${opts.toolSlug}`),
+    reportTarget: opts.reportTarget ?? dpReportTarget("composio", `tool=${opts.toolSlug}`),
   });
 }
 
@@ -59,7 +59,7 @@ export async function callComposioNoAuth(
 ): ReturnType<typeof _sharedCallComposioNoAuth> {
   return _sharedCallComposioNoAuth({
     ...opts,
-    alertTarget: opts.alertTarget ?? dpAlertTarget("composio", `tool=${opts.toolSlug}`),
+    reportTarget: opts.reportTarget ?? dpReportTarget("composio", `tool=${opts.toolSlug}`),
   });
 }
 
@@ -70,5 +70,5 @@ export async function fetchWithTimeout(
   service: string,
   context: string,
 ): ReturnType<typeof _sharedFetchWithTimeout> {
-  return _sharedFetchWithTimeout(url, init, timeoutMs, service, context, dpAlertTarget(service, context));
+  return _sharedFetchWithTimeout(url, init, timeoutMs, service, context, dpReportTarget(service, context));
 }

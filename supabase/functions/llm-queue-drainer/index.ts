@@ -22,7 +22,7 @@ import { sb, jsonResponse, getSettingOrNull, stripFences } from "../_shared/supa
 import { callGroqChat } from "../_shared/llm.ts";
 import { requireSharedSecret } from "../_shared/auth.ts";
 import { writeParsedStatement } from "../_shared/statement_writer.ts";
-import { insertAlert } from "../_shared/alerts.ts";
+import { ensureWatcherTask } from "../_shared/watchers.ts";
 
 // llama-3.3-70b-versatile (12,000 TPM) is decommissioned by Groq 2026-08-16.
 // Moved to openai/gpt-oss-120b (8,000 TPM) 2026-08-08 — less throughput, but
@@ -886,16 +886,15 @@ async function drainWrapupOrganizeItem(item: QueueItem, groqKey: string, dryRun:
   const liveText = (liveRow.wrapup_text ?? "") as string;
   if (liveText.trim() && snapshot !== null && liveText.trim() !== snapshot.trim()) {
     if ((item.attempts ?? 0) === 0) {
-      await sb.from("alerts").insert({
-        agency_id: item.agency_id,
-        alert_type: "data_conflict",
-        severity: "warning",
+      await ensureWatcherTask({
+        agencyId: item.agency_id,
+        source: `wrapup_stale:${item.id}`,
+        relatedId: null,
         title: "Queued wrap-up needs a manual merge",
-        message: `Queued wrap-up job ${item.id} (${item.target_ref?.sender_first_name ?? "unknown teammate"}, week ${item.target_ref?.week_ending_date ?? "unknown"}) was organized against an older copy of the wrap-up text. The stored text has changed since, so writing this result would delete newer content. Merge by hand from Gmail message ${item.target_ref?.gmail_message_id ?? "unknown"}.`,
-        module_reference: "llm-queue-drainer:wrapup_stale",
-        is_read: false,
-        is_resolved: false,
-      }).then(() => {}, () => {});
+        description: `Queued wrap-up job ${item.id} (${item.target_ref?.sender_first_name ?? "unknown teammate"}, week ${item.target_ref?.week_ending_date ?? "unknown"}) was organized against an older copy of the wrap-up text. The stored text has changed since, so writing this result would delete newer content. Merge by hand from Gmail message ${item.target_ref?.gmail_message_id ?? "unknown"}.`,
+        priority: "medium",
+        category: "processes",
+      });
     }
     return { ok: false, error: "detail row advanced since this job was queued — refusing to overwrite newer wrap-up text; manual merge required (alert raised)" };
   }
@@ -1094,21 +1093,21 @@ Deno.serve(async (req) => {
               }),
             }).eq("id", item.document_id);
           }
-          await insertAlert({
+          await ensureWatcherTask({
             agencyId: item.agency_id,
-            alertType: "llm_parse_item_dead",
-            severity: "warning",
+            source: `llm_parse_item_dead:${item.id}`,
             title: isTooLarge
               ? `Parse payload too big, not retryable: ${label}`
               : `Parse gave up after 3 tries: ${label}`,
-            message: isTooLarge
+            description: isTooLarge
               ? `Queue item ${item.id} (${item.purpose}) was rejected for exceeding the model's `
                 + `per-request token ceiling. Retrying cannot help — the same payload fails the same `
                 + `way every time. The text needs to be trimmed at the source before it is queued. `
                 + `Nothing downstream of it has been written. Error: ${r.error ?? "unknown"}`
               : `Queue item ${item.id} (${item.purpose}) failed 3 attempts and will not be retried `
                 + `automatically. Nothing downstream of it has been written. Last error: ${r.error ?? "unknown"}`,
-            moduleReference: item.purpose === "parse_bank_statement" ? "financials" : "automations",
+            priority: "medium",
+            category: item.purpose === "parse_bank_statement" ? "finances" : "admin",
             relatedId: item.document_id ?? null,
           });
         }

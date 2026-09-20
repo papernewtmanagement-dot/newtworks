@@ -77,7 +77,7 @@ import { requireSharedSecret, requireOwnerOrManager } from "../_shared/auth.ts";
 import { callComposio } from "../_shared/composio.ts";
 import { getComposioGmailCreds, sendGmail } from "../_shared/gmail.ts";
 import { escHtml } from "../_shared/html.ts";
-import { insertAlert } from "../_shared/alerts.ts";
+import { ensureWatcherTask } from "../_shared/watchers.ts";
 
 const TZ = "America/Chicago";
 const CALENDAR_ID = "primary";
@@ -610,11 +610,11 @@ async function sendInterviewInvite(agencyId: string, candidateId: string): Promi
   const name = c.candidate_name || firstName;
 
   if (!c.email) {
-    await insertAlert({
-      agencyId, alertType: "interview_invite_send_failed", severity: "high",
+    await ensureWatcherTask({
+      agencyId, source: "interview_invite_send_failed", relatedId: c.id,
       title: `Interview invite not sent — no email for ${name}`,
-      message: `${name} has a CTS result on file and is ready for an interview, but there is no email address on the record. Add one and record the result again, or invite them by hand.`,
-      moduleReference: "team", relatedId: c.id,
+      description: `${name} has a CTS result on file and is ready for an interview, but there is no email address on the record. Add one and record the result again, or invite them by hand.`,
+      priority: "high", category: "team_development",
     });
     return jsonResponse({ ok: false, action: "skipped", reason: "no email" });
   }
@@ -658,11 +658,11 @@ async function sendInterviewInvite(agencyId: string, candidateId: string): Promi
   // sitting in Interview holding a booking link nobody sent them. Say it out
   // loud instead of letting them wait.
   if (!emailSent) {
-    await insertAlert({
-      agencyId, alertType: "interview_invite_send_failed", severity: "high",
+    await ensureWatcherTask({
+      agencyId, source: "interview_invite_send_failed", relatedId: c.id,
       title: `Interview invite not sent — ${name}`,
-      message: `${name} cleared the CTS gate and was moved to Interview, but the booking email did not send: ${emailError}. Their booking link still works: ${bookingUrl}`,
-      moduleReference: "team", relatedId: c.id,
+      description: `${name} cleared the CTS gate and was moved to Interview, but the booking email did not send: ${emailError}. Their booking link still works: ${bookingUrl}`,
+      priority: "high", category: "team_development",
     });
   }
 
@@ -1136,14 +1136,14 @@ async function cancelCalendarEvent(
   // at it and the time never came back.
   const nameLine = who?.name ?? "A candidate";
   const whenLine = who?.when ? ` at ${who.when}` : "";
-  await insertAlert({
+  await ensureWatcherTask({
     agencyId,
-    alertType: "interview_event_not_canceled",
-    severity: "high",
-    title: `Interview still on the calendar — ${nameLine}`,
-    message: `${nameLine}'s interview${whenLine} could not be taken off the calendar: ${lastError}. Delete it by hand so the time opens back up. Calendar event id ${eventId}.`,
-    moduleReference: "team",
+    source: `interview_event_not_canceled:${eventId}`,
     relatedId: who?.candidateId ?? null,
+    title: `Interview still on the calendar — ${nameLine}`,
+    description: `${nameLine}'s interview${whenLine} could not be taken off the calendar: ${lastError}. Delete it by hand so the time opens back up. Calendar event id ${eventId}.`,
+    priority: "high",
+    category: "team_development",
   });
   return { ok: false, error: lastError };
 }
@@ -1637,11 +1637,11 @@ async function sendOfferLetter(agencyId: string, candidateId: string): Promise<R
   const name = c.candidate_name || c.first_name || "the candidate";
 
   if (!c.email) {
-    await insertAlert({
-      agencyId, alertType: "offer_letter_send_failed", severity: "high",
+    await ensureWatcherTask({
+      agencyId, source: "offer_letter_send_failed", relatedId: c.id,
       title: `Offer letter not sent — no email address for ${name}`,
-      message: `${name} was moved to the Offer stage and the letter is ready, but there is no email address on the record. Add one and move them out of Offer and back to send it.`,
-      moduleReference: "team", relatedId: c.id,
+      description: `${name} was moved to the Offer stage and the letter is ready, but there is no email address on the record. Add one and move them out of Offer and back to send it.`,
+      priority: "high", category: "team_development",
     });
     return jsonResponse({ ok: false, action: "failed", reason: "no email address" }, 200);
   }
@@ -1674,11 +1674,11 @@ async function sendOfferLetter(agencyId: string, candidateId: string): Promise<R
 
   const gmailCreds = await getComposioGmailCreds(agencyId);
   if (!gmailCreds.ok) {
-    await insertAlert({
-      agencyId, alertType: "offer_letter_send_failed", severity: "critical",
+    await ensureWatcherTask({
+      agencyId, source: "offer_letter_send_failed", relatedId: c.id,
       title: `Offer letter not sent to ${name} — Gmail is not connected`,
-      message: `${name}'s offer letter is ready but Gmail could not be reached: ${gmailCreds.error}. Reconnect Gmail, then move them out of Offer and back to send it.`,
-      moduleReference: "team", relatedId: c.id,
+      description: `${name}'s offer letter is ready but Gmail could not be reached: ${gmailCreds.error}. Reconnect Gmail, then move them out of Offer and back to send it.`,
+      priority: "critical", category: "team_development",
     });
     return jsonResponse({ ok: false, action: "failed", reason: gmailCreds.error }, 200);
   }
@@ -1686,11 +1686,11 @@ async function sendOfferLetter(agencyId: string, candidateId: string): Promise<R
   const sendRes = await sendGmail({ creds: gmailCreds.creds, to: c.email, subject, html });
 
   if (!sendRes.ok) {
-    await insertAlert({
-      agencyId, alertType: "offer_letter_send_failed", severity: "critical",
+    await ensureWatcherTask({
+      agencyId, source: "offer_letter_send_failed", relatedId: c.id,
       title: `Offer letter not sent to ${name}`,
-      message: `Gmail refused the send: ${sendRes.error}. The letter is still on the candidate record. Fix the problem, then move them out of Offer and back to try again.`,
-      moduleReference: "team", relatedId: c.id,
+      description: `Gmail refused the send: ${sendRes.error}. The letter is still on the candidate record. Fix the problem, then move them out of Offer and back to try again.`,
+      priority: "critical", category: "team_development",
     });
     return jsonResponse({ ok: false, action: "failed", reason: sendRes.error }, 200);
   }

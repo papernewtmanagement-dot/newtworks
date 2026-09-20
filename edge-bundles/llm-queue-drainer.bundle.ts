@@ -468,17 +468,14 @@ async function writeParsedStatement(
         notes: reason,
         processed_at: nowIso(),
       }).eq("id", opts.documentId);
-      await sb.from("alerts").insert({
-        agency_id: opts.agencyId,
-        alert_type: "duplicate_statement_ingest",
-        severity: "low",
+      await ensureWatcherTask({
+        agencyId: opts.agencyId,
+        source: `duplicate_statement_ingest:${moduleRef(opts.source)}`,
+        relatedId: opts.documentId,
         title: `Duplicate statement skipped — ${opts.accountCode} period ending ${opts.period.end}`,
-        message: reason,
-        module_reference: moduleRef(opts.source),
-        related_id: opts.documentId,
-        is_read: false,
-        is_resolved: false,
-        created_at: nowIso(),
+        description: reason,
+        priority: "low",
+        category: "finances",
       });
       return { ok: false, held: "duplicate_ingest", reason, priorDocumentId: priorBal.source_document_id };
     }
@@ -543,19 +540,16 @@ async function writeParsedStatement(
       notes: heldNotes,
       processed_at: nowIso(),
     }).eq("id", opts.documentId);
-    await sb.from("alerts").insert({
-      agency_id: opts.agencyId,
-      alert_type: "reconciliation_mismatch",
-      severity: "high",
+    await ensureWatcherTask({
+      agencyId: opts.agencyId,
+      source: `reconciliation_mismatch:${moduleRef(opts.source)}`,
+      relatedId: opts.documentId,
       title: `Statement reconciliation mismatch — ${opts.accountCode} period ending ${opts.period.end}`,
-      message:
+      description:
         `Parsed statement for account ${opts.accountCode} does not tie to the printed ` +
         `statement summary. ${reconHeldReason}. Held for review — nothing written.`,
-      module_reference: moduleRef(opts.source),
-      related_id: opts.documentId,
-      is_read: false,
-      is_resolved: false,
-      created_at: nowIso(),
+      priority: "high",
+      category: "finances",
     });
     console.warn(`[statement_writer] reconciliation_mismatch doc=${opts.documentId} account=${opts.accountCode}: ${reconHeldReason}`);
     return { ok: false, held: "reconciliation_mismatch", reason: reconHeldReason, delta: reconDelta };
@@ -673,69 +667,83 @@ async function writeParsedStatement(
   return { ok: true, inserted: rows.length };
 }
 
-// ==================== _shared/alerts.ts ====================
+// ==================== _shared/watchers.ts ====================
 // =========================================================================
-// _shared/alerts.ts
+// _shared/watchers.ts
 // =========================================================================
-// Canonical alerts writer for ALL Newtworks edge functions.
+// Canonical "something needs a human" writer for ALL Newtworks edge
+// functions. Replaces the retired _shared/alerts.ts.
 //
-// Why this exists: the alerts table takes (alert_type NOT NULL, severity,
-// title, message, module_reference, related_id, is_resolved). Hand-written
-// inserts have shipped with a `body:` column that does not exist and with
-// alert_type missing — both fail silently when the insert result isn't
-// checked. Going through this helper makes that class of bug impossible.
+// Why this exists: the alerts table was retired 2026-09-16 because nothing
+// read it. A condition that genuinely needs Peter to act now becomes an
+// ordinary row in tasks, so it gets scored, gets hours, and lands in a week
+// like every other piece of work. Both helpers wrap the SQL functions
+// ensure_watcher_task / close_watcher_task so the shaping lives in exactly
+// one place, database side and edge side alike.
+//
+// Dedupe is on created_by ('watcher:' || source) plus related_id, open rows
+// only. related_id must be a uuid or null. When the thing repeats per period
+// and has no uuid of its own, PUT THE PERIOD IN THE SOURCE STRING
+// (e.g. "wrapup_parser_stuck:2026-09-12") and leave relatedId null.
 // =========================================================================
 
 
-async function insertAlert(opts: {
-  agencyId: string;
-  alertType: string;
-  severity: "info" | "warning" | "high" | "critical" | string;
-  title: string;
-  message: string;
-  moduleReference?: string;
-  relatedId?: string | null;
-}): Promise<{ ok: boolean; error: string | null }> {
-  const row: Record<string, unknown> = {
-    agency_id: opts.agencyId,
-    alert_type: opts.alertType,
-    severity: opts.severity,
-    title: opts.title,
-    message: opts.message,
-    is_read: false,
-    is_resolved: false,
-  };
-  if (opts.moduleReference != null) row.module_reference = opts.moduleReference;
-  if (opts.relatedId != null) row.related_id = opts.relatedId;
+// tasks_priority_check allows exactly these four. "urgent" is NOT one of them.
+type WatcherPriority = "low" | "medium" | "high" | "critical";
 
-  const { error } = await sb.from("alerts").insert(row);
+// tasks.task_category is a fixed check-constrained list. Anything outside it
+// fails the insert.
+type WatcherCategory =
+  | "web_app"
+  | "admin"
+  | "marketing"
+  | "team_development"
+  | "handbook"
+  | "processes"
+  | "finances";
+
+async function ensureWatcherTask(opts: {
+  agencyId: string;
+  source: string;
+  relatedId?: string | null;
+  title: string;
+  description: string;
+  priority?: WatcherPriority;
+  category?: WatcherCategory;
+}): Promise<{ ok: boolean; created: boolean; error: string | null }> {
+  const { data, error } = await sb.rpc("ensure_watcher_task", {
+    p_agency_id: opts.agencyId,
+    p_source: opts.source,
+    p_related_id: opts.relatedId ?? null,
+    p_title: opts.title,
+    p_description: opts.description,
+    p_priority: opts.priority ?? "medium",
+    p_category: opts.category ?? "admin",
+  });
   if (error) {
-    // Never throw — alerting must not mask the underlying failure being
-    // reported. But do surface the miss to whoever reads the function logs.
-    console.error(`insertAlert failed (${opts.alertType}): ${error.message}`);
-    return { ok: false, error: error.message };
+    // Never throw — reporting a problem must not mask the problem being
+    // reported. Surface the miss to whoever reads the function logs.
+    console.error(`ensureWatcherTask failed (${opts.source}): ${error.message}`);
+    return { ok: false, created: false, error: error.message };
   }
-  return { ok: true, error: null };
+  return { ok: true, created: data === true, error: null };
 }
 
-// Resolve all open alerts carrying a given module_reference (the standard
-// "this condition cleared" pattern used by surepayroll + pfa flows).
-async function resolveAlerts(opts: {
+async function closeWatcherTask(opts: {
   agencyId: string;
-  moduleReference: string;
-}): Promise<{ ok: boolean; resolved: number; error: string | null }> {
-  const { data, error } = await sb
-    .from("alerts")
-    .update({ is_resolved: true, resolved_at: new Date().toISOString() })
-    .eq("agency_id", opts.agencyId)
-    .eq("module_reference", opts.moduleReference)
-    .eq("is_resolved", false)
-    .select("id");
+  source: string;
+  relatedId?: string | null;
+}): Promise<{ ok: boolean; closed: boolean; error: string | null }> {
+  const { data, error } = await sb.rpc("close_watcher_task", {
+    p_agency_id: opts.agencyId,
+    p_source: opts.source,
+    p_related_id: opts.relatedId ?? null,
+  });
   if (error) {
-    console.error(`resolveAlerts failed (${opts.moduleReference}): ${error.message}`);
-    return { ok: false, resolved: 0, error: error.message };
+    console.error(`closeWatcherTask failed (${opts.source}): ${error.message}`);
+    return { ok: false, closed: false, error: error.message };
   }
-  return { ok: true, resolved: (data ?? []).length, error: null };
+  return { ok: true, closed: data === true, error: null };
 }
 
 // ==================== llm-queue-drainer/index.ts ====================
@@ -1621,16 +1629,15 @@ async function drainWrapupOrganizeItem(item: QueueItem, groqKey: string, dryRun:
   const liveText = (liveRow.wrapup_text ?? "") as string;
   if (liveText.trim() && snapshot !== null && liveText.trim() !== snapshot.trim()) {
     if ((item.attempts ?? 0) === 0) {
-      await sb.from("alerts").insert({
-        agency_id: item.agency_id,
-        alert_type: "data_conflict",
-        severity: "warning",
+      await ensureWatcherTask({
+        agencyId: item.agency_id,
+        source: `wrapup_stale:${item.id}`,
+        relatedId: null,
         title: "Queued wrap-up needs a manual merge",
-        message: `Queued wrap-up job ${item.id} (${item.target_ref?.sender_first_name ?? "unknown teammate"}, week ${item.target_ref?.week_ending_date ?? "unknown"}) was organized against an older copy of the wrap-up text. The stored text has changed since, so writing this result would delete newer content. Merge by hand from Gmail message ${item.target_ref?.gmail_message_id ?? "unknown"}.`,
-        module_reference: "llm-queue-drainer:wrapup_stale",
-        is_read: false,
-        is_resolved: false,
-      }).then(() => {}, () => {});
+        description: `Queued wrap-up job ${item.id} (${item.target_ref?.sender_first_name ?? "unknown teammate"}, week ${item.target_ref?.week_ending_date ?? "unknown"}) was organized against an older copy of the wrap-up text. The stored text has changed since, so writing this result would delete newer content. Merge by hand from Gmail message ${item.target_ref?.gmail_message_id ?? "unknown"}.`,
+        priority: "medium",
+        category: "processes",
+      });
     }
     return { ok: false, error: "detail row advanced since this job was queued — refusing to overwrite newer wrap-up text; manual merge required (alert raised)" };
   }
@@ -1829,21 +1836,21 @@ Deno.serve(async (req) => {
               }),
             }).eq("id", item.document_id);
           }
-          await insertAlert({
+          await ensureWatcherTask({
             agencyId: item.agency_id,
-            alertType: "llm_parse_item_dead",
-            severity: "warning",
+            source: `llm_parse_item_dead:${item.id}`,
             title: isTooLarge
               ? `Parse payload too big, not retryable: ${label}`
               : `Parse gave up after 3 tries: ${label}`,
-            message: isTooLarge
+            description: isTooLarge
               ? `Queue item ${item.id} (${item.purpose}) was rejected for exceeding the model's `
                 + `per-request token ceiling. Retrying cannot help — the same payload fails the same `
                 + `way every time. The text needs to be trimmed at the source before it is queued. `
                 + `Nothing downstream of it has been written. Error: ${r.error ?? "unknown"}`
               : `Queue item ${item.id} (${item.purpose}) failed 3 attempts and will not be retried `
                 + `automatically. Nothing downstream of it has been written. Last error: ${r.error ?? "unknown"}`,
-            moduleReference: item.purpose === "parse_bank_statement" ? "financials" : "automations",
+            priority: "medium",
+            category: item.purpose === "parse_bank_statement" ? "finances" : "admin",
             relatedId: item.document_id ?? null,
           });
         }

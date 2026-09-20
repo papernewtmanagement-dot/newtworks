@@ -426,19 +426,16 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
 
 async function rmbAlert(args: RmbArgs, message: string): Promise<void> {
   try {
-    await sb.from("alerts").insert({
-      agency_id: args.agencyId,
-      alert_type: "resume_ingest_failed",
-      severity: "warning",
+    await ensureWatcherTask({
+      agencyId: args.agencyId,
+      source: "resume_ingest_failed",
+      relatedId: args.documentId,
       title: `Resume could not be ingested — ${args.fileName}`,
-      message: `${message}\n\nFrom: ${args.fromEmail}\nSubject: "${args.subject}"\nFile: ${args.fileName}`,
-      module_reference: "document-processor",
-      related_id: args.documentId,
-      is_read: false,
-      is_resolved: false,
-      created_at: new Date().toISOString(),
+      description: `${message}\n\nFrom: ${args.fromEmail}\nSubject: "${args.subject}"\nFile: ${args.fileName}`,
+      priority: "medium",
+      category: "team_development",
     });
   } catch (e) {
-    console.warn("[resume_manual_batch] alert insert failed (non-fatal):", e);
+    console.warn("[resume_manual_batch] watcher task failed (non-fatal):", e);
   }
 }

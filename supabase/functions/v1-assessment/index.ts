@@ -679,7 +679,7 @@ function canonicalLetter(reported: string, item: any, candidateId: string): stri
 // Runs once Stint 1 is complete, immediately before Stint 2 would be served.
 // The candidate is never told that a gate fired: they get the same neutral
 // completion screen as anyone who finishes. The reason goes to the owner only,
-// via an alerts row and a Telegram message. Every response already collected
+// via a Telegram message. Every response already collected
 // is kept. Thresholds and their rationale live in the SQL function docstring
 // (hiregauge_v2_stint1_exit_gate).
 async function exitGateFired(supa: any, cand: any): Promise<boolean> {
@@ -1112,16 +1112,18 @@ async function handleFinalize(supa: any, cand: any) {
     let notification_skip_reason: string | null = null;
     if (updated) {
       try {
-        const { data: existing } = await supa
-          .from("alerts")
-          .select("id")
+        // "Already told Peter" gate. hiring_candidates.assessment_completed_at
+        // cannot serve here — the update right above this block always sets it,
+        // so it is never null by the time we read it. assessment_notified_at is
+        // written only once the DM has actually gone out.
+        const { data: notifiedRow } = await supa
+          .from("hiring_candidates")
+          .select("assessment_notified_at")
+          .eq("id", cand.id)
           .eq("agency_id", AGENCY_ID)
-          .eq("alert_type", "v2_assessment_complete")
-          .eq("related_id", cand.id)
-          .limit(1)
           .maybeSingle();
 
-        if (existing) {
+        if (notifiedRow?.assessment_notified_at) {
           notification_skip_reason = "already_notified";
         } else {
           const { data: fullCand } = await supa
@@ -1135,24 +1137,6 @@ async function handleFinalize(supa: any, cand: any) {
           const position = fullCand?.position || "unspecified role";
 
           const link = `https://newtworks.vercel.app/team?candidate=${cand.id}`;
-          const title = `Assessment complete: ${candName}`;
-          const message =
-            `${candName} finished the Newtworks assessment for ${position}. ` +
-            `${rows.length} personality facets scored, ${totalItemsScored} items. ` +
-            `GMA scored alongside. View: ${link}`;
-
-          const { error: alertErr } = await supa.from("alerts").insert({
-            agency_id: AGENCY_ID,
-            alert_type: "v2_assessment_complete",
-            severity: "info",
-            title,
-            message,
-            module_reference: "hiring",
-            related_id: cand.id,
-            is_read: false,
-            is_resolved: false,
-          });
-          if (alertErr) throw new Error(`alert_insert_failed: ${alertErr.message}`);
 
           const { data: owner } = await supa
             .from("team")

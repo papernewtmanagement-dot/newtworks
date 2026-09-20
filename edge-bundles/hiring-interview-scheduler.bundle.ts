@@ -218,71 +218,6 @@ async function requireOwnerOrManager(
   return null;
 }
 
-// ==================== _shared/alerts.ts ====================
-// =========================================================================
-// _shared/alerts.ts
-// =========================================================================
-// Canonical alerts writer for ALL Newtworks edge functions.
-//
-// Why this exists: the alerts table takes (alert_type NOT NULL, severity,
-// title, message, module_reference, related_id, is_resolved). Hand-written
-// inserts have shipped with a `body:` column that does not exist and with
-// alert_type missing — both fail silently when the insert result isn't
-// checked. Going through this helper makes that class of bug impossible.
-// =========================================================================
-
-
-async function insertAlert(opts: {
-  agencyId: string;
-  alertType: string;
-  severity: "info" | "warning" | "high" | "critical" | string;
-  title: string;
-  message: string;
-  moduleReference?: string;
-  relatedId?: string | null;
-}): Promise<{ ok: boolean; error: string | null }> {
-  const row: Record<string, unknown> = {
-    agency_id: opts.agencyId,
-    alert_type: opts.alertType,
-    severity: opts.severity,
-    title: opts.title,
-    message: opts.message,
-    is_read: false,
-    is_resolved: false,
-  };
-  if (opts.moduleReference != null) row.module_reference = opts.moduleReference;
-  if (opts.relatedId != null) row.related_id = opts.relatedId;
-
-  const { error } = await sb.from("alerts").insert(row);
-  if (error) {
-    // Never throw — alerting must not mask the underlying failure being
-    // reported. But do surface the miss to whoever reads the function logs.
-    console.error(`insertAlert failed (${opts.alertType}): ${error.message}`);
-    return { ok: false, error: error.message };
-  }
-  return { ok: true, error: null };
-}
-
-// Resolve all open alerts carrying a given module_reference (the standard
-// "this condition cleared" pattern used by surepayroll + pfa flows).
-async function resolveAlerts(opts: {
-  agencyId: string;
-  moduleReference: string;
-}): Promise<{ ok: boolean; resolved: number; error: string | null }> {
-  const { data, error } = await sb
-    .from("alerts")
-    .update({ is_resolved: true, resolved_at: new Date().toISOString() })
-    .eq("agency_id", opts.agencyId)
-    .eq("module_reference", opts.moduleReference)
-    .eq("is_resolved", false)
-    .select("id");
-  if (error) {
-    console.error(`resolveAlerts failed (${opts.moduleReference}): ${error.message}`);
-    return { ok: false, resolved: 0, error: error.message };
-  }
-  return { ok: true, resolved: (data ?? []).length, error: null };
-}
-
 // ==================== _shared/composio.ts ====================
 // =========================================================================
 // _shared/composio.ts
@@ -322,34 +257,25 @@ const COMPOSIO_TIMEOUT_MS = 25000;
  *  silently change the other. */
 const S3_FETCH_TIMEOUT_MS = 25000;
 
-/** Where a timeout should be reported, if anywhere. Omit entirely and a
- *  timeout returns a clean failed result without writing an alert — correct
- *  for callers that already record their own failures (automation-runner logs
- *  every recipe failure to automation_run_log and Telegram). */
-interface TimeoutAlertTarget {
+/** Where a timeout should be reported. A timeout is a transient external
+ *  failure the caller already handles as a clean failed result, so this goes
+ *  to the function log and nowhere else — callers that need a durable record
+ *  already keep one (automation-runner logs every recipe failure to
+ *  automation_run_log and Telegram). */
+interface TimeoutReportTarget {
   agencyId?: string;
   moduleReference: string;
   context: string;
 }
 
-async function writeTimeoutAlert(
+function writeTimeoutReport(
   service: string,
   elapsedMs: number,
-  target: TimeoutAlertTarget,
-): Promise<void> {
-  try {
-    await insertAlert({
-      agencyId: target.agencyId ?? AGENCY_ID_DEFAULT,
-      alertType: "external_call_timeout",
-      severity: "warning",
-      title: `${service} call timed out`,
-      message: `${service} call did not respond within ${elapsedMs}ms and was aborted. Context: ${target.context}`,
-      moduleReference: target.moduleReference,
-    });
-  } catch (_e) {
-    // Best-effort. Must never mask the original timeout or throw a second
-    // uncaught exception on the way out.
-  }
+  target: TimeoutReportTarget,
+): void {
+  console.error(
+    `[${target.moduleReference}] ${service} call timed out after ${elapsedMs}ms and was aborted. Context: ${target.context}`,
+  );
 }
 
 /**
@@ -364,7 +290,7 @@ async function fetchWithTimeout(
   timeoutMs: number,
   service: string,
   context: string,
-  alertTarget?: TimeoutAlertTarget,
+  reportTarget?: TimeoutReportTarget,
 ): Promise<{ res: Response | null; timedOut: boolean; elapsedMs: number }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -375,8 +301,8 @@ async function fetchWithTimeout(
   } catch (e) {
     const elapsedMs = Date.now() - startedAt;
     const timedOut = e instanceof Error && e.name === "AbortError";
-    if (timedOut && alertTarget) {
-      await writeTimeoutAlert(service, elapsedMs, alertTarget);
+    if (timedOut && reportTarget) {
+      writeTimeoutReport(service, elapsedMs, reportTarget);
     } else if (!timedOut) {
       console.error(`[${service}] fetch threw after ${elapsedMs}ms (${context}): ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -441,7 +367,7 @@ async function callComposio(opts: {
    */
   toolkitVersion?: string;
   timeoutMs?: number;
-  alertTarget?: TimeoutAlertTarget;
+  reportTarget?: TimeoutReportTarget;
 }): Promise<ComposioCallResult> {
   const { res, timedOut, elapsedMs } = await fetchWithTimeout(
     `${COMPOSIO_BASE}/${opts.toolSlug}`,
@@ -461,7 +387,7 @@ async function callComposio(opts: {
     opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS,
     `composio:${opts.toolSlug}`,
     `tool=${opts.toolSlug}`,
-    opts.alertTarget,
+    opts.reportTarget,
   );
   if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
   return unwrapComposio(await res.text(), res.ok, res.status);
@@ -473,7 +399,7 @@ async function callComposioNoAuth(opts: {
   toolSlug: string;
   toolArguments: Record<string, any>;
   timeoutMs?: number;
-  alertTarget?: TimeoutAlertTarget;
+  reportTarget?: TimeoutReportTarget;
 }): Promise<ComposioCallResult> {
   const { res, timedOut, elapsedMs } = await fetchWithTimeout(
     `${COMPOSIO_BASE}/${opts.toolSlug}`,
@@ -491,7 +417,7 @@ async function callComposioNoAuth(opts: {
     opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS,
     `composio:${opts.toolSlug}`,
     `tool=${opts.toolSlug} (no connected account)`,
-    opts.alertTarget,
+    opts.reportTarget,
   );
   if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
   return unwrapComposio(await res.text(), res.ok, res.status);
@@ -588,6 +514,85 @@ function escHtml(s: string | null | undefined): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+// ==================== _shared/watchers.ts ====================
+// =========================================================================
+// _shared/watchers.ts
+// =========================================================================
+// Canonical "something needs a human" writer for ALL Newtworks edge
+// functions. Replaces the retired _shared/alerts.ts.
+//
+// Why this exists: the alerts table was retired 2026-09-16 because nothing
+// read it. A condition that genuinely needs Peter to act now becomes an
+// ordinary row in tasks, so it gets scored, gets hours, and lands in a week
+// like every other piece of work. Both helpers wrap the SQL functions
+// ensure_watcher_task / close_watcher_task so the shaping lives in exactly
+// one place, database side and edge side alike.
+//
+// Dedupe is on created_by ('watcher:' || source) plus related_id, open rows
+// only. related_id must be a uuid or null. When the thing repeats per period
+// and has no uuid of its own, PUT THE PERIOD IN THE SOURCE STRING
+// (e.g. "wrapup_parser_stuck:2026-09-12") and leave relatedId null.
+// =========================================================================
+
+
+// tasks_priority_check allows exactly these four. "urgent" is NOT one of them.
+type WatcherPriority = "low" | "medium" | "high" | "critical";
+
+// tasks.task_category is a fixed check-constrained list. Anything outside it
+// fails the insert.
+type WatcherCategory =
+  | "web_app"
+  | "admin"
+  | "marketing"
+  | "team_development"
+  | "handbook"
+  | "processes"
+  | "finances";
+
+async function ensureWatcherTask(opts: {
+  agencyId: string;
+  source: string;
+  relatedId?: string | null;
+  title: string;
+  description: string;
+  priority?: WatcherPriority;
+  category?: WatcherCategory;
+}): Promise<{ ok: boolean; created: boolean; error: string | null }> {
+  const { data, error } = await sb.rpc("ensure_watcher_task", {
+    p_agency_id: opts.agencyId,
+    p_source: opts.source,
+    p_related_id: opts.relatedId ?? null,
+    p_title: opts.title,
+    p_description: opts.description,
+    p_priority: opts.priority ?? "medium",
+    p_category: opts.category ?? "admin",
+  });
+  if (error) {
+    // Never throw — reporting a problem must not mask the problem being
+    // reported. Surface the miss to whoever reads the function logs.
+    console.error(`ensureWatcherTask failed (${opts.source}): ${error.message}`);
+    return { ok: false, created: false, error: error.message };
+  }
+  return { ok: true, created: data === true, error: null };
+}
+
+async function closeWatcherTask(opts: {
+  agencyId: string;
+  source: string;
+  relatedId?: string | null;
+}): Promise<{ ok: boolean; closed: boolean; error: string | null }> {
+  const { data, error } = await sb.rpc("close_watcher_task", {
+    p_agency_id: opts.agencyId,
+    p_source: opts.source,
+    p_related_id: opts.relatedId ?? null,
+  });
+  if (error) {
+    console.error(`closeWatcherTask failed (${opts.source}): ${error.message}`);
+    return { ok: false, closed: false, error: error.message };
+  }
+  return { ok: true, closed: data === true, error: null };
 }
 
 // ==================== hiring-interview-scheduler/index.ts ====================
@@ -1196,11 +1201,11 @@ async function sendInterviewInvite(agencyId: string, candidateId: string): Promi
   const name = c.candidate_name || firstName;
 
   if (!c.email) {
-    await insertAlert({
-      agencyId, alertType: "interview_invite_send_failed", severity: "high",
+    await ensureWatcherTask({
+      agencyId, source: "interview_invite_send_failed", relatedId: c.id,
       title: `Interview invite not sent — no email for ${name}`,
-      message: `${name} has a CTS result on file and is ready for an interview, but there is no email address on the record. Add one and record the result again, or invite them by hand.`,
-      moduleReference: "team", relatedId: c.id,
+      description: `${name} has a CTS result on file and is ready for an interview, but there is no email address on the record. Add one and record the result again, or invite them by hand.`,
+      priority: "high", category: "team_development",
     });
     return jsonResponse({ ok: false, action: "skipped", reason: "no email" });
   }
@@ -1244,11 +1249,11 @@ async function sendInterviewInvite(agencyId: string, candidateId: string): Promi
   // sitting in Interview holding a booking link nobody sent them. Say it out
   // loud instead of letting them wait.
   if (!emailSent) {
-    await insertAlert({
-      agencyId, alertType: "interview_invite_send_failed", severity: "high",
+    await ensureWatcherTask({
+      agencyId, source: "interview_invite_send_failed", relatedId: c.id,
       title: `Interview invite not sent — ${name}`,
-      message: `${name} cleared the CTS gate and was moved to Interview, but the booking email did not send: ${emailError}. Their booking link still works: ${bookingUrl}`,
-      moduleReference: "team", relatedId: c.id,
+      description: `${name} cleared the CTS gate and was moved to Interview, but the booking email did not send: ${emailError}. Their booking link still works: ${bookingUrl}`,
+      priority: "high", category: "team_development",
     });
   }
 
@@ -1722,14 +1727,14 @@ async function cancelCalendarEvent(
   // at it and the time never came back.
   const nameLine = who?.name ?? "A candidate";
   const whenLine = who?.when ? ` at ${who.when}` : "";
-  await insertAlert({
+  await ensureWatcherTask({
     agencyId,
-    alertType: "interview_event_not_canceled",
-    severity: "high",
-    title: `Interview still on the calendar — ${nameLine}`,
-    message: `${nameLine}'s interview${whenLine} could not be taken off the calendar: ${lastError}. Delete it by hand so the time opens back up. Calendar event id ${eventId}.`,
-    moduleReference: "team",
+    source: `interview_event_not_canceled:${eventId}`,
     relatedId: who?.candidateId ?? null,
+    title: `Interview still on the calendar — ${nameLine}`,
+    description: `${nameLine}'s interview${whenLine} could not be taken off the calendar: ${lastError}. Delete it by hand so the time opens back up. Calendar event id ${eventId}.`,
+    priority: "high",
+    category: "team_development",
   });
   return { ok: false, error: lastError };
 }
@@ -2223,11 +2228,11 @@ async function sendOfferLetter(agencyId: string, candidateId: string): Promise<R
   const name = c.candidate_name || c.first_name || "the candidate";
 
   if (!c.email) {
-    await insertAlert({
-      agencyId, alertType: "offer_letter_send_failed", severity: "high",
+    await ensureWatcherTask({
+      agencyId, source: "offer_letter_send_failed", relatedId: c.id,
       title: `Offer letter not sent — no email address for ${name}`,
-      message: `${name} was moved to the Offer stage and the letter is ready, but there is no email address on the record. Add one and move them out of Offer and back to send it.`,
-      moduleReference: "team", relatedId: c.id,
+      description: `${name} was moved to the Offer stage and the letter is ready, but there is no email address on the record. Add one and move them out of Offer and back to send it.`,
+      priority: "high", category: "team_development",
     });
     return jsonResponse({ ok: false, action: "failed", reason: "no email address" }, 200);
   }
@@ -2260,11 +2265,11 @@ async function sendOfferLetter(agencyId: string, candidateId: string): Promise<R
 
   const gmailCreds = await getComposioGmailCreds(agencyId);
   if (!gmailCreds.ok) {
-    await insertAlert({
-      agencyId, alertType: "offer_letter_send_failed", severity: "critical",
+    await ensureWatcherTask({
+      agencyId, source: "offer_letter_send_failed", relatedId: c.id,
       title: `Offer letter not sent to ${name} — Gmail is not connected`,
-      message: `${name}'s offer letter is ready but Gmail could not be reached: ${gmailCreds.error}. Reconnect Gmail, then move them out of Offer and back to send it.`,
-      moduleReference: "team", relatedId: c.id,
+      description: `${name}'s offer letter is ready but Gmail could not be reached: ${gmailCreds.error}. Reconnect Gmail, then move them out of Offer and back to send it.`,
+      priority: "critical", category: "team_development",
     });
     return jsonResponse({ ok: false, action: "failed", reason: gmailCreds.error }, 200);
   }
@@ -2272,11 +2277,11 @@ async function sendOfferLetter(agencyId: string, candidateId: string): Promise<R
   const sendRes = await sendGmail({ creds: gmailCreds.creds, to: c.email, subject, html });
 
   if (!sendRes.ok) {
-    await insertAlert({
-      agencyId, alertType: "offer_letter_send_failed", severity: "critical",
+    await ensureWatcherTask({
+      agencyId, source: "offer_letter_send_failed", relatedId: c.id,
       title: `Offer letter not sent to ${name}`,
-      message: `Gmail refused the send: ${sendRes.error}. The letter is still on the candidate record. Fix the problem, then move them out of Offer and back to try again.`,
-      moduleReference: "team", relatedId: c.id,
+      description: `Gmail refused the send: ${sendRes.error}. The letter is still on the candidate record. Fix the problem, then move them out of Offer and back to try again.`,
+      priority: "critical", category: "team_development",
     });
     return jsonResponse({ ok: false, action: "failed", reason: sendRes.error }, 200);
   }

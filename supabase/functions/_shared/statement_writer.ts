@@ -119,17 +119,14 @@ export async function writeParsedStatement(
         notes: reason,
         processed_at: nowIso(),
       }).eq("id", opts.documentId);
-      await sb.from("alerts").insert({
-        agency_id: opts.agencyId,
-        alert_type: "duplicate_statement_ingest",
-        severity: "low",
+      await ensureWatcherTask({
+        agencyId: opts.agencyId,
+        source: `duplicate_statement_ingest:${moduleRef(opts.source)}`,
+        relatedId: opts.documentId,
         title: `Duplicate statement skipped — ${opts.accountCode} period ending ${opts.period.end}`,
-        message: reason,
-        module_reference: moduleRef(opts.source),
-        related_id: opts.documentId,
-        is_read: false,
-        is_resolved: false,
-        created_at: nowIso(),
+        description: reason,
+        priority: "low",
+        category: "finances",
       });
       return { ok: false, held: "duplicate_ingest", reason, priorDocumentId: priorBal.source_document_id };
     }
@@ -194,19 +191,16 @@ export async function writeParsedStatement(
       notes: heldNotes,
       processed_at: nowIso(),
     }).eq("id", opts.documentId);
-    await sb.from("alerts").insert({
-      agency_id: opts.agencyId,
-      alert_type: "reconciliation_mismatch",
-      severity: "high",
+    await ensureWatcherTask({
+      agencyId: opts.agencyId,
+      source: `reconciliation_mismatch:${moduleRef(opts.source)}`,
+      relatedId: opts.documentId,
       title: `Statement reconciliation mismatch — ${opts.accountCode} period ending ${opts.period.end}`,
-      message:
+      description:
         `Parsed statement for account ${opts.accountCode} does not tie to the printed ` +
         `statement summary. ${reconHeldReason}. Held for review — nothing written.`,
-      module_reference: moduleRef(opts.source),
-      related_id: opts.documentId,
-      is_read: false,
-      is_resolved: false,
-      created_at: nowIso(),
+      priority: "high",
+      category: "finances",
     });
     console.warn(`[statement_writer] reconciliation_mismatch doc=${opts.documentId} account=${opts.accountCode}: ${reconHeldReason}`);
     return { ok: false, held: "reconciliation_mismatch", reason: reconHeldReason, delta: reconDelta };

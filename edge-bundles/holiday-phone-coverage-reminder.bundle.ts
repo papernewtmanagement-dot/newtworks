@@ -1,8 +1,8 @@
 // =========================================================================
-// hiring-offer-accept bundle (auto-generated)
-// Source of truth: supabase/functions/hiring-offer-accept/ + supabase/functions/_shared/
+// holiday-phone-coverage-reminder bundle (auto-generated)
+// Source of truth: supabase/functions/holiday-phone-coverage-reminder/ + supabase/functions/_shared/
 // This single-file bundle is what gets deployed to the Supabase edge runtime.
-// Do NOT hand-edit. Regenerate via `python3 scripts/bundle_edge_fn.py hiring-offer-accept`.
+// Do NOT hand-edit. Regenerate via `python3 scripts/bundle_edge_fn.py holiday-phone-coverage-reminder`.
 // =========================================================================
 
 import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
@@ -137,6 +137,85 @@ function stripFences(s: string): string {
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```\s*$/i, "")
     .trim();
+}
+
+// ==================== _shared/auth.ts ====================
+// =========================================================================
+// _shared/auth.ts
+// =========================================================================
+// Canonical shared-secret gate for cron/internally-dispatched edge functions.
+// The dispatch side (_dispatch_edge_fn, run_automation_recipe, automation-
+// runner INTERNAL handlers) POSTs { agency_id, shared_secret } in the body;
+// the secret must match settings.automation_runner_cron_secret.
+//
+// Usage in a handler:
+//   const denied = await requireSharedSecret(agencyId, body.shared_secret);
+//   if (denied) return denied;
+// =========================================================================
+
+
+async function requireSharedSecret(
+  agencyId: string,
+  provided: string | undefined | null,
+): Promise<Response | null> {
+  if (!provided) {
+    return jsonResponse({ ok: false, error: "missing shared_secret" }, 401);
+  }
+  const expected = await getSettingOrNull(agencyId, "automation_runner_cron_secret");
+  if (!expected || provided !== expected) {
+    return jsonResponse({ ok: false, error: "unauthorized" }, 401);
+  }
+  return null;
+}
+
+// -------------------------------------------------------------------------
+// Caller-identity gate for admin actions fired from the browser
+// -------------------------------------------------------------------------
+// Some functions serve BOTH public token-gated traffic — which forces
+// verify_jwt to stay false at the platform level — AND admin-only actions
+// triggered from inside the Newtworks app. Those admin actions get no help
+// from the platform gate, so they check the caller here instead: the bearer
+// token has to identify a real signed-in user, and that user's public.users
+// row has to be an owner or manager of the agency being acted on.
+//
+// Same two-step check invite-team-member does inline. This is the shared copy
+// so the next function that needs it does not write a third one.
+//
+// A shared secret would NOT do the job here. The call comes from a browser,
+// and anything the browser can send, anyone reading the page can read.
+
+const ADMIN_ROLES = ["owner", "manager"];
+
+async function requireOwnerOrManager(
+  req: Request,
+  agencyId: string,
+): Promise<Response | null> {
+  const token = (req.headers.get("Authorization") || "").replace("Bearer ", "").trim();
+  if (!token) return corsJson({ ok: false, error: "missing session token" }, 401);
+
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!anonKey) return corsJson({ ok: false, error: "auth unavailable" }, 500);
+
+  // The anon key is also what an unauthenticated caller sends as its bearer
+  // token, so getUser() failing here is the normal "nobody is signed in" path,
+  // not an infrastructure problem.
+  const caller = createClient(SUPABASE_URL, anonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: who, error: whoErr } = await caller.auth.getUser();
+  if (whoErr || !who?.user) return corsJson({ ok: false, error: "invalid or expired session" }, 401);
+
+  const { data: row, error: rowErr } = await sb
+    .from("users")
+    .select("role, agency_id")
+    .eq("auth_user_id", who.user.id)
+    .maybeSingle();
+  if (rowErr) return corsJson({ ok: false, error: "could not verify caller" }, 500);
+  if (!row || row.agency_id !== agencyId || !ADMIN_ROLES.includes(row.role as string)) {
+    return corsJson({ ok: false, error: "not permitted" }, 403);
+  }
+  return null;
 }
 
 // ==================== _shared/composio.ts ====================
@@ -418,168 +497,188 @@ async function sendGmail(opts: {
   });
 }
 
-// ==================== _shared/html.ts ====================
+// ==================== holiday-phone-coverage-reminder/index.ts ====================
 // =========================================================================
-// _shared/html.ts
+// holiday-phone-coverage-reminder
 // =========================================================================
-// Tiny HTML helpers shared across the email-composing edge functions.
-// Formatting helpers (money, dates) stay LOCAL to each function on purpose —
-// their formats genuinely differ per surface and unifying them would change
-// live email output.
+// Weekly job (Monday mornings): looks at company_holidays for any
+// observance='closed' holiday landing on a weekday in the next 7 days.
+// If found, emails the active team the WHOLE "Office Hours" section of the
+// Hours & Time Off handbook page verbatim (pulled live from public.manuals,
+// not hardcoded, so it stays in sync if the handbook changes), under an
+// "Office closed — <date> is <holiday>" opener. Plain text, not HTML.
+//
+// Guards against double-send with company_holidays.phone_coverage_reminder_sent_at
+// (set after a successful pass over that holiday).
+//
+// Invoked by pg_cron via automation-runner's dispatch_ path (see companion
+// automation_recipes row "Weekly Holiday Phone Coverage Reminder").
 // =========================================================================
 
-function escHtml(s: string | null | undefined): string {
-  if (s == null) return "";
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+// deno-lint-ignore-file no-explicit-any
+
+const TZ = "America/Chicago";
+
+function todayInCT(): string {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(now);
+  const y = parts.find((p) => p.type === "year")!.value;
+  const m = parts.find((p) => p.type === "month")!.value;
+  const d = parts.find((p) => p.type === "day")!.value;
+  return `${y}-${m}-${d}`;
 }
 
-// ==================== hiring-offer-accept/index.ts ====================
-// =========================================================================
-// hiring-offer-accept edge function
-// =========================================================================
-// The public side of the contingent offer. Two jobs, both reached only by
-// the one-time link in the offer email:
-//
-//   mode="get_offer"  (public, token gated)
-//     The acceptance page asks who the link belongs to and what the letter
-//     said. Returns nothing sensitive — no Social Security number, no
-//     scores, no interview notes.
-//
-//   mode="accept"  (public, token gated)
-//     The candidate accepted. Their details and their three reference
-//     contacts go in, the link is spent, and the candidate moves to
-//     reference check. We confirm to them by email and tell Peter.
-//
-// All the real work is in three database functions, so the rules about what
-// is required and where the Social Security number is filed live in one
-// place rather than being restated here. This function is the door, not the
-// logic.
-// =========================================================================
-
-
-async function appBase(agencyId: string): Promise<string> {
-  return (await getSettingOrNull(agencyId, "app_base_url")) || "https://newtworks.vercel.app";
+function addDaysISO(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map((s) => parseInt(s, 10));
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
 }
 
-// -------------------------------------------------------------------------
-// What the page may show
-// -------------------------------------------------------------------------
-async function getOffer(agencyId: string, token: string): Promise<Response> {
-  const { data, error } = await sb.rpc("hiring_offer_accept_view", { p_token: token });
-  if (error) return corsJson({ ok: false, error: "lookup_failed" }, 500);
-  return corsJson(data ?? { ok: false, error: "not_found" });
+function isWeekday(iso: string): boolean {
+  const [y, m, d] = iso.split("-").map((s) => parseInt(s, 10));
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=Sun..6=Sat
+  return dow >= 1 && dow <= 5;
 }
 
-// -------------------------------------------------------------------------
-// The candidate accepting
-// -------------------------------------------------------------------------
-async function accept(agencyId: string, token: string, payload: unknown): Promise<Response> {
-  const { data, error } = await sb.rpc("hiring_accept_offer", {
-    p_token: token,
-    p_payload: payload ?? {},
+function humanDate(iso: string): string {
+  const [y, m, d] = iso.split("-").map((s) => parseInt(s, 10));
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "UTC",
   });
-  if (error) {
-    console.error("hiring_accept_offer failed", error);
-    return corsJson({ ok: false, error: "save_failed" }, 500);
-  }
-
-  const result = data as { ok?: boolean; error?: string; candidate_id?: string } | null;
-  if (!result?.ok) return corsJson(result ?? { ok: false, error: "save_failed" }, 400);
-
-  // Everything below is courtesy. If any of it fails the acceptance still
-  // stands, so nothing here is allowed to turn a saved acceptance into an
-  // error on the candidate's screen.
-  try {
-    const { data: c } = await sb
-      .from("hiring_candidates")
-      .select("first_name, candidate_name, email, offer_job_title, offer_start_date, reference_caller_kind, reference_caller_name")
-      .eq("id", result.candidate_id)
-      .single();
-
-    const { data: refs } = await sb
-      .from("hiring_reference_contacts")
-      .select("slot_number, contact_name, relationship, phone, email")
-      .eq("candidate_id", result.candidate_id)
-      .order("slot_number");
-
-    const firstName = c?.first_name || (c?.candidate_name || "").split(" ")[0] || "there";
-
-    if (c?.email) {
-      const creds = await getComposioGmailCreds(agencyId);
-      if (creds?.creds) {
-        const refList = (refs ?? [])
-          .map((r) => `<li>${escHtml(r.contact_name)}${r.relationship ? ` — ${escHtml(r.relationship)}` : ""}</li>`)
-          .join("");
-        await sendGmail({
-          creds: creds.creds,
-          to: c.email,
-          subject: "We have your acceptance — thank you",
-          html:
-            `<p>Hi ${escHtml(firstName)},</p>` +
-            `<p>Thanks — we have your acceptance` +
-            (c.offer_job_title ? ` for the ${escHtml(c.offer_job_title)} role` : "") +
-            (c.offer_start_date ? `, starting ${escHtml(String(c.offer_start_date))}` : "") +
-            `. Your details are in and you do not need to send us anything else for now.</p>` +
-            `<p><b>What happens next.</b> We will call the three people you gave us:</p>` +
-            `<ul>${refList}</ul>` +
-            `<p>Please give them a heads up that we will be ringing, and let us know if any of ` +
-            `their numbers change. Once we have spoken to them we will be in touch about your ` +
-            `start date and what to bring on the first day.</p>` +
-            `<p>If anything you entered was wrong, just reply to this email and we will fix it.</p>`,
-        });
-      }
-    }
-
-    const who =
-      c?.reference_caller_kind === "outside"
-        ? c?.reference_caller_name || "someone outside the agency"
-        : c?.reference_caller_kind === "team"
-        ? c?.reference_caller_name || "a teammate"
-        : "the retention team";
-
-    const base = await appBase(agencyId);
-    await sb.rpc("telegram_send", {
-      p_route_key: "admin",
-      p_text:
-        `<b>${escHtml(c?.candidate_name || firstName)} accepted the offer</b>\n` +
-        `Details and ${(refs ?? []).length} reference contacts are in.\n` +
-        `Calling is with ${escHtml(who)}.\n\n` +
-        `${base}/hiring`,
-      p_agency_id: agencyId,
-      p_parse_mode: "HTML",
-    });
-  } catch (e) {
-    console.error("post-acceptance notices failed (acceptance itself is saved)", e);
-  }
-
-  return corsJson({ ok: true });
 }
 
-// -------------------------------------------------------------------------
+// Pull the "## Office Hours" section out of the Hours & Time Off manuals
+// row, rather than hardcoding it, so this stays correct if the handbook
+// text changes.
+// Grabs the WHOLE "## Office Hours" section verbatim, header included, exactly
+// as it reads in the handbook (markdown left as literal text, not rendered —
+// matches the 2026-09-02 manual send Peter approved).
+function extractOfficeHoursSection(fullContent: string): string {
+  const startMarker = "## Office Hours";
+  const start = fullContent.indexOf(startMarker);
+  if (start === -1) return fullContent.slice(0, 1200); // fallback, shouldn't happen
+  const rest = fullContent.slice(start);
+  const nextHeaderIdx = rest.indexOf("\n## ", startMarker.length);
+  const section = nextHeaderIdx === -1 ? rest : rest.slice(0, nextHeaderIdx);
+  return section.trim();
+}
+
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
+  const invokedAt = new Date().toISOString();
+  const startedMs = Date.now();
 
   let body: any = {};
   try {
     body = await req.json();
   } catch {
-    body = {};
+    return new Response(JSON.stringify({ ok: false, error: "invalid json" }), {
+      status: 400, headers: { "Content-Type": "application/json" },
+    });
   }
+
   const agencyId = body.agency_id || AGENCY_ID_DEFAULT;
+  const sharedSecret = body.shared_secret;
+  const denied = await requireSharedSecret(agencyId, sharedSecret);
+  if (denied) return denied;
 
-  if (body.mode === "get_offer") {
-    if (!body.token) return corsJson({ ok: false, error: "missing token" }, 400);
-    return await getOffer(agencyId, String(body.token));
+  const today = todayInCT();
+  const weekOut = addDaysISO(today, 7);
+
+  const { data: holidays, error: holidayErr } = await sb
+    .from("company_holidays")
+    .select("id, holiday_name, holiday_date, observance, is_active, phone_coverage_reminder_sent_at")
+    .eq("agency_id", agencyId)
+    .eq("is_active", true)
+    .eq("observance", "closed")
+    .is("phone_coverage_reminder_sent_at", null)
+    .gte("holiday_date", today)
+    .lte("holiday_date", weekOut);
+
+  if (holidayErr) {
+    return new Response(JSON.stringify({ ok: false, error: holidayErr.message }), {
+      status: 500, headers: { "Content-Type": "application/json" },
+    });
   }
 
-  if (body.mode === "accept") {
-    if (!body.token) return corsJson({ ok: false, error: "missing token" }, 400);
-    return await accept(agencyId, String(body.token), body.payload);
+  const upcoming = (holidays ?? []).filter((h: any) => isWeekday(h.holiday_date));
+
+  if (upcoming.length === 0) {
+    return new Response(JSON.stringify({
+      ok: true, invoked_at: invokedAt, records_processed: 0,
+      output_summary: "No closed-observance holiday landing on a weekday in the next 7 days.",
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
   }
 
-  return jsonResponse({ ok: false, error: "unknown mode" }, 400);
+  const credsRes = await getComposioGmailCreds(agencyId);
+  if (!credsRes.ok) {
+    return new Response(JSON.stringify({ ok: false, error: credsRes.error }), {
+      status: 500, headers: { "Content-Type": "application/json" },
+    });
+  }
+  const gmailCreds: GmailCreds = credsRes.creds;
+
+  const { data: manualRow, error: manualErr } = await sb
+    .from("manuals")
+    .select("content")
+    .eq("title", "Hours & Time Off")
+    .limit(1)
+    .maybeSingle();
+  if (manualErr || !manualRow) {
+    return new Response(JSON.stringify({ ok: false, error: manualErr?.message ?? "Hours & Time Off manual page not found" }), {
+      status: 500, headers: { "Content-Type": "application/json" },
+    });
+  }
+  const officeHoursSection = extractOfficeHoursSection((manualRow as any).content as string);
+
+  const { data: team, error: teamErr } = await sb
+    .from("team")
+    .select("id, first_name, email_sf, email_personal, is_active, is_test_user")
+    .eq("agency_id", agencyId)
+    .eq("is_active", true);
+  if (teamErr) {
+    return new Response(JSON.stringify({ ok: false, error: teamErr.message }), {
+      status: 500, headers: { "Content-Type": "application/json" },
+    });
+  }
+  const recipients = (team ?? [])
+    .filter((t: any) => t.is_test_user !== true)
+    .map((t: any) => ({ name: t.first_name, email: t.email_sf || t.email_personal }))
+    .filter((r: any) => !!r.email);
+
+  const results: any = {
+    holidays_processed: 0, emails_sent: 0, emails_failed: 0, errors: [] as string[],
+  };
+
+  for (const h of upcoming) {
+    const dateStr = humanDate((h as any).holiday_date);
+    const subject = `Office Closed ${dateStr} (${(h as any).holiday_name})`;
+    const text = `Office closed — ${dateStr} is ${(h as any).holiday_name}.\n\n${officeHoursSection}\n\n— Newtworks`;
+
+    let holidaySent = 0;
+    let holidayFailed = 0;
+    for (const r of recipients) {
+      const sendResult = await sendGmail({ creds: gmailCreds, to: r.email, subject, text });
+      if (sendResult.ok) { results.emails_sent++; holidaySent++; }
+      else {
+        results.emails_failed++; holidayFailed++;
+        results.errors.push(`${r.email} for ${(h as any).holiday_name}: ${sendResult.error}`);
+      }
+    }
+
+    if (holidaySent > 0) {
+      await sb.from("company_holidays")
+        .update({ phone_coverage_reminder_sent_at: new Date().toISOString() })
+        .eq("id", (h as any).id);
+    }
+    results.holidays_processed++;
+  }
+
+  const durationSec = Math.round((Date.now() - startedMs) / 100) / 10;
+  return new Response(JSON.stringify({
+    ok: true, invoked_at: invokedAt, duration_seconds: durationSec, today_ct: today,
+    records_processed: results.holidays_processed, ...results,
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
 });

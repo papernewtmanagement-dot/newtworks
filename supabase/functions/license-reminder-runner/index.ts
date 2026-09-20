@@ -3,11 +3,10 @@
 // =========================================================================
 // Daily job that:
 //   1) Reads active rows from public.team_licenses
-//   2) Upserts an alerts row per license (severity scales with days_until_due)
-//   3) On cadence days (90/60/30/14/7/1/0 or negative for past-due) sends a
+//   2) On cadence days (90/60/30/14/7/1/0 or negative for past-due) sends a
 //      reminder email to the team member's email_personal AND email_sf, cc
 //      Peter for high/critical. Skips CE reminders where ce_required=false.
-//   4) Logs each send to license_notification_log so we don't double-send.
+//   3) Logs each send to license_notification_log so we don't double-send.
 //
 // Invoked by pg_cron via dispatch_license_reminders() (see companion SQL).
 // =========================================================================
@@ -45,14 +44,6 @@ const LICENSE_LABELS: Record<string, string> = {
 
 function labelFor(t: string): string {
   return LICENSE_LABELS[t] ?? t;
-}
-
-function severityForDays(daysOut: number): string {
-  if (daysOut < 0) return "critical";
-  if (daysOut <= 1) return "critical";
-  if (daysOut <= 14) return "high";
-  if (daysOut <= 30) return "warning";
-  return "info";
 }
 
 function todayInCT(): string {
@@ -254,7 +245,6 @@ Deno.serve(async (req: Request) => {
   const today = todayInCT();
   const results: any = {
     processed: 0,
-    alerts_upserted: 0,
     emails_sent: 0,
     emails_skipped_already_sent: 0,
     emails_failed: 0,
@@ -282,53 +272,7 @@ Deno.serve(async (req: Request) => {
 
     const daysOut = daysBetween(today, r.due_date);
     const isPastDue = daysOut < 0;
-    const severity = severityForDays(daysOut);
     const licenseLabel = labelFor(r.license_type);
-
-    const { data: existingAlert } = await sb
-      .from("alerts")
-      .select("id, severity")
-      .eq("module_reference", "team_licenses")
-      .eq("related_id", r.id)
-      .eq("is_resolved", false)
-      .maybeSingle();
-
-    const alertTitle =
-      `${teamMember.first_name} ${teamMember.last_name} — ${licenseLabel}`;
-    const alertMessage = isPastDue
-      ? `PAST DUE by ${Math.abs(daysOut)} day${Math.abs(daysOut) === 1 ? "" : "s"}. Due ${r.due_date}.`
-      : daysOut === 0
-      ? `Due TODAY (${r.due_date}).`
-      : `Due in ${daysOut} day${daysOut === 1 ? "" : "s"} (${r.due_date}).`;
-
-    if (daysOut <= 90 || existingAlert) {
-      if (existingAlert) {
-        const { error: updErr } = await sb
-          .from("alerts")
-          .update({
-            severity,
-            title: alertTitle,
-            message: alertMessage,
-            due_date: r.due_date,
-          })
-          .eq("id", existingAlert.id);
-        if (!updErr) results.alerts_upserted++;
-      } else {
-        const { error: insErr } = await sb.from("alerts").insert({
-          agency_id: agencyId,
-          alert_type: "renewal_due",
-          severity,
-          title: alertTitle,
-          message: alertMessage,
-          module_reference: "team_licenses",
-          related_id: r.id,
-          is_read: false,
-          is_resolved: false,
-          due_date: r.due_date,
-        });
-        if (!insErr) results.alerts_upserted++;
-      }
-    }
 
     let cadenceDay: number | null = null;
     if (CADENCE_DAYS_BEFORE.includes(daysOut)) {

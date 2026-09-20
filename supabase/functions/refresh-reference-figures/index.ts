@@ -229,28 +229,16 @@ Deno.serve(async (req) => {
       updated.push(`${row.figure_key} ${row.value_display} -> ${found.value_display.trim()}`);
     }
 
-    // Only shout when a run makes zero progress -- otherwise an hourly cron
-    // would spam an alert for every figure not yet published.
+    // A run that confirms nothing is the NORMAL state before the agencies
+    // publish, so this is a log line, not something anyone has to act on.
+    // FAQ answers keep showing the prior year's figures and figures_tax_year
+    // does not advance, so nothing ever claims to be ${targetYear} early.
     if (updated.length === 0 && !dryRun) {
-      const { data: existing } = await supabase.from("alerts").select("id")
-        .eq("agency_id", AGENCY_ID).eq("module_reference", "knowledge_faqs")
-        .eq("is_resolved", false).ilike("title", `%reference figures%${targetYear}%`).limit(1);
-
-      if (!existing || existing.length === 0) {
-        await supabase.from("alerts").insert({
-          agency_id: AGENCY_ID,
-          module_reference: "knowledge_faqs",
-          severity: "warning",
-          title: `Reference figures: no progress on ${authority} for ${targetYear}`,
-          message:
-            `${queueDepth} figures still behind tax year ${targetYear}. This run confirmed none.\n\n` +
-            `Could not confirm:\n${unconfirmed.join("\n") || "none"}\n\nErrors:\n${failures.join("\n") || "none"}\n\n` +
-            `FAQ answers still show the prior year's figures, and figures_tax_year has NOT advanced, ` +
-            `so no answer claims to be ${targetYear}. Likely causes: the agency has not published ${targetYear} ` +
-            `values yet (normal before late autumn), or the Groq daily token allowance is exhausted.`,
-          is_resolved: false,
-        });
-      }
+      console.warn(
+        `[refresh-reference-figures] no progress on ${authority} for ${targetYear}; ` +
+        `${queueDepth} figures still behind. Could not confirm: ${unconfirmed.join(", ") || "none"}. ` +
+        `Errors: ${failures.join(", ") || "none"}`,
+      );
     }
 
     return jsonResponse({

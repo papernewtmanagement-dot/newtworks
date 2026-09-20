@@ -24,7 +24,7 @@ import SparkMD5 from "npm:spark-md5@3.0.2";
 import { sb, jsonResponse } from "../_shared/supabase.ts";
 import { requireSharedSecret } from "../_shared/auth.ts";
 import { getComposioGmailCreds, sendGmail } from "../_shared/gmail.ts";
-import { insertAlert, resolveAlerts } from "../_shared/alerts.ts";
+import { ensureWatcherTask, closeWatcherTask } from "../_shared/watchers.ts";
 
 const SF_RECIPIENT = "peter.story.yrru@statefarm.com";
 
@@ -118,22 +118,22 @@ async function stageFileWithComposio(opts: {
 
 // Silent failure is what let this break for a month: the SQL function returned
 // success, the runner logged success, and nothing anywhere said the compliance
-// email had not gone out. Any send failure now leaves a durable unresolved
-// alert row so it surfaces in the app instead of only in a log nobody reads.
+// email had not gone out. Any send failure now leaves an open task so it lands
+// in a week instead of only in a log nobody reads.
 async function raiseSendFailureAlert(
   agencyId: string,
   reconciliationId: string,
   periodEnd: string,
   detail: string,
 ): Promise<void> {
-  await insertAlert({
+  await ensureWatcherTask({
     agencyId,
-    alertType: "pfa_reconciliation_send_failed",
-    severity: "warning",
-    title: `PFA reconciliation email did NOT send — statement ending ${periodEnd}`,
-    message: `The reconciliation for the PFA statement ending ${periodEnd} computed clean, but the email to State Farm failed. Nothing has been filed for this period. Detail: ${detail.slice(0, 500)}`,
-    moduleReference: `pfa_reconciliation_send_failed:${reconciliationId}`,
+    source: "pfa_reconciliation_send_failed",
     relatedId: reconciliationId,
+    title: `PFA reconciliation email did NOT send — statement ending ${periodEnd}`,
+    description: `The reconciliation for the PFA statement ending ${periodEnd} computed clean, but the email to State Farm failed. Nothing has been filed for this period. Detail: ${detail.slice(0, 500)}`,
+    priority: "high",
+    category: "finances",
   });
 }
 
@@ -665,10 +665,10 @@ async function run(req: Request): Promise<Response> {
       updated_at: new Date().toISOString(),
     }).eq("id", reconciliationId);
 
-    // 7) Resolve any related alerts (the discrepancy alert and any prior
-    //    send-failure alert both clear once the filing actually goes out).
-    await resolveAlerts({ agencyId, moduleReference: `pfa_reconciliation:${reconciliationId}` });
-    await resolveAlerts({ agencyId, moduleReference: `pfa_reconciliation_send_failed:${reconciliationId}` });
+    // 7) Close the related watcher tasks (the ready-to-file nudge and any
+    //    prior send failure both clear once the filing actually goes out).
+    await closeWatcherTask({ agencyId, source: "pfa_reconciliation_ready", relatedId: reconciliationId });
+    await closeWatcherTask({ agencyId, source: "pfa_reconciliation_send_failed", relatedId: reconciliationId });
   }
 
   return jsonResponse({

@@ -51,7 +51,7 @@ ORDER = [
     # that file's header) and is still bundled from ITS OWN path since it is
     # genuinely document-processor-specific, not a duplicate.
     "../_shared/supabase.ts",
-    "../_shared/alerts.ts",
+    "../_shared/watchers.ts",
     "../_shared/composio.ts",
     # 2026-08-11 (second half): handleBankStatement's reconciliation guard,
     # balance write, and per-transaction insert moved onto this same shared

@@ -218,71 +218,6 @@ async function requireOwnerOrManager(
   return null;
 }
 
-// ==================== _shared/alerts.ts ====================
-// =========================================================================
-// _shared/alerts.ts
-// =========================================================================
-// Canonical alerts writer for ALL Newtworks edge functions.
-//
-// Why this exists: the alerts table takes (alert_type NOT NULL, severity,
-// title, message, module_reference, related_id, is_resolved). Hand-written
-// inserts have shipped with a `body:` column that does not exist and with
-// alert_type missing — both fail silently when the insert result isn't
-// checked. Going through this helper makes that class of bug impossible.
-// =========================================================================
-
-
-async function insertAlert(opts: {
-  agencyId: string;
-  alertType: string;
-  severity: "info" | "warning" | "high" | "critical" | string;
-  title: string;
-  message: string;
-  moduleReference?: string;
-  relatedId?: string | null;
-}): Promise<{ ok: boolean; error: string | null }> {
-  const row: Record<string, unknown> = {
-    agency_id: opts.agencyId,
-    alert_type: opts.alertType,
-    severity: opts.severity,
-    title: opts.title,
-    message: opts.message,
-    is_read: false,
-    is_resolved: false,
-  };
-  if (opts.moduleReference != null) row.module_reference = opts.moduleReference;
-  if (opts.relatedId != null) row.related_id = opts.relatedId;
-
-  const { error } = await sb.from("alerts").insert(row);
-  if (error) {
-    // Never throw — alerting must not mask the underlying failure being
-    // reported. But do surface the miss to whoever reads the function logs.
-    console.error(`insertAlert failed (${opts.alertType}): ${error.message}`);
-    return { ok: false, error: error.message };
-  }
-  return { ok: true, error: null };
-}
-
-// Resolve all open alerts carrying a given module_reference (the standard
-// "this condition cleared" pattern used by surepayroll + pfa flows).
-async function resolveAlerts(opts: {
-  agencyId: string;
-  moduleReference: string;
-}): Promise<{ ok: boolean; resolved: number; error: string | null }> {
-  const { data, error } = await sb
-    .from("alerts")
-    .update({ is_resolved: true, resolved_at: new Date().toISOString() })
-    .eq("agency_id", opts.agencyId)
-    .eq("module_reference", opts.moduleReference)
-    .eq("is_resolved", false)
-    .select("id");
-  if (error) {
-    console.error(`resolveAlerts failed (${opts.moduleReference}): ${error.message}`);
-    return { ok: false, resolved: 0, error: error.message };
-  }
-  return { ok: true, resolved: (data ?? []).length, error: null };
-}
-
 // ==================== _shared/composio.ts ====================
 // =========================================================================
 // _shared/composio.ts
@@ -322,34 +257,25 @@ const COMPOSIO_TIMEOUT_MS = 25000;
  *  silently change the other. */
 const S3_FETCH_TIMEOUT_MS = 25000;
 
-/** Where a timeout should be reported, if anywhere. Omit entirely and a
- *  timeout returns a clean failed result without writing an alert — correct
- *  for callers that already record their own failures (automation-runner logs
- *  every recipe failure to automation_run_log and Telegram). */
-interface TimeoutAlertTarget {
+/** Where a timeout should be reported. A timeout is a transient external
+ *  failure the caller already handles as a clean failed result, so this goes
+ *  to the function log and nowhere else — callers that need a durable record
+ *  already keep one (automation-runner logs every recipe failure to
+ *  automation_run_log and Telegram). */
+interface TimeoutReportTarget {
   agencyId?: string;
   moduleReference: string;
   context: string;
 }
 
-async function writeTimeoutAlert(
+function writeTimeoutReport(
   service: string,
   elapsedMs: number,
-  target: TimeoutAlertTarget,
-): Promise<void> {
-  try {
-    await insertAlert({
-      agencyId: target.agencyId ?? AGENCY_ID_DEFAULT,
-      alertType: "external_call_timeout",
-      severity: "warning",
-      title: `${service} call timed out`,
-      message: `${service} call did not respond within ${elapsedMs}ms and was aborted. Context: ${target.context}`,
-      moduleReference: target.moduleReference,
-    });
-  } catch (_e) {
-    // Best-effort. Must never mask the original timeout or throw a second
-    // uncaught exception on the way out.
-  }
+  target: TimeoutReportTarget,
+): void {
+  console.error(
+    `[${target.moduleReference}] ${service} call timed out after ${elapsedMs}ms and was aborted. Context: ${target.context}`,
+  );
 }
 
 /**
@@ -364,7 +290,7 @@ async function fetchWithTimeout(
   timeoutMs: number,
   service: string,
   context: string,
-  alertTarget?: TimeoutAlertTarget,
+  reportTarget?: TimeoutReportTarget,
 ): Promise<{ res: Response | null; timedOut: boolean; elapsedMs: number }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -375,8 +301,8 @@ async function fetchWithTimeout(
   } catch (e) {
     const elapsedMs = Date.now() - startedAt;
     const timedOut = e instanceof Error && e.name === "AbortError";
-    if (timedOut && alertTarget) {
-      await writeTimeoutAlert(service, elapsedMs, alertTarget);
+    if (timedOut && reportTarget) {
+      writeTimeoutReport(service, elapsedMs, reportTarget);
     } else if (!timedOut) {
       console.error(`[${service}] fetch threw after ${elapsedMs}ms (${context}): ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -441,7 +367,7 @@ async function callComposio(opts: {
    */
   toolkitVersion?: string;
   timeoutMs?: number;
-  alertTarget?: TimeoutAlertTarget;
+  reportTarget?: TimeoutReportTarget;
 }): Promise<ComposioCallResult> {
   const { res, timedOut, elapsedMs } = await fetchWithTimeout(
     `${COMPOSIO_BASE}/${opts.toolSlug}`,
@@ -461,7 +387,7 @@ async function callComposio(opts: {
     opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS,
     `composio:${opts.toolSlug}`,
     `tool=${opts.toolSlug}`,
-    opts.alertTarget,
+    opts.reportTarget,
   );
   if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
   return unwrapComposio(await res.text(), res.ok, res.status);
@@ -473,7 +399,7 @@ async function callComposioNoAuth(opts: {
   toolSlug: string;
   toolArguments: Record<string, any>;
   timeoutMs?: number;
-  alertTarget?: TimeoutAlertTarget;
+  reportTarget?: TimeoutReportTarget;
 }): Promise<ComposioCallResult> {
   const { res, timedOut, elapsedMs } = await fetchWithTimeout(
     `${COMPOSIO_BASE}/${opts.toolSlug}`,
@@ -491,7 +417,7 @@ async function callComposioNoAuth(opts: {
     opts.timeoutMs ?? COMPOSIO_TIMEOUT_MS,
     `composio:${opts.toolSlug}`,
     `tool=${opts.toolSlug} (no connected account)`,
-    opts.alertTarget,
+    opts.reportTarget,
   );
   if (!res) return composioTimeoutResult(opts.toolSlug, timedOut, elapsedMs);
   return unwrapComposio(await res.text(), res.ok, res.status);

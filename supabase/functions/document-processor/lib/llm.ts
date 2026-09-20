@@ -26,20 +26,10 @@ const GROQ_TIMEOUT_MS = 25000;
 // applies here: a stuck Groq call should fail fast and catchably instead of
 // riding the invocation to the platform's own wall-clock kill (observed as
 // an uncaught-exception 546 after ~105-113s). No retry added on purpose.
-async function writeGroqTimeoutAlert(elapsedMs: number, context: string): Promise<void> {
-  try {
-    await sb.from("alerts").insert({
-      alert_type: "external_call_timeout",
-      severity: "warning",
-      title: "Groq call timed out",
-      message: `Groq call did not respond within ${elapsedMs}ms and was aborted. Context: ${context}`,
-      module_reference: "document-processor:groq_timeout",
-      is_read: false,
-      is_resolved: false,
-    });
-  } catch (_e) {
-    // Best-effort; never let a failed alert insert mask the original timeout.
-  }
+function writeGroqTimeoutReport(elapsedMs: number, context: string): void {
+  console.error(
+    `[document-processor:groq_timeout] Groq call did not respond within ${elapsedMs}ms and was aborted. Context: ${context}`,
+  );
 }
 
 // Reads settings.groq_model_default for the agency; falls back to LLM_MODEL_FALLBACK
@@ -135,7 +125,7 @@ async function callGroqDirect(opts: {
   } catch (e) {
     const elapsedMs = Date.now() - startedAt;
     const timedOut = e instanceof Error && e.name === "AbortError";
-    if (timedOut) await writeGroqTimeoutAlert(elapsedMs, opts.context);
+    if (timedOut) writeGroqTimeoutReport(elapsedMs, opts.context);
     const error = timedOut
       ? `Groq call timed out after ${elapsedMs}ms`
       : `Groq fetch failed: ${(e as Error).message}`;

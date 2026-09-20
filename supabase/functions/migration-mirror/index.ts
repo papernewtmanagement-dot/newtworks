@@ -44,7 +44,6 @@
 
 import { getSetting, jsonResponse, AGENCY_ID_DEFAULT, sb } from "../_shared/supabase.ts";
 import { requireSharedSecret } from "../_shared/auth.ts";
-import { insertAlert } from "../_shared/alerts.ts";
 
 const GH_REPO = "papernewtmanagement-dot/newtworks";
 const GH_API = "https://api.github.com";
@@ -569,14 +568,9 @@ Deno.serve(async (req: Request) => {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    await insertAlert({
-      agencyId,
-      alertType: "migration_mirror_failed",
-      severity: "warning",
-      title: "Migration mirror run failed",
-      message: `${msg} (written this run: ${written})`,
-      moduleReference: "migration-mirror",
-    });
+    // run_migration_mirror_nightly already records every run and its outcome
+    // in automation_run_log; a failure there is what gets read, not a row here.
+    console.error(`[migration-mirror] run failed: ${msg} (written this run: ${written})`);
     return jsonResponse({ ok: false, error: msg, written, commits, stats }, 500);
   }
 });
