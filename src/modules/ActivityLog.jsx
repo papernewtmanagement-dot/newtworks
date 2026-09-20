@@ -373,7 +373,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       } else if (d.kind === "activity") {
         setActivities([{ id: newPolicyId(), key: d.activity_key,
           line: d.save_line || d.policy_line || "", type: d.product_type || "",
-          premium: d.premium == null ? "" : String(d.premium), reason: d.save_reason || "" }]);
+          premium: d.premium == null ? "" : String(d.premium), reason: d.save_reason || "",
+          site: d.review_platform || "" }]);
       } else if (d.kind === "scorecard") {
         setScores(Object.fromEntries(Object.entries(d.scores || {}).filter(([, v]) => v != null)));
         setRecTurned(!!d.recording_turned_in); setRecUrl(d.recording_url || "");
@@ -486,11 +487,15 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const cardAvg = cardChosen ? CARD_PARTS.reduce((s, pt) => s + (scores[pt.key] != null ? Number(scores[pt.key]) : 0), 0) / cardChosen : null;   // x averages as 0
 
   // ---- what is in the entry right now ----
+  // Peter 2026-09-19: an Online Review has to say where it landed.
+  const REVIEW_SITES = [{ key: "google", label: "Google" }, { key: "facebook", label: "Facebook" }, { key: "yelp", label: "Yelp" }];
+  const needsSite = (key) => !!(values || []).find(v => v.activity_key === key)?.requires_platform;
   const hasSave = activities.some(a => a.key === "cancelation_saved");
   const hasReview = activities.some(a => a.key === "policy_review");
   const activityItems = activities.filter(a => byKey[a.key]).map(a =>
     a.key === "cancelation_saved" ? { activity_key: a.key, save_line: a.line, product_type: a.type || null, save_reason: (a.reason || "").trim() }
     : a.key === "autopay_enrollment" ? { activity_key: a.key, policy_line: a.line, product_type: a.type || null, premium: a.premium === "" ? null : Number(a.premium) }
+    : needsSite(a.key) ? { activity_key: a.key, review_platform: a.site || null }
     : { activity_key: a.key });
   const activityTotal = activityItems.reduce((s, it) => s + Number(byKey[it.activity_key]?.points || 0), 0);
   const quoted = policies.filter(p => p.status === "quoted" || p.status === "quoted_sold");
@@ -542,6 +547,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   if (needsEcrm && !ecrm.trim()) problems.push("This needs the ECRM opportunity link.");
   if (needsCard && cardChosen < CARD_PARTS.length) problems.push("Score every part of the scorecard. Tap x on a part you did not do.");
   if (activities.some(a => a.key === "autopay_enrollment" && (!a.line || (needsType(a.line) && !a.type) || a.premium === "" || !(Number(a.premium) >= 0)))) problems.push("Each autopay needs the policy line, type, and premium.");
+  if (activities.some(a => needsSite(a.key) && !a.site)) problems.push("Say where the review was left: Google, Facebook or Yelp.");
   if (flagged.some(p => !onFileAnswer[p.id])) problems.push("Say whether the new policy replaces the one on file, is added to it, or is a different household.");
   if (hasSale && hasCxl) {
     const soldLines = new Set(sold.map(p => p.line));
@@ -620,7 +626,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           ...(isSave
             ? { save_line: a.line || "", save_reason: (a.reason || "").trim(), product_type: a.type || "" }
             : { policy_line: a.line || "", product_type: a.type || "",
-                premium: a.premium === "" ? null : Number(a.premium) }) };
+                premium: a.premium === "" ? null : Number(a.premium) }),
+          ...(needsSite(a.key) ? { review_platform: a.site || "" } : {}) };
       } else {
         fn = "rp_edit_scorecard";
         changes = { customer_first_name: first.trim(), ...(phoneOk ? { phone_last4: phone } : {}), scorecard_date: date,
@@ -844,6 +851,18 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               <div style={field(130)}>
                 <label style={labelStyle}>Premium</label>
                 <input type="number" inputMode="decimal" min="0" step="0.01" style={moneyInput} value={a.premium} onChange={e => editActivity(a.id, { premium: e.target.value })} placeholder="0.00" />
+              </div>
+            </div>
+          ))}
+          {activities.filter(a => needsSite(a.key)).map(a => (
+            <div key={a.id} style={{ ...wrapRow, marginTop: 10, padding: 10, background: T.slate50, borderRadius: 8 }}>
+              <div style={{ fontWeight: 700, color: T.slate800, flex: "0 0 auto", paddingBottom: 10 }}>Review left on</div>
+              <div style={field(150)}>
+                <label style={labelStyle}>Site <span style={{ color: T.red }}>(required)</span></label>
+                <select style={inputBase} value={a.site || ""} onChange={e => editActivity(a.id, { site: e.target.value })}>
+                  <option value="">Pick one</option>
+                  {REVIEW_SITES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+                </select>
               </div>
             </div>
           ))}
@@ -4813,7 +4832,7 @@ export default function ActivityLog({ userRole, userId }) {
     let alive = true;
     (async () => {
       const [v, s, pt, r, me] = await Promise.all([
-        supabase.from("retention_point_values").select("activity_key, label, points, category, requires_note, requires_ecrm, sort_order, description").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
+        supabase.from("retention_point_values").select("activity_key, label, points, category, requires_note, requires_ecrm, requires_platform, sort_order, description").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("sales_marketing_sources").select("source_key, label, sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("product_types").select("line_of_business, type_key, label, sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("team_directory").select("id, first_name, role_category, is_admin_backoffice, is_test_user, archived_at, category, is_active").eq("agency_id", AGENCY_ID).order("first_name"),
