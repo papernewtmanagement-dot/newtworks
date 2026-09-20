@@ -6,30 +6,34 @@ import { CustomerName } from "../lib/customerAccount.jsx";
 
 // Dashboard > Backfill. The imported history came in without the last four
 // phone digits, without the ECRM link on the sale, and on some rows without a
-// marketing source, referral detail, or issued premium. This is the list of
-// every record still missing one of those, as rows you go down and save.
+// marketing source, referral detail, or issued premium. This is what is still
+// missing, one card per household (Peter 2026-09-20).
+//
+// The split that matters: the phone and the marketing source belong to the
+// HOUSEHOLD, so they are typed once at the top of the card and land on every
+// record under that name that has none. The ECRM link and the issued premium
+// belong to the RECORD, so they stay on the record.
 //
 // The rule that matters: nothing is written unless you typed it. A box that
 // shows what is already on file is only showing it. The premium the policy was
 // submitted at sits under an empty issued premium box as a one-tap suggestion,
 // so accepting it is a deliberate tap, never something a Save sweeps up.
 //
-// Save the row you just did, or save every row you have touched. The phone is
-// the household key, so a phone typed on one row fills the other rows on screen
-// with the same name, and on save it lands on every record under that name that
-// has none. Cancelations never appear here: each takes its phone from the sale
-// product it cancels. Issuing goes through rp_mark_issued, same as the To Be
-// Issued tab. Reads rp_backfill_queue, writes rp_backfill_save. Owner and
-// managers only.
+// Save one household, or save every household you have touched. Cancelations
+// never appear here: each takes its phone from the sale product it cancels.
+// Issuing goes through rp_mark_issued, same as the To Be Issued tab. Reads
+// rp_backfill_queue, writes rp_backfill_save. Owner and managers only.
 
-const PAGE = 25;
+const PAGE = 25;   // households per page, not records
 
 export default function BackfillTab({ sources = [], roster = [] }) {
   const _vp = useViewport();
-  const [rows, setRows] = useState([]);
-  const [total, setTotal] = useState(null);
+  const [households, setHouseholds] = useState([]);
+  const [totalHouseholds, setTotalHouseholds] = useState(null);
+  const [totalRows, setTotalRows] = useState(null);
   const [offset, setOffset] = useState(0);
-  const [edits, setEdits] = useState({});
+  const [edits, setEdits] = useState({});       // per record: ecrm, policies
+  const [hhEdits, setHhEdits] = useState({});   // per household: phone, source, referral
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
@@ -38,7 +42,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
   const [search, setSearch] = useState("");
   const [searching, setSearching] = useState(false);
   // The list is paged on the server, so the sort has to be too. Otherwise
-  // "sort by name" only sorts the 25 rows on screen.
+  // "sort by name" only sorts the households on screen.
   const [sort, setSort] = useState({ by: "date", dir: "desc" });
 
   const load = async (from, q, s) => {
@@ -57,10 +61,12 @@ export default function BackfillTab({ sources = [], roster = [] }) {
       setLoading(false);
       return;
     }
-    setRows(Array.isArray(data?.rows) ? data.rows : []);
-    setTotal(Number(data?.total_rows || 0));
+    setHouseholds(Array.isArray(data?.households) ? data.households : []);
+    setTotalHouseholds(Number(data?.total_households || 0));
+    setTotalRows(Number(data?.total_rows || 0));
     setSearching(!!data?.searching);
     setEdits({});
+    setHhEdits({});
     setLoading(false);
   };
 
@@ -90,11 +96,19 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     return m;
   }, [sources]);
 
+  // ---- what has been typed -------------------------------------------------
+  const hhTyped = (h, field) => {
+    const e = hhEdits[h.household] || {};
+    return e[field] !== undefined ? e[field] : "";
+  };
+  const setHh = (h, field, value) => {
+    setHhEdits(prev => ({ ...prev, [h.household]: { ...(prev[h.household] || {}), [field]: value } }));
+  };
+
   const typed = (r, field) => {
     const e = edits[r.id] || {};
     return e[field] !== undefined ? e[field] : "";
   };
-
   const setField = (r, field, value) => {
     setEdits(prev => ({ ...prev, [r.id]: { ...(prev[r.id] || {}), [field]: value } }));
   };
@@ -103,7 +117,6 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     const pol = ((edits[r.id] || {}).policies || {})[pid] || {};
     return pol[field] !== undefined ? pol[field] : "";
   };
-
   const setPolicy = (r, pid, field, value) => {
     setEdits(prev => {
       const row = prev[r.id] || {};
@@ -115,38 +128,25 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     });
   };
 
-  // A phone belongs to the household, so fill every row on screen with the same
-  // name that still has none.
-  const setPhone = (r, value) => {
-    const four = value.replace(/\D/g, "").slice(0, 4);
-    const was = (edits[r.id] || {}).phone_last4;
-    setEdits(prev => {
-      const next = { ...prev };
-      rows.forEach(x => {
-        if (x.id === r.id) {
-          next[x.id] = { ...(next[x.id] || {}), phone_last4: four };
-          return;
-        }
-        const already = (next[x.id] || {}).phone_last4;
-        if (x.customer_label === r.customer_label && !x.phone_last4 && (!already || already === was)) {
-          next[x.id] = { ...(next[x.id] || {}), phone_last4: four };
-        }
-      });
-      return next;
-    });
-  };
+  const effectiveSource = (h) => hhTyped(h, "marketing_source") || h.marketing_source || "";
 
-  const effectiveSource = (r) => typed(r, "marketing_source") || r.marketing_source || "";
-
-  const rowPayload = (r) => {
+  // ---- what gets sent ------------------------------------------------------
+  // The household boxes ride along on every record under that name that still
+  // needs them. The server spreads them too, so a household is never half done.
+  const recordPayload = (h, r) => {
     const e = edits[r.id] || {};
+    const he = hhEdits[h.household] || {};
     const out = { kind: r.kind, id: r.id };
     let any = false;
-    if ((e.phone_last4 || "").trim()) { out.phone_last4 = e.phone_last4.trim(); any = true; }
+    const phone = String(he.phone_last4 ?? "").trim();
+    if (phone && r.needs_phone) { out.phone_last4 = phone; any = true; }
+    const src = String(he.marketing_source ?? "").trim();
+    if (src && r.needs_marketing) { out.marketing_source = src; any = true; }
+    const refCust = String(he.referred_by_customer ?? "").trim();
+    if (refCust && r.needs_referral) { out.referred_by_customer = refCust; any = true; }
+    const refBy = String(he.sourced_by_team_member_id ?? "").trim();
+    if (refBy && r.needs_referral) { out.sourced_by_team_member_id = refBy; any = true; }
     if ((e.ecrm || "").trim()) { out.ecrm = e.ecrm.trim(); any = true; }
-    if ((e.marketing_source || "").trim()) { out.marketing_source = e.marketing_source.trim(); any = true; }
-    if ((e.referred_by_customer || "").trim()) { out.referred_by_customer = e.referred_by_customer.trim(); any = true; }
-    if ((e.sourced_by_team_member_id || "").trim()) { out.sourced_by_team_member_id = e.sourced_by_team_member_id.trim(); any = true; }
     const pols = e.policies || {};
     const plist = Object.keys(pols)
       .map(id => {
@@ -163,7 +163,8 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     return any ? out : null;
   };
 
-  const allPayload = () => rows.map(rowPayload).filter(Boolean);
+  const householdPayload = (h) => (h.records || []).map(r => recordPayload(h, r)).filter(Boolean);
+  const allPayload = () => households.flatMap(householdPayload);
 
   const send = async (body) => {
     if (!body.length) return;
@@ -180,8 +181,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     load(offset);
   };
 
-  const th = { textAlign: "left", fontSize: 11, fontWeight: 700, color: T.slate500, padding: "6px 8px", whiteSpace: "nowrap" };
-  const td = { padding: "6px 8px", borderTop: `1px solid ${T.slate200}`, verticalAlign: "top", fontSize: 13, color: T.slate700 };
+  // ---- styles --------------------------------------------------------------
   const input = {
     padding: "7px 9px",
     borderRadius: 7,
@@ -208,7 +208,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     background: "transparent",
     padding: 0,
     font: "inherit",
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: 700,
     color: T.slate500,
     cursor: "pointer",
@@ -224,17 +224,29 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     textAlign: "left",
     cursor: "pointer",
   };
+  const label = { fontSize: 11, fontWeight: 700, color: T.slate500, display: "block", marginBottom: 3 };
+  const card = {
+    background: T.white,
+    border: `1px solid ${T.slate200}`,
+    borderRadius: 12,
+    padding: 14,
+    display: "grid",
+    gap: 12,
+  };
 
   const pending = allPayload().length;
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "baseline", justifyContent: "space-between" }}>
-        <div style={{ fontSize: 13, color: T.slate600, maxWidth: 620 }}>
-          Older records still missing something. Only what you type gets saved. Save a row on its own, or save everything you have touched. A phone fills the other rows with the same name.
+        <div style={{ fontSize: 13, color: T.slate600, maxWidth: 640 }}>
+          Older records still missing something, one card per household. The phone and the marketing source are typed once for the household and land on every record under that name. The ECRM link and the issued premium belong to the record. Only what you type gets saved.
         </div>
         <div style={{ fontSize: 13, color: T.slate500 }}>
-          {total == null ? "" : searching ? `${total} found` : `${total} to go`}{offset ? ` · from ${offset + 1}` : ""}
+          {totalHouseholds == null ? "" : searching
+            ? `${totalHouseholds} found`
+            : `${totalHouseholds} household${totalHouseholds === 1 ? "" : "s"} to go, ${totalRows} record${totalRows === 1 ? "" : "s"}`}
+          {offset ? ` \u00b7 from ${offset + 1}` : ""}
         </div>
       </div>
 
@@ -255,6 +267,12 @@ export default function BackfillTab({ sources = [], roster = [] }) {
             Back to the list
           </button>
         ) : null}
+        <span style={{ marginLeft: "auto", display: "flex", gap: 14, alignItems: "center" }}>
+          <span style={{ fontSize: 11, color: T.slate400 }}>Sort</span>
+          <button type="button" style={sortBtn} onClick={() => sortBy("date")}>Date{sortArrow("date")}</button>
+          <button type="button" style={sortBtn} onClick={() => sortBy("customer")}>Customer{sortArrow("customer")}</button>
+          <button type="button" style={sortBtn} onClick={() => sortBy("missing")}>Missing{sortArrow("missing")}</button>
+        </span>
       </div>
 
       {err ? <div style={{ background: T.redLt, color: T.red, padding: "10px 12px", borderRadius: 8, fontSize: 13 }}>{err}</div> : null}
@@ -262,70 +280,51 @@ export default function BackfillTab({ sources = [], roster = [] }) {
 
       {loading ? (
         <div style={{ color: T.slate500, fontSize: 14 }}>Loading...</div>
-      ) : rows.length === 0 ? (
+      ) : households.length === 0 ? (
         <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 18, fontSize: 14, color: T.slate600 }}>
           {searching ? "No records under that name." : "Nothing left to fill in."}
         </div>
       ) : (
-        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12 }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1190 }}>
-            <thead>
-              <tr>
-                <th style={th}><button type="button" style={sortBtn} onClick={() => sortBy("date")}>Date{sortArrow("date")}</button></th>
-                <th style={th}><button type="button" style={sortBtn} onClick={() => sortBy("customer")}>Customer{sortArrow("customer")}</button></th>
-                <th style={{ ...th, width: 90 }}>Phone</th>
-                <th style={{ ...th, minWidth: 210 }}>ECRM link</th>
-                <th style={{ ...th, minWidth: 165 }}>Marketing source</th>
-                <th style={{ ...th, minWidth: 210 }}>Policies</th>
-                <th style={{ ...th, width: 70 }}><button type="button" style={sortBtn} onClick={() => sortBy("missing")}>Missing{sortArrow("missing")}</button></th>
-                <th style={th}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(r => {
-                const isReferral = effectiveSource(r) === "referral";
-                const rowReady = !!rowPayload(r);
-                return (
-                  <tr key={`${r.kind}-${r.id}`}>
-                    <td style={{ ...td, whiteSpace: "nowrap", color: T.slate500 }}>
-                      {r.on_date}
-                      {r.kind === "quote" ? <div style={{ fontSize: 11 }}>quote</div> : null}
-                    </td>
-                    <td style={{ ...td, fontWeight: 600, color: T.slate900, whiteSpace: "nowrap" }}><CustomerName label={r.customer_label} phone4={r.phone_last4} /></td>
-                    <td style={td}>
-                      {r.phone_last4 ? (
-                        <span style={{ color: T.slate500 }}>{r.phone_last4}</span>
-                      ) : (
+        <div style={{ display: "grid", gap: 12 }}>
+          {households.map(h => {
+            const isReferral = effectiveSource(h) === "referral";
+            const ready = householdPayload(h).length;
+            return (
+              <div key={h.household} style={card}>
+                {/* who, and what the whole household is missing */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "baseline", justifyContent: "space-between" }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>
+                    <CustomerName label={h.customer_label} phone4={h.phone_last4} />
+                    <span style={{ fontWeight: 400, color: T.slate500, fontSize: 12 }}>
+                      {" \u00b7 "}{h.record_count} record{h.record_count === 1 ? "" : "s"}{" \u00b7 "}{h.missing_count} missing
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 12, color: T.slate400 }}>{h.last_date}</span>
+                </div>
+
+                {/* the household's own boxes */}
+                {(h.needs_phone || h.needs_marketing || (isReferral && h.needs_referral)) ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-start",
+                                background: T.slate50 || "#f8fafc", borderRadius: 8, padding: 10 }}>
+                    {h.needs_phone ? (
+                      <div style={{ flex: "0 0 110px" }}>
+                        <label style={label}>Phone, last four</label>
                         <input
-                          value={typed(r, "phone_last4")}
-                          onChange={e => setPhone(r, e.target.value)}
+                          value={hhTyped(h, "phone_last4")}
+                          onChange={e => setHh(h, "phone_last4", e.target.value.replace(/\D/g, "").slice(0, 4))}
                           inputMode="numeric"
                           autoComplete="off"
                           placeholder="0000"
                           style={{ ...input, letterSpacing: 2, fontWeight: 700 }}
                         />
-                      )}
-                    </td>
-                    <td style={td}>
-                      {r.kind === "quote" ? (
-                        <span style={{ color: T.slate500, fontSize: 12 }}>not needed</span>
-                      ) : r.ecrm ? (
-                        <span style={{ color: T.slate500, fontSize: 12 }}>on file</span>
-                      ) : (
-                        <input
-                          value={typed(r, "ecrm")}
-                          onChange={e => setField(r, "ecrm", e.target.value)}
-                          placeholder="https://"
-                          autoComplete="off"
-                          style={input}
-                        />
-                      )}
-                    </td>
-                    <td style={td}>
-                      {r.needs_marketing ? (
+                      </div>
+                    ) : null}
+                    {h.needs_marketing ? (
+                      <div style={{ flex: "1 1 190px", minWidth: 0 }}>
+                        <label style={label}>Marketing source</label>
                         <select
-                          value={typed(r, "marketing_source")}
-                          onChange={e => setField(r, "marketing_source", e.target.value)}
+                          value={hhTyped(h, "marketing_source")}
+                          onChange={e => setHh(h, "marketing_source", e.target.value)}
                           style={input}
                         >
                           <option value="">Pick one</option>
@@ -333,33 +332,60 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                             <option key={s.source_key} value={s.source_key}>{s.label || s.source_key}</option>
                           ))}
                         </select>
-                      ) : (
-                        <span style={{ color: T.slate500, fontSize: 12 }}>{srcLabel[r.marketing_source] || r.marketing_source || ""}</span>
-                      )}
-                      {isReferral && !r.referred_by_customer && !r.sourced_by_team_member_id ? (
-                        <div style={{ display: "grid", gap: 5, marginTop: 6 }}>
+                      </div>
+                    ) : null}
+                    {isReferral && h.needs_referral ? (
+                      <>
+                        <div style={{ flex: "1 1 190px", minWidth: 0 }}>
+                          <label style={label}>Referred by which customer</label>
                           <input
-                            value={typed(r, "referred_by_customer")}
-                            onChange={e => setField(r, "referred_by_customer", e.target.value)}
-                            placeholder="Referred by which customer"
+                            value={hhTyped(h, "referred_by_customer")}
+                            onChange={e => setHh(h, "referred_by_customer", e.target.value)}
                             autoComplete="off"
                             style={input}
                           />
+                        </div>
+                        <div style={{ flex: "0 1 160px", minWidth: 0 }}>
+                          <label style={label}>Sourced by</label>
                           <select
-                            value={typed(r, "sourced_by_team_member_id")}
-                            onChange={e => setField(r, "sourced_by_team_member_id", e.target.value)}
+                            value={hhTyped(h, "sourced_by_team_member_id")}
+                            onChange={e => setHh(h, "sourced_by_team_member_id", e.target.value)}
                             style={input}
                           >
-                            <option value="">Sourced by</option>
+                            <option value="">Pick one</option>
                             {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
                           </select>
                         </div>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {/* one block per record under that name */}
+                <div style={{ display: "grid", gap: 10 }}>
+                  {(h.records || []).map(r => (
+                    <div key={`${r.kind}-${r.id}`} style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-start", borderTop: `1px solid ${T.slate200}`, paddingTop: 10 }}>
+                      <div style={{ flex: "0 0 150px", fontSize: 12, color: T.slate500 }}>
+                        <div style={{ fontWeight: 700, color: T.slate700 }}>{r.on_date}{r.kind === "quote" ? " \u00b7 quote" : ""}</div>
+                        <div>{r.detail}</div>
+                      </div>
+
+                      {r.kind === "sale" && r.needs_ecrm ? (
+                        <div style={{ flex: "1 1 220px", minWidth: 0 }}>
+                          <label style={label}>ECRM link</label>
+                          <input
+                            value={typed(r, "ecrm")}
+                            onChange={e => setField(r, "ecrm", e.target.value)}
+                            placeholder="https://"
+                            autoComplete="off"
+                            style={input}
+                          />
+                        </div>
                       ) : null}
-                    </td>
-                    <td style={td}>
-                      {(r.policies || []).length ? (
-                        <div style={{ display: "grid", gap: 10 }}>
-                          {r.policies.map(p => {
+
+                      {(r.policies || []).some(p => p.needs_premium || !p.issued_date) ? (
+                        <div style={{ flex: "1 1 240px", minWidth: 0, display: "grid", gap: 10 }}>
+                          {(r.policies || []).map(p => {
                             const polEdit = ((edits[r.id] || {}).policies || {})[p.id] || {};
                             // What is on file is shown, not staged. Only a typed value is sent.
                             const premBox = polEdit.issued_premium !== undefined
@@ -399,32 +425,30 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                             );
                           })}
                         </div>
-                      ) : (
-                        <span style={{ color: T.slate500, fontSize: 12 }}>—</span>
-                      )}
-                    </td>
-                    <td style={{ ...td, textAlign: "center", color: T.slate500 }}>{r.missing_count ?? ""}</td>
-                    <td style={td}>
-                      <button
-                        type="button"
-                        onClick={() => send([rowPayload(r)].filter(Boolean))}
-                        disabled={saving || !rowReady}
-                        style={{ ...btn(false), padding: "7px 12px", fontSize: 13, color: rowReady ? T.blue : T.slate500 }}
-                      >
-                        Save
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => send(householdPayload(h))}
+                    disabled={saving || !ready}
+                    style={{ ...btn(false), padding: "7px 12px", fontSize: 13, color: ready ? T.blue : T.slate500 }}
+                  >
+                    Save this household
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
         <button type="button" onClick={() => send(allPayload())} disabled={saving || !pending} style={btn(true)}>
-          {saving ? "Saving..." : pending ? `Save ${pending} touched row${pending === 1 ? "" : "s"}` : "Nothing typed yet"}
+          {saving ? "Saving..." : pending ? `Save ${pending} touched record${pending === 1 ? "" : "s"}` : "Nothing typed yet"}
         </button>
         <button type="button" onClick={() => setOffset(o => o + PAGE)} disabled={saving} style={btn(false)}>
           Skip this page
