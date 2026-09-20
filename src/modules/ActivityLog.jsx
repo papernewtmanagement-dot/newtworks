@@ -1187,11 +1187,26 @@ function PendingSaves({ refreshKey }) {
 // The server does the rest: chargeback, voided saves and the 0.50 logging
 // credit all behave exactly as they do on the normal cancelation screen.
 // ---------------------------------------------------------------------
-function CancelationConvert({ row, types, onClose, onDone }) {
+function CancelationConvert({ row, types, pool, onClose, onDone }) {
   const [onFile, setOnFile] = useState([]);
   const [picked, setPicked] = useState({});
   const [extras, setExtras] = useState([]);
   const [ecrm, setEcrm] = useState(row.ecrm_url || "");
+  const [alsoVoid, setAlsoVoid] = useState({});   // other entries on this household, ticked by default
+  const [edits, setEdits] = useState({});         // corrections to what the log says is on file
+
+  // The same cancelation often gets typed more than once for one household.
+  // Everything else on this household in the week is offered alongside.
+  const seen = new Set([row.id]);
+  const sibs = (pool || []).filter(p => {
+    if (seen.has(p.id)) return false;
+    if ((p.customer_label || "") !== (row.customer_label || "")) return false;
+    if ((p.phone_last4 || "") !== (row.phone_last4 || "")) return false;
+    seen.add(p.id); return true;
+  });
+  const onFor = (id) => alsoVoid[id] !== false;
+  const editOf = (p) => edits[p.sale_product_id] || {};
+  const setEdit = (id, patch) => setEdits(s => ({ ...s, [id]: { ...(s[id] || {}), ...patch } }));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -1220,8 +1235,9 @@ function CancelationConvert({ row, types, onClose, onDone }) {
     const policies = [
       ...onFile.filter(p => picked[p.sale_product_id]).map(p => ({
         policy_line: p.line_of_business,
-        product_type: p.product_type,
-        premium: p.premium == null ? "" : String(p.premium),
+        product_type: editOf(p).type != null ? (editOf(p).type || null) : p.product_type,
+        premium: editOf(p).premium != null ? editOf(p).premium
+          : (p.premium == null ? "" : String(p.premium)),
         vehicle_count: p.vehicle_count == null ? "" : String(p.vehicle_count),
         matched_sale_product_id: p.sale_product_id,
       })),
@@ -1240,11 +1256,13 @@ function CancelationConvert({ row, types, onClose, onDone }) {
     setBusy(true); setErr("");
     try {
       const { data, error } = await supabase.rpc("rp_convert_activity_to_cancelation",
-        { p_activity_id: row.id, p_policies: policies, p_ecrm_url: ecrm.trim() || null });
+        { p_activity_id: row.id, p_policies: policies, p_ecrm_url: ecrm.trim() || null,
+          p_also_void: sibs.filter(s => onFor(s.id)).map(s => s.id) });
       if (error) { setErr(errText(error)); return; }
       if (data && data.ok === false) { setErr(errText(data)); return; }
       const n = Number(data?.count || policies.length);
-      onDone(`${row.customer_label}: ${n} cancelation${n === 1 ? "" : "s"} logged, and the ${row.label || row.activity_key} removed.`);
+      const also = Number(data?.also_removed || 0);
+      onDone(`${row.customer_label}: ${n} cancelation${n === 1 ? "" : "s"} logged, and ${1 + also} entr${(1 + also) === 1 ? "y" : "ies"} removed.`);
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
   };
 
@@ -1266,16 +1284,50 @@ function CancelationConvert({ row, types, onClose, onDone }) {
           {onFile.length === 0 ? (
             <div style={{ fontSize: 13, color: T.slate600 }}>Nothing in force on file for this household. Add what canceled below.</div>
           ) : onFile.map(p => (
-            <label key={p.sale_product_id} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, padding: "4px 0" }}>
-              <input type="checkbox" checked={!!picked[p.sale_product_id]}
+            <div key={p.sale_product_id} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end", padding: "4px 0" }}>
+              <input type="checkbox" style={{ marginBottom: 10 }} checked={!!picked[p.sale_product_id]}
                      onChange={e => setPicked(s => ({ ...s, [p.sale_product_id]: e.target.checked }))} />
-              <span>
-                {typeLabel(types, p.line_of_business, p.product_type) || PRODUCT_SHORT[p.line_of_business] || p.line_of_business}
-                {" · $"}{fmtPts(p.premium)}{" · sold "}{fmtDate(p.submitted_date)}
-              </span>
-            </label>
+              <div style={{ ...field(120), fontSize: 13, color: T.slate800, paddingBottom: 10 }}>
+                {PRODUCT_SHORT[p.line_of_business] || p.line_of_business}
+                <div style={{ fontSize: 11, color: T.slate400 }}>sold {fmtDate(p.submitted_date)}</div>
+              </div>
+              {(types[p.line_of_business] || []).length > 0 && (
+                <div style={field(140)}>
+                  <label style={labelStyle}>Type</label>
+                  <select style={inputBase}
+                          value={editOf(p).type != null ? editOf(p).type : (p.product_type || "")}
+                          onChange={e => setEdit(p.sale_product_id, { type: e.target.value })}>
+                    <option value="">Pick one</option>
+                    {(types[p.line_of_business] || []).map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
+                  </select>
+                </div>
+              )}
+              <div style={field(120)}>
+                <label style={labelStyle}>Premium</label>
+                <input type="number" inputMode="decimal" min="0" step="0.01" style={moneyInput}
+                       value={editOf(p).premium != null ? editOf(p).premium : (p.premium == null ? "" : String(p.premium))}
+                       onChange={e => setEdit(p.sale_product_id, { premium: e.target.value })} />
+              </div>
+            </div>
           ))}
         </div>
+
+        {sibs.length > 0 && (
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>Other entries on this household</div>
+            <div style={{ fontSize: 12, color: T.slate500, marginBottom: 6 }}>Ticked ones are removed with this one. Untick anything that really was separate.</div>
+            {sibs.map(s => (
+              <label key={s.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, padding: "3px 0" }}>
+                <input type="checkbox" checked={onFor(s.id)}
+                       onChange={e => setAlsoVoid(v => ({ ...v, [s.id]: e.target.checked }))} />
+                <span>
+                  {s.label || s.activity_key}{" · "}{fmtDate(s.occurred_on)}{" · "}{s.first_name}
+                  {s.note ? <div style={{ fontSize: 11, color: T.slate500 }}>{s.note}</div> : null}
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
 
         <div>
           <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>Not on file</div>
@@ -1509,7 +1561,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
       )}
       {msg && <Notice kind="ok">{msg}</Notice>}
       {converting && (
-        <CancelationConvert row={converting} types={types} onClose={() => setConverting(null)}
+        <CancelationConvert row={converting} types={types} pool={[...rows, ...flags]} onClose={() => setConverting(null)}
           onDone={(mm) => { setConverting(null); setMsg(mm); setTick(t => t + 1); }} />
       )}
       <Notice kind="error">{err}</Notice>
