@@ -301,6 +301,9 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [dupQuotes, setDupQuotes] = useState([]);   // this week's quotes already on file for this household
   const [onFileAnswer, setOnFileAnswer] = useState({}); // policy id -> "replaces" | "added" | "different" when the household already has that line
   const [initial, setInitial] = useState(appointment?.customer_last_initial || "");
+  // Peter 2026-09-20: a customer is a person or an organization. A person is
+  // first name plus last initial; an organization is one name, no initial.
+  const [custKind, setCustKind] = useState(appointment?.customer_kind || "person");
   const [phone, setPhone] = useState(appointment?.phone_last4 || "");   // customer phone, last four digits: part of the household key
   const [date, setDate] = useState(today);
   const [dateOpen, setDateOpen] = useState(false);
@@ -347,6 +350,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       if (r.error) { setErr(errText(r.error)); return; }
       const d = r.data || {};
       setEditRec(d);
+      setCustKind(d.customer_kind || "person");
       setFirst(d.customer_first || ""); setInitial(d.customer_last_initial || "");
       setPhone(d.phone_last4 || ""); setDate(d.date || today); setDateOpen(true);
       setRelationship(d.relationship || ""); setSource(d.marketing_source || "");
@@ -411,35 +415,39 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     document.addEventListener("touchstart", away);
     return () => { document.removeEventListener("mousedown", away); document.removeEventListener("touchstart", away); };
   }, [suggestOpen]);
-  const pickCustomer = (c) => { setFirst(c.customer_first_name || ""); setInitial(c.customer_last_initial || ""); if (c.phone_last4) setPhone(c.phone_last4); setSuggest([]); setSuggestOpen(false); };
+  const pickCustomer = (c) => { setCustKind(c.customer_kind || "person"); setFirst(c.customer_first_name || ""); setInitial(c.customer_last_initial || ""); if (c.phone_last4) setPhone(c.phone_last4); setSuggest([]); setSuggestOpen(false); };
   const phoneOk = /^\d{4}$/.test(phone);
+  // One place decides whether the name is complete and what the household is
+  // called. The household key is still that name plus the phone last four.
+  const isOrg = custKind === "org";
+  const nameOk = !!first.trim() && (isOrg || /^[A-Za-z]$/.test(initial.trim()));
+  const householdLabel = isOrg ? first.trim() : `${first.trim()} ${initial.trim().toUpperCase()}.`;
 
   // same household quoted already this week? Logs anyway; the same household counts once for HH quotes.
   useEffect(() => {
-    const f = first.trim(), i = initial.trim().toUpperCase();
-    if (!f || !/^[A-Z]$/.test(i)) { setDupQuotes([]); return undefined; }
+    if (!nameOk) { setDupQuotes([]); return undefined; }
     let alive = true;
     const t = setTimeout(async () => {
       let qq = supabase.from("quote_log").select("id, team_member_id, quote_date")
-        .eq("agency_id", AGENCY_ID).eq("status", "active").eq("customer_label", `${f} ${i}.`).eq("week_end_date", weekEndOf(date));
+        .eq("agency_id", AGENCY_ID).eq("status", "active").eq("customer_label", householdLabel).eq("week_end_date", weekEndOf(date));
       if (phoneOk) qq = qq.or(`phone_last4.is.null,phone_last4.eq.${phone}`);
       const { data } = await qq;
       if (alive) setDupQuotes(Array.isArray(data) ? data : []);
     }, 300);
     return () => { alive = false; clearTimeout(t); };
-  }, [first, initial, date, phone]);
+  }, [first, initial, custKind, date, phone]);
 
   // what this customer has on file, once the name is complete
   useEffect(() => {
     const f = first.trim(), i = initial.trim();
-    if (!f || !/^[A-Za-z]$/.test(i)) { setOnFile([]); return undefined; }
+    if (!nameOk) { setOnFile([]); return undefined; }
     let alive = true;
     const t = setTimeout(async () => {
-      const { data } = await supabase.rpc("rp_sold_on_file2", { p_customer_first: f, p_customer_last_initial: i, p_phone_last4: phoneOk ? phone : null });
+      const { data } = await supabase.rpc("rp_sold_on_file2", { p_customer_first: f, p_customer_last_initial: i, p_phone_last4: phoneOk ? phone : null, p_customer_kind: custKind });
       if (alive) setOnFile(Array.isArray(data) ? data : []);
     }, 300);
     return () => { alive = false; clearTimeout(t); };
-  }, [first, initial, phone]);
+  }, [first, initial, custKind, phone]);
   // the sold policy on file that a canceled row would be matched to (same line, same type first, most recent, not already canceled)
   const soldMatch = (p) => onFile
     .filter(r => r.line_of_business === p.line && !r.already_canceled && (!date || r.submitted_date <= date) && (!date || r.window_end > date))
@@ -528,7 +536,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   };
   const needsCard = hasQuote || hasSale || cardChosen > 0;
   const hasAnything = hasActivity || hasQuote || hasSale || hasCxl || hasCard;
-  const customerOk = !!first.trim() && /^[A-Za-z]$/.test(initial.trim());
+  const customerOk = nameOk;
   const isReferral = source === "referral";
   const householdFresh = relationship === "new" || relationship === "winback";
   const needsType = (line) => (types[line] || []).length > 0;
@@ -542,7 +550,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
 
   // ---- what still needs fixing, in plain words (mirrors the server rules) ----
   const problems = [];
-  if (!customerOk) problems.push("Customer first name and last initial.");
+  if (!customerOk) problems.push(isOrg ? "The organization name." : "Customer first name and last initial.");
   if (!phoneOk) problems.push("Customer phone, last four digits.");
   if (!hasAnything) problems.push("Add an activity or a policy, or score the conversation.");
   if (policies.some(p => !p.status)) problems.push("Each policy needs Quoted, Sold, or Canceled.");
@@ -569,7 +577,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   if (ecrm.trim() && !/^https?:\/\//i.test(ecrm.trim())) problems.push("The ECRM link must start with http.");
 
   const reset = (keep) => {
-    if (!keep) { setFirst(""); setInitial(""); setPhone(""); setDate(today); setDateOpen(false); }
+    if (!keep) { setCustKind("person"); setFirst(""); setInitial(""); setPhone(""); setDate(today); setDateOpen(false); }
     setSuggest([]);
     setRelationship(""); setSource(""); setSourcedBy("");
     setActivities([]);
@@ -585,11 +593,11 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     const k = editRec.kind;
     // A historical sale usually has no phone on file. Only insist on one when the
     // record already carried one, or when something has been typed into the box.
-    const who = { customer_first: first.trim(), customer_last_initial: initial.trim() };
+    const who = { customer_first: first.trim(), customer_last_initial: initial.trim(), customer_kind: custKind };
     if (phoneOk) who.phone_last4 = phone;
     const gate = [];
-    if (!first.trim()) gate.push("First name.");
-    if (k !== "scorecard" && !/^[A-Za-z]$/.test(initial.trim())) gate.push("Last initial.");
+    if (!first.trim()) gate.push(isOrg ? "The organization name." : "First name.");
+    if (k !== "scorecard" && !isOrg && !/^[A-Za-z]$/.test(initial.trim())) gate.push("Last initial.");
     if (phone && !phoneOk) gate.push("Customer phone: four digits, or leave it blank.");
     if (!phone && editRec.phone_last4) gate.push("Customer phone, last four digits.");
     if (k === "sale" && sold.length === 0) gate.push("A sale needs at least one sold policy.");
@@ -664,7 +672,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       const money = (p) => ({ premium: Number(p.premium), vehicle_count: hasCars(p.line, p.type) ? Number(p.vehicles) : null });
       const matched = (p) => ({ matched_sale_product_id: p.matchedId || null });
       const payload = {
-        customer_first: first.trim(), customer_last_initial: initial.trim(), phone_last4: phone, occurred_on: date,
+        customer_first: first.trim(), customer_last_initial: initial.trim(), customer_kind: custKind, phone_last4: phone, occurred_on: date,
         ecrm_url: ecrm.trim() || null, note: note.trim() || null, team_member_id: logFor,
         relationship_type: relationship || null,
         marketing_source: source || null,
@@ -702,14 +710,14 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         const items = replaces.map(p => { const o = oldOnFile(p); return { line_of_business: o.line_of_business, product_type: o.product_type || null, premium: Number(o.premium ?? 0),
           vehicle_count: hasCars(o.line_of_business, o.product_type) ? Number(o.vehicle_count || 1) : null, matched_sale_product_id: o.sale_product_id, replacement: true }; });
         const c = await supabase.rpc("rp_log_entry", { p_payload: {
-          customer_first: first.trim(), customer_last_initial: initial.trim(), phone_last4: phone, occurred_on: date, team_member_id: logFor, relationship_type: "existing",
+          customer_first: first.trim(), customer_last_initial: initial.trim(), customer_kind: custKind, phone_last4: phone, occurred_on: date, team_member_id: logFor, relationship_type: "existing",
           cancelation: { items, reason: "Replaced by the new policy logged with the sale" },
         } });
         if (c.error || !c.data?.ok) summary += ` The old ${replaces.map(p => PRODUCT_SHORT[p.line]).join(", ")} could not be canceled: ${errText(c.error || c.data)}. Cancel it on the Canceled tab.`;
         else { cxlResult = c.data; summary += ` Old policy ${summarizeEntry(c.data).replace(/^Logged for [^:]*: /, "")}`; }
       }
       setOk(summary);
-      setLast({ result: data, cxlResult, first: first.trim(), initial: initial.trim(), phone, date });
+      setLast({ result: data, cxlResult, first: first.trim(), initial: initial.trim(), kind: custKind, label: householdLabel, phone, date });
       reset();
       onLogged?.();
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
@@ -735,11 +743,11 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   };
   const logAnother = () => {
     if (!last) return;
-    setFirst(last.first); setInitial(last.initial); setPhone(last.phone || ""); setDate(last.date);
+    setCustKind(last.kind || "person"); setFirst(last.first); setInitial(last.initial); setPhone(last.phone || ""); setDate(last.date);
     setOk(""); setLast(null);
   };
 
-  const preview = first.trim() && /^[A-Za-z]$/.test(initial.trim()) ? `${first.trim()} ${initial.trim().toUpperCase()}.${phoneOk ? ` ·${phone}` : ""}` : "";
+  const preview = nameOk ? `${householdLabel}${phoneOk ? ` ·${phone}` : ""}` : "";
   useEffect(() => { /* keep matches fresh if the name changes after a row was marked canceled */
     setPolicies(list => list.map(p => p.status === "canceled" ? { ...p, matchedId: (soldMatch(p) || {}).sale_product_id || null } : p));
   }, [onFile]);
@@ -779,9 +787,21 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </select>
             </div>
           )}
-          <div ref={nameBoxRef} style={{ ...field(150), position: "relative" }}>
-            <label style={labelStyle}>First name</label>
-            <input {...noPwManager("a1")} style={inputBase} value={first} placeholder="Anna"
+          <div style={{ flex: "0 0 auto" }}>
+            <label style={labelStyle}>Customer</label>
+            <div style={{ display: "flex", border: `1px solid ${T.slate200}`, borderRadius: 8, overflow: "hidden" }}>
+              {[["person", "Person"], ["org", "Organization"]].map(([k, lbl]) => (
+                <button key={k} type="button" onClick={() => { setCustKind(k); if (k === "org") setInitial(""); }}
+                  style={{ padding: "9px 12px", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13,
+                           background: custKind === k ? T.blue : T.white,
+                           color: custKind === k ? T.white : T.slate600,
+                           fontWeight: custKind === k ? 700 : 400 }}>{lbl}</button>
+              ))}
+            </div>
+          </div>
+          <div ref={nameBoxRef} style={{ ...field(isOrg ? 228 : 150), position: "relative" }}>
+            <label style={labelStyle}>{isOrg ? "Organization" : "First name"}</label>
+            <input {...noPwManager("a1")} style={inputBase} value={first} placeholder={isOrg ? "Premier Online Marketing LLC" : "Anna"}
               onChange={e => { setFirst(e.target.value); setSuggestOpen(true); }}
               onFocus={() => setSuggestOpen(true)}
               onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setSuggestOpen(false); } }} />
@@ -796,10 +816,12 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </div>
             )}
           </div>
-          <div style={{ flex: "0 0 78px" }}>
-            <label style={labelStyle}>Initial</label>
-            <input style={{ ...inputBase, textAlign: "center" }} value={initial} maxLength={1} onChange={e => setInitial(e.target.value)} placeholder="S" {...noPwManager("a2")} />
-          </div>
+          {!isOrg && (
+            <div style={{ flex: "0 0 78px" }}>
+              <label style={labelStyle}>Initial</label>
+              <input style={{ ...inputBase, textAlign: "center" }} value={initial} maxLength={1} onChange={e => setInitial(e.target.value)} placeholder="S" {...noPwManager("a2")} />
+            </div>
+          )}
           <div style={{ flex: "0 0 126px" }}>
             <label style={labelStyle}>Phone last 4</label>
             <input {...noPwManager("a3")} inputMode="numeric" style={{ ...inputBase, textAlign: "center" }} value={phone} maxLength={4} onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="4417" />
@@ -1128,7 +1150,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         {ok && last && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginTop: 8, fontSize: 13 }}>
             <button type="button" style={linkBtn} onClick={undo} disabled={busy}>Undo</button>
-            <button type="button" style={linkBtn} onClick={logAnother}>Log another for {last.first} {last.initial.toUpperCase()}.</button>
+            <button type="button" style={linkBtn} onClick={logAnother}>Log another for {last.label}</button>
           </div>
         )}
       </div>
@@ -1664,9 +1686,9 @@ const RECORD_KINDS = [
   { key: "activities",   label: "Activities" },
   { key: "sales",        label: "Sales" },
 ];
-const SALE_SELECT = "id, team_member_id, submitted_date, week_end_date, customer_label, customer_first_name, customer_last_initial, phone_last4, household_status, marketing_source, vehicle_count, total_premium, note, ecrm_opportunity_url, on_file_answer, entry_source, sales_log_products(id, line_of_business, product_type, premium, policy_count, vehicle_count, is_new_line, is_added_to_existing, issued_date, issued_premium, autopay_enrolled)";
-const APPT_SELECT = "id, team_member_id, escalated_to_team_member_id, set_on, week_end_date, kept_on, no_show_on, sold_on, customer_label, customer_first_name, customer_last_initial, phone_last4, line_of_business, product_type, starts_at, duration_minutes, is_video, meet_url, calendar_error, note, ecrm_url";
-const ACT_SELECT = "id, team_member_id, activity_key, occurred_on, customer_label, customer_first_name, customer_last_initial, phone_last4, note, points, source, policy_line, product_type, premium, credit_available_on, ecrm_url";
+const SALE_SELECT = "id, team_member_id, submitted_date, week_end_date, customer_label, customer_first_name, customer_last_initial, customer_kind, phone_last4, household_status, marketing_source, vehicle_count, total_premium, note, ecrm_opportunity_url, on_file_answer, entry_source, sales_log_products(id, line_of_business, product_type, premium, policy_count, vehicle_count, is_new_line, is_added_to_existing, issued_date, issued_premium, autopay_enrolled)";
+const APPT_SELECT = "id, team_member_id, escalated_to_team_member_id, set_on, week_end_date, kept_on, no_show_on, sold_on, customer_label, customer_first_name, customer_last_initial, customer_kind, phone_last4, line_of_business, product_type, starts_at, duration_minutes, is_video, meet_url, calendar_error, note, ecrm_url";
+const ACT_SELECT = "id, team_member_id, activity_key, occurred_on, customer_label, customer_first_name, customer_last_initial, customer_kind, phone_last4, note, points, source, policy_line, product_type, premium, credit_available_on, ecrm_url";
 const relLabel = (k) => k === "new" ? "New" : k === "winback" ? "Winback" : "Existing";
 const onFileLabel = (k) => k === "replaces" ? "replaced old policy" : k === "added" ? "added to on-file" : "different household";
 const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000);
@@ -2077,7 +2099,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
 // appointment you keep for yourself pays nothing here (Peter 2026-09-11).
 // ---------------------------------------------------------------------
 function AddAppointment({ roster, myTeamId, types, onClose, onSaved }) {
-  const [f, setF] = useState({ customer_first: "", customer_last_initial: "", phone_last4: "", set_on: todayCentral(),
+  const [f, setF] = useState({ customer_first: "", customer_last_initial: "", customer_kind: "person", phone_last4: "", set_on: todayCentral(),
     when_date: todayCentral(), when_time: "10:00", duration_minutes: "30", is_video: false,
     escalated_to: "", line_of_business: "", product_type: "", note: "" });
   const [saving, setSaving] = useState(false);
@@ -2090,7 +2112,7 @@ function AddAppointment({ roster, myTeamId, types, onClose, onSaved }) {
     setSaving(true); setErr("");
     const { data, error } = await supabase.rpc("rp_log_appointment", {
       p_payload: {
-        customer_first: f.customer_first, customer_last_initial: f.customer_last_initial,
+        customer_first: f.customer_first, customer_last_initial: f.customer_last_initial, customer_kind: f.customer_kind,
         phone_last4: f.phone_last4, set_on: f.set_on,
         line_of_business: f.line_of_business, product_type: f.product_type || null,
         starts_at: startsAt, duration_minutes: f.duration_minutes, is_video: !!f.is_video,
@@ -2111,10 +2133,12 @@ function AddAppointment({ roster, myTeamId, types, onClose, onSaved }) {
             <label style={labelStyle}>First name</label>
             <input value={f.customer_first} onChange={e => set("customer_first", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("afn")} />
           </div>
-          <div>
-            <label style={labelStyle}>Last initial</label>
-            <input value={f.customer_last_initial} maxLength={1} onChange={e => set("customer_last_initial", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("ali")} />
-          </div>
+          {f.customer_kind !== "org" && (
+            <div>
+              <label style={labelStyle}>Last initial</label>
+              <input value={f.customer_last_initial} maxLength={1} onChange={e => set("customer_last_initial", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("ali")} />
+            </div>
+          )}
           <div>
             <label style={labelStyle}>Phone, last four</label>
             <input value={f.phone_last4} maxLength={4} inputMode="numeric" onChange={e => set("phone_last4", e.target.value.replace(/\D/g, ""))} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("ap4")} />
@@ -2193,6 +2217,7 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
   const [f, setF] = useState(() => ({
     customer_first: row.customer_first_name || "",
     customer_last_initial: row.customer_last_initial || "",
+    customer_kind: row.customer_kind || "person",
     phone_last4: row.phone_last4 || "",
     on_date: row.submitted_date || row.set_on || row.occurred_on || todayCentral(),
     relationship: row.household_status || "existing",
@@ -2234,7 +2259,7 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
     if (kind === "sale") {
       fn = "rp_edit_sale";
       changes = {
-        customer_first: f.customer_first, customer_last_initial: f.customer_last_initial, phone_last4: f.phone_last4,
+        customer_first: f.customer_first, customer_last_initial: f.customer_last_initial, customer_kind: f.customer_kind, phone_last4: f.phone_last4,
         submitted_date: f.on_date, household_status: f.relationship, marketing_source: f.marketing_source,
         note: f.note,
         products: f.products.map(p => ({
@@ -2251,7 +2276,7 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
     } else if (kind === "appointment") {
       fn = "rp_edit_appointment";
       changes = {
-        customer_first: f.customer_first, customer_last_initial: f.customer_last_initial, phone_last4: f.phone_last4,
+        customer_first: f.customer_first, customer_last_initial: f.customer_last_initial, customer_kind: f.customer_kind, phone_last4: f.phone_last4,
         set_on: f.on_date, escalated_to_team_member_id: f.escalated_to || null, note: f.note,
         line_of_business: f.appt_line, product_type: f.appt_type || null,
         starts_at: centralIso(f.appt_when_date, f.appt_when_time),
@@ -2260,7 +2285,7 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
     } else {
       fn = "rp_edit_activity";
       changes = {
-        customer_first: f.customer_first, customer_last_initial: f.customer_last_initial, phone_last4: f.phone_last4,
+        customer_first: f.customer_first, customer_last_initial: f.customer_last_initial, customer_kind: f.customer_kind, phone_last4: f.phone_last4,
         occurred_on: f.on_date, note: f.note,
       };
     }
@@ -2288,13 +2313,28 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
         )}
         <div style={gridForm}>
           <div>
-            <label style={labelStyle}>First name</label>
-            <input value={f.customer_first} onChange={e => set("customer_first", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("efn")} />
+            <label style={labelStyle}>Customer</label>
+            <div style={{ display: "flex", border: `1px solid ${T.slate200}`, borderRadius: 8, overflow: "hidden" }}>
+              {[["person", "Person"], ["org", "Organization"]].map(([k, lbl]) => (
+                <button key={k} type="button"
+                  onClick={() => setF(d => ({ ...d, customer_kind: k, customer_last_initial: k === "org" ? "" : d.customer_last_initial }))}
+                  style={{ padding: "9px 12px", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13,
+                           background: f.customer_kind === k ? T.blue : T.white,
+                           color: f.customer_kind === k ? T.white : T.slate600,
+                           fontWeight: f.customer_kind === k ? 700 : 400 }}>{lbl}</button>
+              ))}
+            </div>
           </div>
           <div>
-            <label style={labelStyle}>Last initial</label>
-            <input value={f.customer_last_initial} maxLength={1} onChange={e => set("customer_last_initial", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("eli")} />
+            <label style={labelStyle}>{f.customer_kind === "org" ? "Organization" : "First name"}</label>
+            <input value={f.customer_first} onChange={e => set("customer_first", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("efn")} />
           </div>
+          {f.customer_kind !== "org" && (
+            <div>
+              <label style={labelStyle}>Last initial</label>
+              <input value={f.customer_last_initial} maxLength={1} onChange={e => set("customer_last_initial", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("eli")} />
+            </div>
+          )}
           <div>
             <label style={labelStyle}>Phone, last four</label>
             <input value={f.phone_last4} maxLength={4} inputMode="numeric" onChange={e => set("phone_last4", e.target.value.replace(/\D/g, ""))} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("ep4")} />
