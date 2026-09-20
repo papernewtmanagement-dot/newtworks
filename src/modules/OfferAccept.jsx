@@ -38,6 +38,9 @@ async function callAccept(mode, extra = {}) {
 // message invented at each call site.
 const PROBLEMS = {
   missing_signature: "Please type your full name to sign.",
+  missing_name: "Please fill in your first and last name.",
+  bad_email: "That email address does not look right. Please check it.",
+  bad_phone: "Please enter a mobile number with all ten digits.",
   missing_date_of_birth: "Please enter your date of birth.",
   missing_address: "Please fill in your street, city, state and ZIP.",
   bad_ssn: "A Social Security number is nine digits. Please check what you entered.",
@@ -74,6 +77,11 @@ export default function OfferAccept({ token }) {
 
   const [form, setForm] = useState({
     signed_name: "",
+    first_name: "",
+    last_name: "",
+    nickname: "",
+    email_personal: "",
+    phone_personal: "",
     date_of_birth: "",
     address_line1: "",
     address_line2: "",
@@ -94,6 +102,14 @@ export default function OfferAccept({ token }) {
     if (data.accepted) { setOffer(data); setState("accepted"); return; }
     if (data.expired) { setOffer(data); setState("expired"); return; }
     setOffer(data);
+    setForm((f) => ({
+      ...f,
+      first_name: data.prefill_first_name || "",
+      last_name: data.prefill_last_name || "",
+      nickname: data.prefill_nickname || "",
+      email_personal: data.prefill_email || "",
+      phone_personal: data.prefill_phone || "",
+    }));
     const wanted = Math.max(1, data.references_wanted || 3);
     setRefs(Array.from({ length: wanted }, () => ({ ...EMPTY_REF })));
     setState("form");
@@ -220,7 +236,28 @@ export default function OfferAccept({ token }) {
       )}
 
       <div style={h2}>About you</div>
+      <div style={{ fontSize: 13, color: T?.slate600 || "#475569", lineHeight: 1.6, marginBottom: 14 }}>
+        Check what we have and fix anything that is wrong. This is what we will set your
+        record up with.
+      </div>
+      <div style={row}>
+        <div style={{ flex: 1 }}>
+          <label style={label}>First name</label>
+          <input style={input} value={form.first_name}
+                 onChange={(e) => setField("first_name", e.target.value)} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={label}>Last name</label>
+          <input style={input} value={form.last_name}
+                 onChange={(e) => setField("last_name", e.target.value)} />
+        </div>
+      </div>
+      {field("nickname", "What should we call you? (optional)", { placeholder: "Leave blank to use your first name" })}
+      {field("email_personal", "Personal email", { inputMode: "email", type: "email" })}
+      {field("phone_personal", "Mobile number", { inputMode: "tel", type: "tel" })}
       {field("date_of_birth", "Date of birth", { type: "date" })}
+
+      <div style={h2}>Where you live</div>
       {field("address_line1", "Street address")}
       {field("address_line2", "Apartment or unit (optional)")}
       <div style={row}>
@@ -239,6 +276,7 @@ export default function OfferAccept({ token }) {
                  onChange={(e) => setField("zip_code", e.target.value)} />
         </div>
       </div>
+      <div style={h2}>For payroll</div>
       <div style={{ marginBottom: 12 }}>
         <label style={label}>Social Security number</label>
         <input
