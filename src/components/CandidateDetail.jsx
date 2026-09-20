@@ -6,6 +6,7 @@ import { STAGES, PIPELINE_STAGES, stageLabel } from "../lib/hiringStages.js";
 import OfferLetterModal from "./OfferLetterModal.jsx";
 import MeetGreetModal from "./MeetGreetModal.jsx";
 import CtsResultPanel from "./CtsResultPanel.jsx";
+import CopyButton from "./CopyButton.jsx";
 
 // ─── Constants ─────────────────────────────────────────────────────
 
@@ -1967,7 +1968,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   // { answer, saved_at }). See op-rule "Interview probe analysis protocol".
   const [savingAnswers, setSavingAnswers] = useState(false);
   // v1 assessment copy-link button state. "idle"|"copying"|"copied"|"error".
-  const [copyLinkStatus, setCopyLinkStatus] = useState("idle");
 
   // Fetch full row on mount. `detail` starts as the (partial) card data passed
   // in from the pipeline list, so a silent failure here used to just leave the
@@ -2284,21 +2284,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   // returns the path; we prepend window.location.origin. HMAC token is baked in
   // and the edge fn verifies it server-side, so the link is safe to hand out
   // even though it bypasses auth on the frontend.
-  const copyAssessmentLink = async () => {
-    if (!detail?.id || !supabase) return;
-    setCopyLinkStatus("copying");
-    try {
-      const { data, error } = await supabase.rpc("mint_v1_assessment_link", { p_candidate_id: detail.id });
-      if (error || !data) throw error || new Error("no link returned");
-      const url = window.location.origin + data;
-      await navigator.clipboard.writeText(url);
-      setCopyLinkStatus("copied");
-      setTimeout(() => setCopyLinkStatus("idle"), 2000);
-    } catch (e) {
-      console.error("[CandidateDetail] copy link failed:", e);
-      setCopyLinkStatus("error");
-      setTimeout(() => setCopyLinkStatus("idle"), 2500);
-    }
+  // Hands back the public /assess/<id>/<token> URL. mint_v1_assessment_link
+  // returns the path; we prepend window.location.origin. The signed token is
+  // baked in and the edge function checks it server-side, so the link is safe
+  // to hand out even though it skips the sign-in screen. CopyButton does the
+  // clipboard work, the tick and the failure state.
+  const mintAssessmentLink = async () => {
+    if (!detail?.id || !supabase) return "";
+    const { data, error } = await supabase.rpc("mint_v1_assessment_link", { p_candidate_id: detail.id });
+    if (error || !data) throw error || new Error("no link returned");
+    return window.location.origin + data;
   };
 
   // Move the candidate to another pipeline stage. Writes status +
@@ -2506,23 +2501,13 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-            <button
-              onClick={copyAssessmentLink}
-              disabled={copyLinkStatus === "copying" || !detail?.id}
-              title="Generate and copy the public /assess/<id>/<token> link — hand to candidate"
-              style={{
-                padding: "7px 14px",
-                fontSize: 12,
-                fontWeight: 600,
-                color: copyLinkStatus === "copied" || copyLinkStatus === "error" ? T.white : T.slate700,
-                background: copyLinkStatus === "copied" ? T.green : copyLinkStatus === "error" ? T.red : T.slate100,
-                border: "none",
-                borderRadius: 7,
-                cursor: copyLinkStatus === "copying" ? "wait" : "pointer",
-              }}
-            >
-              {copyLinkStatus === "copying" ? "Copying…" : copyLinkStatus === "copied" ? "✓ Copied!" : copyLinkStatus === "error" ? "Copy failed" : "Copy assessment link"}
-            </button>
+            <CopyButton
+              variant="soft"
+              label="Copy assessment link"
+              title="Build and copy the candidate's assessment link — hand this to them"
+              value={mintAssessmentLink}
+              disabled={!detail?.id}
+            />
             <button onClick={onBack} style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, color: T.slate700, background: T.slate100, border: "none", borderRadius: 7, cursor: "pointer" }}>← Back to Pipeline</button>
           </div>
         </div>

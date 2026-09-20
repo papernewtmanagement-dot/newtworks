@@ -30,6 +30,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 
 import { useTabParam, TabLink } from "../lib/routing.jsx";
+import CopyButton from "../components/CopyButton.jsx";
 // ─── Platform Config ──────────────────────────────────────────
 const PLATFORMS = {
   facebook:  { label:"Facebook",  color:"#1877F2", bg:"#E7F0FD", icon:"f",  scheduling:"Auto-scheduled",  frequency:"4-5 posts/week", best_time:"Tue-Thu 9-11AM" },
@@ -572,7 +573,6 @@ const CreateContent = () => {
   const [platform,   setPlatform]   = useState("facebook");
   const [pillar,     setPillar]     = useState("educate");
   const [topic,      setTopic]      = useState("");
-  const [copyDone,   setCopyDone]   = useState(false);
 
   const platformRules = {
     facebook:  "Facebook (4-5 posts/week, auto-scheduled, medium-long captions 100-300 words, 3-5 hashtags, warm neighborly tone, moderate emoji)",
@@ -619,14 +619,6 @@ Please draft a complete, compliant post ready to publish. Include:
 3. Recommended posting time
 4. Any platform-specific notes
 5. Confirm it passes the compliance pre-post checklist`;
-  };
-
-  const handleCopy = () => {
-    const prompt = buildPrompt();
-    if (!prompt) return;
-    navigator.clipboard?.writeText(prompt);
-    setCopyDone(true);
-    setTimeout(() => setCopyDone(false), 2000);
   };
 
   return (
@@ -692,13 +684,14 @@ Please draft a complete, compliant post ready to publish. Include:
         </div>
 
         {/* Send Button */}
-        <button
-          onClick={handleCopy}
+        <CopyButton
+          variant="primary"
+          full
+          label="Build & copy prompt"
+          doneText="Prompt copied"
+          value={buildPrompt}
           disabled={!topic.trim()}
-          style={{ width:"100%", padding:"12px", fontSize:13, fontWeight:700, color:T.white, background:topic.trim()?T.blue:"#94A3B8", border:"none", borderRadius:10, cursor:topic.trim()?"pointer":"not-allowed", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}
-        >
-          {copyDone ? "✓ Prompt copied to clipboard" : "⚡ Build & copy prompt"}
-        </button>
+        />
       </Card>
     </div>
   );

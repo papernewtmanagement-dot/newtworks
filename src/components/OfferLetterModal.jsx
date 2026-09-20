@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
+import CopyButton from "./CopyButton.jsx";
 
 // Offer letter form. Opens when a candidate is moved to the Offer stage.
 //
@@ -85,7 +86,6 @@ export default function OfferLetterModal({ candidate, onClose, onSaved }) {
   const [loading, setLoading]     = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [saving, setSaving]       = useState(false);
-  const [copied, setCopied]       = useState(false);
   const [showLetter, setShowLetter] = useState(false);
 
   const [jobTitle, setJobTitle]       = useState(candidate?.offer_job_title || candidate?.position || "");
@@ -263,14 +263,6 @@ export default function OfferLetterModal({ candidate, onClose, onSaved }) {
     setSaving(false);
     if (error) { alert("Saving the offer failed: " + error.message); return; }
     if (typeof onSaved === "function") onSaved();
-  };
-
-  const copyLetter = async () => {
-    try {
-      await navigator.clipboard.writeText(letter);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch { /* clipboard blocked — the text is on screen to select by hand */ }
   };
 
   const label = { fontSize: 11, fontWeight: 700, color: T.slate600, marginBottom: 4, display: "block" };
@@ -510,13 +502,7 @@ export default function OfferLetterModal({ candidate, onClose, onSaved }) {
                                border: `1px solid ${T.slate200}`, background: T.white, color: T.slate600 }}>
                 Cancel
               </button>
-              <button onClick={copyLetter} disabled={!letter}
-                      style={{ padding: "9px 14px", fontSize: 13, borderRadius: 8,
-                               cursor: letter ? "pointer" : "not-allowed",
-                               border: `1px solid ${T.slate200}`, background: T.white,
-                               color: letter ? T.slate700 : T.slate400 }}>
-                {copied ? "Copied" : "Copy letter"}
-              </button>
+              <CopyButton variant="soft" label="Copy letter" value={letter} disabled={!letter} />
               <button onClick={save} disabled={!canSave}
                       style={{ padding: "9px 16px", fontSize: 13, fontWeight: 700, borderRadius: 8,
                                cursor: canSave ? "pointer" : "not-allowed", border: "none",
