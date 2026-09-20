@@ -1482,7 +1482,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   // keeps each household together without sorting it again here.
   const households = [];
   rows.forEach(r => {
-    const key = `${r.customer_label || ""}|${r.phone_last4 || ""}`;
+    const key = `${(r.customer_label || "").trim().toLowerCase()}|${r.phone_last4 || ""}`;
     const last = households[households.length - 1];
     if (last && last.key === key) last.entries.push(r);
     else households.push({ key, label: r.customer_label, phone: r.phone_last4,
@@ -1555,8 +1555,8 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
           {households.map(h => (
             <div key={h.key} style={{ border: `1px solid ${T.slate200}`, borderRadius: 10, padding: 12, background: T.white }}>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline", marginBottom: 8 }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>
-                  {h.label}
+                <div style={{ fontSize: 15, fontWeight: 700 }}>
+                  <CustomerName label={h.label} phone4={h.phone} />
                   {h.phone ? <span style={{ color: T.slate400, fontWeight: 400 }}> ·{h.phone}</span> : null}
                 </div>
                 <div style={{ fontSize: 12, color: h.entries.length > 2 ? T.amber : T.slate500, fontWeight: h.entries.length > 2 ? 700 : 400 }}>
