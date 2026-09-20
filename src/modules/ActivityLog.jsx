@@ -1227,6 +1227,7 @@ function CancelationConvert({ row, types, pool, onClose, onDone }) {
   const seen = new Set([row.id]);
   const sibs = (pool || []).filter(p => {
     if (seen.has(p.id)) return false;
+    if (p.kind && p.kind !== "activity") return false;   // a sale on the same household is not a duplicate cancelation
     if ((p.customer_label || "") !== (row.customer_label || "")) return false;
     if ((p.phone_last4 || "") !== (row.phone_last4 || "")) return false;
     seen.add(p.id); return true;
@@ -1464,15 +1465,21 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   // Peter 2026-09-19: a note left while checking reads on the CPR change
   // report, so Verified carries whatever is in the box with it.
   const noteFor = (r) => notes[r.id] !== undefined ? notes[r.id] : (r.spot_check_note || "");
+  // Two kinds of record share this screen now: entries off the activity log,
+  // and the sales that issued in the week. Every button sends the kind along
+  // so the server hands the work to the function that owns that table.
+  const kindOf = (r) => r.kind || "activity";
+  // A sale carries a premium where an entry carries points.
+  const worth = (r) => (kindOf(r) === "sale" ? fmtMoney(r.premium) : fmtPts(r.points));
   const rowActions = (r) => (
     <>
       {flags.find(f => f.id === r.id) && (
         <button style={{ ...btnGhost, color: T.amber, marginRight: 6 }} disabled={busyId === r.id}
                 onClick={() => { setMsg(""); setConverting(flags.find(f => f.id === r.id)); }}>This was a cancelation</button>
       )}
-      <button style={{ ...btnGhost, marginRight: 6 }} disabled={busyId === r.id} onClick={() => setEditing({ kind: "activity", id: r.id })}>Edit</button>
-      <button style={{ ...btnGhost, color: T.green, marginRight: 6 }} disabled={busyId === r.id} onClick={() => act(() => supabase.rpc("rp_verify_activity", { p_id: r.id, p_note: noteFor(r) || null }), r.id)}>Verified</button>
-      <button style={{ ...btnGhost, color: T.red }} disabled={busyId === r.id} onClick={() => { if (window.confirm(`Remove ${r.label || r.activity_key} for ${r.customer_label}? It will not be paid.`)) act(() => supabase.rpc("rp_void_activity", { p_id: r.id, p_reason: "spot-check: could not verify" }), r.id); }}>Remove</button>
+      <button style={{ ...btnGhost, marginRight: 6 }} disabled={busyId === r.id} onClick={() => setEditing({ kind: kindOf(r), id: r.id })}>Edit</button>
+      <button style={{ ...btnGhost, color: T.green, marginRight: 6 }} disabled={busyId === r.id} onClick={() => act(() => supabase.rpc("rp_spot_check_verify", { p_kind: kindOf(r), p_id: r.id, p_note: noteFor(r) || null }), r.id)}>Verified</button>
+      <button style={{ ...btnGhost, color: T.red }} disabled={busyId === r.id} onClick={() => { if (window.confirm(`Remove ${r.label || r.activity_key} for ${r.customer_label}? It will not be paid.`)) act(() => supabase.rpc("rp_spot_check_remove", { p_kind: kindOf(r), p_id: r.id, p_reason: "spot-check: could not verify" }), r.id); }}>Remove</button>
     </>
   );
   // Flagged entries already in the ten below are marked there instead, so
@@ -1501,7 +1508,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
         </select>
       </div>
       <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
-        Ten households from the week, with everything logged on each one. Clear a household and the next one takes its place, so the list refills until the week is done. A verified entry never comes back unless it gets changed. Open the ECRM link, check the notes, tap Verified. {housesLeft > 10 ? `${housesLeft} households still unchecked this week, ${remaining} entries in all.` : housesLeft > 0 ? `${housesLeft} households left this week.` : "Nothing left to check this week."}
+        Ten households from the week, with everything on each one: the entries logged, and the sales that issued. Clear a household and the next one takes its place, so the list refills until the week is done. A verified entry never comes back unless it gets changed. Open the ECRM link, check the notes, tap Verified. {housesLeft > 10 ? `${housesLeft} households still unchecked this week, ${remaining} entries in all.` : housesLeft > 0 ? `${housesLeft} households left this week.` : "Nothing left to check this week."}
       </div>
       {flagsAbove.length > 0 && (
         <div style={{ border: `1px solid ${T.amber}`, background: "#fffbeb", borderRadius: 10, padding: 12, marginBottom: 14 }}>
@@ -1532,7 +1539,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                                onChange={e => setNotes(s => ({ ...s, [r.id]: e.target.value }))} />
                         {noteFor(r) !== (r.spot_check_note || "") && (
                           <button type="button" style={miniBtn} disabled={busyId === r.id}
-                                  onClick={() => act(() => supabase.rpc("rp_spot_check_note", { p_id: r.id, p_note: noteFor(r) }), r.id)}>Save note</button>
+                                  onClick={() => act(() => supabase.rpc("rp_spot_check_note", { p_kind: kindOf(r), p_id: r.id, p_note: noteFor(r) }), r.id)}>Save note</button>
                         )}
                       </div>
                     </td>
@@ -1540,7 +1547,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                       {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
                         : <span style={{ color: T.slate300 }}>—</span>}
                     </td>
-                    <td style={tableTd}>{fmtPts(r.points)}</td>
+                    <td style={tableTd}>{worth(r)}</td>
                     <td style={{ ...tableTd, whiteSpace: "nowrap", fontWeight: 700, color: r.has_cancelation ? T.green : T.red }}>{r.has_cancelation ? "Yes" : "No"}</td>
                     <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{rowActions(r)}</td>
                   </tr>
@@ -1583,7 +1590,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                                    onChange={e => setNotes(s => ({ ...s, [r.id]: e.target.value }))} />
                             {noteFor(r) !== (r.spot_check_note || "") && (
                               <button type="button" style={miniBtn} disabled={busyId === r.id}
-                                      onClick={() => act(() => supabase.rpc("rp_spot_check_note", { p_id: r.id, p_note: noteFor(r) }), r.id)}>Save note</button>
+                                      onClick={() => act(() => supabase.rpc("rp_spot_check_note", { p_kind: kindOf(r), p_id: r.id, p_note: noteFor(r) }), r.id)}>Save note</button>
                             )}
                           </div>
                         </td>
@@ -1591,7 +1598,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                           {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
                             : <span style={{ color: T.slate300 }}>—</span>}
                         </td>
-                        <td style={tableTd}>{fmtPts(r.points)}</td>
+                        <td style={tableTd}>{worth(r)}</td>
                         <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{rowActions(r)}</td>
                       </tr>
                     ))}
