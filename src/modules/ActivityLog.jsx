@@ -1410,6 +1410,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   const [flags, setFlags] = useState([]);         // entries this week whose note says cancel
   const [converting, setConverting] = useState(null);  // the flagged entry being turned into a cancelation
   const [msg, setMsg] = useState("");
+  const [notes, setNotes] = useState({});        // spot-check notes he is typing, by entry
 
   // Which weeks the picker offers, and which one we land on. A week stays in
   // the list once it is cleared, so the week being worked does not disappear
@@ -1460,6 +1461,9 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
     } finally { setBusyId(null); }
   };
   const weekLabel = (iso) => `Week of ${fmtDate(addDays(iso, -6))} \u2013 ${fmtDate(iso)}`;
+  // Peter 2026-09-19: a note left while checking reads on the CPR change
+  // report, so Verified carries whatever is in the box with it.
+  const noteFor = (r) => notes[r.id] !== undefined ? notes[r.id] : (r.spot_check_note || "");
   const rowActions = (r) => (
     <>
       {flags.find(f => f.id === r.id) && (
@@ -1467,7 +1471,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                 onClick={() => { setMsg(""); setConverting(flags.find(f => f.id === r.id)); }}>This was a cancelation</button>
       )}
       <button style={{ ...btnGhost, marginRight: 6 }} disabled={busyId === r.id} onClick={() => setEditing({ kind: "activity", id: r.id })}>Edit</button>
-      <button style={{ ...btnGhost, color: T.green, marginRight: 6 }} disabled={busyId === r.id} onClick={() => act(() => supabase.rpc("rp_verify_activity", { p_id: r.id }), r.id)}>Verified</button>
+      <button style={{ ...btnGhost, color: T.green, marginRight: 6 }} disabled={busyId === r.id} onClick={() => act(() => supabase.rpc("rp_verify_activity", { p_id: r.id, p_note: noteFor(r) || null }), r.id)}>Verified</button>
       <button style={{ ...btnGhost, color: T.red }} disabled={busyId === r.id} onClick={() => { if (window.confirm(`Remove ${r.label || r.activity_key} for ${r.customer_label}? It will not be paid.`)) act(() => supabase.rpc("rp_void_activity", { p_id: r.id, p_reason: "spot-check: could not verify" }), r.id); }}>Remove</button>
     </>
   );
@@ -1520,7 +1524,18 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                       {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}
                       {r.phone_last4 ? <span style={{ color: T.slate400 }}> ·{r.phone_last4}</span> : null}
                     </td>
-                    <td style={{ ...tableTd, maxWidth: 260 }}>{r.note || "\u2014"}</td>
+                    <td style={{ ...tableTd, maxWidth: 260 }}>
+                      {r.note || "\u2014"}
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
+                        <input style={{ ...inputBase, fontSize: 12, padding: "4px 6px" }}
+                               value={noteFor(r)} placeholder="Spot-check note (goes on the change report)"
+                               onChange={e => setNotes(s => ({ ...s, [r.id]: e.target.value }))} />
+                        {noteFor(r) !== (r.spot_check_note || "") && (
+                          <button type="button" style={miniBtn} disabled={busyId === r.id}
+                                  onClick={() => act(() => supabase.rpc("rp_spot_check_note", { p_id: r.id, p_note: noteFor(r) }), r.id)}>Save note</button>
+                        )}
+                      </div>
+                    </td>
                     <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
                       {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
                         : <span style={{ color: T.slate300 }}>—</span>}
@@ -1562,6 +1577,15 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                           {flags.some(f => f.id === r.id) && (
                             <div style={{ fontSize: 11, fontWeight: 700, color: T.amber }}>Note says cancel — policy change or cancelation?</div>
                           )}
+                          <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
+                            <input style={{ ...inputBase, fontSize: 12, padding: "4px 6px" }}
+                                   value={noteFor(r)} placeholder="Spot-check note (goes on the change report)"
+                                   onChange={e => setNotes(s => ({ ...s, [r.id]: e.target.value }))} />
+                            {noteFor(r) !== (r.spot_check_note || "") && (
+                              <button type="button" style={miniBtn} disabled={busyId === r.id}
+                                      onClick={() => act(() => supabase.rpc("rp_spot_check_note", { p_id: r.id, p_note: noteFor(r) }), r.id)}>Save note</button>
+                            )}
+                          </div>
                         </td>
                         <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
                           {r.ecrm_url ? <a href={r.ecrm_url} target="_blank" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
