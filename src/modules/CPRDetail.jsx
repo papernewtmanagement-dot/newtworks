@@ -4033,16 +4033,14 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, ret
   const weeklyRetentionPool = Number(diag.weekly_retention_pool || 0);
   // Retention Points (tracker step 7, 2026-09-07). Once settings.retention_points_go_live_week_end
   // is set, every net point is a dollar, guaranteed, paid first out of the retention third; the
-  // Retention split under Team Bonus then shares out only what is left of the third. Until that
-  // key is set the mode is "hours", retention_points_pay is 0 on every row, and nothing here changes.
-  const pointsLive          = (diag.retention_points || {}).mode === "points";
-  const teamGuarantee       = pointsLive ? Number(diag.qtd_pools?.retention_guarantee_team_total || 0) : 0;
-  // Envelope = weekly bonus pool. Normally an even three-way split: 13-wk sales points,
-  // 4-wk sales points, retention. But when the retention floor kicks in, retention takes
-  // MORE than a third and the two sales buckets share whatever is left — so the buckets
-  // are read from the actual settled pools, never assumed to be equal thirds.
-  const weeklyBonusPool     = weeklySalesPool + Math.max(0, weeklyRetentionPool - teamGuarantee);
-  const retentionBucketPool = Math.max(0, weeklyRetentionPool - teamGuarantee);
+  // Retention split under Team Bonus then shares out only what is left of the third.
+  // The pool named in the Team Bonus label is the week's bonus pool exactly as the breakdown
+  // below states it ("= Bonus pool THIS WEEK"), read from the settled figure rather than
+  // re-derived here. It used to be weeklySalesPool + (weeklyRetentionPool - the guarantee),
+  // which was right while retention points were paid on their own row. They moved inside the
+  // Team Bonus row on 2026-09-18 and this line did not follow, so the label read $21.97
+  // against a row paying $171.98 (week ending 2026-09-19).
+  const weeklyBonusPool     = Number(diag.qtd_pools?.qtd_bonus_pool || 0);
   const salesBucketPool     = weeklySalesPool / 2;
   const floorApplied        = diag.qtd_pools?.retention_floor_applied === true;
   // d.bonus is the whole residual-pool bonus: sales share plus retention share, the
