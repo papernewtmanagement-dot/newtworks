@@ -228,14 +228,20 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     textAlign: "left",
     cursor: "pointer",
   };
-  // A household is a row, not a box. One record means one line, nothing more.
+  // One compact card per customer. The first line of business rides on the
+  // first line with the household fields; every other line of business gets a
+  // line of its own underneath, so the card reads top to bottom (Peter 2026-09-20).
   const card = {
     background: T.white,
-    borderTop: `1px solid ${T.slate200}`,
-    padding: "3px 8px",
+    border: `1px solid ${T.slate200}`,
+    borderRadius: 8,
+    padding: "4px 8px",
     display: "grid",
     gap: 2,
   };
+  const lobTag = { fontSize: 11, fontWeight: 700, color: T.slate700, width: 42, flex: "0 0 42px" };
+  const LOB_ORDER = ["auto", "fire", "life", "health", "variable", "bank"];
+  const LOB_NAME = { auto: "Auto", fire: "Fire", life: "Life", health: "Health", variable: "Variable", bank: "Bank" };
   const line = { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", minHeight: 28 };
   const who = { fontSize: 12, fontWeight: 700, color: T.slate900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 200 };
   const what = { fontSize: 11, color: T.slate500, whiteSpace: "nowrap" };
@@ -292,7 +298,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
           {searching ? "No records under that name." : "Nothing left to fill in."}
         </div>
       ) : (
-        <div style={{ display: "grid", background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ display: "grid", gap: 6 }}>
           {households.map(h => {
             const isReferral = effectiveSource(h) === "referral";
             const ready = householdPayload(h).length;
@@ -366,6 +372,12 @@ export default function BackfillTab({ sources = [], roster = [] }) {
               (r.policies || [])
                 .filter(p => !(p.issued_date && p.issued_premium != null && p.canceled_on))
                 .map(p => ({ r, p })));
+            const lobs = [...new Set(openPolicies.map(x => x.p.line_of_business))]
+              .sort((a, b) => {
+                const ia = LOB_ORDER.indexOf(a), ib = LOB_ORDER.indexOf(b);
+                return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || String(a).localeCompare(String(b));
+              });
+            const lobPolicies = (lob) => openPolicies.filter(x => x.p.line_of_business === lob);
 
             // Every box on this line carries a visible word saying what it is.
             // An unlabeled date field next to an issue date is how issue dates
@@ -385,7 +397,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
               const added = polEdit.added_to_existing !== undefined ? !!polEdit.added_to_existing : !!p.added_to_existing;
               return (
                 <span key={p.id} style={{ display: "flex", gap: 5, alignItems: "center", flex: "0 1 auto",
-                                          padding: "1px 6px", borderLeft: `2px solid ${T.slate200}` }}>
+                                          padding: "1px 6px", borderLeft: `1px solid ${T.slate200}` }}>
                   <span style={{ ...what, color: T.slate600, fontWeight: 700 }}
                         title={`${r.owner || "unassigned"} \u00b7 sold ${r.on_date} \u00b7 submitted at ${Number(p.premium || 0).toLocaleString()}`}>
                     {manyOwners && r.owner ? `${r.owner} ` : ""}{p.product_type}
@@ -484,9 +496,20 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                     {owners.length ? owners.join(", ") : "\u2014"}
                   </span>
                   {hhBoxes}
-                  {openPolicies.map(polBoxes)}
+                  {lobs.length ? (
+                    <>
+                      <span style={lobTag}>{LOB_NAME[lobs[0]] || lobs[0]}</span>
+                      {lobPolicies(lobs[0]).map(polBoxes)}
+                    </>
+                  ) : null}
                   {saveBtn}
                 </div>
+                {lobs.slice(1).map(lob => (
+                  <div key={lob} style={{ ...line, paddingLeft: 12 }}>
+                    <span style={lobTag}>{LOB_NAME[lob] || lob}</span>
+                    {lobPolicies(lob).map(polBoxes)}
+                  </div>
+                ))}
               </div>
             );
           })}
