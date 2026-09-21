@@ -5026,7 +5026,7 @@ export default function ActivityLog({ userRole, userId }) {
         types={types} isOwner={isOwner} refreshKey={refreshKey} onChanged={bump} />}
       {tab === "spotcheck" && isAdmin && <SpotCheck isAdmin={isAdmin} values={values} sources={sources}
         types={types} isOwner={isOwner} roster={roster} />}
-      {tab === "backfill" && isAdmin && <BackfillTab sources={sources} roster={roster} />}
+      {tab === "backfill" && isAdmin && <BackfillTab sources={sources} roster={roster} types={types} />}
       {tab === "history" && <HistoryTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} />}
     </div>
     </AccountCtx.Provider>

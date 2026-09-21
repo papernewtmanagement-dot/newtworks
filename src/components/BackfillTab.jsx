@@ -26,13 +26,15 @@ import { CustomerName } from "../lib/customerAccount.jsx";
 
 const PAGE = 25;   // households per page, not records
 
-export default function BackfillTab({ sources = [], roster = [] }) {
+export default function BackfillTab({ sources = [], roster = [], types = {} }) {
   const _vp = useViewport();
   const [households, setHouseholds] = useState([]);
   const [totalHouseholds, setTotalHouseholds] = useState(null);
   const [totalRows, setTotalRows] = useState(null);
   const [offset, setOffset] = useState(0);
-  const [edits, setEdits] = useState({});       // per record: ecrm, policies
+  const [edits, setEdits] = useState({});
+  // Fields opened for a change by a click, keyed "<id>:<field>".
+  const [open, setOpen] = useState({});       // per record: ecrm, policies
   const [hhEdits, setHhEdits] = useState({});   // per household: phone, source, referral
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -66,6 +68,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     setTotalRows(Number(data?.total_rows || 0));
     setSearching(!!data?.searching);
     setEdits({});
+    setOpen({});
     setHhEdits({});
     setLoading(false);
   };
@@ -120,6 +123,15 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     });
   };
 
+  const isOpen = (k) => !!open[k];
+  const openField = (k) => setOpen(o => ({ ...o, [k]: true }));
+  const setRecord = (r, field, value) =>
+    setEdits(prev => ({ ...prev, [r.id]: { ...(prev[r.id] || {}), [field]: value } }));
+  const recTyped = (r, field) => {
+    const e = edits[r.id] || {};
+    return e[field] !== undefined ? e[field] : "";
+  };
+
   const effectiveSource = (h) => hhTyped(h, "marketing_source") || h.marketing_source || "";
 
   // ---- what gets sent ------------------------------------------------------
@@ -131,11 +143,13 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     const out = { kind: r.kind, id: r.id };
     let any = false;
     const phone = String(he.phone_last4 ?? "").trim();
-    if (phone && r.needs_phone) { out.phone_last4 = phone; any = true; }
+    if (phone && phone !== (r.phone_last4 || "")) { out.phone_last4 = phone; any = true; }
     const src = String(he.marketing_source ?? "").trim();
-    if (src && r.needs_marketing) { out.marketing_source = src; any = true; }
+    if (src && src !== (r.marketing_source || "")) { out.marketing_source = src; any = true; }
     const ecrm = String(he.ecrm ?? "").trim();
-    if (ecrm && r.needs_ecrm) { out.ecrm = ecrm; any = true; }
+    if (ecrm && r.kind === "sale" && ecrm !== (r.ecrm || "")) { out.ecrm = ecrm; any = true; }
+    const sub = String(e.submitted_date ?? "").trim();
+    if (sub && sub !== r.on_date) { out.submitted_date = sub; any = true; }
     const refCust = String(he.referred_by_customer ?? "").trim();
     if (refCust && r.needs_referral) { out.referred_by_customer = refCust; any = true; }
     const refBy = String(he.sourced_by_team_member_id ?? "").trim();
@@ -146,11 +160,15 @@ export default function BackfillTab({ sources = [], roster = [] }) {
         const p = pols[id] || {};
         const prem = String(p.issued_premium ?? "").trim();
         const cxl = String(p.canceled_on ?? "").trim();
-        if (!prem && !cxl && p.added_to_existing === undefined) return null;
+        const when = String(p.issued_date ?? "").trim();
+        const ptype = String(p.product_type ?? "").trim();
+        const cars = String(p.vehicle_count ?? "").trim();
+        if (!prem && !cxl && !when && !ptype && !cars && p.added_to_existing === undefined) return null;
         const item = { id };
         if (prem) item.issued_premium = prem;
-        const when = String(p.issued_date ?? "").trim();
         if (when) item.issued_date = when;
+        if (ptype) item.product_type = ptype;
+        if (cars) item.vehicle_count = cars;
         // The server applies the premium first, so a chargeback logged in the
         // same save is priced off the number being typed here.
         if (cxl) item.canceled_on = cxl;
@@ -308,24 +326,33 @@ export default function BackfillTab({ sources = [], roster = [] }) {
             const manyOwners = owners.length > 1;
 
             // The household's own boxes. One set, wherever the line ends up.
+            const clickText = { ...what, cursor: "pointer", color: T.slate700, borderBottom: `1px dotted ${T.slate400}` };
+            const phoneKey = `${h.household}:phone`, srcKey = `${h.household}:src`, ecrmKey = `${h.household}:ecrm`;
             const hhBoxes = (
               <>
-                {h.needs_phone ? (
+                {h.phone_last4 && !isOpen(phoneKey) ? (
+                  <span style={clickText} title="Phone, last four — click to change it for the household"
+                        onClick={() => openField(phoneKey)}>{h.phone_last4}</span>
+                ) : (
                   <input
                     value={hhTyped(h, "phone_last4")}
                     onChange={e => setHh(h, "phone_last4", e.target.value.replace(/\D/g, "").slice(0, 4))}
                     inputMode="numeric"
                     autoComplete="off"
-                    placeholder="Phone"
-                    title="Phone, last four — fills the whole household"
+                    autoFocus={isOpen(phoneKey)}
+                    placeholder={h.phone_last4 || "Phone"}
+                    title="Phone, last four — one for the whole household"
                     style={{ ...input, width: 74, letterSpacing: 1, fontWeight: 700 }}
                   />
-                ) : null}
-                {h.needs_marketing ? (
+                )}
+                {h.marketing_source && !isOpen(srcKey) ? (
+                  <span style={clickText} title="Marketing source — click to change it for the household"
+                        onClick={() => openField(srcKey)}>{srcLabel[h.marketing_source] || h.marketing_source}</span>
+                ) : (
                   <select
-                    value={hhTyped(h, "marketing_source")}
+                    value={hhTyped(h, "marketing_source") || (isOpen(srcKey) ? h.marketing_source || "" : "")}
                     onChange={e => setHh(h, "marketing_source", e.target.value)}
-                    title="Marketing source — fills the whole household"
+                    title="Marketing source — one for the whole household"
                     style={{ ...input, width: 150 }}
                   >
                     <option value="">Marketing source</option>
@@ -333,16 +360,22 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                       <option key={s.source_key} value={s.source_key}>{s.label || s.source_key}</option>
                     ))}
                   </select>
-                ) : null}
-                {h.needs_ecrm ? (
-                  <input
-                    value={hhTyped(h, "ecrm")}
-                    onChange={e => setHh(h, "ecrm", e.target.value)}
-                    autoComplete="off"
-                    placeholder="ECRM link"
-                    title="ECRM opportunity link — one for the whole household"
-                    style={{ ...input, flex: "1 1 140px", minWidth: 110, width: "auto" }}
-                  />
+                )}
+                {records.some(r => r.kind === "sale") ? (
+                  h.ecrm && !isOpen(ecrmKey) ? (
+                    <span style={clickText} title={`${h.ecrm} — click to change it for the household`}
+                          onClick={() => openField(ecrmKey)}>ECRM</span>
+                  ) : (
+                    <input
+                      value={hhTyped(h, "ecrm")}
+                      onChange={e => setHh(h, "ecrm", e.target.value)}
+                      autoComplete="off"
+                      autoFocus={isOpen(ecrmKey)}
+                      placeholder={h.ecrm || "ECRM link"}
+                      title="ECRM opportunity link — one for the whole household"
+                      style={{ ...input, flex: "1 1 140px", minWidth: 110, width: "auto" }}
+                    />
+                  )
                 ) : null}
                 {isReferral && h.needs_referral ? (
                   <>
@@ -398,19 +431,67 @@ export default function BackfillTab({ sources = [], roster = [] }) {
               return (
                 <span key={p.id} style={{ display: "flex", gap: 5, alignItems: "center", flex: "0 1 auto",
                                           padding: "1px 6px", borderLeft: `1px solid ${T.slate200}` }}>
-                  <span style={{ ...what, color: T.slate600, fontWeight: 700 }}
-                        title={`${r.owner || "unassigned"} \u00b7 sold ${r.on_date} \u00b7 submitted at ${Number(p.premium || 0).toLocaleString()}`}>
-                    {manyOwners && r.owner ? `${r.owner} ` : ""}{p.product_type}
-                  </span>
+                  {manyOwners && r.owner ? <span style={{ ...what, color: T.slate600, fontWeight: 700 }}>{r.owner}</span> : null}
+                  {isOpen(`${p.id}:type`) ? (
+                    <select
+                      value={polEdit.product_type ?? p.product_type ?? ""}
+                      onChange={e => setPolicy(r, p.id, "product_type", e.target.value)}
+                      style={{ ...input, width: 140 }}
+                    >
+                      {(types[p.line_of_business] || []).map(t => (
+                        <option key={t.type_key} value={t.type_key}>{t.label || t.type_key}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span style={{ ...clickText, color: T.slate600, fontWeight: 700 }}
+                          title={`${r.owner || "unassigned"} \u00b7 submitted at ${Number(p.premium || 0).toLocaleString()} \u2014 click to change the type`}
+                          onClick={() => openField(`${p.id}:type`)}>
+                      {(types[p.line_of_business] || []).find(t => t.type_key === (polEdit.product_type ?? p.product_type))?.label || polEdit.product_type || p.product_type}
+                    </span>
+                  )}
+
+                  {p.line_of_business === "auto" ? (
+                    isOpen(`${p.id}:cars`) ? (
+                      <input
+                        value={polEdit.vehicle_count ?? (p.vehicle_count ?? "")}
+                        onChange={e => setPolicy(r, p.id, "vehicle_count", e.target.value.replace(/\D/g, "").slice(0, 2))}
+                        inputMode="numeric"
+                        autoFocus
+                        style={{ ...input, width: 40 }}
+                      />
+                    ) : (
+                      <span style={clickText} title="Cars on this policy — click to change"
+                            onClick={() => openField(`${p.id}:cars`)}>
+                        {(polEdit.vehicle_count ?? p.vehicle_count) || "?"} car{Number(polEdit.vehicle_count ?? p.vehicle_count) === 1 ? "" : "s"}
+                      </span>
+                    )
+                  ) : null}
+
+                  <span style={tag}>Sold</span>
+                  {isOpen(`${r.id}:sold`) ? (
+                    <input
+                      value={recTyped(r, "submitted_date") || r.on_date || ""}
+                      onChange={e => setRecord(r, "submitted_date", e.target.value)}
+                      type="date"
+                      autoFocus
+                      title="Submitted date for this whole sale"
+                      style={{ ...input, width: 124 }}
+                    />
+                  ) : (
+                    <span style={clickText} title="Submitted date for this whole sale — click to change"
+                          onClick={() => openField(`${r.id}:sold`)}>{recTyped(r, "submitted_date") || r.on_date}</span>
+                  )}
 
                   <span style={tag}>Issued</span>
-                  {p.issued_date ? (
-                    <span style={what}>{p.issued_date}</span>
+                  {p.issued_date && !isOpen(`${p.id}:issued`) ? (
+                    <span style={clickText} title="Click to change the issue date"
+                          onClick={() => openField(`${p.id}:issued`)}>{dateBox}</span>
                   ) : (
                     <input
                       value={dateBox}
                       onChange={e => setPolicy(r, p.id, "issued_date", e.target.value)}
                       type="date"
+                      autoFocus={isOpen(`${p.id}:issued`)}
                       title="Leave it blank and it issues on the submit date"
                       style={{ ...input, width: 124, color: dateBox ? T.slate900 : T.slate400 }}
                     />
