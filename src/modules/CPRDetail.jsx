@@ -1246,13 +1246,20 @@ function useCPRData(weekDate) {
 
         let marketingByTeammate = {};
         try {
-          const qStartISO = cycleStartISO;
-          const { data: mpRows } = await supabase
-            .from("marketing_points")
-            .select("team_member_id, week_end_date, points, notes")
-            .eq("agency_id", AGENCY_ID)
-            .gte("week_end_date", qStartISO)
-            .lte("week_end_date", weekDate);
+          // marketing_points_weekly is the one reader: locked weeks from what was
+          // reported, weeks after the last lock priced live from the logs (the
+          // same numbers the scoreboard shows). Notes still live on the table.
+          const [{ data: mpPts }, { data: mpNotes }] = await Promise.all([
+            supabase.rpc("marketing_points_weekly", { p_agency_id: AGENCY_ID, p_week_end: weekDate }),
+            supabase
+              .from("marketing_points")
+              .select("team_member_id, notes")
+              .eq("agency_id", AGENCY_ID)
+              .eq("week_end_date", weekDate),
+          ]);
+          const notesByTm = {};
+          (mpNotes || []).forEach(n => { notesByTm[n.team_member_id] = n.notes; });
+          const mpRows = (mpPts || []).map(r => ({ ...r, notes: notesByTm[r.team_member_id] || "" }));
           if (mpRows) {
             mpRows.forEach(r => {
               const tmId = r.team_member_id;
