@@ -266,6 +266,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
           <span style={{ fontSize: 11, color: T.slate400 }}>Sort</span>
           <button type="button" style={sortBtn} onClick={() => sortBy("date")}>Date{sortArrow("date")}</button>
           <button type="button" style={sortBtn} onClick={() => sortBy("customer")}>Customer{sortArrow("customer")}</button>
+          <button type="button" style={sortBtn} onClick={() => sortBy("owner")}>Owner{sortArrow("owner")}</button>
           <button type="button" style={sortBtn} onClick={() => sortBy("missing")}>Missing{sortArrow("missing")}</button>
         </span>
       </div>
@@ -286,6 +287,8 @@ export default function BackfillTab({ sources = [], roster = [] }) {
             const ready = householdPayload(h).length;
             const records = h.records || [];
             const one = records.length === 1;
+            const owners = h.owners || [];
+            const manyOwners = owners.length > 1;
 
             // The household's own boxes. One set, wherever the line ends up.
             const hhBoxes = (
@@ -361,8 +364,8 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                 : (p.issued_premium != null ? String(p.issued_premium) : "");
               return (
                 <span key={p.id} style={{ display: "flex", gap: 4, alignItems: "center", flex: "0 1 auto" }}>
-                  <span style={{ ...what, color: T.slate400 }} title={`${r.on_date} \u00b7 submitted ${Number(p.premium || 0).toLocaleString()}`}>
-                    {p.product_type}
+                  <span style={{ ...what, color: T.slate400 }} title={`${r.owner || "unassigned"} \u00b7 ${r.on_date} \u00b7 submitted ${Number(p.premium || 0).toLocaleString()}`}>
+                    {manyOwners && r.owner ? `${r.owner} ` : ""}{p.product_type}
                   </span>
                   {!p.issued_date ? (
                     <input
@@ -411,8 +414,12 @@ export default function BackfillTab({ sources = [], roster = [] }) {
               <div key={h.household} style={card}>
                 <div style={line}>
                   <span style={who}><CustomerName label={h.customer_label} phone4={h.phone_last4} /></span>
-                  <span style={what} title={records.map(r => `${r.on_date} ${r.detail}`).join(" \u00b7 ")}>
+                  <span style={what} title={records.map(r => `${r.owner || "unassigned"} \u00b7 ${r.on_date} ${r.detail}`).join("\n")}>
                     {one ? h.last_date : `${records.length} records`}
+                  </span>
+                  <span style={{ ...what, color: T.slate600, fontWeight: 700 }}
+                        title={manyOwners ? "More than one person has records here" : ""}>
+                    {owners.length ? owners.join(", ") : "\u2014"}
                   </span>
                   {hhBoxes}
                   {openPolicies.map(polBoxes)}
