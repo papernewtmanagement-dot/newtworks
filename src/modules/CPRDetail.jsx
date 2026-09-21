@@ -3855,22 +3855,20 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
 
 
 
-// A badge only when the week is locked, meaning the payroll summary has arrived
+// Rendered inline in the Payroll header. A badge only when the week is locked, meaning the payroll summary has arrived
 // and every figure below is frozen at what was actually paid. An unlocked week
 // gets no badge at all.
 function PayLockBadge({ lock }) {
   if (!lock || !lock.locked) return null;
   return (
-    <div style={{ margin: "0 0 8px 0" }}>
-      <span style={{
-        display: "inline-flex", alignItems: "center", gap: 4,
-        fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px",
-        boxSizing: "border-box", whiteSpace: "nowrap",
-        background: T.slate100, color: T.slate700,
-      }}>
-        🔒 Locked · paid
-      </span>
-    </div>
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4,
+      fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px",
+      boxSizing: "border-box", whiteSpace: "nowrap",
+      background: T.slate100, color: T.slate700,
+    }}>
+      🔒 Locked · paid
+    </span>
   );
 }
 
@@ -4106,8 +4104,8 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, ret
 
   return (
     <div>
-      <SectionHeader icon="💰" title="Payroll" />
-      <PayLockBadge lock={payLock} />
+      {/* Locked badge sits inline after the Payroll label (Peter 2026-09-21). */}
+      <SectionHeader icon="💰" title="Payroll" accessory={<PayLockBadge lock={payLock} />} />
       <Card style={{ padding: 0, overflow: "hidden" }}>
         {/* Edit toolbar — owner-only, hidden on historical weeks (canEdit=false). */}
         {canEdit && (
