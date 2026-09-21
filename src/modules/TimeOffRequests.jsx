@@ -219,6 +219,10 @@ function stopSummary(p) {
   return `${dow} ${part} ${pat}`;
 }
 
+function shortDate(d) {
+  return new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 function MyStandingPrefsPanel({ me, onSubmitted }) {
   const [prefs, setPrefs] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -234,7 +238,9 @@ function MyStandingPrefsPanel({ me, onSubmitted }) {
           .eq("agency_id", AGENCY_ID)
           .eq("team_member_id", me.id)
           .is("archived_at", null);
-        setPrefs(Array.isArray(data) ? data : []);
+        // Hide patterns that have already ended. Upcoming and ending ones carry a date note.
+        const today = isoDayLocal(new Date());
+        setPrefs((Array.isArray(data) ? data : []).filter(p => !p.effective_until || p.effective_until >= today));
       } catch (e) { console.error("standing prefs load", e); }
       finally { setLoaded(true); }
     }
@@ -284,6 +290,8 @@ function MyStandingPrefsPanel({ me, onSubmitted }) {
               {items.map(p => (
                 <li key={p.id}>
                   {stopSummary(p)}{p.is_paid ? " (paid)" : " (unpaid)"}
+                  {p.effective_from > isoDayLocal(new Date()) && <span style={{ color: "#64748b" }}> · starts {shortDate(p.effective_from)}</span>}
+                  {p.effective_until && <span style={{ color: "#64748b" }}> · last week ends {shortDate(p.effective_until)}</span>}
                 </li>
               ))}
             </ul>
@@ -308,11 +316,10 @@ function MyStandingPrefsPanel({ me, onSubmitted }) {
 
 function StandingPrefBuilder({ me, onSubmitted, onClose }) {
   const [days, setDays] = useState([
-    { day_of_week: "monday", day_part: "morning", pattern: "remote" }
+    { day_of_week: "friday", day_part: "full", pattern: "off" }
   ]);
   const [trigger] = useState("wtw_won_prior_week");
   const [isPaid, setIsPaid] = useState(true);
-  const [effectiveFrom, setEffectiveFrom] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -330,7 +337,6 @@ function StandingPrefBuilder({ me, onSubmitted, onClose }) {
   async function submit() {
     if (!me?.id || !supabase) return;
     if (days.length === 0) { setError("Add at least one day to the pattern."); return; }
-    if (!effectiveFrom) { setError("Pick an effective-from date."); return; }
     setSubmitting(true);
     setError(null);
     try {
@@ -340,8 +346,9 @@ function StandingPrefBuilder({ me, onSubmitted, onClose }) {
         agency_id: AGENCY_ID,
         requester_team_id: me.id,
         request_type: "standing_time_off_preference",
-        start_date: effectiveFrom,
-        end_date: effectiveFrom,
+        // Submission date only. The new pattern starts the week after approval (set by the database).
+        start_date: isoDayLocal(new Date()),
+        end_date: isoDayLocal(new Date()),
         partial_day: "none",
         notes: notes || null,
         status: "voting",
@@ -437,8 +444,9 @@ function StandingPrefBuilder({ me, onSubmitted, onClose }) {
             <option value="unpaid">Unpaid</option>
           </select>
 
-          <label style={labelStyle}>Effective from (first Monday the pattern should count)</label>
-          <input type="date" value={effectiveFrom} onChange={e => setEffectiveFrom(e.target.value)} style={inputStyle} />
+          <div style={{ marginTop: 12, padding: "8px 10px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 6, fontSize: 12, color: "#0c4a6e" }}>
+            Starts the week after Peter approves it and replaces your current WtW day off. This week stays the same.
+          </div>
 
           <label style={labelStyle}>Notes / context (optional)</label>
           <textarea value={notes} onChange={e => setNotes(e.target.value)} style={{ ...inputStyle, minHeight: 60, fontFamily: "inherit" }} placeholder="Why this pattern, what it enables, etc." />
