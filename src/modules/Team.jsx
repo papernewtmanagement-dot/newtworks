@@ -84,6 +84,8 @@ function useProducerROI() {
 
         const agency = agencyRes.data || {};
         const staff  = (staffRes.data || []).filter(s => s.is_active !== false && !s.archived_at);
+        // Accepted an offer, not started yet: switched off but never archived.
+        const incoming = (staffRes.data || []).filter(s => s.is_active === false && !s.archived_at);
         const production = prodRes.data || [];
         const payrollDetail = payrollDetailRes.data || [];
         const payrollRuns = payrollRunsRes.data || [];
@@ -216,6 +218,7 @@ function useProducerROI() {
           currentRenewals,
           producerRows,
           allActiveStaff: staff,
+          incomingStaff: incoming,
           aipp,
           aippTracking,
           hasProductionData: production.length > 0,
@@ -695,6 +698,10 @@ const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidate
 };
 
 // ─── Section: Staff Directory ─────────────────────────────────
+// Switched off but never archived = accepted an offer and not started yet.
+// Archived is the only thing that means they have left.
+const isIncoming = (s) => !!s && s.is_active === false && !s.archived_at;
+
 const StaffDirectory = ({ staff }) => {
   const [expanded, setExpanded] = useState(null);
   const [editingId, setEditingId] = useState(null);
@@ -704,6 +711,18 @@ const StaffDirectory = ({ staff }) => {
   const [saveError, setSaveError] = useState("");
   // Local overlay of edits so saved changes show immediately without a full reload
   const [overrides, setOverrides] = useState({});
+  const [startingId, setStartingId] = useState(null);
+  // Switches a new hire on. Manual on purpose: nothing flips this automatically.
+  const markStarted = async (member) => {
+    if (!supabase || !member?.id) return;
+    setStartingId(member.id);
+    const { error } = await supabase.from("team")
+      .update({ is_active: true })
+      .eq("id", member.id).eq("agency_id", AGENCY_ID);
+    setStartingId(null);
+    if (error) { alert(error.message || "Could not switch them on."); return; }
+    setOverrides(o => ({ ...o, [member.id]: { ...(o[member.id] || {}), is_active: true } }));
+  };
 
   // ── Seat profitability (folded into roster 2026-07-09) ──
   // Fetches compute_warning_trigger + compute_seat_projections_for_agency for the current
@@ -784,7 +803,7 @@ const StaffDirectory = ({ staff }) => {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const activeIds = (staff || []).filter(s => s && s.is_active).map(s => s.id);
+      const activeIds = (staff || []).filter(s => s && (s.is_active || isIncoming(s))).map(s => s.id);
       if (activeIds.length === 0) return;
       try {
         const [asRes, prRes, bnRes, trRes] = await Promise.all([
@@ -1163,6 +1182,7 @@ const StaffDirectory = ({ staff }) => {
         .select("id, first_name, last_name, role, role_level, role_category, category, employment_type, start_date, end_date, archived_at, performance_status, pay_type, pay_rate, license_pc, license_lh, license_ips, license_states, email_personal, email_sf, phone_personal, phone_extension, notes, user_id, photo_storage_path, address_line1, address_line2, city, state, zip_code")
         .eq("agency_id", AGENCY_ID)
         .eq("is_active", false)
+        .not("archived_at", "is", null)
         .order("archived_at", { ascending: false, nullsFirst: false });
       if (cancelled) return;
       if (teamErr) { setArchivedError(teamErr.message || "Failed to load archived staff."); setArchivedLoading(false); return; }
@@ -1696,7 +1716,7 @@ const StaffDirectory = ({ staff }) => {
 
   // Counts for the view toggle
   const mergedActive = [...additions, ...((staff || []).filter(s => !additions.some(a => a.id === s.id)))];
-  const activeCount = mergedActive.filter(s => s.is_active && !terminatedIds.has(s.id)).length;
+  const activeCount = mergedActive.filter(s => (s.is_active || isIncoming(s)) && !terminatedIds.has(s.id)).length;
   // Owner (Peter) + admin back-office (Marie) sit at the bottom of the active list,
   // divided from the team above. Stable sort preserves existing order for everyone else.
   const bottomRank = (m) => (m?.is_admin_backoffice ? 2 : (m?.role_level === "Owner" ? 1 : 0));
@@ -2049,7 +2069,7 @@ const StaffDirectory = ({ staff }) => {
 
       {/* ============== ACTIVE VIEW (existing card list) ============== */}
       {view === "active" && (() => {
-        const _activeItems = sortedActive.filter(s => s.is_active && !terminatedIds.has(s.id));
+        const _activeItems = sortedActive.filter(s => (s.is_active || isIncoming(s)) && !terminatedIds.has(s.id));
         const _firstBottomIdx = _activeItems.findIndex(s => bottomRank(s) > 0);
         return _activeItems.map((raw, _idx) => {
         // Merge any saved override on top of the loaded row.
@@ -2085,6 +2105,21 @@ const StaffDirectory = ({ staff }) => {
               <div style={{ flex:1 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
                   <span style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{member.first_name} {member.last_name}</span>
+                  {isIncoming(member) && (
+                    <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>
+                      {member.start_date
+                        ? `Starts ${new Date(`${member.start_date}T12:00:00`).toLocaleDateString(undefined, { month:"short", day:"numeric" })}`
+                        : "Starting soon · no start date"}
+                    </span>
+                  )}
+                  {isIncoming(member) && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); markStarted(member); }}
+                      disabled={startingId === member.id}
+                      style={{ fontSize:10, fontWeight:700, padding:"2px 10px", borderRadius:20, border:"none", background:T.green, color:T.white, cursor:"pointer" }}>
+                      {startingId === member.id ? "Saving…" : "Mark started"}
+                    </button>
+                  )}
                   {spRatingByMember[member.id]?.title && (
                     <span
                       title={`13-week Sales Points average ${Number(spRatingByMember[member.id]?.avg_13wk || 0).toFixed(0)} - rating ${spRatingByMember[member.id]?.rating || "-"}`}
@@ -3286,7 +3321,7 @@ export default function Team({ userRole }) {
 
       {/* Section Content */}
       {section === "members"  && (
-        <StaffDirectory staff={roi?.allActiveStaff || []} />
+        <StaffDirectory staff={[...(roi?.allActiveStaff || []), ...(roi?.incomingStaff || [])]} />
       )}
       {section === "payroll" && <TeamPayroll />}
       {section === "cts"     && <TeamCTSReference />}
