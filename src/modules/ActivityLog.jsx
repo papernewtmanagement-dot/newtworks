@@ -3,7 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink, hrefWithParam } from "../lib/routing.jsx";
 import { AccountCtx, CustomerName, parseAcctToken } from "../lib/customerAccount.jsx";
-import { ChangeDiffs, changeDiffList } from "../lib/changeLog.jsx";
+import { ChangeDiffs, changeDiffList, changeEvents, changeTone } from "../lib/changeLog.jsx";
 import TimeHub from "./TimeHub.jsx";
 import PFA from "./PFA.jsx";
 import Development from "./Development.jsx";
@@ -2712,7 +2712,7 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
     const keyOf = (r) => {
       if (sort.by === "when") return String(r.changed_at || "");
       if (sort.by === "who") return String(r.who || "").toLowerCase();
-      if (sort.by === "what") return `${r.item || ""} ${r.action || ""}`.toLowerCase();
+      if (sort.by === "what") return (changeEvents(r.changes).map(c => c.label).join(" ") || `${r.item || ""} ${r.action || ""}`).toLowerCase();
       return String(r.subject || "").toLowerCase();
     };
     const dir = sort.dir === "asc" ? 1 : -1;
@@ -2780,13 +2780,21 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
                     <td style={{ ...tableTd, whiteSpace: "nowrap", color: sameClick ? T.slate300 : T.slate800 }}>{sameClick ? "〃" : changeWhen(r.changed_at)}</td>
                     <td style={{ ...tableTd, whiteSpace: "nowrap", color: sameClick ? T.slate300 : T.slate800 }}>{sameClick ? "〃" : r.who}</td>
                     <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
-                      <span style={{ fontWeight: 700, color: r.action === "delete" ? T.red : r.action === "update" ? T.amber : T.green }}>{verb[r.action] || r.action}</span> {r.item === "FIT scorecard" ? r.item : r.item.toLowerCase()}
+                      {/* A named event (Policy issued, Sale removed...) says what happened
+                          better than "Changed sold policy" does. */}
+                      {changeEvents(r.changes).length ? (
+                        changeEvents(r.changes).map((c, k) => (
+                          <div key={c.field + k} style={{ fontWeight: 700, color: changeTone(c) }}>{c.label}</div>
+                        ))
+                      ) : (
+                        <><span style={{ fontWeight: 700, color: r.action === "delete" ? T.red : r.action === "update" ? T.amber : T.green }}>{verb[r.action] || r.action}</span> {r.item === "FIT scorecard" ? r.item : r.item.toLowerCase()}</>
+                      )}
                     </td>
                     <td style={tableTd}>{r.subject || "—"}</td>
                     <td style={{ ...tableTd, maxWidth: 420 }}>
                       {r.action === "update" ? (
-                        changeDiffList(r.changes).length
-                          ? <ChangeDiffs changes={r.changes} />
+                        changeDiffList(r.changes).some(c => !c.event || c.after)
+                          ? <ChangeDiffs changes={r.changes} eventsAsDetail />
                           : <span style={{ color: T.slate500 }}>&mdash;</span>
                       ) : changeSummary(r, ctx)}
                     </td>
