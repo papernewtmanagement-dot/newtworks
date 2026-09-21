@@ -3171,8 +3171,9 @@ function EURSection({ report, editMode, formReport, isReportDirty, onReportChang
   );
 }
 
-// 13.6 — Log Changes and Issued Policies (Peter 2026-09-19, reworked
-// 2026-09-21). Two cards, both read live from production_changes_for_range —
+// 13.6 — Notes, Issued and Canceled (Peter 2026-09-19, reworked 2026-09-21).
+// In that order, the same order as the Changes tab; plain edits are left off
+// the CPR (Peter 2026-09-21) and live on the Changes tab. All three read live from production_changes_for_range —
 // the same function behind the daily change alert and the Activity Log Changes
 // tab, drawn by the same ChangeEntry / IssueEntry components, so the CPR and the
 // Changes tab read the same way. Nothing on either card is typed in or stored.
@@ -3212,7 +3213,6 @@ function LogChangesSection({ weekDate, team, viewerTeamMemberId = null, userRole
   const seesAll = ["owner", "manager"].includes(userRole);
   const visibleRows = (rows || []).filter(r => seesAll || r.owner_id === viewerTeamMemberId);
   const byKind = (k) => groupChangesByOwner(visibleRows.filter(r => (r.kind || "change") === k), ownerIds, viewerTeamMemberId);
-  const changeGroups = byKind("change");
   const issueGroups = byKind("issue");
   const spotGroups = byKind("spot_check");
   const cancelGroups = byKind("canceled");
@@ -3228,48 +3228,28 @@ function LogChangesSection({ weekDate, team, viewerTeamMemberId = null, userRole
         ? <div style={quiet}>{empty}</div>
         : <ChangeGroups groups={groups} kind={kind} />;
 
+  const card = (icon, title, kind, groups, blurb, empty) => (
+    <div key={kind}>
+      <SectionHeader icon={icon} title={title}
+        accessory={rows === null ? null : `${count(groups)} this week`} />
+      <Card>
+        <div style={note}>{blurb}</div>
+        {body(groups, kind, empty)}
+      </Card>
+    </div>
+  );
+
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, alignItems: "start" }}>
-      <div>
-        <SectionHeader icon="📝" title="Log Changes"
-          accessory={rows === null ? null : `${count(changeGroups)} this week`} />
-        <Card>
-          <div style={note}>
-            Every edit or removal to a sale, quote, cancelation or activity entry that counts toward this week's points: made this week, or made before this report went out. Listed under the teammate whose entry it is. Adding a brand new entry is not a change.
-          </div>
-          {body(changeGroups, "change", "No log changes this week.")}
-        </Card>
-      </div>
-      <div>
-        <SectionHeader icon="✅" title="Issued Policies"
-          accessory={rows === null ? null : `${count(issueGroups)} this week`} />
-        <Card>
-          <div style={note}>
-            Every policy issued, un-issued or corrected that counts toward this week's points, with the issued premium against what was submitted. A change that was undone right after is left out.
-          </div>
-          {body(issueGroups, "issue", "No policies issued this week.")}
-        </Card>
-      </div>
-      <div>
-        <SectionHeader icon="🚫" title="Canceled"
-          accessory={rows === null ? null : `${count(cancelGroups)} this week`} />
-        <Card>
-          <div style={note}>
-            Every cancelation that counts toward this week. It shows as logged under whoever logged it, and as a chargeback under whoever's policy it was. A chargeback counts in the week it was logged.
-          </div>
-          {body(cancelGroups, "canceled", "No cancelations this week.")}
-        </Card>
-      </div>
-      <div>
-        <SectionHeader icon="🔍" title="Spot-Check Notes"
-          accessory={rows === null ? null : `${count(spotGroups)} this week`} />
-        <Card>
-          <div style={note}>
-            Notes left during spot checks that count toward this week's report.
-          </div>
-          {body(spotGroups, "spot_check", "No spot-check notes this week.")}
-        </Card>
-      </div>
+      {card("🔍", "Notes", "spot_check", spotGroups,
+        "Notes left during spot checks that count toward this week's report.",
+        "No notes this week.")}
+      {card("✅", "Issued", "issue", issueGroups,
+        "Every policy issued, un-issued or corrected that counts toward this week's points, with the issued premium against what was submitted. A change that was undone right after is left out.",
+        "No policies issued this week.")}
+      {card("🚫", "Canceled", "canceled", cancelGroups,
+        "Every cancelation that counts toward this week, once each: as a chargeback under whoever's policy it was, or as logged when it charged nothing.",
+        "No cancelations this week.")}
     </div>
   );
 }
@@ -7075,7 +7055,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         </div>
       </Section>
 
-      {/* Log Changes + Issued Policies — their own row, side by side. */}
+      {/* Notes, Issued, Canceled — their own row, side by side. */}
       <Section>
         <LogChangesSection weekDate={weekDate} team={data.team} viewerTeamMemberId={viewerTeamMemberId} userRole={userRole} />
       </Section>

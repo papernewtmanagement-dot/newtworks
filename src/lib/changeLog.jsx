@@ -278,14 +278,16 @@ export function IssueEntry({ r, withDay = false, showWho = true, hideCustomer = 
   );
 }
 
-// The two-way switch between edits and issued policies.
+// The four kinds, in the order they show everywhere — the Changes tab toggle
+// and the CPR cards (Peter 2026-09-21): notes, issued, canceled, changes.
+export const CHANGE_KINDS = [
+  { key: "spot_check", label: "Notes" },
+  { key: "issue", label: "Issued" },
+  { key: "canceled", label: "Canceled" },
+  { key: "change", label: "Changes" },
+];
 export function ChangeKindToggle({ value, onChange, counts = {} }) {
-  const opts = [
-    { key: "change", label: "Changes" },
-    { key: "issue", label: "Issued policies" },
-    { key: "canceled", label: "Canceled" },
-    { key: "spot_check", label: "Spot-check notes" },
-  ];
+  const opts = CHANGE_KINDS;
   return (
     <div role="group" style={{ display: "inline-flex", flexWrap: "wrap", border: `1px solid ${T.slate300}`, borderRadius: 8, overflow: "hidden" }}>
       {opts.map(o => {
@@ -345,9 +347,33 @@ function clusterByCustomer(rows) {
   return out;
 }
 
-// Inside each teammate's group, a customer with more than one record shows the
-// name once, and the records hang under it with file-list lines (Peter
-// 2026-09-21). A customer with one record stays on one line.
+// A row's calendar day in Central time, as YYYY-MM-DD.
+function dayKey(ts) {
+  const d = new Date(ts);
+  return Number.isFinite(d.getTime()) ? d.toLocaleDateString("en-CA", { timeZone: "America/Chicago" }) : "";
+}
+function dayLabel(key) {
+  if (!key) return "No date";
+  const d = new Date(`${key}T12:00:00`);
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+// A teammate's rows by day, kept in time order.
+function byDay(rows) {
+  const out = [];
+  const m = new Map();
+  (rows || []).forEach(r => {
+    const k = dayKey(r.changed_at);
+    if (!m.has(k)) { const d = { key: k, rows: [] }; m.set(k, d); out.push(d); }
+    m.get(k).rows.push(r);
+  });
+  return out;
+}
+
+// Inside each teammate's group the day comes first, then the customer, drawn
+// like a file list (Peter 2026-09-21): the day's line hangs its customers, and a
+// customer with more than one record hangs those records under the name. A
+// customer with one record stays on one line. Lines show the time only; the day
+// is on the line above.
 export function ChangeGroups({ groups, kind = "change", maxHeight = 380 }) {
   const Entry = { issue: IssueEntry, canceled: CanceledEntry, spot_check: SpotEntry }[kind] || ChangeEntry;
   const noun = {
@@ -361,23 +387,31 @@ export function ChangeGroups({ groups, kind = "change", maxHeight = 380 }) {
             <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{g.name}</span>
             <span style={{ fontSize: 11, color: T.slate500 }}>{g.rows.length} {g.rows.length === 1 ? noun[0] : noun[1]}</span>
           </div>
-          {clusterByCustomer(g.rows).map((c, ci) => (
-            <div key={`${c.key || "row"}-${ci}`} style={{
-              fontSize: 12, color: T.slate700, lineHeight: 1.5, paddingLeft: 10, marginBottom: 3,
-              borderLeft: `2px solid ${T.slate200}`, boxSizing: "border-box",
-            }}>
-              {c.rows.length === 1 ? <Entry r={c.rows[0]} withDay /> : (
-                <>
-                  <div><Customer r={c.rows[0]} /></div>
-                  {c.rows.map((r, i) => (
-                    <TreeRow key={`${r.kind}-${r.txid}-${i}`} last={i === c.rows.length - 1}>
-                      <Entry r={r} withDay hideCustomer />
-                    </TreeRow>
-                  ))}
-                </>
-              )}
-            </div>
-          ))}
+          {byDay(g.rows).map(d => {
+            const customers = clusterByCustomer(d.rows);
+            return (
+              <div key={d.key} style={{
+                fontSize: 12, color: T.slate700, lineHeight: 1.5, paddingLeft: 10, marginBottom: 6,
+                borderLeft: `2px solid ${T.slate200}`, boxSizing: "border-box",
+              }}>
+                <div style={{ fontWeight: 700, color: T.slate900 }}>{dayLabel(d.key)}</div>
+                {customers.map((c, ci) => (
+                  <TreeRow key={`${c.key || "row"}-${ci}`} last={ci === customers.length - 1}>
+                    {c.rows.length === 1 ? <Entry r={c.rows[0]} /> : (
+                      <>
+                        <div><Customer r={c.rows[0]} /></div>
+                        {c.rows.map((r, i) => (
+                          <TreeRow key={`${r.kind}-${r.txid}-${i}`} last={i === c.rows.length - 1}>
+                            <Entry r={r} hideCustomer />
+                          </TreeRow>
+                        ))}
+                      </>
+                    )}
+                  </TreeRow>
+                ))}
+              </div>
+            );
+          })}
         </div>
       ))}
     </div>

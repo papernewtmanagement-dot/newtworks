@@ -2648,7 +2648,7 @@ function ChangeWeek({ day, setDay, kind, setKind, isAdmin, myTeamId }) {
         <div style={{ color: T.slate600, fontSize: 14 }}>
           {kind === "issue" ? "No policies were issued or un-issued this week."
             : kind === "canceled" ? "No cancelations this week."
-            : kind === "spot_check" ? "No spot-check notes this week."
+            : kind === "spot_check" ? "No notes this week."
             : "Nothing was edited or removed this week."}
         </div>
       ) : (
@@ -2661,8 +2661,8 @@ function ChangeWeek({ day, setDay, kind, setKind, isAdmin, myTeamId }) {
 function ChangesTab({ roster, nameOf, values, sources, types, isOwner, isAdmin, myTeamId, refreshKey, onChanged }) {
   const [day, setDay] = useTabParam("day", "");
   const [view, setView] = useState("day");
-  // Edits and issued policies are kept apart (Peter 2026-09-21).
-  const [kind, setKind] = useState("change");
+  // The kinds are kept apart, Notes first (Peter 2026-09-21).
+  const [kind, setKind] = useState("spot_check");
   const [days, setDays] = useState(30);
   const [who, setWho] = useState("");
   const [rows, setRows] = useState(null);
@@ -2800,7 +2800,7 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, isAdmin, 
       {rows === null ? (
         <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>
       ) : shown.length === 0 ? (
-        <div style={{ ...cardStyle, color: T.slate600, fontSize: 14 }}>{kind === "issue" ? `No policies issued or un-issued in the last ${days} days.` : kind === "canceled" ? `No cancelations in the last ${days} days.` : kind === "spot_check" ? `No spot-check notes in the last ${days} days.` : `No changes in the last ${days} days.`}</div>
+        <div style={{ ...cardStyle, color: T.slate600, fontSize: 14 }}>{kind === "issue" ? `No policies issued or un-issued in the last ${days} days.` : kind === "canceled" ? `No cancelations in the last ${days} days.` : kind === "spot_check" ? `No notes in the last ${days} days.` : `No changes in the last ${days} days.`}</div>
       ) : (
         <div style={{ ...cardStyle, overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
