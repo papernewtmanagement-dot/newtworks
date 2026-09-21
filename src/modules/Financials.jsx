@@ -1193,6 +1193,9 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged, allEntities }) => {
       section_type: ctx.accountType === "income" ? "Income" : "Expense",
       flip_sign:    false,
       entity_id:    row.business_entity_id || ctx.entityId,
+      remember_rule: true,
+      tithe_draw:   row.tithe_draw_source === "manual" ? String(row.tithe_draw_amount)
+                  : row.tithe_draw_source === "excluded" ? "0" : "",
     });
   };
 
@@ -1251,11 +1254,38 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged, allEntities }) => {
         if (editDraft.entry_date && editDraft.entry_date !== String(row.entry_date).split("T")[0]) {
           jlUpdates.entry_date = editDraft.entry_date;
         }
+        // Tithe pool. Blank hands the row back to the tithe rules; 0 keeps it
+        // out of the pool; any other number is a hand-set draw the rules never
+        // overwrite.
+        if (ctx.accountType === "expense") {
+          const titheNow = String(editDraft.tithe_draw ?? "").trim();
+          const titheWas = row.tithe_draw_source === "manual" ? String(row.tithe_draw_amount)
+                         : row.tithe_draw_source === "excluded" ? "0" : "";
+          if (titheNow !== titheWas) {
+            if (titheNow === "") {
+              Object.assign(jlUpdates, { tithe_draw_amount: null, tithe_draw_source: null, tithe_draw_rule_id: null });
+            } else if (!Number.isFinite(Number(titheNow))) {
+              throw new Error("The tithe amount has to be a number.");
+            } else if (Number(titheNow) === 0) {
+              Object.assign(jlUpdates, { tithe_draw_amount: null, tithe_draw_source: "excluded", tithe_draw_rule_id: null });
+            } else {
+              Object.assign(jlUpdates, { tithe_draw_amount: Number(titheNow), tithe_draw_source: "manual", tithe_draw_rule_id: null });
+            }
+          }
+        }
         if (Object.keys(jlUpdates).length > 0) {
           const { data, error } = await supabase.from("ledger")
             .update(jlUpdates).eq("id", row.line_id).select("id");
           if (error) throw error;
           if (!data || data.length === 0) throw new Error("Ledger row update returned no rows (RLS?)");
+        }
+        // Teach the classification rules so the next charge from this merchant
+        // on this card lands in the same account without being touched.
+        if (accountChanged && editDraft.remember_rule !== false) {
+          const { error: learnErr } = await supabase.rpc("learn_gl_rule_from_ledger", {
+            p_ledger_id: row.line_id, p_actor: "peter_pnl",
+          });
+          if (learnErr) alert("Saved, but the rule for next time was not written: " + learnErr.message);
         }
       } else if (row.source === "prior_year_pl") {
         const pypUpdates = {};
@@ -1426,6 +1456,9 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged, allEntities }) => {
                       {row.confirmation === "not_on_statement" && (
                         <span title="A statement covering this date has arrived and this transaction was not on it." style={{ padding: "1px 5px", background: "#fee2e2", color: "#991b1b", borderRadius: 3 }}>not on statement</span>
                       )}
+                      {row.tithe_draw_amount != null && (
+                        <span title={row.tithe_draw_source === "rule" ? "Counted against the tithe pool by a tithe rule." : "Counted against the tithe pool by hand."} style={{ padding: "1px 5px", background: "#ede9fe", color: "#5b21b6", borderRadius: 3 }}>tithe {fmtMoney(row.tithe_draw_amount)}</span>
+                      )}
                       {row.je_source && <span style={{ opacity: 0.65 }}>{row.je_source}</span>}
                       {row.reference_number && <span style={{ opacity: 0.65 }}>ref: {row.reference_number}</span>}
                     </div>
@@ -1472,6 +1505,24 @@ const PLDrillPanel = ({ ctx, onClose, onDataChanged, allEntities }) => {
                         {!editDraft.account_id && (
                           <span style={{ color: "#b91c1c" }}>No income/expense accounts for this entity — pick a different entity or account type.</span>
                         )}
+                      </label>
+                    )}
+                    {!isPrior && editDraft.account_id && editDraft.account_id !== row.account_id && (
+                      <label style={{ ..._drillLabel, flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <input type="checkbox" checked={editDraft.remember_rule !== false} onChange={(e) => setEditDraft({ ...editDraft, remember_rule: e.target.checked })} />
+                        Do this every time for this merchant
+                      </label>
+                    )}
+                    {!isPrior && ctx.accountType === "expense" && (
+                      <label style={_drillLabel}>Out of the tithe pool
+                        <input
+                          type="number" step="0.01" inputMode="decimal"
+                          value={editDraft.tithe_draw ?? ""}
+                          placeholder={row.tithe_draw_source === "rule" ? `${Number(row.tithe_draw_amount).toFixed(2)} (automatic)` : "None"}
+                          onChange={(e) => setEditDraft({ ...editDraft, tithe_draw: e.target.value })}
+                          style={_drillInput}
+                        />
+                        <span style={{ fontWeight: 400, color: T.slate500 }}>Blank lets the tithe rules decide. 0 keeps it out.</span>
                       </label>
                     )}
                     {!isPrior && (
@@ -1563,6 +1614,13 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
   const [grain, setGrain, grainHref] = useTabParam("plgrain", "quarterly", ["monthly", "quarterly", "annual"]);
   const [showPct, setShowPct] = useState(false);
   const [yearsBack, setYearsBack] = useState("3"); // "3" | "10" | "all"
+  const [tithePool, setTithePool] = useState(null);
+  useEffect(() => {
+    supabase.from("v_tithe_pool_balance")
+      .select("set_aside_total, given_total, available")
+      .eq("agency_id", AGENCY_ID).maybeSingle()
+      .then(({ data: tp }) => setTithePool(tp || null));
+  }, [data]);
 
   // Drill state persisted in URL as pldrill=<entityId>::<accountName>::<section>::<type>::<from>::<to>
   // Entity id is part of the URL so a refresh restores the correct entity-scoped drill.
@@ -2059,6 +2117,14 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
         {grainBtn("monthly",   "Monthly")}
         {grainBtn("quarterly", "Quarterly")}
         {grainBtn("annual",    "Annual")}
+        {tithePool && (
+          <span
+            title={`Set aside ${fmtMoney(tithePool.set_aside_total)} · Given ${fmtMoney(tithePool.given_total)}`}
+            style={{ order: 99, marginLeft: "auto", fontSize: 12, color: T.slate700, padding: "5px 10px", background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 6 }}
+          >
+            Tithe pool <strong>{fmtMoney(tithePool.available)}</strong> available
+          </span>
+        )}
         {grain === "annual" && (
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 12, fontSize: 12, color: T.slate600 }}>
             Show:
