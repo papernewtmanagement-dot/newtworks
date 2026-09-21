@@ -12,6 +12,7 @@ import BackfillTab from "../components/BackfillTab.jsx";
 import { mdToHtml, commitOptions } from "../lib/markdown.js";
 import { kickoffToday } from "../lib/kickoff.js";
 import CommitPicker from "../components/CommitPicker.jsx";
+import InfoDot from "../components/InfoDot.jsx";
 import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 
@@ -3253,9 +3254,7 @@ function ChecklistRow({ item, checked, byLabel, byOwner, busy, disabled, onToggl
             <button type="button" title="Edit this item" aria-label="Edit this item" onClick={() => onEdit(item)} style={{ ...checklistRowBtn, borderColor: T.blue, color: T.blue }}>✎</button>
           </>
         )}
-        <button type="button" title="What this means" aria-label="What this means"
-          onClick={() => setOpenHelp(h => (h === item.id ? null : item.id))}
-          style={{ flexShrink: 0, width: 18, height: 18, lineHeight: "16px", textAlign: "center", padding: 0, borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, boxSizing: "border-box", border: `1px solid ${open ? T.blue : T.slate300}`, background: open ? T.blueLt : T.white, color: open ? T.blue : T.slate500 }}>i</button>
+        <InfoDot open={open} title="What this means" onClick={() => setOpenHelp(h => (h === item.id ? null : item.id))} />
       </div>
       {children}
       {open && !children && <HelpPanel item={item} />}

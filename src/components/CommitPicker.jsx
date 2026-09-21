@@ -1,6 +1,7 @@
 import { useState, useId } from "react";
 import { supabase } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
+import InfoDot from "./InfoDot.jsx";
 
 // ─── Daily commit picker ──────────────────────────────────────
 // The week's commit choices as radio buttons plus "Other" with a text box.
@@ -21,15 +22,28 @@ const COMMIT_BTN_PRIMARY = {
   color: T.white, font: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer",
 };
 
-// The explanation behind a commit option. The option itself is a short line so
-// it reads cleanly on the Telegram messages; anything that needs more words
-// sits in here (Peter 2026-09-19).
-export function CommitNote({ note }) {
+// One commit option: the short line, an info button when there is more to it,
+// and the explanation underneath once the button is clicked. The option itself
+// stays a short line so it reads cleanly on the Telegram messages (Peter
+// 2026-09-19); the explanation sits behind the button (Peter 2026-09-21).
+// control is the radio button, or nothing for a read-only list.
+export function CommitLine({ text, note, control }) {
+  const [open, setOpen] = useState(false);
   return (
-    <details style={{ margin: "2px 0 0 24px" }}>
-      <summary style={{ cursor: "pointer", fontSize: 12, color: T.slate500, listStyle: "none" }}>What this means</summary>
-      <div style={{ fontSize: 13, color: T.slate700, marginTop: 4 }}>{note}</div>
-    </details>
+    <div style={{ margin: "4px 0" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+        {control ? (
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", flex: "0 1 auto", minWidth: 0 }}>
+            {control}
+            <span>{text}</span>
+          </label>
+        ) : <span style={{ minWidth: 0 }}>• {text}</span>}
+        {note ? <span style={{ marginTop: 2 }}><InfoDot open={open} onClick={() => setOpen((o) => !o)} /></span> : null}
+      </div>
+      {note && open ? (
+        <div style={{ margin: "4px 0 6px 24px", padding: "8px 10px", background: T.slate50, borderRadius: 8, fontSize: 12.5, color: T.slate700, lineHeight: 1.5 }}>{note}</div>
+      ) : null}
+    </div>
   );
 }
 
@@ -58,13 +72,8 @@ export default function CommitPicker({ items, week, onSaved, style }) {
   return (
     <div style={style}>
       {list.map((t, i) => (
-        <div key={i} style={{ margin: "4px 0" }}>
-          <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
-            <input type="radio" name={group} checked={choice === i} onChange={() => setChoice(i)} style={{ marginTop: 5, flexShrink: 0 }} />
-            <span>{t.text}</span>
-          </label>
-          {t.note ? <CommitNote note={t.note} /> : null}
-        </div>
+        <CommitLine key={i} text={t.text} note={t.note}
+          control={<input type="radio" name={group} checked={choice === i} onChange={() => setChoice(i)} style={{ marginTop: 5, flexShrink: 0 }} />} />
       ))}
       <label style={{ display: "flex", alignItems: "flex-start", gap: 8, margin: "4px 0", cursor: "pointer" }}>
         <input type="radio" name={group} checked={choice === "other"} onChange={() => setChoice("other")} style={{ marginTop: 5, flexShrink: 0 }} />

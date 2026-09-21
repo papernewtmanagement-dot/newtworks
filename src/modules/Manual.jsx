@@ -32,7 +32,7 @@ import { MarkdownTextarea } from "../lib/markdownEditor.jsx";
 import { handleModuleLinkClick, useTabParam } from "../lib/routing.jsx";
 import { fillLiveFormulas } from "../lib/liveFormulas.js";
 import { kickoffToday, pickCycleValue } from "../lib/kickoff.js";
-import CommitPicker, { CommitNote } from "../components/CommitPicker.jsx";
+import CommitPicker, { CommitLine } from "../components/CommitPicker.jsx";
 
 // ─── Per-manual configuration ─────────────────────────────────
 // Every manual_type has one entry. To add a new manual:
@@ -1272,12 +1272,9 @@ function KickoffCommits({ hosts, week }) {
   let pick;
   if (!canSave) {
     pick = items.length ? (
-      <ul>{items.map((t, i) => (
-        <li key={i}>
-          {t.text}
-          {t.note ? <CommitNote note={t.note} /> : null}
-        </li>
-      ))}</ul>
+      <div style={{ margin: "8px 0 14px 0" }}>{items.map((t, i) => (
+        <CommitLine key={i} text={t.text} note={t.note} />
+      ))}</div>
     ) : null;
   } else if (today) {
     pick = (
