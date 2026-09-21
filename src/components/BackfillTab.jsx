@@ -183,10 +183,10 @@ export default function BackfillTab({ sources = [], roster = [] }) {
 
   // ---- styles --------------------------------------------------------------
   const input = {
-    padding: "7px 9px",
-    borderRadius: 7,
+    padding: "5px 7px",
+    borderRadius: 6,
     border: `1px solid ${T.slate200}`,
-    fontSize: 13,
+    fontSize: 12,
     color: T.slate900,
     background: T.white,
     boxSizing: "border-box",
@@ -224,14 +224,13 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     textAlign: "left",
     cursor: "pointer",
   };
-  const label = { fontSize: 11, fontWeight: 700, color: T.slate500, display: "block", marginBottom: 3 };
   const card = {
     background: T.white,
     border: `1px solid ${T.slate200}`,
-    borderRadius: 12,
-    padding: 14,
+    borderRadius: 10,
+    padding: "8px 10px",
     display: "grid",
-    gap: 12,
+    gap: 6,
   };
 
   const pending = allPayload().length;
@@ -239,8 +238,8 @@ export default function BackfillTab({ sources = [], roster = [] }) {
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "baseline", justifyContent: "space-between" }}>
-        <div style={{ fontSize: 13, color: T.slate600, maxWidth: 640 }}>
-          Older records still missing something, one card per household. The phone and the marketing source are typed once for the household and land on every record under that name. The ECRM link and the issued premium belong to the record. Only what you type gets saved.
+        <div style={{ fontSize: 12, color: T.slate600, maxWidth: 680 }}>
+          One card per household. Phone and marketing source are typed once at the top and land on every record under that name; the ECRM link and the issued premium sit on the record they belong to. Only what you type gets saved.
         </div>
         <div style={{ fontSize: 13, color: T.slate500 }}>
           {totalHouseholds == null ? "" : searching
@@ -279,166 +278,139 @@ export default function BackfillTab({ sources = [], roster = [] }) {
       {msg ? <div style={{ background: T.greenLt, color: T.green, padding: "10px 12px", borderRadius: 8, fontSize: 13 }}>{msg}</div> : null}
 
       {loading ? (
-        <div style={{ color: T.slate500, fontSize: 14 }}>Loading...</div>
+        <div style={{ color: T.slate500, fontSize: 13 }}>Loading...</div>
       ) : households.length === 0 ? (
         <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 18, fontSize: 14, color: T.slate600 }}>
           {searching ? "No records under that name." : "Nothing left to fill in."}
         </div>
       ) : (
-        <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gap: 6 }}>
           {households.map(h => {
             const isReferral = effectiveSource(h) === "referral";
             const ready = householdPayload(h).length;
             return (
               <div key={h.household} style={card}>
-                {/* who, and what the whole household is missing */}
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "baseline", justifyContent: "space-between" }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>
+                {/* who they are and what the household owes, all on one line */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                  <div style={{ flex: "1 1 190px", minWidth: 0, fontSize: 13, fontWeight: 700, color: T.slate900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     <CustomerName label={h.customer_label} phone4={h.phone_last4} />
-                    <span style={{ fontWeight: 400, color: T.slate500, fontSize: 12 }}>
-                      {" \u00b7 "}{h.record_count} record{h.record_count === 1 ? "" : "s"}{" \u00b7 "}{h.missing_count} missing
+                    <span style={{ fontWeight: 400, color: T.slate400, fontSize: 11 }}>
+                      {" \u00b7 "}{h.record_count} rec{" \u00b7 "}{h.missing_count} missing
                     </span>
                   </div>
-                  <span style={{ fontSize: 12, color: T.slate400 }}>{h.last_date}</span>
-                </div>
-
-                {/* the household's own boxes */}
-                {(h.needs_phone || h.needs_marketing || (isReferral && h.needs_referral)) ? (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-start",
-                                background: T.slate50 || "#f8fafc", borderRadius: 8, padding: 10 }}>
-                    {h.needs_phone ? (
-                      <div style={{ flex: "0 0 110px" }}>
-                        <label style={label}>Phone, last four</label>
-                        <input
-                          value={hhTyped(h, "phone_last4")}
-                          onChange={e => setHh(h, "phone_last4", e.target.value.replace(/\D/g, "").slice(0, 4))}
-                          inputMode="numeric"
-                          autoComplete="off"
-                          placeholder="0000"
-                          style={{ ...input, letterSpacing: 2, fontWeight: 700 }}
-                        />
-                      </div>
-                    ) : null}
-                    {h.needs_marketing ? (
-                      <div style={{ flex: "1 1 190px", minWidth: 0 }}>
-                        <label style={label}>Marketing source</label>
-                        <select
-                          value={hhTyped(h, "marketing_source")}
-                          onChange={e => setHh(h, "marketing_source", e.target.value)}
-                          style={input}
-                        >
-                          <option value="">Pick one</option>
-                          {(sources || []).map(s => (
-                            <option key={s.source_key} value={s.source_key}>{s.label || s.source_key}</option>
-                          ))}
-                        </select>
-                      </div>
-                    ) : null}
-                    {isReferral && h.needs_referral ? (
-                      <>
-                        <div style={{ flex: "1 1 190px", minWidth: 0 }}>
-                          <label style={label}>Referred by which customer</label>
-                          <input
-                            value={hhTyped(h, "referred_by_customer")}
-                            onChange={e => setHh(h, "referred_by_customer", e.target.value)}
-                            autoComplete="off"
-                            style={input}
-                          />
-                        </div>
-                        <div style={{ flex: "0 1 160px", minWidth: 0 }}>
-                          <label style={label}>Sourced by</label>
-                          <select
-                            value={hhTyped(h, "sourced_by_team_member_id")}
-                            onChange={e => setHh(h, "sourced_by_team_member_id", e.target.value)}
-                            style={input}
-                          >
-                            <option value="">Pick one</option>
-                            {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
-                          </select>
-                        </div>
-                      </>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {/* one block per record under that name */}
-                <div style={{ display: "grid", gap: 10 }}>
-                  {(h.records || []).map(r => (
-                    <div key={`${r.kind}-${r.id}`} style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-start", borderTop: `1px solid ${T.slate200}`, paddingTop: 10 }}>
-                      <div style={{ flex: "0 0 150px", fontSize: 12, color: T.slate500 }}>
-                        <div style={{ fontWeight: 700, color: T.slate700 }}>{r.on_date}{r.kind === "quote" ? " \u00b7 quote" : ""}</div>
-                        <div>{r.detail}</div>
-                      </div>
-
-                      {r.kind === "sale" && r.needs_ecrm ? (
-                        <div style={{ flex: "1 1 220px", minWidth: 0 }}>
-                          <label style={label}>ECRM link</label>
-                          <input
-                            value={typed(r, "ecrm")}
-                            onChange={e => setField(r, "ecrm", e.target.value)}
-                            placeholder="https://"
-                            autoComplete="off"
-                            style={input}
-                          />
-                        </div>
-                      ) : null}
-
-                      {(r.policies || []).some(p => p.needs_premium || !p.issued_date) ? (
-                        <div style={{ flex: "1 1 240px", minWidth: 0, display: "grid", gap: 10 }}>
-                          {(r.policies || []).map(p => {
-                            const polEdit = ((edits[r.id] || {}).policies || {})[p.id] || {};
-                            // What is on file is shown, not staged. Only a typed value is sent.
-                            const premBox = polEdit.issued_premium !== undefined
-                              ? polEdit.issued_premium
-                              : (p.issued_premium != null ? String(p.issued_premium) : "");
-                            return (
-                              <div key={p.id} style={{ display: "grid", gap: 3 }}>
-                                <span style={{ fontSize: 11, color: T.slate500 }}>
-                                  {p.product_type} · submitted ${Number(p.premium || 0).toLocaleString()}
-                                </span>
-                                {!p.issued_date ? (
-                                  <input
-                                    value={polTyped(r, p.id, "issued_date")}
-                                    onChange={e => setPolicy(r, p.id, "issued_date", e.target.value)}
-                                    type="date"
-                                    style={input}
-                                  />
-                                ) : null}
-                                <input
-                                  value={premBox}
-                                  onChange={e => setPolicy(r, p.id, "issued_premium", e.target.value)}
-                                  inputMode="decimal"
-                                  autoComplete="off"
-                                  placeholder={p.issued_date ? "Issued premium" : "Issued premium once it issues"}
-                                  style={input}
-                                />
-                                {p.issued_premium == null && !premBox ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => setPolicy(r, p.id, "issued_premium", String(p.premium ?? ""))}
-                                    style={chip}
-                                  >
-                                    use {Number(p.premium || 0).toLocaleString()}
-                                  </button>
-                                ) : null}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-
-                <div>
+                  {h.needs_phone ? (
+                    <input
+                      value={hhTyped(h, "phone_last4")}
+                      onChange={e => setHh(h, "phone_last4", e.target.value.replace(/\D/g, "").slice(0, 4))}
+                      inputMode="numeric"
+                      autoComplete="off"
+                      placeholder="Phone 0000"
+                      title="Phone, last four — fills the whole household"
+                      style={{ ...input, width: 96, letterSpacing: 1, fontWeight: 700 }}
+                    />
+                  ) : null}
+                  {h.needs_marketing ? (
+                    <select
+                      value={hhTyped(h, "marketing_source")}
+                      onChange={e => setHh(h, "marketing_source", e.target.value)}
+                      title="Marketing source — fills the whole household"
+                      style={{ ...input, width: 170 }}
+                    >
+                      <option value="">Marketing source</option>
+                      {(sources || []).map(s => (
+                        <option key={s.source_key} value={s.source_key}>{s.label || s.source_key}</option>
+                      ))}
+                    </select>
+                  ) : null}
+                  {isReferral && h.needs_referral ? (
+                    <>
+                      <input
+                        value={hhTyped(h, "referred_by_customer")}
+                        onChange={e => setHh(h, "referred_by_customer", e.target.value)}
+                        autoComplete="off"
+                        placeholder="Referred by"
+                        style={{ ...input, width: 150 }}
+                      />
+                      <select
+                        value={hhTyped(h, "sourced_by_team_member_id")}
+                        onChange={e => setHh(h, "sourced_by_team_member_id", e.target.value)}
+                        style={{ ...input, width: 120 }}
+                      >
+                        <option value="">Sourced by</option>
+                        {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
+                      </select>
+                    </>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => send(householdPayload(h))}
                     disabled={saving || !ready}
-                    style={{ ...btn(false), padding: "7px 12px", fontSize: 13, color: ready ? T.blue : T.slate500 }}
+                    style={{ ...btn(false), padding: "5px 10px", fontSize: 12, color: ready ? T.blue : T.slate400 }}
                   >
-                    Save this household
+                    Save
                   </button>
+                </div>
+
+                {/* one line per record under that name */}
+                <div style={{ display: "grid", gap: 4 }}>
+                  {(h.records || []).map(r => (
+                    <div key={`${r.kind}-${r.id}`} style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", borderTop: `1px solid ${T.slate100 || T.slate200}`, paddingTop: 4 }}>
+                      <span style={{ flex: "0 0 auto", fontSize: 11, color: T.slate500, whiteSpace: "nowrap" }}>
+                        <b style={{ color: T.slate700 }}>{r.on_date}</b>{r.kind === "quote" ? " quote" : ""} · {r.detail}
+                      </span>
+
+                      {r.kind === "sale" && r.needs_ecrm ? (
+                        <input
+                          value={typed(r, "ecrm")}
+                          onChange={e => setField(r, "ecrm", e.target.value)}
+                          placeholder="ECRM link"
+                          autoComplete="off"
+                          style={{ ...input, flex: "1 1 170px", minWidth: 120, width: "auto" }}
+                        />
+                      ) : null}
+
+                      {(r.policies || []).map(p => {
+                        const polEdit = ((edits[r.id] || {}).policies || {})[p.id] || {};
+                        // What is on file is shown, not staged. Only a typed value is sent.
+                        const premBox = polEdit.issued_premium !== undefined
+                          ? polEdit.issued_premium
+                          : (p.issued_premium != null ? String(p.issued_premium) : "");
+                        if (p.issued_date && p.issued_premium != null) return null;
+                        return (
+                          <span key={p.id} style={{ display: "flex", gap: 4, alignItems: "center", flex: "0 1 auto" }}>
+                            {!p.issued_date ? (
+                              <input
+                                value={polTyped(r, p.id, "issued_date")}
+                                onChange={e => setPolicy(r, p.id, "issued_date", e.target.value)}
+                                type="date"
+                                title={`${p.product_type} issued date`}
+                                style={{ ...input, width: 130 }}
+                              />
+                            ) : null}
+                            <input
+                              value={premBox}
+                              onChange={e => setPolicy(r, p.id, "issued_premium", e.target.value)}
+                              inputMode="decimal"
+                              autoComplete="off"
+                              placeholder="Issued $"
+                              title={`${p.product_type} issued premium`}
+                              style={{ ...input, width: 96 }}
+                            />
+                            {p.issued_premium == null && !premBox ? (
+                              <button
+                                type="button"
+                                onClick={() => setPolicy(r, p.id, "issued_premium", String(p.premium ?? ""))}
+                                style={chip}
+                                title={`${p.product_type} submitted at ${Number(p.premium || 0).toLocaleString()}`}
+                              >
+                                use {Number(p.premium || 0).toLocaleString()}
+                              </button>
+                            ) : null}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  ))}
                 </div>
               </div>
             );
