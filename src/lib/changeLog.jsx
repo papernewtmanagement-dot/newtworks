@@ -83,6 +83,21 @@ export function ChangeStamp({ ts, withDay = false }) {
   return <span style={{ fontWeight: 700, color: T.blue, whiteSpace: "nowrap" }}>{changeWhenText(ts, withDay)}</span>;
 }
 
+// How every line opens (Peter 2026-09-21): the customer, then the time. Under a
+// customer who has several lines the name is on the line above, so each line
+// opens with its time. fallback = say "Customer" when the row has no name.
+function Lead({ r, withDay = false, hideCustomer = false, fallback = false }) {
+  const showName = !hideCustomer && (r.subject || fallback);
+  return (
+    <>
+      {showName ? (r.subject ? <Customer r={r} /> : <span style={{ fontWeight: 600 }}>Customer</span>) : null}
+      {showName ? " · " : null}
+      <ChangeStamp ts={r.changed_at} withDay={withDay} />
+      {" · "}
+    </>
+  );
+}
+
 function Pair({ c, muted, detailOnly }) {
   const times = Number(c.count) > 1 ? <span style={{ color: muted }}>{` ×${c.count}`}</span> : null;
   if (c.event) {
@@ -143,9 +158,7 @@ export function ChangeEntry({ r, withDay = false, showWho = true, hideCustomer =
   const removed = r.what === "removed";
   return (
     <span>
-      <ChangeStamp ts={r.changed_at} withDay={withDay} />
-      {" · "}
-      {r.subject && !hideCustomer ? <><Customer r={r} /> — </> : null}
+      <Lead r={r} withDay={withDay} hideCustomer={hideCustomer} />
       <span style={{ color: T.slate600 }}>{r.item || "Record"}</span>
       {" · "}
       <span style={{ fontWeight: 700, color: removed ? T.red : T.slate800 }}>{removed ? "Removed" : "Edited"}</span>
@@ -162,9 +175,7 @@ export function ChangeEntry({ r, withDay = false, showWho = true, hideCustomer =
 export function SpotEntry({ r, withDay = false, hideCustomer = false }) {
   return (
     <span>
-      <ChangeStamp ts={r.changed_at} withDay={withDay} />
-      {" · "}
-      {r.subject && !hideCustomer ? <><Customer r={r} /> — </> : null}
+      <Lead r={r} withDay={withDay} hideCustomer={hideCustomer} />
       <span style={{ color: T.slate600 }}>{r.item}</span>
       {": "}
       <span style={{ fontStyle: "italic", color: T.slate800 }}>{r.spot_note}</span>
@@ -196,11 +207,8 @@ export function CanceledEntry({ r, withDay = false, showWho = true, hideCustomer
   }
   return (
     <span>
-      <ChangeStamp ts={r.changed_at} withDay={withDay} />
-      {" · "}
-      {hideCustomer ? null : r.subject ? <Customer r={r} /> : <span style={{ fontWeight: 600 }}>Customer</span>}
-      {what ? <span style={{ color: T.slate600 }}>{`${hideCustomer ? "" : " — "}${what}`}</span> : null}
-      <span style={{ color: T.slate600 }}>{` · canceled ${day(p.canceled_on)} · `}</span>
+      <Lead r={r} withDay={withDay} hideCustomer={hideCustomer} fallback />
+      <span style={{ color: T.slate600 }}>{`${what ? `${what} · ` : ""}canceled ${day(p.canceled_on)} · `}</span>
       {head}
       {showWho ? <span style={{ color: T.slate500 }}>{` · by ${r.who}`}</span> : null}
       {p.note ? <span style={{ color: T.slate500, fontStyle: "italic" }}>{` — spot-check: ${p.note}`}</span> : null}
@@ -267,11 +275,8 @@ export function IssueEntry({ r, withDay = false, showWho = true, hideCustomer = 
   }
   return (
     <span>
-      <ChangeStamp ts={r.changed_at} withDay={withDay} />
-      {" · "}
-      {hideCustomer ? null : r.subject ? <Customer r={r} /> : <span style={{ fontWeight: 600 }}>Customer</span>}
-      {what ? <span style={{ color: T.slate600 }}>{`${hideCustomer ? "" : " — "}${what}`}</span> : null}
-      {" · "}
+      <Lead r={r} withDay={withDay} hideCustomer={hideCustomer} fallback />
+      {what ? <span style={{ color: T.slate600 }}>{`${what} · `}</span> : null}
       {body}
       {showWho ? <span style={{ color: T.slate500 }}>{` · by ${r.who}`}</span> : null}
     </span>
