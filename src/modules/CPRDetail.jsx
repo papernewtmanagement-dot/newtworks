@@ -1791,7 +1791,11 @@ function CodeRedsYellowsSection({ details, team, weekEnding, editMode, formDetai
 const CHECKLIST_CUTOVER = "2026-09-12";
 const CHECKLIST_KEY_PREFIX = "chk:";
 
-function TeamChecklistLive({ report, editMode, formReport, isReportDirty, onReportChange }) {
+// Wrap-up and Inbox (the personal items) ride as the last rows of the live list
+// (Peter 2026-09-21). Their CPR cell names anyone who missed in red, or a single
+// check when everyone got it done. Values still live per person on
+// weekly_cpr_team_detail; edit mode shows a checkbox per person in that cell.
+function TeamChecklistLive({ report, weekDate, editMode, formReport, isReportDirty, onReportChange, details, team, formDetails, isDetailDirty, onDetailChange }) {
   const [live, setLive] = useState(null);
   const [error, setError] = useState(null);
   useEffect(() => {
@@ -1817,7 +1821,21 @@ function TeamChecklistLive({ report, editMode, formReport, isReportDirty, onRepo
     const k = CHECKLIST_KEY_PREFIX + it.id;
     return editMode && Object.prototype.hasOwnProperty.call(formReport || {}, k) ? formReport[k] : it.done === true;
   };
-  const hits = items.filter((it) => it.done === true).length;
+  const teamById = {};
+  (team || []).forEach((t) => { teamById[t.id] = t; });
+  const people = sortByTenure(
+    (details || []).filter((d) => !leftDuringWeek(teamById[d.team_member_id]?.end_date, weekDate)),
+    team,
+  );
+  const personalKeys = personalChecklistKeys(weekDate);
+  const personalVal = (d, key) => (editMode
+    ? (formDetails?.[d.id]?.[key] ?? null) === true
+    : d[key] === true);
+  const personalRows = personalKeys.map(([key, label]) => ({
+    key, label, missed: people.filter((d) => !personalVal(d, key)),
+  }));
+  const hits = items.filter((it) => it.done === true).length
+    + personalRows.filter((r) => people.length > 0 && r.missed.length === 0).length;
   const dayLabel = (iso) => {
     const d = new Date(`${iso}T12:00:00`);
     return isNaN(d) ? iso : d.toLocaleDateString("en-US", { weekday: "narrow" });
@@ -1825,7 +1843,7 @@ function TeamChecklistLive({ report, editMode, formReport, isReportDirty, onRepo
   return (
     <Card>
       <div style={{ fontSize: 12, color: T.slate600, marginBottom: 8 }}>
-        {hits} of {items.length} verified · the dots are the team's daily ticks (hover for who and when)
+        {hits} of {items.length + personalRows.length} verified · the dots are the team's daily ticks (hover for who and when)
       </div>
       <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -1863,6 +1881,37 @@ function TeamChecklistLive({ report, editMode, formReport, isReportDirty, onRepo
                 </tr>
               );
             })}
+            {personalRows.map((r) => {
+              const rowDirty = editMode && people.some((d) => isDetailDirty?.(d.id, r.key));
+              return (
+                <tr key={r.key} style={{ borderTop: `1px solid ${T.slate200}`, background: rowDirty ? (T.amber50 || "#fef3c7") : "transparent" }}>
+                  <td style={{ fontSize: 12, color: T.slate700, padding: "5px 6px" }}>{r.label}</td>
+                  {workdays.length > 0 && <td colSpan={workdays.length} />}
+                  <td style={{ textAlign: "center", padding: "3px 6px", fontSize: 12 }}>
+                    {people.length === 0 ? (
+                      <span style={{ color: T.slate400 }}>—</span>
+                    ) : editMode ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
+                        {people.map((d) => (
+                          <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                            <Checkbox
+                              checked={personalVal(d, r.key)}
+                              onChange={(v) => onDetailChange(d.id, r.key, v)}
+                              dirty={isDetailDirty?.(d.id, r.key)}
+                            />
+                            <span style={{ color: T.slate700 }}>{firstName(d.__name)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : r.missed.length === 0 ? (
+                      <span style={{ color: T.green }}>✓</span>
+                    ) : (
+                      <span style={{ color: T.red, fontWeight: 600 }}>{r.missed.map((d) => firstName(d.__name)).join(", ")}</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1870,17 +1919,23 @@ function TeamChecklistLive({ report, editMode, formReport, isReportDirty, onRepo
   );
 }
 
-function TeamChecklistSection({ report, weekDate, editMode, formReport, isReportDirty, onReportChange }) {
+function TeamChecklistSection({ report, weekDate, editMode, formReport, isReportDirty, onReportChange, details, team, formDetails, isDetailDirty, onDetailChange }) {
   if (report && weekDate && weekDate >= CHECKLIST_CUTOVER) {
     return (
       <div>
         <SectionHeader icon="✅" title="Team Checklist" />
         <TeamChecklistLive
           report={report}
+          weekDate={weekDate}
           editMode={editMode}
           formReport={formReport}
           isReportDirty={isReportDirty}
           onReportChange={onReportChange}
+          details={details}
+          team={team}
+          formDetails={formDetails}
+          isDetailDirty={isDetailDirty}
+          onDetailChange={onDetailChange}
         />
       </div>
     );
@@ -6960,10 +7015,16 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           formReport={edit.form.report}
           isReportDirty={edit.isReportDirty}
           onReportChange={edit.setReportField}
+          details={data.details} team={data.team}
+          formDetails={edit.form.details}
+          isDetailDirty={edit.isDetailDirty}
+          onDetailChange={edit.setDetailField}
         />
       </Section>
 
-      {/* 7. Personal checklist */}
+      {/* 7. Personal checklist — weeks before the live checklist only; from
+          2026-09-12 on, Wrap-up and Inbox are the last rows of the team list. */}
+      {!(weekDate && weekDate >= CHECKLIST_CUTOVER) && (
       <Section>
         <PersonalChecklistSection
           details={data.details} team={data.team}
@@ -6974,6 +7035,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           onChange={edit.setDetailField}
         />
       </Section>
+      )}
 
       {/* 8. Requirements — Modified column editable */}
       <Section>
