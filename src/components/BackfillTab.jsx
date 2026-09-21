@@ -46,6 +46,26 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
   // The list is paged on the server, so the sort has to be too. Otherwise
   // "sort by name" only sorts the households on screen.
   const [sort, setSort] = useState({ by: "date", dir: "desc" });
+  // The two views of this tab: what still needs filling in, and everything
+  // canceled through it (Peter 2026-09-20: "I need to see everything that I've
+  // canceled for chargebacks in this whole backfill process").
+  const [view, setView] = useState("fill");
+  const [cxls, setCxls] = useState(null);
+  const loadCxls = async () => {
+    const { data, error } = await supabase.rpc("rp_backfill_cancelations");
+    if (error) { setErr(error.message || "Could not load the canceled list."); return; }
+    setCxls(Array.isArray(data?.cancelations) ? data.cancelations : []);
+  };
+  useEffect(() => { loadCxls(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const undoCxl = async (c) => {
+    if (!window.confirm(`Undo the cancelation of ${c.customer_label}'s ${c.product_type}? It goes back into sales points.`)) return;
+    setSaving(true); setErr(""); setMsg("");
+    const { error } = await supabase.rpc("rp_void_cancelation", { p_id: c.id, p_reason: "Undone from the Backfill canceled list" });
+    setSaving(false);
+    if (error) { setErr(error.message || "That did not undo."); return; }
+    setMsg(`Undid the cancelation of ${c.customer_label}'s ${c.product_type}.`);
+    loadCxls(); load(offset);
+  };
 
   const load = async (from, q, s) => {
     setLoading(true);
@@ -172,6 +192,7 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
         // The server applies the premium first, so a chargeback logged in the
         // same save is priced off the number being typed here.
         if (cxl) item.canceled_on = cxl;
+        if (cxl && p.replacement) item.replacement = true;
         if (p.added_to_existing !== undefined) item.added_to_existing = !!p.added_to_existing;
         return item;
       })
@@ -201,6 +222,7 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
       + (canceled ? `, ${canceled} marked canceled (${charged} charged back)` : "")
       + (filled ? `, plus ${filled} more filled in from the same households` : "") + ".");
     load(offset);
+    loadCxls();
   };
 
   // ---- styles --------------------------------------------------------------
@@ -266,11 +288,56 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
 
   const pending = allPayload().length;
 
+  const viewBtn = (on) => ({ ...btn(on), padding: "5px 12px", fontSize: 12 });
+  const cxlRow = { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "5px 8px",
+                   borderTop: `1px solid ${T.slate200}`, fontSize: 12, color: T.slate700 };
+
   return (
     <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", gap: 6 }}>
+        <button type="button" style={viewBtn(view === "fill")} onClick={() => setView("fill")}>To fill in</button>
+        <button type="button" style={viewBtn(view === "canceled")} onClick={() => { setView("canceled"); loadCxls(); }}>
+          Canceled{cxls ? ` (${cxls.length})` : ""}
+        </button>
+      </div>
+
+      {view === "canceled" ? (
+        <div style={{ display: "grid", gap: 8 }}>
+          {err ? <div style={{ background: T.redLt, color: T.red, padding: "10px 12px", borderRadius: 8, fontSize: 13 }}>{err}</div> : null}
+          {msg ? <div style={{ background: T.greenLt, color: T.green, padding: "10px 12px", borderRadius: 8, fontSize: 13 }}>{msg}</div> : null}
+          <div style={{ fontSize: 12, color: T.slate600, maxWidth: 680 }}>
+            Every policy canceled from this tab. A policy from an earlier quarter charges back in the quarter the cancelation was entered, as a negative app and negative premium.
+          </div>
+          {cxls == null ? (
+            <div style={{ color: T.slate500, fontSize: 13 }}>Loading...</div>
+          ) : cxls.length === 0 ? (
+            <div style={{ fontSize: 13, color: T.slate600 }}>Nothing canceled from the backfill yet.</div>
+          ) : (
+            <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 8, overflow: "hidden" }}>
+              {cxls.map(c => (
+                <div key={c.id} style={cxlRow}>
+                  <span style={{ fontWeight: 700, color: T.slate900, minWidth: 110 }}>
+                    <CustomerName label={c.customer_label} phone4={c.phone_last4} />
+                  </span>
+                  <span style={{ minWidth: 60, color: T.slate600, fontWeight: 700 }}>{c.owner || "\u2014"}</span>
+                  <span style={{ minWidth: 150 }}>{c.product_type}{c.cars ? ` \u00b7 ${c.cars} car${c.cars === 1 ? "" : "s"}` : ""}</span>
+                  <span style={{ color: T.slate500 }}>issued {c.issued_date || "\u2014"}</span>
+                  <span style={{ color: T.red, fontWeight: 700 }}>canceled {c.canceled_on}</span>
+                  <span style={{ color: T.slate500 }}>entered {c.recorded_on}</span>
+                  <span style={{ minWidth: 70, textAlign: "right" }}>${Number(c.premium || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  <span style={{ color: c.effect === "charged back this quarter" ? T.red : T.slate500, fontStyle: "italic" }}>{c.effect}</span>
+                  <button type="button" disabled={saving} onClick={() => undoCxl(c)}
+                          style={{ ...btn(false), marginLeft: "auto", padding: "3px 10px", fontSize: 12 }}>Undo</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+      <>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "baseline", justifyContent: "space-between" }}>
         <div style={{ fontSize: 12, color: T.slate600, maxWidth: 680 }}>
-          One line per household. Phone, marketing source and the ECRM link are typed once and land on every record under that name. Per policy: the issued date and premium, and a date to mark it canceled, which charges it back off the premium you are applying. Only what you type gets saved.
+          One card per customer. Anything on file is shown; click it to change it. Anything missing is a box. Phone, marketing source and the ECRM link cover the whole household. Only what you change gets saved.
         </div>
         <div style={{ fontSize: 13, color: T.slate500 }}>
           {totalHouseholds == null ? "" : searching
@@ -538,6 +605,12 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
                         title="Marks this policy canceled on this date and charges it back"
                         style={{ ...input, width: 124, color: T.red, borderColor: T.red }}
                       />
+                      <label style={{ ...what, display: "flex", gap: 3, alignItems: "center", cursor: "pointer" }}
+                             title="Replaced by a new policy of the same kind. The household kept the line, so it does not charge back.">
+                        <input type="checkbox" checked={!!polEdit.replacement}
+                               onChange={e => setPolicy(r, p.id, "replacement", e.target.checked)} />
+                        replaced
+                      </label>
                       <button type="button" style={{ ...chip, color: T.slate500 }}
                               title="Never mind, do not cancel it"
                               onClick={() => { setPolicy(r, p.id, "canceled_on", ""); setPolicy(r, p.id, "cancel_open", false); }}>
@@ -608,6 +681,8 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
           <button type="button" onClick={() => setOffset(0)} disabled={saving} style={btn(false)}>Back to the top</button>
         ) : null}
       </div>
+      </>
+      )}
     </div>
   );
 }
