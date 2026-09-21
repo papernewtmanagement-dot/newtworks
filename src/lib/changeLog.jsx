@@ -218,3 +218,49 @@ export function ChangeKindToggle({ value, onChange, counts = {} }) {
     </div>
   );
 }
+
+// Entries grouped by the teammate whose record it is (owner_name from the
+// database), each line saying who made the change. The CPR and the Changes tab
+// both draw a week this way. exclude = team ids that get no group (the CPR
+// leaves the owner out).
+export function groupChangesByOwner(rows, exclude = null) {
+  const groups = [];
+  const byKey = new Map();
+  (rows || []).filter(r => !(exclude && exclude.has(r.owner_id))).forEach(r => {
+    const key = r.owner_id || "none";
+    if (!byKey.has(key)) {
+      const g = { key, name: r.owner_id ? (r.owner_name || "Teammate") : "Other", isTeam: !!r.owner_id, rows: [] };
+      byKey.set(key, g);
+      groups.push(g);
+    }
+    byKey.get(key).rows.push(r);
+  });
+  groups.sort((x, y) => (x.isTeam === y.isTeam ? x.name.localeCompare(y.name) : (x.isTeam ? -1 : 1)));
+  groups.forEach(g => g.rows.sort((x, y) => String(x.changed_at).localeCompare(String(y.changed_at))));
+  return groups;
+}
+
+export function ChangeGroups({ groups, kind = "change", maxHeight = 380 }) {
+  const Entry = kind === "issue" ? IssueEntry : ChangeEntry;
+  const noun = kind === "issue" ? ["policy", "policies"] : ["change", "changes"];
+  return (
+    <div style={maxHeight ? { maxHeight, overflowY: "auto", WebkitOverflowScrolling: "touch" } : undefined}>
+      {groups.map(g => (
+        <div key={g.key} style={{ marginBottom: 14 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 8, marginBottom: 5 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{g.name}</span>
+            <span style={{ fontSize: 11, color: T.slate500 }}>{g.rows.length} {g.rows.length === 1 ? noun[0] : noun[1]}</span>
+          </div>
+          {g.rows.map((r, i) => (
+            <div key={`${r.kind}-${r.txid}-${i}`} style={{
+              fontSize: 12, color: T.slate700, lineHeight: 1.5, paddingLeft: 10, marginBottom: 3,
+              borderLeft: `2px solid ${T.slate200}`, boxSizing: "border-box",
+            }}>
+              <Entry r={r} withDay />
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}

@@ -3,7 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T, BAND } from "../lib/theme.js";
 import { fmtMoney as _fmtMoney, fmtMoneyR as _fmtMoneyR } from "../lib/format.jsx";
 import { addDaysISO, currentWeekSaturdayCT } from "../lib/weeks.js";
-import { ChangeEntry, IssueEntry } from "../lib/changeLog.jsx";
+import { ChangeGroups, groupChangesByOwner } from "../lib/changeLog.jsx";
 
 
 // Sales Points band badge colours (Peter 2026-08-28). The badge shows the
@@ -3101,23 +3101,25 @@ function AgencyPerformanceSection({ snapshot, snapshotPrior, bookYearStart, goal
   );
 }
 
-// 12 — Claims
-
-function ClaimsSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
-  if (editMode) {
-    const fields = [
-      ["new_claims", "New"],
-      ["unreviewed_claims", "Unreviewed"],
-      ["open_claims", "Open"],
-    ];
-    return (
-      <div>
-        <SectionHeader icon="🚨" title="Claims" />
-        <Card>
-          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-end" }}>
-            {fields.map(([key, label]) => (
-              <div key={key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 11, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>{label}</span>
+// 12 + 13 — Book Watch (Peter 2026-09-21): non-pays and claims in one card,
+// stacked. Was two cards, Non-Pays and Claims. Same columns on
+// weekly_cpr_reports: non_pays, new_claims, unreviewed_claims, open_claims.
+const BOOK_WATCH_FIELDS = [
+  ["non_pays", "Non-pays this week"],
+  ["new_claims", "New claims"],
+  ["unreviewed_claims", "Unreviewed claims"],
+  ["open_claims", "Open claims"],
+];
+function BookWatchSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
+  return (
+    <div>
+      <SectionHeader icon="🔎" title="Book Watch" />
+      <Card>
+        <div style={{ display: "flex", flexDirection: "column", gap: editMode ? 10 : 6 }}>
+          {BOOK_WATCH_FIELDS.map(([key, label]) => (
+            <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <span style={{ fontSize: 13, color: T.slate700 }}>{label}</span>
+              {editMode ? (
                 <NumberInput
                   value={formReport[key]}
                   onChange={v => onReportChange(key, v)}
@@ -3126,21 +3128,11 @@ function ClaimsSection({ report, editMode, formReport, isReportDirty, onReportCh
                   step={1}
                   style={{ width: 96 }}
                 />
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-    );
-  }
-  return (
-    <div>
-      <SectionHeader icon="🚨" title="Claims" />
-      <Card>
-        <div style={{ fontSize: 13, color: T.slate800 }}>
-          New: <strong>{fmtInt(report?.new_claims)}</strong> &nbsp;•&nbsp;
-          Unreviewed: <strong>{fmtInt(report?.unreviewed_claims)}</strong> &nbsp;•&nbsp;
-          Open: <strong>{fmtInt(report?.open_claims)}</strong>
+              ) : (
+                <strong style={{ fontSize: 14, color: T.slate900 }}>{fmtInt(report?.[key])}</strong>
+              )}
+            </div>
+          ))}
         </div>
       </Card>
     </div>
@@ -3190,51 +3182,6 @@ function EURSection({ report, editMode, formReport, isReportDirty, onReportChang
 // points. Entries are grouped by the teammate whose record it is, and each line
 // says who made the change — so a change the owner made to a teammate's sale is
 // listed under that teammate, while the owner never gets a group of their own.
-function groupByOwner(rows, team) {
-  const ownerIds = new Set((team || []).filter(t => t.role_level === "Owner").map(t => t.id));
-  const nameById = new Map((team || []).map(t => [
-    t.id,
-    [t.first_name, t.last_name].filter(Boolean).join(" ") || t.nickname || "Teammate",
-  ]));
-  const groups = [];
-  const byKey = new Map();
-  (rows || []).filter(r => !ownerIds.has(r.owner_id)).forEach(r => {
-    const key = r.owner_id || "none";
-    if (!byKey.has(key)) {
-      const g = { key, name: r.owner_id ? (nameById.get(r.owner_id) || r.owner_name || "Teammate") : "Other", isTeam: !!r.owner_id, rows: [] };
-      byKey.set(key, g);
-      groups.push(g);
-    }
-    byKey.get(key).rows.push(r);
-  });
-  groups.sort((x, y) => (x.isTeam === y.isTeam ? x.name.localeCompare(y.name) : (x.isTeam ? -1 : 1)));
-  groups.forEach(g => g.rows.sort((x, y) => String(x.changed_at).localeCompare(String(y.changed_at))));
-  return groups;
-}
-
-function ChangeGroups({ groups, Entry, noun }) {
-  return (
-    <div style={{ maxHeight: 380, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
-      {groups.map(g => (
-        <div key={g.key} style={{ marginBottom: 14 }}>
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 8, marginBottom: 5 }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{g.name}</span>
-            <span style={{ fontSize: 11, color: T.slate500 }}>{g.rows.length} {g.rows.length === 1 ? noun : `${noun}s`}</span>
-          </div>
-          {g.rows.map((r, i) => (
-            <div key={`${r.txid}-${i}`} style={{
-              fontSize: 12, color: T.slate700, lineHeight: 1.5, paddingLeft: 10, marginBottom: 3,
-              borderLeft: `2px solid ${T.slate200}`, boxSizing: "border-box",
-            }}>
-              <Entry r={r} withDay />
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function LogChangesSection({ weekDate, team }) {
   const [rows, setRows] = useState(null);
   const [loadError, setLoadError] = useState("");
@@ -3258,22 +3205,23 @@ function LogChangesSection({ weekDate, team }) {
     return () => { alive = false; };
   }, [weekDate]);
 
-  const changeGroups = groupByOwner((rows || []).filter(r => r.kind !== "issue"), team);
-  const issueGroups = groupByOwner((rows || []).filter(r => r.kind === "issue"), team);
+  const ownerIds = new Set((team || []).filter(t => t.role_level === "Owner").map(t => t.id));
+  const changeGroups = groupChangesByOwner((rows || []).filter(r => r.kind !== "issue"), ownerIds);
+  const issueGroups = groupChangesByOwner((rows || []).filter(r => r.kind === "issue"), ownerIds);
   const count = (gs) => gs.reduce((n, g) => n + g.rows.length, 0);
   const note = { fontSize: 11, color: T.slate500, marginBottom: 10, lineHeight: 1.4 };
   const quiet = { fontSize: 13, color: T.slate400, fontStyle: "italic" };
 
-  const body = (groups, Entry, noun, empty) => loadError
+  const body = (groups, kind, empty) => loadError
     ? <div style={{ fontSize: 13, color: T.red }}>{loadError}</div>
     : rows === null
       ? <div style={quiet}>Loading…</div>
       : groups.length === 0
         ? <div style={quiet}>{empty}</div>
-        : <ChangeGroups groups={groups} Entry={Entry} noun={noun} />;
+        : <ChangeGroups groups={groups} kind={kind} />;
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, alignItems: "start" }}>
       <div>
         <SectionHeader icon="📝" title="Log Changes"
           accessory={rows === null ? null : `${count(changeGroups)} this week`} />
@@ -3281,7 +3229,7 @@ function LogChangesSection({ weekDate, team }) {
           <div style={note}>
             Every edit or removal to a sale, quote, cancelation or activity entry made this week, plus any made later to a policy that issued this week. Listed under the teammate whose entry it is. Adding a brand new entry is not a change.
           </div>
-          {body(changeGroups, ChangeEntry, "change", "No log changes this week.")}
+          {body(changeGroups, "change", "No log changes this week.")}
         </Card>
       </div>
       <div>
@@ -3291,43 +3239,9 @@ function LogChangesSection({ weekDate, team }) {
           <div style={note}>
             Every policy marked issued or not issued this week, or issued this week and corrected later, with the issued premium against what was submitted.
           </div>
-          {body(issueGroups, IssueEntry, "policy", "No policies issued this week.")}
+          {body(issueGroups, "issue", "No policies issued this week.")}
         </Card>
       </div>
-    </div>
-  );
-}
-
-// 13 — Non-Pays
-function NonPaysSection({ report, editMode, formReport, isReportDirty, onReportChange }) {
-  if (editMode) {
-    return (
-      <div>
-        <SectionHeader icon="🛑" title="Non-Pays" />
-        <Card>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, width: 140 }}>
-            <span style={{ fontSize: 11, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>This week</span>
-            <NumberInput
-              value={formReport.non_pays}
-              onChange={v => onReportChange("non_pays", v)}
-              dirty={isReportDirty("non_pays")}
-              min={0}
-              step={1}
-              style={{ width: 96 }}
-            />
-          </div>
-        </Card>
-      </div>
-    );
-  }
-  return (
-    <div>
-      <SectionHeader icon="🛑" title="Non-Pays" />
-      <Card>
-        <div style={{ fontSize: 13, color: T.slate800 }}>
-          This week: <strong>{fmtInt(report?.non_pays)}</strong>
-        </div>
-      </Card>
     </div>
   );
 }
@@ -7092,9 +7006,9 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       {/* 11. SMVC & Scorecard — merged into Agency Performance section (rate rows). */}
 
 
-      {/* 12 + 13 + 14. Non-Pays + Claims + Campaigns — same row, single column each.
-          Stacks vertically on narrow screens via grid auto-fit. Per Peter 2026-07-12 (Non-Pays/Claims),
-          Campaigns folded into row + onboarding option dropped 2026-08-07. */}
+      {/* Book Watch + Campaigns + EUR — same row, stacking on narrow screens.
+          Book Watch folds Non-Pays and Claims into one card (Peter 2026-09-21);
+          EUR moved up into this row the same day. */}
       <Section>
         <div style={{
           display: "grid",
@@ -7102,16 +7016,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
           gap: 16, alignItems: "start",
         }}>
           <div>
-            <NonPaysSection
-              report={data.report}
-              editMode={edit.active}
-              formReport={edit.form.report}
-              isReportDirty={edit.isReportDirty}
-              onReportChange={edit.setReportField}
-            />
-          </div>
-          <div>
-            <ClaimsSection
+            <BookWatchSection
               report={data.report}
               editMode={edit.active}
               formReport={edit.form.report}
@@ -7130,18 +7035,6 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
               onReportChange={edit.setReportField}
             />
           </div>
-        </div>
-      </Section>
-
-      {/* 13.5. EUR (left) + Log Changes (right) — same row, single column each.
-          Stacks vertically on narrow screens via grid auto-fit. Log Changes
-          replaced Whiteboard Errors 2026-09-19. */}
-      <Section>
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: 16, alignItems: "start",
-        }}>
           <div>
             <EURSection
               report={data.report}
@@ -7151,10 +7044,12 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
               onReportChange={edit.setReportField}
             />
           </div>
-          <div>
-            <LogChangesSection weekDate={weekDate} team={data.team} />
-          </div>
         </div>
+      </Section>
+
+      {/* Log Changes + Issued Policies — their own row, side by side. */}
+      <Section>
+        <LogChangesSection weekDate={weekDate} team={data.team} />
       </Section>
 
       <Divider />

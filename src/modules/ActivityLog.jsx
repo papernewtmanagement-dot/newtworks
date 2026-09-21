@@ -3,7 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink, hrefWithParam } from "../lib/routing.jsx";
 import { AccountCtx, CustomerName, parseAcctToken } from "../lib/customerAccount.jsx";
-import { ChangeDiffs, changeDiffList, changeEvents, changeTone, isIssueItem, ChangeEntry, IssueEntry, ChangeKindToggle } from "../lib/changeLog.jsx";
+import { ChangeDiffs, changeDiffList, changeEvents, changeTone, isIssueItem, ChangeKindToggle, ChangeGroups, groupChangesByOwner } from "../lib/changeLog.jsx";
 import TimeHub from "./TimeHub.jsx";
 import PFA from "./PFA.jsx";
 import Development from "./Development.jsx";
@@ -2584,63 +2584,70 @@ function changeSummary(r, ctx) {
   }
 }
 
-// One day at a time, arrows to move. Rows that came from a single click on the
-// Log tab collapse to one line. These are the same lines the daily alert and the
-// Telegram note carry, because all three read production_changes_for_day. The
-// Telegram link lands here: ?tab=changes&day=YYYY-MM-DD
-function ChangeDay({ day, setDay, kind, setKind }) {
-  const [lines, setLines] = useState(null);
+// One week at a time, Sunday to Saturday, arrows to move (Peter 2026-09-21:
+// the change log is for the week, not the day). Reads the same
+// production_changes_for_range call the CPR makes — the week's changes plus any
+// later change to a policy that issued that week — and draws it with the same
+// ChangeGroups, so the two read the same way. The Telegram link still lands
+// here with ?tab=changes&day=YYYY-MM-DD; that day's week opens.
+function weekStartOf(iso) {
+  const d = new Date(`${iso}T12:00:00`);
+  return addDays(iso, -d.getDay());
+}
+function ChangeWeek({ day, setDay, kind, setKind }) {
+  const start = weekStartOf(day);
+  const end = addDays(start, 6);
+  const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
   useEffect(() => {
     let alive = true;
     (async () => {
-      setErr(""); setLines(null);
-      const r = await supabase.rpc("production_changes_for_day", { p_agency_id: AGENCY_ID, p_day: day });
+      setErr(""); setRows(null);
+      const r = await supabase.rpc("production_changes_for_range", {
+        p_agency_id: AGENCY_ID, p_start: start, p_end: end, p_issued_in_range: true,
+      });
       if (!alive) return;
-      if (r.error) { setErr(errText(r.error)); setLines([]); return; }
-      setLines(Array.isArray(r.data) ? r.data : []);
+      if (r.error) { setErr(errText(r.error)); setRows([]); return; }
+      setRows(Array.isArray(r.data) ? r.data : []);
     })();
     return () => { alive = false; };
-  }, [day]);
+  }, [start, end]);
 
   const today = todayCentral();
+  const thisWeek = weekStartOf(today);
   const arrow = { ...btnGhost, padding: "6px 12px", fontSize: 15, lineHeight: 1 };
+  const list = (rows || []).filter(l => (kind === "issue") === (l.kind === "issue"));
   const counts = {
-    change: (lines || []).filter(l => l.kind !== "issue").length,
-    issue: (lines || []).filter(l => l.kind === "issue").length,
+    change: (rows || []).filter(l => l.kind !== "issue").length,
+    issue: (rows || []).filter(l => l.kind === "issue").length,
   };
-  const shownLines = (lines || []).filter(l => (kind === "issue") === (l.kind === "issue"));
+  const groups = groupChangesByOwner(list);
   return (
     <div style={cardStyle}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>
-          {day === today ? "Today" : fmtDate(day)}
+          {start === thisWeek ? "This week" : `Week of ${fmtDate(start)}`}
+          <span style={{ color: T.slate500, fontWeight: 600, fontSize: 13 }}> &middot; {fmtDate(start)} to {fmtDate(end)}</span>
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <button style={arrow} onClick={() => setDay(addDays(day, -1))} aria-label="previous day">&lsaquo;</button>
+          <button style={arrow} onClick={() => setDay(addDays(start, -7))} aria-label="previous week">&lsaquo;</button>
           <input type="date" style={{ ...inputBase, width: "auto", fontSize: 13, padding: "6px 10px" }} value={day} max={today}
             onChange={e => { if (e.target.value) setDay(e.target.value); }} />
-          <button style={arrow} disabled={day >= today} onClick={() => setDay(addDays(day, 1))} aria-label="next day">&rsaquo;</button>
+          <button style={arrow} disabled={start >= thisWeek} onClick={() => setDay(addDays(start, 7))} aria-label="next week">&rsaquo;</button>
         </div>
       </div>
       <div style={{ marginBottom: 12 }}>
-        <ChangeKindToggle value={kind} onChange={setKind} counts={lines ? counts : {}} />
+        <ChangeKindToggle value={kind} onChange={setKind} counts={rows ? counts : {}} />
       </div>
       {err && <Notice kind="error">{err}</Notice>}
-      {lines === null ? (
+      {rows === null ? (
         <div style={{ color: T.slate500, fontSize: 13 }}>Loading&hellip;</div>
-      ) : shownLines.length === 0 ? (
+      ) : groups.length === 0 ? (
         <div style={{ color: T.slate600, fontSize: 14 }}>
-          {kind === "issue" ? "No policies were issued or un-issued on this day." : "Nothing was edited or removed on this day."}
+          {kind === "issue" ? "No policies were issued or un-issued this week." : "Nothing was edited or removed this week."}
         </div>
       ) : (
-        <div style={{ display: "grid", gap: 8 }}>
-          {shownLines.map((l, i) => (
-            <div key={`${l.kind}-${l.txid}-${i}`} style={{ fontSize: 13, color: T.slate800, padding: "8px 10px", background: T.slate50, borderRadius: 8, lineHeight: 1.5 }}>
-              {l.kind === "issue" ? <IssueEntry r={l} /> : <ChangeEntry r={l} />}
-            </div>
-          ))}
-        </div>
+        <ChangeGroups groups={groups} kind={kind} maxHeight={null} />
       )}
     </div>
   );
@@ -2749,10 +2756,10 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
     return (
       <div style={{ display: "grid", gap: 12 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontSize: 13, color: T.slate500 }}>Edits, removals and issued policies, one day at a time.</div>
+          <div style={{ fontSize: 13, color: T.slate500 }}>Edits, removals and issued policies, one week at a time, by whose entry it is.</div>
           <button style={btnGhost} onClick={() => setView("all")}>See every change</button>
         </div>
-        <ChangeDay day={day || todayCentral()} setDay={setDay} kind={kind} setKind={setKind} />
+        <ChangeWeek day={day || todayCentral()} setDay={setDay} kind={kind} setKind={setKind} />
       </div>
     );
   }
@@ -2762,7 +2769,7 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ fontSize: 13, color: T.slate500 }}>Who changed what, and when. Everything on this module, newest first.</div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button style={btnGhost} onClick={() => setView("day")}>Back to one day</button>
+          <button style={btnGhost} onClick={() => setView("day")}>Back to one week</button>
           <select value={who} onChange={e => setWho(e.target.value)} style={selectStyle}>
             <option value="">Everyone</option>
             {roster.map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
