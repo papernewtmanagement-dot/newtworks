@@ -3211,6 +3211,7 @@ function LogChangesSection({ weekDate, team, viewerTeamMemberId = null }) {
   const changeGroups = byKind("change");
   const issueGroups = byKind("issue");
   const spotGroups = byKind("spot_check");
+  const cancelGroups = byKind("canceled");
   const count = (gs) => gs.reduce((n, g) => n + g.rows.length, 0);
   const note = { fontSize: 11, color: T.slate500, marginBottom: 10, lineHeight: 1.4 };
   const quiet = { fontSize: 13, color: T.slate400, fontStyle: "italic" };
@@ -3240,9 +3241,19 @@ function LogChangesSection({ weekDate, team, viewerTeamMemberId = null }) {
           accessory={rows === null ? null : `${count(issueGroups)} this week`} />
         <Card>
           <div style={note}>
-            Every policy issued, un-issued, corrected or canceled that counts toward this week's points, with the issued premium against what was submitted. A change that was undone right after is left out.
+            Every policy issued, un-issued or corrected that counts toward this week's points, with the issued premium against what was submitted. A change that was undone right after is left out.
           </div>
           {body(issueGroups, "issue", "No policies issued this week.")}
+        </Card>
+      </div>
+      <div>
+        <SectionHeader icon="🚫" title="Canceled"
+          accessory={rows === null ? null : `${count(cancelGroups)} this week`} />
+        <Card>
+          <div style={note}>
+            Every cancelation that counts toward this week, and what it charged back. A chargeback counts in the week it was logged.
+          </div>
+          {body(cancelGroups, "canceled", "No cancelations this week.")}
         </Card>
       </div>
       <div>

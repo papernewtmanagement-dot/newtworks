@@ -21,9 +21,13 @@
 //
 // production_changes_for_range rows come in three kinds (Peter 2026-09-21):
 //   kind "change" — one click's edits or removals. ChangeEntry draws it.
-//   kind "issue"  — one policy issued, marked not issued, its issue
-//                   corrected, or canceled in a way that moves the points
-//                   (charged back, or taken off the week it issued). `policy` carries the issue date, the issued
+//   kind "issue"  — one policy issued, marked not issued, or its issue
+//                   corrected.
+//   kind "canceled" — every cancelation logged, with what it did to the
+//                   points: charged back, taken off the week it issued,
+//                   already charged back, or outside the window. A chargeback
+//                   sits in the week it was recorded, since that is the week
+//                   its points move. CanceledEntry draws it. `policy` carries the issue date, the issued
 //                   premium and how far it is from the submitted premium.
 //                   IssueEntry draws it.
 //   kind "spot_check" — a spot-check note someone left on an entry. SpotEntry
@@ -142,18 +146,50 @@ export function ChangeEntry({ r, withDay = false, showWho = true }) {
   );
 }
 
-// One spot-check note.
-export function SpotEntry({ r, withDay = false, showWho = true }) {
-  const item = String(r.item || "record").toLowerCase();
+// One spot-check note (Peter 2026-09-21): the customer, the thing noted — the
+// products sold, the activity's own name, the canceled line — and the note.
+// Who wrote it is left off; it is always a manager.
+export function SpotEntry({ r, withDay = false }) {
   return (
     <span>
       <ChangeStamp ts={r.changed_at} withDay={withDay} />
       {" · "}
-      {showWho ? <span style={{ color: T.slate800 }}>{r.who} </span> : null}
-      {`noted ${/^[aeiou]/.test(item) ? "an" : "a"} ${item}`}
-      {r.subject ? <> — <Customer r={r} /></> : null}
+      {r.subject ? <><Customer r={r} /> — </> : null}
+      <span style={{ color: T.slate600 }}>{r.item}</span>
       {": "}
       <span style={{ fontStyle: "italic", color: T.slate800 }}>{r.spot_note}</span>
+    </span>
+  );
+}
+
+// One cancelation and what it did to the points.
+const CANCEL_EFFECT = {
+  already_charged_back: "already charged back when it happened",
+  outside_window: "outside the chargeback window, no charge",
+  not_counted: "never counted, no charge",
+};
+export function CanceledEntry({ r, withDay = false, showWho = true }) {
+  const p = r.policy || {};
+  const what = [p.line_of_business ? p.line_of_business[0].toUpperCase() + p.line_of_business.slice(1) : "", p.product || ""]
+    .filter(Boolean).join(" ");
+  let effect;
+  if (p.effect === "charged_back") {
+    effect = <span style={{ color: T.red, fontWeight: 600 }}>{` · charged back ${money(p.charge)}`}</span>;
+  } else if (p.effect === "removed") {
+    effect = <span style={{ color: T.red, fontWeight: 600 }}>{` · taken off its ${day(p.issued_date)} issue (${money(p.charge)})`}</span>;
+  } else {
+    effect = <span style={{ color: T.slate500 }}>{` · ${CANCEL_EFFECT[p.effect] || "no charge"}`}</span>;
+  }
+  return (
+    <span>
+      <ChangeStamp ts={r.changed_at} withDay={withDay} />
+      {" · "}
+      {r.subject ? <Customer r={r} /> : <span style={{ fontWeight: 600 }}>Customer</span>}
+      {what ? <span style={{ color: T.slate600 }}>{` — ${what}`}</span> : null}
+      {" · "}
+      <span style={{ fontWeight: 700, color: T.slate800 }}>Canceled {day(p.canceled_on)}</span>
+      {effect}
+      {showWho ? <span style={{ color: T.slate500 }}>{` · logged by ${r.who}`}</span> : null}
     </span>
   );
 }
@@ -186,16 +222,7 @@ export function IssueEntry({ r, withDay = false, showWho = true }) {
   const what = [p.line_of_business ? p.line_of_business[0].toUpperCase() + p.line_of_business.slice(1) : "", p.product || ""]
     .filter(Boolean).join(" ");
   let body;
-  if (r.what === "canceled") {
-    body = (
-      <>
-        <span style={{ fontWeight: 700, color: T.red }}>Canceled {day(p.canceled_on)}</span>
-        <span style={{ color: T.slate600 }}>{p.effect === "charged_back"
-          ? ` · charged back ${money(p.issued_premium)}`
-          : ` · taken off its ${day(p.issued_date)} issue`}</span>
-      </>
-    );
-  } else if (r.what === "unissued") {
+  if (r.what === "unissued") {
     body = (
       <>
         <span style={{ fontWeight: 700, color: T.red }}>Marked not issued</span>
@@ -239,7 +266,12 @@ export function IssueEntry({ r, withDay = false, showWho = true }) {
 
 // The two-way switch between edits and issued policies.
 export function ChangeKindToggle({ value, onChange, counts = {} }) {
-  const opts = [{ key: "change", label: "Changes" }, { key: "issue", label: "Issued policies" }, { key: "spot_check", label: "Spot-check notes" }];
+  const opts = [
+    { key: "change", label: "Changes" },
+    { key: "issue", label: "Issued policies" },
+    { key: "canceled", label: "Canceled" },
+    { key: "spot_check", label: "Spot-check notes" },
+  ];
   return (
     <div role="group" style={{ display: "inline-flex", flexWrap: "wrap", border: `1px solid ${T.slate300}`, borderRadius: 8, overflow: "hidden" }}>
       {opts.map(o => {
@@ -286,8 +318,10 @@ export function groupChangesByOwner(rows, exclude = null, meId = null) {
 }
 
 export function ChangeGroups({ groups, kind = "change", maxHeight = 380 }) {
-  const Entry = kind === "issue" ? IssueEntry : kind === "spot_check" ? SpotEntry : ChangeEntry;
-  const noun = kind === "issue" ? ["policy", "policies"] : kind === "spot_check" ? ["note", "notes"] : ["change", "changes"];
+  const Entry = { issue: IssueEntry, canceled: CanceledEntry, spot_check: SpotEntry }[kind] || ChangeEntry;
+  const noun = {
+    issue: ["policy", "policies"], canceled: ["cancelation", "cancelations"], spot_check: ["note", "notes"],
+  }[kind] || ["change", "changes"];
   return (
     <div style={maxHeight ? { maxHeight, overflowY: "auto", WebkitOverflowScrolling: "touch" } : undefined}>
       {groups.map(g => (

@@ -2626,6 +2626,7 @@ function ChangeWeek({ day, setDay, kind, setKind, isAdmin, myTeamId }) {
   const counts = {
     change: mine.filter(l => kindOf(l) === "change").length,
     issue: mine.filter(l => kindOf(l) === "issue").length,
+    canceled: mine.filter(l => kindOf(l) === "canceled").length,
     spot_check: mine.filter(l => kindOf(l) === "spot_check").length,
   };
   const groups = groupChangesByOwner(list, null, myTeamId);
@@ -2652,6 +2653,7 @@ function ChangeWeek({ day, setDay, kind, setKind, isAdmin, myTeamId }) {
       ) : groups.length === 0 ? (
         <div style={{ color: T.slate600, fontSize: 14 }}>
           {kind === "issue" ? "No policies were issued or un-issued this week."
+            : kind === "canceled" ? "No cancelations this week."
             : kind === "spot_check" ? "No spot-check notes this week."
             : "Nothing was edited or removed this week."}
         </div>
@@ -2739,12 +2741,17 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, isAdmin, 
   // Which toggle a history row shows under. A row can land under more than
   // one: a policy line that was issued and had its phone filled in shows the
   // issue under Issued policies and the phone under Changes.
-  const hasKind = (r, k) => (r.action !== "update" ? k === "change" : changeDiffList(r.changes).some(c => changeItemKind(c) === k));
+  const hasKind = (r, k) => {
+    // A cancelation being logged sits under Canceled.
+    if (r.table_name === "cancelation_log" && r.action === "insert") return k === "canceled";
+    return r.action !== "update" ? k === "change" : changeDiffList(r.changes).some(c => changeItemKind(c) === k);
+  };
   const inKind = (r) => hasKind(r, kind);
   const onlyKind = (c) => changeItemKind(c) === kind;
   const kindCounts = useMemo(() => ({
     change: (rows || []).filter(r => hasKind(r, "change")).length,
     issue: (rows || []).filter(r => hasKind(r, "issue")).length,
+    canceled: (rows || []).filter(r => hasKind(r, "canceled")).length,
     spot_check: (rows || []).filter(r => hasKind(r, "spot_check")).length,
   }), [rows]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2769,7 +2776,7 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, isAdmin, 
       <div style={{ display: "grid", gap: 12 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ fontSize: 13, color: T.slate500 }}>{isAdmin
-            ? "Edits, removals, issued policies and spot-check notes, one week at a time, by whose entry it is."
+            ? "Edits, removals, issued policies, cancelations and spot-check notes, one week at a time, by whose entry it is."
             : "Changes made to your entries, one week at a time."}</div>
           {isAdmin ? <button style={btnGhost} onClick={() => setView("all")}>See every change</button> : null}
         </div>
@@ -2799,7 +2806,7 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, isAdmin, 
       {rows === null ? (
         <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>
       ) : shown.length === 0 ? (
-        <div style={{ ...cardStyle, color: T.slate600, fontSize: 14 }}>{kind === "issue" ? `No policies issued or un-issued in the last ${days} days.` : kind === "spot_check" ? `No spot-check notes in the last ${days} days.` : `No changes in the last ${days} days.`}</div>
+        <div style={{ ...cardStyle, color: T.slate600, fontSize: 14 }}>{kind === "issue" ? `No policies issued or un-issued in the last ${days} days.` : kind === "canceled" ? `No cancelations in the last ${days} days.` : kind === "spot_check" ? `No spot-check notes in the last ${days} days.` : `No changes in the last ${days} days.`}</div>
       ) : (
         <div style={{ ...cardStyle, overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
