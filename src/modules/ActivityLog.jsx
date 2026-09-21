@@ -3,7 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink, hrefWithParam } from "../lib/routing.jsx";
 import { AccountCtx, CustomerName, parseAcctToken } from "../lib/customerAccount.jsx";
-import { ChangeDiffs, changeDiffList, changeEvents, changeTone, isIssueItem, ChangeKindToggle, ChangeGroups, groupChangesByOwner } from "../lib/changeLog.jsx";
+import { ChangeDiffs, changeDiffList, changeEvents, changeTone, changeItemKind, ChangeKindToggle, ChangeGroups, groupChangesByOwner } from "../lib/changeLog.jsx";
 import TimeHub from "./TimeHub.jsx";
 import PFA from "./PFA.jsx";
 import Development from "./Development.jsx";
@@ -2594,7 +2594,7 @@ function weekStartOf(iso) {
   const d = new Date(`${iso}T12:00:00`);
   return addDays(iso, -d.getDay());
 }
-function ChangeWeek({ day, setDay, kind, setKind }) {
+function ChangeWeek({ day, setDay, kind, setKind, isAdmin, myTeamId }) {
   const start = weekStartOf(day);
   const end = addDays(start, 6);
   const [rows, setRows] = useState(null);
@@ -2616,18 +2616,23 @@ function ChangeWeek({ day, setDay, kind, setKind }) {
   const today = todayCentral();
   const thisWeek = weekStartOf(today);
   const arrow = { ...btnGhost, padding: "6px 12px", fontSize: 15, lineHeight: 1 };
-  const list = (rows || []).filter(l => (kind === "issue") === (l.kind === "issue"));
+  // A teammate sees only the changes to their own entries; managers see all
+  // (Peter 2026-09-21). Their own group sits at the top, then fewest to most.
+  const mine = (rows || []).filter(l => isAdmin || l.owner_id === myTeamId);
+  const kindOf = (l) => l.kind || "change";
+  const list = mine.filter(l => kindOf(l) === kind);
   const counts = {
-    change: (rows || []).filter(l => l.kind !== "issue").length,
-    issue: (rows || []).filter(l => l.kind === "issue").length,
+    change: mine.filter(l => kindOf(l) === "change").length,
+    issue: mine.filter(l => kindOf(l) === "issue").length,
+    spot_check: mine.filter(l => kindOf(l) === "spot_check").length,
   };
-  const groups = groupChangesByOwner(list);
+  const groups = groupChangesByOwner(list, null, myTeamId);
   return (
     <div style={cardStyle}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>
-          {start === thisWeek ? "This week" : `Week of ${fmtDate(start)}`}
-          <span style={{ color: T.slate500, fontWeight: 600, fontSize: 13 }}> &middot; {fmtDate(start)} to {fmtDate(end)}</span>
+          {start === thisWeek ? <>This week <span style={{ color: T.slate500, fontWeight: 600, fontSize: 13 }}>&middot; </span></> : null}
+          {fmtDate(start)} to {fmtDate(end)}
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <button style={arrow} onClick={() => setDay(addDays(start, -7))} aria-label="previous week">&lsaquo;</button>
@@ -2644,7 +2649,9 @@ function ChangeWeek({ day, setDay, kind, setKind }) {
         <div style={{ color: T.slate500, fontSize: 13 }}>Loading&hellip;</div>
       ) : groups.length === 0 ? (
         <div style={{ color: T.slate600, fontSize: 14 }}>
-          {kind === "issue" ? "No policies were issued or un-issued this week." : "Nothing was edited or removed this week."}
+          {kind === "issue" ? "No policies were issued or un-issued this week."
+            : kind === "spot_check" ? "No spot-check notes this week."
+            : "Nothing was edited or removed this week."}
         </div>
       ) : (
         <ChangeGroups groups={groups} kind={kind} maxHeight={null} />
@@ -2653,7 +2660,7 @@ function ChangeWeek({ day, setDay, kind, setKind }) {
   );
 }
 
-function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKey, onChanged }) {
+function ChangesTab({ roster, nameOf, values, sources, types, isOwner, isAdmin, myTeamId, refreshKey, onChanged }) {
   const [day, setDay] = useTabParam("day", "");
   const [view, setView] = useState("day");
   // Edits and issued policies are kept apart (Peter 2026-09-21).
@@ -2674,6 +2681,7 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
   useEffect(() => {
     let alive = true;
     (async () => {
+      if (!isAdmin) { setRows([]); return; }
       setErr("");
       const r = await supabase.rpc("change_log_recent", { p_days: days, p_team_member_id: who || null, p_limit: 300 });
       if (!alive) return;
@@ -2726,14 +2734,16 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
     : { by, dir: by === "when" ? "desc" : "asc" });
   const sortArrow = (by) => sort.by !== by ? "" : sort.dir === "asc" ? " \u25B2" : " \u25BC";
 
-  // An issue row: a policy line whose issue date or issued premium moved.
-  const hasIssue = (r) => r.action === "update" && changeDiffList(r.changes).some(isIssueItem);
-  const hasOther = (r) => r.action !== "update" || changeDiffList(r.changes).some(c => !isIssueItem(c));
-  const inKind = (r) => kind === "issue" ? hasIssue(r) : hasOther(r);
-  const onlyKind = kind === "issue" ? isIssueItem : (c) => !isIssueItem(c);
+  // Which toggle a history row shows under. A row can land under more than
+  // one: a policy line that was issued and had its phone filled in shows the
+  // issue under Issued policies and the phone under Changes.
+  const hasKind = (r, k) => (r.action !== "update" ? k === "change" : changeDiffList(r.changes).some(c => changeItemKind(c) === k));
+  const inKind = (r) => hasKind(r, kind);
+  const onlyKind = (c) => changeItemKind(c) === kind;
   const kindCounts = useMemo(() => ({
-    change: (rows || []).filter(hasOther).length,
-    issue: (rows || []).filter(hasIssue).length,
+    change: (rows || []).filter(r => hasKind(r, "change")).length,
+    issue: (rows || []).filter(r => hasKind(r, "issue")).length,
+    spot_check: (rows || []).filter(r => hasKind(r, "spot_check")).length,
   }), [rows]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shown = useMemo(() => {
@@ -2756,10 +2766,12 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
     return (
       <div style={{ display: "grid", gap: 12 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontSize: 13, color: T.slate500 }}>Edits, removals and issued policies, one week at a time, by whose entry it is.</div>
-          <button style={btnGhost} onClick={() => setView("all")}>See every change</button>
+          <div style={{ fontSize: 13, color: T.slate500 }}>{isAdmin
+            ? "Edits, removals, issued policies and spot-check notes, one week at a time, by whose entry it is."
+            : "Changes made to your entries, one week at a time."}</div>
+          {isAdmin ? <button style={btnGhost} onClick={() => setView("all")}>See every change</button> : null}
         </div>
-        <ChangeWeek day={day || todayCentral()} setDay={setDay} kind={kind} setKind={setKind} />
+        <ChangeWeek day={day || todayCentral()} setDay={setDay} kind={kind} setKind={setKind} isAdmin={isAdmin} myTeamId={myTeamId} />
       </div>
     );
   }
@@ -2785,7 +2797,7 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
       {rows === null ? (
         <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>
       ) : shown.length === 0 ? (
-        <div style={{ ...cardStyle, color: T.slate600, fontSize: 14 }}>{kind === "issue" ? `No policies issued or un-issued in the last ${days} days.` : `No changes in the last ${days} days.`}</div>
+        <div style={{ ...cardStyle, color: T.slate600, fontSize: 14 }}>{kind === "issue" ? `No policies issued or un-issued in the last ${days} days.` : kind === "spot_check" ? `No spot-check notes in the last ${days} days.` : `No changes in the last ${days} days.`}</div>
       ) : (
         <div style={{ ...cardStyle, overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -2821,7 +2833,7 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
                         <><span style={{ fontWeight: 700, color: r.action === "delete" ? T.red : r.action === "update" ? T.amber : T.green }}>{verb[r.action] || r.action}</span> {r.item === "FIT scorecard" ? r.item : r.item.toLowerCase()}</>
                       )}
                     </td>
-                    <td style={tableTd}>{r.subject || "—"}</td>
+                    <td style={tableTd}><CustomerName label={r.subject} phone4={r.phone_last4} /></td>
                     <td style={{ ...tableTd, maxWidth: 420 }}>
                       {r.action === "update" ? (
                         changeDiffList(r.changes).filter(onlyKind).some(c => !c.event || c.after)
@@ -4984,7 +4996,7 @@ export default function ActivityLog({ userRole, userId }) {
     { id: "week", label: "Score" },
     { id: "earnings", label: "Earnings" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
     { id: "issued", label: "Pending" },
-    ...(isAdmin ? [{ id: "changes", label: "Changes" }] : []),  // who changed what and when (Peter 2026-09-10)
+    { id: "changes", label: "Changes" },  // who changed what and when (Peter 2026-09-10); teammates see their own entries (2026-09-21)
     ...(isAdmin ? [{ id: "spotcheck", label: "Spot-check" }] : []),  // monthly check of self-logged entries, owner and managers only (Peter 2026-09-16)
     ...(isAdmin ? [{ id: "backfill", label: "Backfill" }] : []),  // gaps on older records: phone, marketing source, ECRM link (Peter 2026-09-17)
     { id: "history", label: "History" },
@@ -5061,8 +5073,8 @@ export default function ActivityLog({ userRole, userId }) {
       {tab === "deposits" && <PFA userRole={userRole} embedded />}
       {tab === "development" && <Development userRole={userRole} userId={userId} embedded />}
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
-      {tab === "changes" && isAdmin && <ChangesTab roster={roster} nameOf={nameOf} values={values} sources={sources}
-        types={types} isOwner={isOwner} refreshKey={refreshKey} onChanged={bump} />}
+      {tab === "changes" && <ChangesTab roster={roster} nameOf={nameOf} values={values} sources={sources}
+        types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={bump} />}
       {tab === "spotcheck" && isAdmin && <SpotCheck isAdmin={isAdmin} values={values} sources={sources}
         types={types} isOwner={isOwner} roster={roster} />}
       {tab === "backfill" && isAdmin && <BackfillTab sources={sources} roster={roster} types={types} />}

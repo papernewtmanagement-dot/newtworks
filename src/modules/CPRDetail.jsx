@@ -3182,7 +3182,7 @@ function EURSection({ report, editMode, formReport, isReportDirty, onReportChang
 // points. Entries are grouped by the teammate whose record it is, and each line
 // says who made the change — so a change the owner made to a teammate's sale is
 // listed under that teammate, while the owner never gets a group of their own.
-function LogChangesSection({ weekDate, team }) {
+function LogChangesSection({ weekDate, team, viewerTeamMemberId = null }) {
   const [rows, setRows] = useState(null);
   const [loadError, setLoadError] = useState("");
 
@@ -3206,8 +3206,11 @@ function LogChangesSection({ weekDate, team }) {
   }, [weekDate]);
 
   const ownerIds = new Set((team || []).filter(t => t.role_level === "Owner").map(t => t.id));
-  const changeGroups = groupChangesByOwner((rows || []).filter(r => r.kind !== "issue"), ownerIds);
-  const issueGroups = groupChangesByOwner((rows || []).filter(r => r.kind === "issue"), ownerIds);
+  // The viewer's own group first, then fewest to most (Peter 2026-09-21).
+  const byKind = (k) => groupChangesByOwner((rows || []).filter(r => (r.kind || "change") === k), ownerIds, viewerTeamMemberId);
+  const changeGroups = byKind("change");
+  const issueGroups = byKind("issue");
+  const spotGroups = byKind("spot_check");
   const count = (gs) => gs.reduce((n, g) => n + g.rows.length, 0);
   const note = { fontSize: 11, color: T.slate500, marginBottom: 10, lineHeight: 1.4 };
   const quiet = { fontSize: 13, color: T.slate400, fontStyle: "italic" };
@@ -3240,6 +3243,16 @@ function LogChangesSection({ weekDate, team }) {
             Every policy marked issued or not issued this week, or issued this week and corrected later, with the issued premium against what was submitted.
           </div>
           {body(issueGroups, "issue", "No policies issued this week.")}
+        </Card>
+      </div>
+      <div>
+        <SectionHeader icon="🔍" title="Spot-Check Notes"
+          accessory={rows === null ? null : `${count(spotGroups)} this week`} />
+        <Card>
+          <div style={note}>
+            Notes left during spot checks on this week's entries, or on entries for a policy that issued this week.
+          </div>
+          {body(spotGroups, "spot_check", "No spot-check notes this week.")}
         </Card>
       </div>
     </div>
@@ -7049,7 +7062,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
 
       {/* Log Changes + Issued Policies — their own row, side by side. */}
       <Section>
-        <LogChangesSection weekDate={weekDate} team={data.team} />
+        <LogChangesSection weekDate={weekDate} team={data.team} viewerTeamMemberId={viewerTeamMemberId} />
       </Section>
 
       <Divider />

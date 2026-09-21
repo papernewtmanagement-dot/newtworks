@@ -19,16 +19,20 @@
 // can be empty. count is above 1 only when one click made the same move on
 // several records.
 //
-// production_changes_for_range rows come in two kinds (Peter 2026-09-21):
+// production_changes_for_range rows come in three kinds (Peter 2026-09-21):
 //   kind "change" — one click's edits or removals. ChangeEntry draws it.
 //   kind "issue"  — one policy issued, marked not issued, or its issue
 //                   corrected. `policy` carries the issue date, the issued
 //                   premium and how far it is from the submitted premium.
 //                   IssueEntry draws it.
-// They are kept apart on screen: a toggle on the Changes tab, two cards on the
-// CPR.
+//   kind "spot_check" — a spot-check note someone left on an entry. SpotEntry
+//                   draws it.
+// They are kept apart on screen: a toggle on the Changes tab, separate cards
+// on the CPR. The customer name opens the household popup wherever the page
+// provides one (the Activity Log does; the CPR shows plain text).
 
 import { T } from "./theme.js";
+import { CustomerName } from "./customerAccount.jsx";
 
 const TONE = { green: T.green, red: T.red, amber: T.amber, slate: T.slate600 };
 export function changeTone(c) { return (c && TONE[c.tone]) || T.slate800; }
@@ -41,6 +45,14 @@ export function changeEvents(changes) { return changeDiffList(changes).filter(c 
 // The entries that belong on the issued-policies side rather than with edits.
 const ISSUE_FIELDS = new Set(["event:issued", "event:unissued", "event:issued_premium", "issued_date", "issued_premium"]);
 export function isIssueItem(c) { return !!(c && ISSUE_FIELDS.has(c.field)); }
+export function isSpotItem(c) { return !!(c && c.field === "spot_check_note"); }
+// Which side of the toggle one entry of `changes` belongs on.
+export function changeItemKind(c) { return isIssueItem(c) ? "issue" : isSpotItem(c) ? "spot_check" : "change"; }
+
+function Customer({ r }) {
+  if (!r.subject) return null;
+  return <CustomerName label={r.subject} phone4={r.phone_last4} style={{ fontWeight: 600 }} />;
+}
 
 // The timestamp on every change line: bold and in the accent color so the eye
 // can run down the times.
@@ -122,10 +134,25 @@ export function ChangeEntry({ r, withDay = false, showWho = true }) {
       {showWho ? <span style={{ color: T.slate800 }}>{r.who} </span> : null}
       <span style={{ fontWeight: 700, color: removed ? T.red : T.slate800 }}>{removed ? "removed" : "edited"}</span>
       {` ${/^[aeiou]/.test(item) ? "an" : "a"} ${item}`}
-      {r.subject ? <> — <span style={{ fontWeight: 600 }}>{r.subject}</span></> : null}
+      {r.subject ? <> — <Customer r={r} /></> : null}
       <ChangeDiffs changes={r.changes} inline eventsAsDetail={removed} />
       {Number(r.row_count) > 1 ? <span style={{ color: T.slate500 }}>{` [${r.row_count} records]`}</span> : null}
-      {r.spot_note ? <span style={{ color: T.slate500, fontStyle: "italic" }}>{` — spot-check: ${r.spot_note}`}</span> : null}
+    </span>
+  );
+}
+
+// One spot-check note.
+export function SpotEntry({ r, withDay = false, showWho = true }) {
+  const item = String(r.item || "record").toLowerCase();
+  return (
+    <span>
+      <ChangeStamp ts={r.changed_at} withDay={withDay} />
+      {" · "}
+      {showWho ? <span style={{ color: T.slate800 }}>{r.who} </span> : null}
+      {`noted ${/^[aeiou]/.test(item) ? "an" : "a"} ${item}`}
+      {r.subject ? <> — <Customer r={r} /></> : null}
+      {": "}
+      <span style={{ fontStyle: "italic", color: T.slate800 }}>{r.spot_note}</span>
     </span>
   );
 }
@@ -191,7 +218,7 @@ export function IssueEntry({ r, withDay = false, showWho = true }) {
     <span>
       <ChangeStamp ts={r.changed_at} withDay={withDay} />
       {" · "}
-      <span style={{ fontWeight: 600 }}>{r.subject || "Customer"}</span>
+      {r.subject ? <Customer r={r} /> : <span style={{ fontWeight: 600 }}>Customer</span>}
       {what ? <span style={{ color: T.slate600 }}>{` — ${what}`}</span> : null}
       {" · "}
       {body}
@@ -202,9 +229,9 @@ export function IssueEntry({ r, withDay = false, showWho = true }) {
 
 // The two-way switch between edits and issued policies.
 export function ChangeKindToggle({ value, onChange, counts = {} }) {
-  const opts = [{ key: "change", label: "Changes" }, { key: "issue", label: "Issued policies" }];
+  const opts = [{ key: "change", label: "Changes" }, { key: "issue", label: "Issued policies" }, { key: "spot_check", label: "Spot-check notes" }];
   return (
-    <div role="group" style={{ display: "inline-flex", border: `1px solid ${T.slate300}`, borderRadius: 8, overflow: "hidden" }}>
+    <div role="group" style={{ display: "inline-flex", flexWrap: "wrap", border: `1px solid ${T.slate300}`, borderRadius: 8, overflow: "hidden" }}>
       {opts.map(o => {
         const on = value === o.key;
         return (
@@ -222,8 +249,9 @@ export function ChangeKindToggle({ value, onChange, counts = {} }) {
 // Entries grouped by the teammate whose record it is (owner_name from the
 // database), each line saying who made the change. The CPR and the Changes tab
 // both draw a week this way. exclude = team ids that get no group (the CPR
-// leaves the owner out).
-export function groupChangesByOwner(rows, exclude = null) {
+// leaves the owner out). Order (Peter 2026-09-21): the viewer's own group
+// first, then fewest entries to most.
+export function groupChangesByOwner(rows, exclude = null, meId = null) {
   const groups = [];
   const byKey = new Map();
   (rows || []).filter(r => !(exclude && exclude.has(r.owner_id))).forEach(r => {
@@ -235,14 +263,21 @@ export function groupChangesByOwner(rows, exclude = null) {
     }
     byKey.get(key).rows.push(r);
   });
-  groups.sort((x, y) => (x.isTeam === y.isTeam ? x.name.localeCompare(y.name) : (x.isTeam ? -1 : 1)));
+  groups.sort((x, y) => {
+    const mx = meId && x.key === meId ? 0 : 1;
+    const my = meId && y.key === meId ? 0 : 1;
+    if (mx !== my) return mx - my;
+    if (x.isTeam !== y.isTeam) return x.isTeam ? -1 : 1;
+    if (x.rows.length !== y.rows.length) return x.rows.length - y.rows.length;
+    return x.name.localeCompare(y.name);
+  });
   groups.forEach(g => g.rows.sort((x, y) => String(x.changed_at).localeCompare(String(y.changed_at))));
   return groups;
 }
 
 export function ChangeGroups({ groups, kind = "change", maxHeight = 380 }) {
-  const Entry = kind === "issue" ? IssueEntry : ChangeEntry;
-  const noun = kind === "issue" ? ["policy", "policies"] : ["change", "changes"];
+  const Entry = kind === "issue" ? IssueEntry : kind === "spot_check" ? SpotEntry : ChangeEntry;
+  const noun = kind === "issue" ? ["policy", "policies"] : kind === "spot_check" ? ["note", "notes"] : ["change", "changes"];
   return (
     <div style={maxHeight ? { maxHeight, overflowY: "auto", WebkitOverflowScrolling: "touch" } : undefined}>
       {groups.map(g => (
