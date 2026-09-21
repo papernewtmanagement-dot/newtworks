@@ -380,15 +380,17 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                   <span style={{ ...what, color: T.slate400 }} title={`${r.owner || "unassigned"} \u00b7 ${r.on_date} \u00b7 submitted ${Number(p.premium || 0).toLocaleString()}`}>
                     {manyOwners && r.owner ? `${r.owner} ` : ""}{p.product_type}
                   </span>
-                  <input
-                    value={dateBox}
-                    onChange={e => setPolicy(r, p.id, "issued_date", e.target.value)}
-                    type="date"
-                    title={p.issued_date
-                      ? `${p.product_type} issued ${p.issued_date}`
-                      : `${p.product_type} \u2014 leave it blank and it issues on the submit date`}
-                    style={{ ...input, width: 124, color: p.issued_date || dateBox ? T.slate900 : T.slate400 }}
-                  />
+                  {p.issued_date ? (
+                    <span style={what} title={`${p.product_type} issued ${p.issued_date}`}>{p.issued_date}</span>
+                  ) : (
+                    <input
+                      value={dateBox}
+                      onChange={e => setPolicy(r, p.id, "issued_date", e.target.value)}
+                      type="date"
+                      title={`${p.product_type} \u2014 leave it blank and it issues on the submit date`}
+                      style={{ ...input, width: 124, color: dateBox ? T.slate900 : T.slate400 }}
+                    />
+                  )}
                   <input
                     value={premBox}
                     onChange={e => setPolicy(r, p.id, "issued_premium", e.target.value)}
