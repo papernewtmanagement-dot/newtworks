@@ -3161,8 +3161,9 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
 //    team list grows a self-ticking "Weekly wrap-up" row on that day so
 //    the progress is visible without adding a step.
 //  * Code Reds and Code Yellows are raised here any day, stored in
-//    code_flags, and rolled into the CPR week automatically. No more
-//    Code Red emails.
+//    code_flags, and rolled into the CPR week automatically. Saving one
+//    emails the whole agency team at their State Farm addresses
+//    (trigger trg_code_flag_notify_team on code_flags).
 //  * Every item carries the explanation that used to live on the Daily
 //    Wrap-up processes page, behind the ⓘ on the right of the row.
 // =====================================================================
