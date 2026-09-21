@@ -57,6 +57,16 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
     setCxls(Array.isArray(data?.cancelations) ? data.cancelations : []);
   };
   useEffect(() => { loadCxls(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const markCharged = async (c, value) => {
+    setSaving(true); setErr(""); setMsg("");
+    const { error } = await supabase.rpc("rp_backfill_mark_charged_back", { p_id: c.id, p_value: value });
+    setSaving(false);
+    if (error) { setErr(error.message || "That did not save."); return; }
+    setMsg(value
+      ? `${c.customer_label}'s ${c.product_type} marked as already charged back. No new charge.`
+      : `${c.customer_label}'s ${c.product_type} will charge back again.`);
+    loadCxls();
+  };
   const undoCxl = async (c) => {
     if (!window.confirm(`Undo the cancelation of ${c.customer_label}'s ${c.product_type}? It goes back into sales points.`)) return;
     setSaving(true); setErr(""); setMsg("");
@@ -192,7 +202,6 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
         // The server applies the premium first, so a chargeback logged in the
         // same save is priced off the number being typed here.
         if (cxl) item.canceled_on = cxl;
-        if (cxl && p.replacement) item.replacement = true;
         if (p.added_to_existing !== undefined) item.added_to_existing = !!p.added_to_existing;
         return item;
       })
@@ -306,7 +315,7 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
           {err ? <div style={{ background: T.redLt, color: T.red, padding: "10px 12px", borderRadius: 8, fontSize: 13 }}>{err}</div> : null}
           {msg ? <div style={{ background: T.greenLt, color: T.green, padding: "10px 12px", borderRadius: 8, fontSize: 13 }}>{msg}</div> : null}
           <div style={{ fontSize: 12, color: T.slate600, maxWidth: 680 }}>
-            Every policy canceled from this tab. A policy from an earlier quarter charges back in the quarter the cancelation was entered, as a negative app and negative premium.
+            Every policy canceled from this tab. A policy from an earlier quarter charges back in the quarter the cancelation was entered, as a negative app and negative premium, unless it was already charged back when it happened.
           </div>
           {cxls == null ? (
             <div style={{ color: T.slate500, fontSize: 13 }}>Loading...</div>
@@ -326,8 +335,16 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
                   <span style={{ color: T.slate500 }}>entered {c.recorded_on}</span>
                   <span style={{ minWidth: 70, textAlign: "right" }}>${Number(c.premium || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   <span style={{ color: c.effect === "charged back this quarter" ? T.red : T.slate500, fontStyle: "italic" }}>{c.effect}</span>
+                  {c.matched ? (
+                    <label style={{ display: "flex", gap: 4, alignItems: "center", cursor: "pointer", marginLeft: "auto", color: T.slate600 }}
+                           title="It was charged back when it happened, so it should not charge again now">
+                      <input type="checkbox" checked={!!c.already_charged_back} disabled={saving}
+                             onChange={e => markCharged(c, e.target.checked)} />
+                      already charged back
+                    </label>
+                  ) : null}
                   <button type="button" disabled={saving} onClick={() => undoCxl(c)}
-                          style={{ ...btn(false), marginLeft: "auto", padding: "3px 10px", fontSize: 12 }}>Undo</button>
+                          style={{ ...btn(false), marginLeft: c.matched ? 0 : "auto", padding: "3px 10px", fontSize: 12 }}>Undo</button>
                 </div>
               ))}
             </div>
@@ -605,12 +622,6 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
                         title="Marks this policy canceled on this date and charges it back"
                         style={{ ...input, width: 124, color: T.red, borderColor: T.red }}
                       />
-                      <label style={{ ...what, display: "flex", gap: 3, alignItems: "center", cursor: "pointer" }}
-                             title="Replaced by a new policy of the same kind. The household kept the line, so it does not charge back.">
-                        <input type="checkbox" checked={!!polEdit.replacement}
-                               onChange={e => setPolicy(r, p.id, "replacement", e.target.checked)} />
-                        replaced
-                      </label>
                       <button type="button" style={{ ...chip, color: T.slate500 }}
                               title="Never mind, do not cancel it"
                               onClick={() => { setPolicy(r, p.id, "canceled_on", ""); setPolicy(r, p.id, "cancel_open", false); }}>
