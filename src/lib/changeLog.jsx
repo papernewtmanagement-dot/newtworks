@@ -24,8 +24,8 @@
 //   kind "issue"  — one policy issued, marked not issued, or its issue
 //                   corrected.
 //   kind "canceled" — every cancelation logged, with what it did to the
-//                   points: charged back, taken off the week it issued,
-//                   already charged back, or outside the window. A chargeback
+//                   points: charged back, already charged back, or outside
+//                   the window. A chargeback
 //                   sits in the week it was recorded, since that is the week
 //                   its points move. CanceledEntry draws it. `policy` carries the issue date, the issued
 //                   premium and how far it is from the submitted premium.
@@ -38,6 +38,7 @@
 
 import { T } from "./theme.js";
 import { CustomerName } from "./customerAccount.jsx";
+import { TreeRow } from "./TreeRow.jsx";
 
 const TONE = { green: T.green, red: T.red, amber: T.amber, slate: T.slate600 };
 export function changeTone(c) { return (c && TONE[c.tone]) || T.slate800; }
@@ -138,13 +139,13 @@ export function ChangeDiffs({ changes, inline = false, muted = T.slate500, event
 // One click's edits or removals, from production_changes_for_range.
 // Names the thing (Peter 2026-09-21): the products on the sale, the
 // activity's own name — `item` comes from change_record_label.
-export function ChangeEntry({ r, withDay = false, showWho = true }) {
+export function ChangeEntry({ r, withDay = false, showWho = true, hideCustomer = false }) {
   const removed = r.what === "removed";
   return (
     <span>
       <ChangeStamp ts={r.changed_at} withDay={withDay} />
       {" · "}
-      {r.subject ? <><Customer r={r} /> — </> : null}
+      {r.subject && !hideCustomer ? <><Customer r={r} /> — </> : null}
       <span style={{ color: T.slate600 }}>{r.item || "Record"}</span>
       {" · "}
       <span style={{ fontWeight: 700, color: removed ? T.red : T.slate800 }}>{removed ? "Removed" : "Edited"}</span>
@@ -158,12 +159,12 @@ export function ChangeEntry({ r, withDay = false, showWho = true }) {
 // One spot-check note (Peter 2026-09-21): the customer, the thing noted — the
 // products sold, the activity's own name, the canceled line — and the note.
 // Who wrote it is left off; it is always a manager.
-export function SpotEntry({ r, withDay = false }) {
+export function SpotEntry({ r, withDay = false, hideCustomer = false }) {
   return (
     <span>
       <ChangeStamp ts={r.changed_at} withDay={withDay} />
       {" · "}
-      {r.subject ? <><Customer r={r} /> — </> : null}
+      {r.subject && !hideCustomer ? <><Customer r={r} /> — </> : null}
       <span style={{ color: T.slate600 }}>{r.item}</span>
       {": "}
       <span style={{ fontStyle: "italic", color: T.slate800 }}>{r.spot_note}</span>
@@ -177,21 +178,19 @@ const CANCEL_EFFECT = {
   outside_window: "outside the chargeback window, no charge",
   not_counted: "never counted, no charge",
 };
-// A cancelation shows up to twice (Peter 2026-09-21): as logged, under the
-// teammate who logged it (their activity), and as the chargeback or take-off,
-// under the teammate whose policy it was. Its spot-check note rides along.
-export function CanceledEntry({ r, withDay = false, showWho = true }) {
+// One line per cancelation (Peter 2026-09-21). Every cancelation inside the
+// window is a chargeback, filed under the teammate whose policy it was; one
+// that charged nothing shows as logged, under who it was logged for. Its
+// spot-check note rides along.
+export function CanceledEntry({ r, withDay = false, showWho = true, hideCustomer = false }) {
   const p = r.policy || {};
   const what = [p.line_of_business ? p.line_of_business[0].toUpperCase() + p.line_of_business.slice(1) : "", p.product || ""]
     .filter(Boolean).join(" ");
   let head;
   if (r.what === "charged_back") {
     head = <span style={{ fontWeight: 700, color: T.red }}>{`Charged back ${money(p.charge)}`}</span>;
-  } else if (r.what === "removed") {
-    head = <span style={{ fontWeight: 700, color: T.red }}>{`Taken off its ${day(p.issued_date)} issue (${money(p.charge)})`}</span>;
   } else {
     const effect = p.effect === "charged_back" ? `charged back ${money(p.charge)}`
-      : p.effect === "removed" ? `taken off its ${day(p.issued_date)} issue`
       : (CANCEL_EFFECT[p.effect] || "no charge");
     head = <><span style={{ fontWeight: 700, color: T.slate800 }}>Cancelation logged</span><span style={{ color: T.slate500 }}>{` · ${effect}`}</span></>;
   }
@@ -199,8 +198,8 @@ export function CanceledEntry({ r, withDay = false, showWho = true }) {
     <span>
       <ChangeStamp ts={r.changed_at} withDay={withDay} />
       {" · "}
-      {r.subject ? <Customer r={r} /> : <span style={{ fontWeight: 600 }}>Customer</span>}
-      {what ? <span style={{ color: T.slate600 }}>{` — ${what}`}</span> : null}
+      {hideCustomer ? null : r.subject ? <Customer r={r} /> : <span style={{ fontWeight: 600 }}>Customer</span>}
+      {what ? <span style={{ color: T.slate600 }}>{`${hideCustomer ? "" : " — "}${what}`}</span> : null}
       <span style={{ color: T.slate600 }}>{` · canceled ${day(p.canceled_on)} · `}</span>
       {head}
       {showWho ? <span style={{ color: T.slate500 }}>{` · by ${r.who}`}</span> : null}
@@ -232,7 +231,7 @@ function Difference({ p }) {
 }
 
 // One policy issued, marked not issued, or its issue corrected.
-export function IssueEntry({ r, withDay = false, showWho = true }) {
+export function IssueEntry({ r, withDay = false, showWho = true, hideCustomer = false }) {
   const p = r.policy || {};
   const what = [p.line_of_business ? p.line_of_business[0].toUpperCase() + p.line_of_business.slice(1) : "", p.product || ""]
     .filter(Boolean).join(" ");
@@ -270,8 +269,8 @@ export function IssueEntry({ r, withDay = false, showWho = true }) {
     <span>
       <ChangeStamp ts={r.changed_at} withDay={withDay} />
       {" · "}
-      {r.subject ? <Customer r={r} /> : <span style={{ fontWeight: 600 }}>Customer</span>}
-      {what ? <span style={{ color: T.slate600 }}>{` — ${what}`}</span> : null}
+      {hideCustomer ? null : r.subject ? <Customer r={r} /> : <span style={{ fontWeight: 600 }}>Customer</span>}
+      {what ? <span style={{ color: T.slate600 }}>{`${hideCustomer ? "" : " — "}${what}`}</span> : null}
       {" · "}
       {body}
       {showWho ? <span style={{ color: T.slate500 }}>{` · by ${r.who}`}</span> : null}
@@ -332,6 +331,23 @@ export function groupChangesByOwner(rows, exclude = null, meId = null) {
   return groups;
 }
 
+// A customer's rows in one group, kept together at the place the first one
+// falls in time. Rows with no customer stand alone.
+function clusterByCustomer(rows) {
+  const out = [];
+  const byKey = new Map();
+  (rows || []).forEach(r => {
+    if (!r.subject) { out.push({ key: null, rows: [r] }); return; }
+    const key = `${String(r.subject).toLowerCase()}|${r.phone_last4 || ""}`;
+    if (!byKey.has(key)) { const c = { key, rows: [] }; byKey.set(key, c); out.push(c); }
+    byKey.get(key).rows.push(r);
+  });
+  return out;
+}
+
+// Inside each teammate's group, a customer with more than one record shows the
+// name once, and the records hang under it with file-list lines (Peter
+// 2026-09-21). A customer with one record stays on one line.
 export function ChangeGroups({ groups, kind = "change", maxHeight = 380 }) {
   const Entry = { issue: IssueEntry, canceled: CanceledEntry, spot_check: SpotEntry }[kind] || ChangeEntry;
   const noun = {
@@ -345,12 +361,21 @@ export function ChangeGroups({ groups, kind = "change", maxHeight = 380 }) {
             <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{g.name}</span>
             <span style={{ fontSize: 11, color: T.slate500 }}>{g.rows.length} {g.rows.length === 1 ? noun[0] : noun[1]}</span>
           </div>
-          {g.rows.map((r, i) => (
-            <div key={`${r.kind}-${r.txid}-${i}`} style={{
+          {clusterByCustomer(g.rows).map((c, ci) => (
+            <div key={`${c.key || "row"}-${ci}`} style={{
               fontSize: 12, color: T.slate700, lineHeight: 1.5, paddingLeft: 10, marginBottom: 3,
               borderLeft: `2px solid ${T.slate200}`, boxSizing: "border-box",
             }}>
-              <Entry r={r} withDay />
+              {c.rows.length === 1 ? <Entry r={c.rows[0]} withDay /> : (
+                <>
+                  <div><Customer r={c.rows[0]} /></div>
+                  {c.rows.map((r, i) => (
+                    <TreeRow key={`${r.kind}-${r.txid}-${i}`} last={i === c.rows.length - 1}>
+                      <Entry r={r} withDay hideCustomer />
+                    </TreeRow>
+                  ))}
+                </>
+              )}
             </div>
           ))}
         </div>

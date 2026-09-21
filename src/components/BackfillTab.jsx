@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { TreeRow } from "../lib/TreeRow.jsx";
 import { supabase } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { T } from "../lib/theme.js";
@@ -277,9 +278,10 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
     textAlign: "left",
     cursor: "pointer",
   };
-  // One compact card per customer. The first line of business rides on the
-  // first line with the household fields; every other line of business gets a
-  // line of its own underneath, so the card reads top to bottom (Peter 2026-09-20).
+  // One compact card per household. The household fields sit on the first
+  // line; every product gets a line of its own underneath, hung off the
+  // household with file-list lines, and the boxes line up in columns from one
+  // product to the next (Peter 2026-09-21).
   const card = {
     background: T.white,
     border: `1px solid ${T.slate200}`,
@@ -489,12 +491,13 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
               (r.policies || [])
                 .filter(p => !(p.issued_date && p.issued_premium != null && p.canceled_on))
                 .map(p => ({ r, p })));
-            const lobs = [...new Set(openPolicies.map(x => x.p.line_of_business))]
-              .sort((a, b) => {
-                const ia = LOB_ORDER.indexOf(a), ib = LOB_ORDER.indexOf(b);
-                return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || String(a).localeCompare(String(b));
-              });
-            const lobPolicies = (lob) => openPolicies.filter(x => x.p.line_of_business === lob);
+            const lobRank = (lob) => { const i = LOB_ORDER.indexOf(lob); return i < 0 ? 99 : i; };
+            openPolicies.sort((a, b) =>
+              lobRank(a.p.line_of_business) - lobRank(b.p.line_of_business)
+              || String(a.p.line_of_business).localeCompare(String(b.p.line_of_business))
+              || String(a.r.on_date || "").localeCompare(String(b.r.on_date || "")));
+            // Fixed-width slots so every product's boxes line up under the one above.
+            const slot = (w) => ({ display: "inline-flex", alignItems: "center", gap: 4, width: w, flex: `0 0 ${w}px` });
 
             // Every box on this line carries a visible word saying what it is.
             // An unlabeled date field next to an issue date is how issue dates
@@ -513,9 +516,12 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
               const cancelOpen = polEdit.cancel_open || !!polEdit.canceled_on;
               const added = polEdit.added_to_existing !== undefined ? !!polEdit.added_to_existing : !!p.added_to_existing;
               return (
-                <span key={p.id} style={{ display: "flex", gap: 5, alignItems: "center", flex: "0 1 auto",
-                                          padding: "1px 6px", borderLeft: `1px solid ${T.slate200}` }}>
-                  {manyOwners && r.owner ? <span style={{ ...what, color: T.slate600, fontWeight: 700 }}>{r.owner}</span> : null}
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", minHeight: 28 }}>
+                  <span style={lobTag}>{LOB_NAME[p.line_of_business] || p.line_of_business}</span>
+                  {manyOwners ? (
+                    <span style={{ ...slot(64), ...what, color: T.slate600, fontWeight: 700 }}>{r.owner || ""}</span>
+                  ) : null}
+                  <span style={slot(140)}>
                   {isOpen(`${p.id}:type`) ? (
                     <select
                       value={polEdit.product_type ?? p.product_type ?? ""}
@@ -533,7 +539,9 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
                       {(types[p.line_of_business] || []).find(t => t.type_key === (polEdit.product_type ?? p.product_type))?.label || polEdit.product_type || p.product_type}
                     </span>
                   )}
+                  </span>
 
+                  <span style={slot(48)}>
                   {p.line_of_business === "auto" ? (
                     isOpen(`${p.id}:cars`) ? (
                       <input
@@ -550,7 +558,9 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
                       </span>
                     )
                   ) : null}
+                  </span>
 
+                  <span style={slot(160)}>
                   <span style={tag}>Sold</span>
                   {isOpen(`${r.id}:sold`) ? (
                     <input
@@ -565,7 +575,9 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
                     <span style={clickText} title="Submitted date for this whole sale — click to change"
                           onClick={() => openField(`${r.id}:sold`)}>{recTyped(r, "submitted_date") || r.on_date}</span>
                   )}
+                  </span>
 
+                  <span style={slot(170)}>
                   <span style={tag}>Issued</span>
                   {p.issued_date && !isOpen(`${p.id}:issued`) ? (
                     <span style={clickText} title="Click to change the issue date"
@@ -580,7 +592,9 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
                       style={{ ...input, width: 124, color: dateBox ? T.slate900 : T.slate400 }}
                     />
                   )}
+                  </span>
 
+                  <span style={slot(170)}>
                   <span style={tag}>$</span>
                   <input
                     value={premBox}
@@ -599,7 +613,9 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
                       use {Number(p.premium || 0).toLocaleString()}
                     </button>
                   ) : null}
+                  </span>
 
+                  <span style={slot(78)}>
                   {p.line_of_business === "auto" ? (
                     <label style={{ ...what, display: "flex", gap: 3, alignItems: "center", cursor: "pointer" }}
                            title="A car added to an auto policy the household already had, not a new line">
@@ -608,6 +624,7 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
                       added car
                     </label>
                   ) : null}
+                  </span>
 
                   {p.canceled_on ? (
                     <span style={{ ...what, color: T.red, fontWeight: 700 }}>canceled {p.canceled_on}</span>
@@ -661,19 +678,12 @@ export default function BackfillTab({ sources = [], roster = [], types = {} }) {
                     {owners.length ? owners.join(", ") : "\u2014"}
                   </span>
                   {hhBoxes}
-                  {lobs.length ? (
-                    <>
-                      <span style={lobTag}>{LOB_NAME[lobs[0]] || lobs[0]}</span>
-                      {lobPolicies(lobs[0]).map(polBoxes)}
-                    </>
-                  ) : null}
                   {saveBtn}
                 </div>
-                {lobs.slice(1).map(lob => (
-                  <div key={lob} style={{ ...line, paddingLeft: 12 }}>
-                    <span style={lobTag}>{LOB_NAME[lob] || lob}</span>
-                    {lobPolicies(lob).map(polBoxes)}
-                  </div>
+                {openPolicies.map((x, i) => (
+                  <TreeRow key={x.p.id} mid={14} last={i === openPolicies.length - 1}>
+                    {polBoxes(x)}
+                  </TreeRow>
                 ))}
               </div>
             );
