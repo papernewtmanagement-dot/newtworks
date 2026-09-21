@@ -1481,7 +1481,9 @@ const StaffDirectory = ({ staff }) => {
         employment_type: (addForm.employment_type || "").trim() || null,
         start_date:      addForm.start_date || null,
         hire_date:       addForm.start_date || null,
-        is_active:       true,
+        // A future start date means they have not started: added switched off,
+        // so they stay off the weekly report email until you mark them started.
+        is_active:       !(addForm.start_date && addForm.start_date > new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" })),
         license_pc:      addForm.license_pc  === true,
         license_lh:      addForm.license_lh  === true,
         license_ips:     addForm.license_ips === true,
