@@ -3182,7 +3182,7 @@ function EURSection({ report, editMode, formReport, isReportDirty, onReportChang
 // points. Entries are grouped by the teammate whose record it is, and each line
 // says who made the change — so a change the owner made to a teammate's sale is
 // listed under that teammate, while the owner never gets a group of their own.
-function LogChangesSection({ weekDate, team, viewerTeamMemberId = null }) {
+function LogChangesSection({ weekDate, team, viewerTeamMemberId = null, userRole = null }) {
   const [rows, setRows] = useState(null);
   const [loadError, setLoadError] = useState("");
 
@@ -3207,7 +3207,11 @@ function LogChangesSection({ weekDate, team, viewerTeamMemberId = null }) {
 
   const ownerIds = new Set((team || []).filter(t => t.role_level === "Owner").map(t => t.id));
   // The viewer's own group first, then fewest to most (Peter 2026-09-21).
-  const byKind = (k) => groupChangesByOwner((rows || []).filter(r => (r.kind || "change") === k), ownerIds, viewerTeamMemberId);
+  // Teammates see only their own entries (Peter 2026-09-21: the full list is
+  // too much); the owner and managers see everyone.
+  const seesAll = ["owner", "manager"].includes(userRole);
+  const visibleRows = (rows || []).filter(r => seesAll || r.owner_id === viewerTeamMemberId);
+  const byKind = (k) => groupChangesByOwner(visibleRows.filter(r => (r.kind || "change") === k), ownerIds, viewerTeamMemberId);
   const changeGroups = byKind("change");
   const issueGroups = byKind("issue");
   const spotGroups = byKind("spot_check");
@@ -3251,7 +3255,7 @@ function LogChangesSection({ weekDate, team, viewerTeamMemberId = null }) {
           accessory={rows === null ? null : `${count(cancelGroups)} this week`} />
         <Card>
           <div style={note}>
-            Every cancelation that counts toward this week, and what it charged back. A chargeback counts in the week it was logged.
+            Every cancelation that counts toward this week. It shows as logged under whoever logged it, and as a chargeback under whoever's policy it was. A chargeback counts in the week it was logged.
           </div>
           {body(cancelGroups, "canceled", "No cancelations this week.")}
         </Card>
@@ -7073,7 +7077,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
 
       {/* Log Changes + Issued Policies — their own row, side by side. */}
       <Section>
-        <LogChangesSection weekDate={weekDate} team={data.team} viewerTeamMemberId={viewerTeamMemberId} />
+        <LogChangesSection weekDate={weekDate} team={data.team} viewerTeamMemberId={viewerTeamMemberId} userRole={userRole} />
       </Section>
 
       <Divider />

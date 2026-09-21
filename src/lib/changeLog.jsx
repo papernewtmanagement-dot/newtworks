@@ -129,19 +129,21 @@ export function ChangeDiffs({ changes, inline = false, muted = T.slate500, event
 }
 
 // One click's edits or removals, from production_changes_for_range.
+// Names the thing (Peter 2026-09-21): the products on the sale, the
+// activity's own name — `item` comes from change_record_label.
 export function ChangeEntry({ r, withDay = false, showWho = true }) {
   const removed = r.what === "removed";
-  const item = String(r.item || "record").toLowerCase();
   return (
     <span>
       <ChangeStamp ts={r.changed_at} withDay={withDay} />
       {" · "}
-      {showWho ? <span style={{ color: T.slate800 }}>{r.who} </span> : null}
-      <span style={{ fontWeight: 700, color: removed ? T.red : T.slate800 }}>{removed ? "removed" : "edited"}</span>
-      {` ${/^[aeiou]/.test(item) ? "an" : "a"} ${item}`}
-      {r.subject ? <> — <Customer r={r} /></> : null}
+      {r.subject ? <><Customer r={r} /> — </> : null}
+      <span style={{ color: T.slate600 }}>{r.item || "Record"}</span>
+      {" · "}
+      <span style={{ fontWeight: 700, color: removed ? T.red : T.slate800 }}>{removed ? "Removed" : "Edited"}</span>
       <ChangeDiffs changes={r.changes} inline eventsAsDetail={removed} />
       {Number(r.row_count) > 1 ? <span style={{ color: T.slate500 }}>{` [${r.row_count} records]`}</span> : null}
+      {showWho ? <span style={{ color: T.slate500 }}>{` · by ${r.who}`}</span> : null}
     </span>
   );
 }
@@ -168,17 +170,23 @@ const CANCEL_EFFECT = {
   outside_window: "outside the chargeback window, no charge",
   not_counted: "never counted, no charge",
 };
+// A cancelation shows up to twice (Peter 2026-09-21): as logged, under the
+// teammate who logged it (their activity), and as the chargeback or take-off,
+// under the teammate whose policy it was. Its spot-check note rides along.
 export function CanceledEntry({ r, withDay = false, showWho = true }) {
   const p = r.policy || {};
   const what = [p.line_of_business ? p.line_of_business[0].toUpperCase() + p.line_of_business.slice(1) : "", p.product || ""]
     .filter(Boolean).join(" ");
-  let effect;
-  if (p.effect === "charged_back") {
-    effect = <span style={{ color: T.red, fontWeight: 600 }}>{` · charged back ${money(p.charge)}`}</span>;
-  } else if (p.effect === "removed") {
-    effect = <span style={{ color: T.red, fontWeight: 600 }}>{` · taken off its ${day(p.issued_date)} issue (${money(p.charge)})`}</span>;
+  let head;
+  if (r.what === "charged_back") {
+    head = <span style={{ fontWeight: 700, color: T.red }}>{`Charged back ${money(p.charge)}`}</span>;
+  } else if (r.what === "removed") {
+    head = <span style={{ fontWeight: 700, color: T.red }}>{`Taken off its ${day(p.issued_date)} issue (${money(p.charge)})`}</span>;
   } else {
-    effect = <span style={{ color: T.slate500 }}>{` · ${CANCEL_EFFECT[p.effect] || "no charge"}`}</span>;
+    const effect = p.effect === "charged_back" ? `charged back ${money(p.charge)}`
+      : p.effect === "removed" ? `taken off its ${day(p.issued_date)} issue`
+      : (CANCEL_EFFECT[p.effect] || "no charge");
+    head = <><span style={{ fontWeight: 700, color: T.slate800 }}>Cancelation logged</span><span style={{ color: T.slate500 }}>{` · ${effect}`}</span></>;
   }
   return (
     <span>
@@ -186,10 +194,10 @@ export function CanceledEntry({ r, withDay = false, showWho = true }) {
       {" · "}
       {r.subject ? <Customer r={r} /> : <span style={{ fontWeight: 600 }}>Customer</span>}
       {what ? <span style={{ color: T.slate600 }}>{` — ${what}`}</span> : null}
-      {" · "}
-      <span style={{ fontWeight: 700, color: T.slate800 }}>Canceled {day(p.canceled_on)}</span>
-      {effect}
-      {showWho ? <span style={{ color: T.slate500 }}>{` · logged by ${r.who}`}</span> : null}
+      <span style={{ color: T.slate600 }}>{` · canceled ${day(p.canceled_on)} · `}</span>
+      {head}
+      {showWho ? <span style={{ color: T.slate500 }}>{` · by ${r.who}`}</span> : null}
+      {p.note ? <span style={{ color: T.slate500, fontStyle: "italic" }}>{` — spot-check: ${p.note}`}</span> : null}
     </span>
   );
 }
