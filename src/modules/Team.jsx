@@ -1428,6 +1428,12 @@ const StaffDirectory = ({ staff }) => {
   };
   const closeAdd = () => { setAddOpen(false); setAddError(""); setHiredFrom(null); };
 
+  // A start date after today means the hire has not started. They are saved
+  // switched off and get their login invite at 7 a.m. Central on that date
+  // (team.login_invite_due, sent by send_due_login_invites on the hourly tick).
+  const addTodayCT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+  const addStartsLater = !!(addForm.start_date && addForm.start_date > addTodayCT);
+
   const addMember = async () => {
     if (adding) return;
     setAddError("");
@@ -1483,7 +1489,8 @@ const StaffDirectory = ({ staff }) => {
         hire_date:       addForm.start_date || null,
         // A future start date means they have not started: added switched off,
         // so they stay off the weekly report email until you mark them started.
-        is_active:       !(addForm.start_date && addForm.start_date > new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" })),
+        is_active:       !addStartsLater,
+        login_invite_due: addStartsLater ? addForm.start_date : null,
         license_pc:      addForm.license_pc  === true,
         license_lh:      addForm.license_lh  === true,
         license_ips:     addForm.license_ips === true,
@@ -1508,44 +1515,29 @@ const StaffDirectory = ({ staff }) => {
         return;
       }
 
-      // 2) Send the invite via the invite-team-member edge function.
-      //    The function does its own owner/manager check off the caller's session.
-      const { data: invRes, error: invErr } = await supabase.functions.invoke(
-        "invite-team-member",
-        {
-          body: {
-            email,
-            full_name: `${firstName} ${lastName}`,
-            role:      "staff",
-          },
+      // 2) Starting today or earlier: send the invite now. The edge function
+      //    checks the caller is an owner/manager, sends it, and links the new
+      //    users row to this team row. Starting later: nothing to send yet.
+      if (!addStartsLater) {
+        const { data: invRes, error: invErr } = await supabase.functions.invoke(
+          "invite-team-member",
+          {
+            body: {
+              email,
+              full_name:      `${firstName} ${lastName}`,
+              role:           "staff",
+              team_member_id: newTeam.id,
+            },
+          }
+        );
+        if (invErr || !invRes?.ok) {
+          // Roll the team row back so we don't leave an orphan.
+          await supabase.from("team").delete().eq("id", newTeam.id).eq("agency_id", AGENCY_ID);
+          const detail = invRes?.error || invRes?.detail || invErr?.message || "unknown error";
+          setAddError(`Invite failed (team row rolled back): ${detail}`);
+          setAdding(false);
+          return;
         }
-      );
-      if (invErr || !invRes?.ok) {
-        // Roll the team row back so we don't leave an orphan.
-        await supabase.from("team").delete().eq("id", newTeam.id).eq("agency_id", AGENCY_ID);
-        const detail = invRes?.error || invRes?.detail || invErr?.message || "unknown error";
-        setAddError(`Invite failed (team row rolled back): ${detail}`);
-        setAdding(false);
-        return;
-      }
-
-      // 3) Link the freshly-created public.users row to this team row.
-      //    Non-blocking: warn if it fails — Claude can repair manually.
-      const warnings = [];
-      const userLink = await supabase
-        .from("users")
-        .update({ team_member_id: newTeam.id, updated_at: new Date().toISOString() })
-        .eq("agency_id", AGENCY_ID)
-        .ilike("email", email)
-        .is("team_member_id", null)
-        .select("id");
-      if (userLink.error) {
-        warnings.push(`users link: ${userLink.error.message}`);
-      } else if (!userLink.data || userLink.data.length === 0) {
-        warnings.push("users row not found to link — the invite went out but team.user_id will be empty until the user signs in.");
-      }
-      if (warnings.length > 0) {
-        console.error("[add member] non-blocking failures:", warnings);
       }
 
       // 3b) Came from the pipeline: point the hiring record at the new team row
@@ -1764,7 +1756,7 @@ const StaffDirectory = ({ staff }) => {
             </div>
           )}
           <div style={{ fontSize:11, color:T.slate600, marginBottom:14, lineHeight:1.55 }}>
-            Creates a team row, sends a Supabase Auth invite to the personal email, and links the new Newtworks user back to this team row once they sign in. Role defaults to <code>staff</code> (team tier — sees Dashboard, CPR, Hours, Handbook, Processes). To grant admin access, change role to <code>owner</code> or <code>manager</code> after they accept.
+            Creates a team row and emails a Newtworks login invite to the personal email. If the start date is after today, the invite waits and goes out at 7 a.m. on the start date. Role defaults to <code>staff</code> (team tier — sees Dashboard, CPR, Hours, Handbook, Processes). To grant admin access, change role to <code>owner</code> or <code>manager</code> after they accept.
           </div>
 
           {/* Row 1: name + email */}
@@ -1840,6 +1832,9 @@ const StaffDirectory = ({ staff }) => {
             <div>
               <label style={labelStyle}>Start date</label>
               <input type="date" style={inputStyle} value={addForm.start_date} onChange={e => setAddForm(f => ({ ...f, start_date: e.target.value }))} />
+              {addStartsLater && (
+                <div style={{ fontSize:10, color:T.slate500, marginTop:4 }}>Login invite goes out at 7 a.m. on this date.</div>
+              )}
             </div>
           </div>
 
@@ -1901,7 +1896,7 @@ const StaffDirectory = ({ staff }) => {
           <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
             <button onClick={closeAdd} disabled={adding} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate700, background:T.slate100, border:"none", borderRadius:7, cursor:adding?"not-allowed":"pointer" }}>Cancel</button>
             <button onClick={addMember} disabled={adding} style={{ padding:"7px 16px", fontSize:11, fontWeight:700, color:T.white, background:adding?T.slate400:T.slate900, border:"none", borderRadius:7, cursor:adding?"not-allowed":"pointer" }}>
-              {adding ? "Adding…" : "Save & Invite"}
+              {adding ? "Adding…" : addStartsLater ? "Save" : "Save & Invite"}
             </button>
           </div>
         </Card>
