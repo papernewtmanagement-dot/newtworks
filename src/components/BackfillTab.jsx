@@ -146,7 +146,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
         const p = pols[id] || {};
         const prem = String(p.issued_premium ?? "").trim();
         const cxl = String(p.canceled_on ?? "").trim();
-        if (!prem && !cxl) return null;
+        if (!prem && !cxl && p.added_to_existing === undefined) return null;
         const item = { id };
         if (prem) item.issued_premium = prem;
         const when = String(p.issued_date ?? "").trim();
@@ -154,6 +154,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
         // The server applies the premium first, so a chargeback logged in the
         // same save is priced off the number being typed here.
         if (cxl) item.canceled_on = cxl;
+        if (p.added_to_existing !== undefined) item.added_to_existing = !!p.added_to_existing;
         return item;
       })
       .filter(Boolean);
@@ -366,6 +367,11 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                 .filter(p => !(p.issued_date && p.issued_premium != null && p.canceled_on))
                 .map(p => ({ r, p })));
 
+            // Every box on this line carries a visible word saying what it is.
+            // An unlabeled date field next to an issue date is how issue dates
+            // got typed into cancel boxes on 2026-09-20. Cancel is never a bare
+            // box: it takes a deliberate click to open, and it is red and named.
+            const tag = { fontSize: 10, fontWeight: 700, color: T.slate400, textTransform: "uppercase", letterSpacing: 0.3 };
             const polBoxes = ({ r, p }) => {
               const polEdit = ((edits[r.id] || {}).policies || {})[p.id] || {};
               // What is on file is shown, not staged. Only a typed value is sent.
@@ -375,53 +381,81 @@ export default function BackfillTab({ sources = [], roster = [] }) {
               const dateBox = polEdit.issued_date !== undefined
                 ? polEdit.issued_date
                 : (p.issued_date || "");
+              const cancelOpen = polEdit.cancel_open || !!polEdit.canceled_on;
+              const added = polEdit.added_to_existing !== undefined ? !!polEdit.added_to_existing : !!p.added_to_existing;
               return (
-                <span key={p.id} style={{ display: "flex", gap: 4, alignItems: "center", flex: "0 1 auto" }}>
-                  <span style={{ ...what, color: T.slate400 }} title={`${r.owner || "unassigned"} \u00b7 ${r.on_date} \u00b7 submitted ${Number(p.premium || 0).toLocaleString()}`}>
+                <span key={p.id} style={{ display: "flex", gap: 5, alignItems: "center", flex: "0 1 auto",
+                                          padding: "1px 6px", borderLeft: `2px solid ${T.slate200}` }}>
+                  <span style={{ ...what, color: T.slate600, fontWeight: 700 }}
+                        title={`${r.owner || "unassigned"} \u00b7 sold ${r.on_date} \u00b7 submitted at ${Number(p.premium || 0).toLocaleString()}`}>
                     {manyOwners && r.owner ? `${r.owner} ` : ""}{p.product_type}
                   </span>
+
+                  <span style={tag}>Issued</span>
                   {p.issued_date ? (
-                    <span style={what} title={`${p.product_type} issued ${p.issued_date}`}>{p.issued_date}</span>
+                    <span style={what}>{p.issued_date}</span>
                   ) : (
                     <input
                       value={dateBox}
                       onChange={e => setPolicy(r, p.id, "issued_date", e.target.value)}
                       type="date"
-                      title={`${p.product_type} \u2014 leave it blank and it issues on the submit date`}
+                      title="Leave it blank and it issues on the submit date"
                       style={{ ...input, width: 124, color: dateBox ? T.slate900 : T.slate400 }}
                     />
                   )}
+
+                  <span style={tag}>$</span>
                   <input
                     value={premBox}
                     onChange={e => setPolicy(r, p.id, "issued_premium", e.target.value)}
                     inputMode="decimal"
                     autoComplete="off"
-                    placeholder="Issued $"
-                    title={`${p.product_type} issued premium`}
-                    style={{ ...input, width: 88 }}
+                    placeholder="premium"
+                    style={{ ...input, width: 84 }}
                   />
                   {p.issued_premium == null && !premBox ? (
                     <button
                       type="button"
                       onClick={() => setPolicy(r, p.id, "issued_premium", String(p.premium ?? ""))}
                       style={chip}
-                      title={`${p.product_type} submitted at ${Number(p.premium || 0).toLocaleString()}`}
                     >
                       use {Number(p.premium || 0).toLocaleString()}
                     </button>
                   ) : null}
+
+                  {p.line_of_business === "auto" ? (
+                    <label style={{ ...what, display: "flex", gap: 3, alignItems: "center", cursor: "pointer" }}
+                           title="A car added to an auto policy the household already had, not a new line">
+                      <input type="checkbox" checked={added}
+                             onChange={e => setPolicy(r, p.id, "added_to_existing", e.target.checked)} />
+                      added car
+                    </label>
+                  ) : null}
+
                   {p.canceled_on ? (
-                    <span style={{ ...what, color: T.red, fontWeight: 700 }} title={`${p.product_type} canceled ${p.canceled_on}`}>
-                      canceled {p.canceled_on}
+                    <span style={{ ...what, color: T.red, fontWeight: 700 }}>canceled {p.canceled_on}</span>
+                  ) : cancelOpen ? (
+                    <span style={{ display: "flex", gap: 3, alignItems: "center" }}>
+                      <span style={{ ...tag, color: T.red }}>Canceled on</span>
+                      <input
+                        value={polTyped(r, p.id, "canceled_on")}
+                        onChange={e => setPolicy(r, p.id, "canceled_on", e.target.value)}
+                        type="date"
+                        autoFocus
+                        title="Marks this policy canceled on this date and charges it back"
+                        style={{ ...input, width: 124, color: T.red, borderColor: T.red }}
+                      />
+                      <button type="button" style={{ ...chip, color: T.slate500 }}
+                              title="Never mind, do not cancel it"
+                              onClick={() => { setPolicy(r, p.id, "canceled_on", ""); setPolicy(r, p.id, "cancel_open", false); }}>
+                        ✕
+                      </button>
                     </span>
                   ) : (
-                    <input
-                      value={polTyped(r, p.id, "canceled_on")}
-                      onChange={e => setPolicy(r, p.id, "canceled_on", e.target.value)}
-                      type="date"
-                      title={`${p.product_type} \u2014 set a date to mark it canceled and charge it back`}
-                      style={{ ...input, width: 124, color: polTyped(r, p.id, "canceled_on") ? T.red : T.slate400 }}
-                    />
+                    <button type="button" style={{ ...chip, color: T.red }}
+                            onClick={() => setPolicy(r, p.id, "cancel_open", true)}>
+                      cancel…
+                    </button>
                   )}
                 </span>
               );
