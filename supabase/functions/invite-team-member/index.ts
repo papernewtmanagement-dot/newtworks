@@ -28,7 +28,9 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
-const DEFAULT_REDIRECT = "https://storybccdashboard.vercel.app/welcome";
+// Where the login link lands. The app reads the invite from the link and asks
+// for a password. app_base_url in settings wins when it is set.
+const DEFAULT_REDIRECT = "https://newtworks.vercel.app/";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -162,7 +164,13 @@ Deno.serve(async (req) => {
     }
 
     // ---- Send the invite (or a magic link if the email already exists) ------
-    const redirectTo = body.redirect_to || DEFAULT_REDIRECT;
+    const { data: baseRow } = await admin
+      .from("settings")
+      .select("setting_value")
+      .eq("agency_id", agencyId)
+      .eq("setting_key", "app_base_url")
+      .maybeSingle();
+    const redirectTo = body.redirect_to || (baseRow?.setting_value ? `${String(baseRow.setting_value).replace(/\/+$/, "")}/` : DEFAULT_REDIRECT);
     const meta = { full_name: fullName, invited_by: invitedBy };
     const { data: inviteData, error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email, {
       redirectTo,

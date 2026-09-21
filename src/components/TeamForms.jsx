@@ -141,7 +141,7 @@ function Check({ checked, onChange, children }) {
 const RANKABLE = ["Words of Affirmation", "Paid Time Off", "Awards", "Bonuses"];
 const EMPTY_BANK = { bank_name: "", routing_number: "", account_number: "", account_type: "checking", percent: "" };
 
-function CombinedForm({ data, setData, secure, setSecure }) {
+function CombinedForm({ data, setData, secure, setSecure, ssnOnFile }) {
   const set = (k) => (v) => setData({ ...data, [k]: v });
   const banks = secure.banks && secure.banks.length ? secure.banks : [{ ...EMPTY_BANK }];
   const setBank = (i, k, v) => {
@@ -227,9 +227,15 @@ function CombinedForm({ data, setData, secure, setSecure }) {
       <Section title="Payroll"
         note="This goes straight into SurePayroll and is then destroyed. It is never shown back to you, and nobody but Peter and a manager can read it.">
         <Grid min={240}>
-          <Field label="Social Security number" hint="Numbers only.">
-            <Text value={secure.ssn} onChange={v => setSecure({ ...secure, ssn: v })} placeholder="000000000" />
-          </Field>
+          {ssnOnFile ? (
+            <Field label="Social Security number" hint="You gave us this when you accepted your offer.">
+              <div style={{ fontSize: 14, color: T.slate600, padding: "9px 0" }}>On file</div>
+            </Field>
+          ) : (
+            <Field label="Social Security number" hint="Numbers only.">
+              <Text value={secure.ssn} onChange={v => setSecure({ ...secure, ssn: v })} placeholder="000000000" />
+            </Field>
+          )}
         </Grid>
 
         {banks.map((b, i) => (
@@ -509,12 +515,12 @@ function I9EmployerSection({ data, setData, canEdit, locked }) {
 
 // ─── the form shell ─────────────────────────────────────────────────────
 
-function readyToSubmit(formType, data, secure) {
+function readyToSubmit(formType, data, secure, ssnOnFile) {
   if (formType === "non_compete" || formType === "handbook_ack") return !!data.agreed;
   if (formType === "annual_certification") return !!data.agreed && !!data.completed_on;
   if (formType === "i9") return !!data.attested && !!data.signature && !!data.status;
   if (formType === "combined_onboarding") {
-    return !!data.why_statement && !!secure.ssn &&
+    return !!data.why_statement && (!!secure.ssn || !!ssnOnFile) &&
       (secure.banks || []).some(b => b.bank_name && b.account_number && b.routing_number);
   }
   return false;
@@ -526,6 +532,16 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
   const [secure, setSecure] = useState({ ssn: "", banks: [{ ...EMPTY_BANK }] });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  // A Social Security number given at offer acceptance is reused, not asked twice.
+  const [ssnOnFile, setSsnOnFile] = useState(false);
+
+  useEffect(() => {
+    if (!supabase || form.id !== "combined_onboarding" || !teamId) return;
+    let cancelled = false;
+    supabase.rpc("onboarding_ssn_on_file", { p_team_id: teamId })
+      .then(({ data: onFile }) => { if (!cancelled) setSsnOnFile(onFile === true); });
+    return () => { cancelled = true; };
+  }, [form.id, teamId]);
 
   const locked = !!submission?.locked_at;
   const doc = form.id === "non_compete" ? docs.non_compete
@@ -565,13 +581,14 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
       if (error) throw error;
 
       // Social Security number and bank details go to their own table and are
-      // never read back to the person who typed them.
-      if (submit && form.id === "combined_onboarding" && saved && secure.ssn) {
-        const { error: se } = await supabase.from("team_form_secure").insert({
-          submission_id: saved.id,
-          agency_id: AGENCY_ID,
-          ssn: secure.ssn,
-          banks: (secure.banks || []).filter(b => b.bank_name && b.account_number),
+      // never read back to the person who typed them. The save runs in the
+      // database (save_onboarding_secure) so the hire can write it without
+      // being able to read the table, and it reuses a number already on file.
+      if (submit && form.id === "combined_onboarding" && saved) {
+        const { error: se } = await supabase.rpc("save_onboarding_secure", {
+          p_submission_id: saved.id,
+          p_ssn: secure.ssn || null,
+          p_banks: (secure.banks || []).filter(b => b.bank_name && b.account_number),
         });
         if (se) throw se;
       }
@@ -595,7 +612,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
 
   const canSubmit = form.id === "i9" && isAdmin && submission?.employee_submitted_at
     ? !!employer.attested
-    : readyToSubmit(form.id, data, secure);
+    : readyToSubmit(form.id, data, secure, ssnOnFile);
 
   return (
     <div>
@@ -625,7 +642,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
 
       <div style={locked && form.id !== "i9" ? { pointerEvents: "none", opacity: 0.65 } : null}>
         {form.id === "combined_onboarding" &&
-          <CombinedForm data={data} setData={setData} secure={secure} setSecure={setSecure} />}
+          <CombinedForm data={data} setData={setData} secure={secure} setSecure={setSecure} ssnOnFile={ssnOnFile} />}
         {form.id === "non_compete" && <NonCompeteForm doc={doc} data={data} setData={setData} />}
         {form.id === "handbook_ack" && <HandbookForm doc={doc} data={data} setData={setData} />}
         {form.id === "annual_certification" && <CertificationForm data={data} setData={setData} />}
