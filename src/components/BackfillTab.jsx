@@ -145,10 +145,15 @@ export default function BackfillTab({ sources = [], roster = [] }) {
       .map(id => {
         const p = pols[id] || {};
         const prem = String(p.issued_premium ?? "").trim();
-        if (!prem) return null;
-        const item = { id, issued_premium: prem };
+        const cxl = String(p.canceled_on ?? "").trim();
+        if (!prem && !cxl) return null;
+        const item = { id };
+        if (prem) item.issued_premium = prem;
         const when = String(p.issued_date ?? "").trim();
         if (when) item.issued_date = when;
+        // The server applies the premium first, so a chargeback logged in the
+        // same save is priced off the number being typed here.
+        if (cxl) item.canceled_on = cxl;
         return item;
       })
       .filter(Boolean);
@@ -170,7 +175,12 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     const issued = Number(data?.policies_issued || 0);
     const filled = Number(data?.also_filled || 0);
     const saved = Number(data?.rows_saved || 0);
-    setMsg(`Saved ${saved} record${saved === 1 ? "" : "s"}${issued ? `, ${issued} policy premium${issued === 1 ? "" : "s"}` : ""}${filled ? `, plus ${filled} more filled in from the same households` : ""}.`);
+    const canceled = Number(data?.policies_canceled || 0);
+    const charged = Number(data?.charged_back || 0);
+    setMsg(`Saved ${saved} record${saved === 1 ? "" : "s"}`
+      + (issued ? `, ${issued} policy premium${issued === 1 ? "" : "s"}` : "")
+      + (canceled ? `, ${canceled} marked canceled (${charged} charged back)` : "")
+      + (filled ? `, plus ${filled} more filled in from the same households` : "") + ".");
     load(offset);
   };
 
@@ -235,7 +245,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "baseline", justifyContent: "space-between" }}>
         <div style={{ fontSize: 12, color: T.slate600, maxWidth: 680 }}>
-          One card per household. Phone and marketing source are typed once at the top and land on every record under that name; the ECRM link and the issued premium sit on the record they belong to. Only what you type gets saved.
+          One line per household. Phone, marketing source and the ECRM link are typed once and land on every record under that name. Per policy: the issued date and premium, and a date to mark it canceled, which charges it back off the premium you are applying. Only what you type gets saved.
         </div>
         <div style={{ fontSize: 13, color: T.slate500 }}>
           {totalHouseholds == null ? "" : searching
@@ -353,7 +363,7 @@ export default function BackfillTab({ sources = [], roster = [] }) {
             // flattened so they all sit on the household's one line.
             const openPolicies = records.flatMap(r =>
               (r.policies || [])
-                .filter(p => !(p.issued_date && p.issued_premium != null))
+                .filter(p => !(p.issued_date && p.issued_premium != null && p.canceled_on))
                 .map(p => ({ r, p })));
 
             const polBoxes = ({ r, p }) => {
@@ -395,6 +405,19 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                       use {Number(p.premium || 0).toLocaleString()}
                     </button>
                   ) : null}
+                  {p.canceled_on ? (
+                    <span style={{ ...what, color: T.red, fontWeight: 700 }} title={`${p.product_type} canceled ${p.canceled_on}`}>
+                      canceled {p.canceled_on}
+                    </span>
+                  ) : (
+                    <input
+                      value={polTyped(r, p.id, "canceled_on")}
+                      onChange={e => setPolicy(r, p.id, "canceled_on", e.target.value)}
+                      type="date"
+                      title={`${p.product_type} \u2014 set a date to mark it canceled and charge it back`}
+                      style={{ ...input, width: 124, color: polTyped(r, p.id, "canceled_on") ? T.red : T.slate400 }}
+                    />
+                  )}
                 </span>
               );
             };
