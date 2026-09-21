@@ -4102,9 +4102,9 @@ function ChecklistTab() {
     });
     setSaving(false);
     if (error) { setErr(error.message || "Could not save the wrap-up."); return false; }
-    setOk(data?.wrapup_done ? "Saved — all six answered." : "Saved. Some answers are still blank.");
+    setOk(data?.wrapup_done ? "Saved. Every question answered." : "Saved. Some answers are still blank.");
     setWrap(w => (w ? { ...w, wrapup_done: !!data?.wrapup_done } : w));
-    return true;
+    return { done: !!data?.wrapup_done };
   };
 
   // "This is not my last day this week" puts the wrap-up away until tomorrow.
@@ -4151,8 +4151,12 @@ function ChecklistTab() {
   };
 
   // The one button on the form, and the only way the week gets closed.
+  // Peter 2026-09-21: the week only closes once every answer is in. Until then
+  // the same button just saves, and the server refuses a close anyway.
   const submitWrapup = async () => {
-    if (!(await save())) return;
+    const res = await save();
+    if (!res) return;
+    if (!res.done) { setOk(`Saved. Answer all ${prompts.length} to close your week.`); return; }
     await finish(true);
   };
 
@@ -4182,6 +4186,7 @@ function ChecklistTab() {
   const commitHitNames = commitPeople.filter(p => p.hit === true).map(p => p.name).join(", ");
   const prompts = Array.isArray(wrap?.prompts) ? wrap.prompts : [];
   const answered = parts.filter(p => (p || "").trim()).length;
+  const allAnswered = prompts.length > 0 && answered >= prompts.length;
   // On screen every day. On a day the system already knows is their last
   // workday there is no way to put it away — that is the day it exists for.
   // Any earlier day carries the "not my last day" checkbox instead.
@@ -4414,7 +4419,7 @@ function ChecklistTab() {
                 {wrap?.week_ending ? `Week ending ${fmtDate(wrap.week_ending)}` : "Loading"} · goes straight onto the CPR
               </div>
             </div>
-            {showWrap && <span style={{ fontSize: 12, fontWeight: 700, color: answered === 6 ? T.green : T.slate600 }}>{answered} of 6</span>}
+            {showWrap && prompts.length > 0 && <span style={{ fontSize: 12, fontWeight: 700, color: allAnswered ? T.green : T.slate600 }}>{answered} of {prompts.length}</span>}
           </div>
 
           {showWrap && wrap?.off_rest_of_week && (
@@ -4475,8 +4480,9 @@ function ChecklistTab() {
               ) : (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
                   <button type="button" onClick={submitWrapup} disabled={saving} style={btnPrimary(saving)}>
-                    {saving ? "Saving…" : "Save and close my week"}
+                    {saving ? "Saving…" : allAnswered ? "Save and close my week" : "Save my answers"}
                   </button>
+                  {!allAnswered && !ok && <span style={{ fontSize: 12, color: T.slate500 }}>Answer all {prompts.length} to close your week.</span>}
                   {ok && <span style={{ fontSize: 12, color: T.green, fontWeight: 600 }}>{ok}</span>}
                 </div>
               )}
