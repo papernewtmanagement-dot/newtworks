@@ -306,6 +306,8 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
             const renderStep = (step) => {
                 const cc = CATEGORY_COLORS[step.category] || { fg: T.slate600, bg: T.slate100, label: step.category || "Step" };
                 const isExpanded = expandedStep === step.id;
+                // Finished cards fold down to one line; a click opens them back up.
+                const collapsed = !!step.completed_at && !isExpanded;
                 const isEditingThis = editingNote?.stepId === step.id;
                 const isSaving = savingId === step.id;
                 const groups = subGroups(step.substeps);
@@ -376,19 +378,19 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                           </div>
                         </div>
 
-                        {step.description && (
+                        {!collapsed && step.description && (
                           <div style={{ fontSize: 11, color: T.slate500, marginTop: 3, lineHeight: 1.45 }}>
                             {step.description}
                           </div>
                         )}
 
-                        {locked && (
+                        {!collapsed && locked && (
                           <div style={{ fontSize: 11, color: T.amber, marginTop: 4, fontWeight: 600 }}>
                             Waiting on: {waitingOn.join(", ")}
                           </div>
                         )}
 
-                        {!locked && isAuto && (
+                        {!collapsed && !locked && isAuto && (
                           <div style={{
                             marginTop: 8, padding: "8px 10px",
                             background: T.slate50, border: `1px solid ${T.slate200}`,
@@ -443,13 +445,13 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                           </div>
                         )}
 
-                        {!locked && step.auto_source === "references" && plan.candidate_id && (
+                        {!collapsed && !locked && step.auto_source === "references" && plan.candidate_id && (
                           <div style={{ marginTop: 10 }}>
                             <ReferenceCalls candidateId={plan.candidate_id} embedded />
                           </div>
                         )}
 
-                        {!locked && groups.length > 0 && (
+                        {!collapsed && !locked && groups.length > 0 && (
                           <div style={{ marginTop: 8 }}>
                             {groups.map((g, gi) => (
                               <div key={gi} style={{ marginTop: gi === 0 ? 0 : 10 }}>
@@ -544,10 +546,19 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                           </div>
                         )}
 
-                        {done && !isExpanded && (
-                          <div style={{ fontSize: 10, color: T.slate400, marginTop: 4 }}>
-                            Completed {fmtDate(step.completed_at.slice(0, 10))}
-                          </div>
+                        {collapsed && (
+                          <button
+                            onClick={() => setExpandedStep(step.id)}
+                            style={{ fontSize: 10, color: T.slate400, marginTop: 4, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
+                          >
+                            Completed {fmtDate(step.completed_at.slice(0, 10))} · <span style={{ color: T.blue }}>Show</span>
+                          </button>
+                        )}
+                        {done && isExpanded && (
+                          <button
+                            onClick={() => setExpandedStep(null)}
+                            style={{ fontSize: 10, color: T.blue, marginTop: 6, background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                          >Hide</button>
                         )}
                       </div>
                     </div>
