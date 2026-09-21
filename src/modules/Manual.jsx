@@ -30,6 +30,7 @@ import { T } from "../lib/theme.js";
 import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 import { MarkdownTextarea } from "../lib/markdownEditor.jsx";
 import { handleModuleLinkClick, useTabParam } from "../lib/routing.jsx";
+import { fillLiveFormulas } from "../lib/liveFormulas.js";
 
 // ─── Per-manual configuration ─────────────────────────────────
 // Every manual_type has one entry. To add a new manual:
@@ -1918,10 +1919,23 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   // `# ...` line before rendering. Only the first heading, only if it is the
   // first non-empty line: a `#` further down is a real section heading and is
   // left alone.
+  // Pay formulas shown live (Peter 2026-09-21): a page with {{live:...}} tokens
+  // gets the current rates from handbook_live_formulas, the same sources the
+  // pay math reads. See src/lib/liveFormulas.js.
+  const [liveFormulas, setLiveFormulas] = useState(null);
+  const usesLive = String(page?.content || "").includes("{{live:");
+  useEffect(() => {
+    if (!usesLive) return undefined;
+    let alive = true;
+    supabase.rpc("handbook_live_formulas", { p_agency_id: AGENCY_ID }).then(({ data }) => {
+      if (alive) setLiveFormulas(data || {});
+    });
+    return () => { alive = false; };
+  }, [usesLive, page?.id]);
   const bodyMd = useMemo(() => {
     const raw = String(page?.content || "");
-    return raw.replace(/^\s*#[ \t]+[^\n]*\n?/, "");
-  }, [page?.content]);
+    return fillLiveFormulas(raw.replace(/^\s*#[ \t]+[^\n]*\n?/, ""), liveFormulas);
+  }, [page?.content, liveFormulas]);
   const cycleOpts = useMemo(() => {
     const sc = scanSelector(bodyMd);
     return { weeks: sc.weeks || [], days: sc.days || [] };
