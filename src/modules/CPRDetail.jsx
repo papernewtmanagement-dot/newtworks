@@ -3196,7 +3196,7 @@ function LogChangesSection({ weekDate, team, viewerTeamMemberId = null }) {
         p_agency_id: AGENCY_ID,
         p_start: addDaysISO(weekDate, -6),
         p_end: weekDate,
-        p_issued_in_range: true,
+        p_by_cpr_week: true,
       });
       if (!alive) return;
       if (error) { setLoadError(error.message || "Could not load log changes."); setRows([]); return; }
@@ -3230,7 +3230,7 @@ function LogChangesSection({ weekDate, team, viewerTeamMemberId = null }) {
           accessory={rows === null ? null : `${count(changeGroups)} this week`} />
         <Card>
           <div style={note}>
-            Every edit or removal to a sale, quote, cancelation or activity entry made this week, plus any made later to a policy that issued this week. Listed under the teammate whose entry it is. Adding a brand new entry is not a change.
+            Every edit or removal to a sale, quote, cancelation or activity entry that counts toward this week's points: made this week, or made before this report went out. Listed under the teammate whose entry it is. Adding a brand new entry is not a change.
           </div>
           {body(changeGroups, "change", "No log changes this week.")}
         </Card>
@@ -3240,7 +3240,7 @@ function LogChangesSection({ weekDate, team, viewerTeamMemberId = null }) {
           accessory={rows === null ? null : `${count(issueGroups)} this week`} />
         <Card>
           <div style={note}>
-            Every policy marked issued or not issued this week, or issued this week and corrected later, with the issued premium against what was submitted.
+            Every policy issued, un-issued, corrected or canceled that counts toward this week's points, with the issued premium against what was submitted. A change that was undone right after is left out.
           </div>
           {body(issueGroups, "issue", "No policies issued this week.")}
         </Card>
@@ -3250,7 +3250,7 @@ function LogChangesSection({ weekDate, team, viewerTeamMemberId = null }) {
           accessory={rows === null ? null : `${count(spotGroups)} this week`} />
         <Card>
           <div style={note}>
-            Notes left during spot checks on this week's entries, or on entries for a policy that issued this week.
+            Notes left during spot checks that count toward this week's report.
           </div>
           {body(spotGroups, "spot_check", "No spot-check notes this week.")}
         </Card>

@@ -2588,7 +2588,9 @@ function changeSummary(r, ctx) {
 // the change log is for the week, not the day). Reads the same
 // production_changes_for_range call the CPR makes — the week's changes plus any
 // later change to a policy that issued that week — and draws it with the same
-// ChangeGroups, so the two read the same way. The Telegram link still lands
+// ChangeGroups, so the two read the same way. Each change is filed under the
+// CPR week whose sales points it moved (cpr_week_for in the database): a
+// Sunday fix before last week's CPR goes out lands on last week. The Telegram link still lands
 // here with ?tab=changes&day=YYYY-MM-DD; that day's week opens.
 function weekStartOf(iso) {
   const d = new Date(`${iso}T12:00:00`);
@@ -2604,7 +2606,7 @@ function ChangeWeek({ day, setDay, kind, setKind, isAdmin, myTeamId }) {
     (async () => {
       setErr(""); setRows(null);
       const r = await supabase.rpc("production_changes_for_range", {
-        p_agency_id: AGENCY_ID, p_start: start, p_end: end, p_issued_in_range: true,
+        p_agency_id: AGENCY_ID, p_start: start, p_end: end, p_by_cpr_week: true,
       });
       if (!alive) return;
       if (r.error) { setErr(errText(r.error)); setRows([]); return; }

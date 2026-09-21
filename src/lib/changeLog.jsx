@@ -21,8 +21,9 @@
 //
 // production_changes_for_range rows come in three kinds (Peter 2026-09-21):
 //   kind "change" — one click's edits or removals. ChangeEntry draws it.
-//   kind "issue"  — one policy issued, marked not issued, or its issue
-//                   corrected. `policy` carries the issue date, the issued
+//   kind "issue"  — one policy issued, marked not issued, its issue
+//                   corrected, or canceled in a way that moves the points
+//                   (charged back, or taken off the week it issued). `policy` carries the issue date, the issued
 //                   premium and how far it is from the submitted premium.
 //                   IssueEntry draws it.
 //   kind "spot_check" — a spot-check note someone left on an entry. SpotEntry
@@ -185,7 +186,16 @@ export function IssueEntry({ r, withDay = false, showWho = true }) {
   const what = [p.line_of_business ? p.line_of_business[0].toUpperCase() + p.line_of_business.slice(1) : "", p.product || ""]
     .filter(Boolean).join(" ");
   let body;
-  if (r.what === "unissued") {
+  if (r.what === "canceled") {
+    body = (
+      <>
+        <span style={{ fontWeight: 700, color: T.red }}>Canceled {day(p.canceled_on)}</span>
+        <span style={{ color: T.slate600 }}>{p.effect === "charged_back"
+          ? ` · charged back ${money(p.issued_premium)}`
+          : ` · taken off its ${day(p.issued_date)} issue`}</span>
+      </>
+    );
+  } else if (r.what === "unissued") {
     body = (
       <>
         <span style={{ fontWeight: 700, color: T.red }}>Marked not issued</span>
