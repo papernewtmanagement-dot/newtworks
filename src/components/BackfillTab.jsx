@@ -105,14 +105,6 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     setHhEdits(prev => ({ ...prev, [h.household]: { ...(prev[h.household] || {}), [field]: value } }));
   };
 
-  const typed = (r, field) => {
-    const e = edits[r.id] || {};
-    return e[field] !== undefined ? e[field] : "";
-  };
-  const setField = (r, field, value) => {
-    setEdits(prev => ({ ...prev, [r.id]: { ...(prev[r.id] || {}), [field]: value } }));
-  };
-
   const polTyped = (r, pid, field) => {
     const pol = ((edits[r.id] || {}).policies || {})[pid] || {};
     return pol[field] !== undefined ? pol[field] : "";
@@ -142,11 +134,12 @@ export default function BackfillTab({ sources = [], roster = [] }) {
     if (phone && r.needs_phone) { out.phone_last4 = phone; any = true; }
     const src = String(he.marketing_source ?? "").trim();
     if (src && r.needs_marketing) { out.marketing_source = src; any = true; }
+    const ecrm = String(he.ecrm ?? "").trim();
+    if (ecrm && r.needs_ecrm) { out.ecrm = ecrm; any = true; }
     const refCust = String(he.referred_by_customer ?? "").trim();
     if (refCust && r.needs_referral) { out.referred_by_customer = refCust; any = true; }
     const refBy = String(he.sourced_by_team_member_id ?? "").trim();
     if (refBy && r.needs_referral) { out.sourced_by_team_member_id = refBy; any = true; }
-    if ((e.ecrm || "").trim()) { out.ecrm = e.ecrm.trim(); any = true; }
     const pols = e.policies || {};
     const plist = Object.keys(pols)
       .map(id => {
@@ -321,6 +314,16 @@ export default function BackfillTab({ sources = [], roster = [] }) {
                     ))}
                   </select>
                 ) : null}
+                {h.needs_ecrm ? (
+                  <input
+                    value={hhTyped(h, "ecrm")}
+                    onChange={e => setHh(h, "ecrm", e.target.value)}
+                    autoComplete="off"
+                    placeholder="ECRM link"
+                    title="ECRM opportunity link — one for the whole household"
+                    style={{ ...input, flex: "1 1 140px", minWidth: 110, width: "auto" }}
+                  />
+                ) : null}
                 {isReferral && h.needs_referral ? (
                   <>
                     <input
@@ -343,65 +346,55 @@ export default function BackfillTab({ sources = [], roster = [] }) {
               </>
             );
 
-            // What one record is, and the boxes that belong to that record.
-            const recWhat = (r) => (
-              <span style={what}>
-                <b style={{ color: T.slate700 }}>{r.on_date}</b>{r.kind === "quote" ? " quote" : ""} · {r.detail}
-              </span>
-            );
-            const recBoxes = (r) => (
-              <>
-                {r.kind === "sale" && r.needs_ecrm ? (
+            // Every policy in the household that still needs a date or a premium,
+            // flattened so they all sit on the household's one line.
+            const openPolicies = records.flatMap(r =>
+              (r.policies || [])
+                .filter(p => !(p.issued_date && p.issued_premium != null))
+                .map(p => ({ r, p })));
+
+            const polBoxes = ({ r, p }) => {
+              const polEdit = ((edits[r.id] || {}).policies || {})[p.id] || {};
+              // What is on file is shown, not staged. Only a typed value is sent.
+              const premBox = polEdit.issued_premium !== undefined
+                ? polEdit.issued_premium
+                : (p.issued_premium != null ? String(p.issued_premium) : "");
+              return (
+                <span key={p.id} style={{ display: "flex", gap: 4, alignItems: "center", flex: "0 1 auto" }}>
+                  <span style={{ ...what, color: T.slate400 }} title={`${r.on_date} \u00b7 submitted ${Number(p.premium || 0).toLocaleString()}`}>
+                    {p.product_type}
+                  </span>
+                  {!p.issued_date ? (
+                    <input
+                      value={polTyped(r, p.id, "issued_date")}
+                      onChange={e => setPolicy(r, p.id, "issued_date", e.target.value)}
+                      type="date"
+                      title={`${p.product_type} issued date`}
+                      style={{ ...input, width: 124 }}
+                    />
+                  ) : null}
                   <input
-                    value={typed(r, "ecrm")}
-                    onChange={e => setField(r, "ecrm", e.target.value)}
-                    placeholder="ECRM link"
+                    value={premBox}
+                    onChange={e => setPolicy(r, p.id, "issued_premium", e.target.value)}
+                    inputMode="decimal"
                     autoComplete="off"
-                    style={{ ...input, flex: "1 1 150px", minWidth: 110, width: "auto" }}
+                    placeholder="Issued $"
+                    title={`${p.product_type} issued premium`}
+                    style={{ ...input, width: 88 }}
                   />
-                ) : null}
-                {(r.policies || []).map(p => {
-                  const polEdit = ((edits[r.id] || {}).policies || {})[p.id] || {};
-                  // What is on file is shown, not staged. Only a typed value is sent.
-                  const premBox = polEdit.issued_premium !== undefined
-                    ? polEdit.issued_premium
-                    : (p.issued_premium != null ? String(p.issued_premium) : "");
-                  if (p.issued_date && p.issued_premium != null) return null;
-                  return (
-                    <span key={p.id} style={{ display: "flex", gap: 4, alignItems: "center", flex: "0 1 auto" }}>
-                      {!p.issued_date ? (
-                        <input
-                          value={polTyped(r, p.id, "issued_date")}
-                          onChange={e => setPolicy(r, p.id, "issued_date", e.target.value)}
-                          type="date"
-                          title={`${p.product_type} issued date`}
-                          style={{ ...input, width: 124 }}
-                        />
-                      ) : null}
-                      <input
-                        value={premBox}
-                        onChange={e => setPolicy(r, p.id, "issued_premium", e.target.value)}
-                        inputMode="decimal"
-                        autoComplete="off"
-                        placeholder="Issued $"
-                        title={`${p.product_type} issued premium`}
-                        style={{ ...input, width: 88 }}
-                      />
-                      {p.issued_premium == null && !premBox ? (
-                        <button
-                          type="button"
-                          onClick={() => setPolicy(r, p.id, "issued_premium", String(p.premium ?? ""))}
-                          style={chip}
-                          title={`${p.product_type} submitted at ${Number(p.premium || 0).toLocaleString()}`}
-                        >
-                          use {Number(p.premium || 0).toLocaleString()}
-                        </button>
-                      ) : null}
-                    </span>
-                  );
-                })}
-              </>
-            );
+                  {p.issued_premium == null && !premBox ? (
+                    <button
+                      type="button"
+                      onClick={() => setPolicy(r, p.id, "issued_premium", String(p.premium ?? ""))}
+                      style={chip}
+                      title={`${p.product_type} submitted at ${Number(p.premium || 0).toLocaleString()}`}
+                    >
+                      use {Number(p.premium || 0).toLocaleString()}
+                    </button>
+                  ) : null}
+                </span>
+              );
+            };
 
             const saveBtn = (
               <button
@@ -418,20 +411,13 @@ export default function BackfillTab({ sources = [], roster = [] }) {
               <div key={h.household} style={card}>
                 <div style={line}>
                   <span style={who}><CustomerName label={h.customer_label} phone4={h.phone_last4} /></span>
-                  {one ? recWhat(records[0]) : (
-                    <span style={what}>{records.length} records · {h.missing_count} missing</span>
-                  )}
+                  <span style={what} title={records.map(r => `${r.on_date} ${r.detail}`).join(" \u00b7 ")}>
+                    {one ? h.last_date : `${records.length} records`}
+                  </span>
                   {hhBoxes}
-                  {one ? recBoxes(records[0]) : null}
+                  {openPolicies.map(polBoxes)}
                   {saveBtn}
                 </div>
-
-                {one ? null : records.map(r => (
-                  <div key={`${r.kind}-${r.id}`} style={{ ...line, paddingLeft: 16 }}>
-                    {recWhat(r)}
-                    {recBoxes(r)}
-                  </div>
-                ))}
               </div>
             );
           })}
