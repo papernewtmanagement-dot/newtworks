@@ -24,7 +24,6 @@ import ContentEditor from "./src/modules/ContentEditor.jsx";
 import CandidateAssessment from "./src/modules/CandidateAssessment.jsx";
 import InterviewScheduler from "./src/modules/InterviewScheduler.jsx";
 import OfferAccept from "./src/modules/OfferAccept.jsx";
-import ReferenceCalls from "./src/modules/ReferenceCalls.jsx";
 import ActivityLog from "./src/modules/ActivityLog.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
@@ -102,11 +101,6 @@ const NAV_ITEMS = [
   { id: "cpr",         label: "CPR",         icon: "trendingUp",    roles: TEAM_VISIBLE_ROLES },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
   { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
-  // Reference calls is the one team-visible item that is also conditional:
-  // needsAssignment hides it from anyone who has no references to call, so it
-  // appears in a caller's sidebar only while there is calling to do. Admins
-  // always see it, because Peter reads the same list to check it is done.
-  { id: "references",  label: "References",  icon: "message",       roles: TEAM_VISIBLE_ROLES, needsAssignment: true },
   { type: "divider",   id: "_div_admin_top" },
   { id: "alerts",      label: "Alerts",      icon: "bell",          roles: ADMIN_ROLES },
   { id: "tasks",       label: "Tasks",       icon: "check",         roles: ADMIN_ROLES },
@@ -678,7 +672,6 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     tasks:       <ErrorBoundary name="Tasks & Goals"><TasksGoals userRole={userRole} userId={userId} /></ErrorBoundary>,
     alerts:      <ErrorBoundary name="Alerts"><AlertsNotifications onNavigate={onNavigate} /></ErrorBoundary>,
     hr:          <ErrorBoundary name="Team"><Team userRole={userRole} /></ErrorBoundary>,
-    references:  <ErrorBoundary name="Reference Calls"><ReferenceCalls /></ErrorBoundary>,
     book:        <ErrorBoundary name="Book"><Book /></ErrorBoundary>,
     marketing:   <ErrorBoundary name="Marketing"><Marketing /></ErrorBoundary>,
     editor:      <ErrorBoundary name="Editor"><ContentEditor userRole={userRole} /></ErrorBoundary>,
@@ -734,6 +727,9 @@ const LEGACY_MODULE_ALIASES = {
   onboarding: "dashboard",
   trivia: "dashboard",
   licensing: "dashboard",
+  // 2026-09-21: reference calling moved off the sidebar and onto the
+  // references card inside Development > Onboarding.
+  references: "dashboard",
 };
 // An old slug that became a TAB also seeds ?tab= once, so /pfa still lands on
 // Deposits rather than dumping the person on the default Log tab. Runs before
@@ -745,6 +741,7 @@ const LEGACY_TAB_SEED = {
   onboarding: "development",
   trivia: "development",
   licensing: "development",
+  references: "development",
 };
 function seedLegacyTab(pathname) {
   if (typeof window === "undefined") return;
@@ -1046,26 +1043,6 @@ export default function NewtworksApp() {
     setAuthState("out");
   };
 
-  // Does this person have references to call? Drives the conditional sidebar
-  // item only — the page itself is scoped server-side by rp_reference_calls,
-  // so a stale false here hides a link, it never hides data from its owner.
-  const [hasReferenceCalls, setHasReferenceCalls] = useState(false);
-  useEffect(() => {
-    if (!supabase || authState !== "in") return undefined;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data, error } = await supabase.rpc("rp_reference_calls");
-        if (!cancelled && !error) {
-          setHasReferenceCalls(Array.isArray(data?.rows) && data.rows.length > 0);
-        }
-      } catch (e) {
-        // Nav item just stays hidden. Nothing else depends on this.
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [authState]);
-
   // ── Public assessment link render (bypass auth entirely) ──────────────────
   // Placed AFTER all hooks (useState/useEffect above) to satisfy the
   // hook-order-vs-early-returns discipline. Auth-state effects still fire in
@@ -1102,13 +1079,7 @@ export default function NewtworksApp() {
   // First pass: filter by role, keeping divider sentinels.
   const filteredNav = NAV_ITEMS.filter(n => {
     if (n.type === "divider") return true;
-    if (!n.roles.includes(agency.user.role)) return false;
-    // An item flagged needsAssignment only earns a sidebar slot when the
-    // signed-in person actually has that work waiting. Admins always see it.
-    if (n.needsAssignment
-        && !ADMIN_ROLES.includes(agency.user.role)
-        && !hasReferenceCalls) return false;
-    return true;
+    return n.roles.includes(agency.user.role);
   });
   // Second pass: drop dividers that would render as visual artifacts
   // (leading, trailing, or adjacent to another divider after filtering).

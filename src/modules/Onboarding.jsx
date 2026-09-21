@@ -1,8 +1,14 @@
 // =========================================================================
 // Onboarding.jsx
 // =========================================================================
-// Team-visible module: teammates see their own plan; admin (owner/manager)
-// sees all plans, can create new plans and delete/complete plans.
+// Who sees what (Peter 2026-09-21), enforced in the database by
+// onboarding_can_see_step / onboarding_can_see_plan:
+//   * Admins (owner, manager) see every plan and every card.
+//   * The person a plan is for sees every card from Day 1 forward.
+//   * Anyone a card is assigned to sees that card. The references card is
+//     assigned to whoever is calling that candidate's references, and the
+//     calling list lives on that card.
+// The UI shows whatever the database returns. It does not filter again.
 //
 // Data: team_onboarding_plans + team_onboarding_steps.
 // Plan creation compiles from onboarding_step_templates via RPC
@@ -25,6 +31,7 @@ import {
   subGroups, subAll, trackColumns, wrapLongText,
 } from "../lib/onboardingUi.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
+import ReferenceCalls from "./ReferenceCalls.jsx";
 
 // ─── constants ─────────────────────────────────────
 const ADMIN_ROLES = ["owner", "manager"];
@@ -61,6 +68,7 @@ function useOnboardingData(userId, isAdmin) {
     phases: [],          // onboarding_phases — milestone list, newest source of truth
     candidates: [],      // hiring candidates a plan can be started on at offer
     myTeamMemberId: null,
+    planNames: {},       // plan_id -> name, for plans a teammate can see but whose person they cannot look up
   });
 
   const load = useCallback(async () => {
@@ -104,13 +112,17 @@ function useOnboardingData(userId, isAdmin) {
         steps = stepsRes.data || [];
       }
 
+      const namesRes = await supabase.rpc("onboarding_visible_plan_names");
+      const planNames = {};
+      (namesRes.data || []).forEach(r => { planNames[r.plan_id] = r.subject_name; });
+
       let myTeamMemberId = null;
       if (userId) {
         const mine = team.find(t => t.user_id === userId);
         myTeamMemberId = mine?.id || null;
       }
 
-      setState({ loading: false, error: null, plans, steps, team, phases, candidates, myTeamMemberId });
+      setState({ loading: false, error: null, plans, steps, team, phases, candidates, myTeamMemberId, planNames });
     } catch (e) {
       setState(s => ({ ...s, loading: false, error: e.message || "Failed to load onboarding data." }));
     }
@@ -159,7 +171,7 @@ function progress(steps) {
 }
 
 // ─── plan detail (steps by phase/category) ───────────────
-function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleStep, onToggleSubstep, onUpdateStepNotes, onDeletePlan, onChangeStatus, isAdmin, phaseMeta, ownerName }) {
+function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleStep, onToggleSubstep, onUpdateStepNotes, onDeletePlan, onChangeStatus, isAdmin, phaseMeta, ownerName, showBack = true }) {
   const [expandedStep, setExpandedStep] = useState(null);
   const [editingNote, setEditingNote] = useState(null); // {stepId, text}
   const [savingId, setSavingId] = useState(null);
@@ -201,7 +213,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
   return (
     <div>
       {/* Header */}
-      <div style={{ marginBottom: 16 }}>
+      {showBack && <div style={{ marginBottom: 16 }}>
         <a
           href="/development"
           onClick={(e) => {
@@ -211,7 +223,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
           }}
           style={{ fontSize: 12, color: T.slate500, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}
         >← All schedules</a>
-      </div>
+      </div>}
 
       <Card style={{ marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
@@ -428,6 +440,12 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                             <div style={{ fontSize: 10, color: T.slate400, marginTop: 8 }}>
                               Comes from the hiring module. Ticks itself at {autoSum ? autoSum.minimum : 2} positive.
                             </div>
+                          </div>
+                        )}
+
+                        {!locked && step.auto_source === "references" && plan.candidate_id && (
+                          <div style={{ marginTop: 10 }}>
+                            <ReferenceCalls candidateId={plan.candidate_id} embedded />
                           </div>
                         )}
 
@@ -893,7 +911,7 @@ function ModuleHeader({ tab, tabHref, onSelectTab, action = null }) {
 // ─── main component ────────────────────────────────
 export default function Onboarding({ userRole, userId }) {
   const isAdmin = ADMIN_ROLES.includes(userRole);
-  const { loading, error, plans, steps, team, phases, candidates, myTeamMemberId, reload } = useOnboardingData(userId, isAdmin);
+  const { loading, error, plans, steps, team, phases, candidates, myTeamMemberId, planNames, reload } = useOnboardingData(userId, isAdmin);
 
   // URL-persisted so refresh keeps the same plan open. Replaces the prior
   // useState + manual ?plan= useEffect pair — useTabParam handles both the
@@ -940,9 +958,11 @@ export default function Onboarding({ userRole, userId }) {
   }, []);
 
   const subjectName = useCallback((plan) => {
-    if (plan.team_member_id) return memberName(teamById.get(plan.team_member_id));
-    return candidateName(candidateById.get(plan.candidate_id));
-  }, [teamById, candidateById, candidateName]);
+    if (plan.team_member_id && teamById.get(plan.team_member_id)) return memberName(teamById.get(plan.team_member_id));
+    const c = candidateById.get(plan.candidate_id);
+    if (c) return candidateName(c);
+    return (planNames && planNames[plan.id]) || "New hire";
+  }, [teamById, candidateById, candidateName, planNames]);
 
   const stepsByPlan = useMemo(() => {
     const m = new Map();
@@ -952,14 +972,6 @@ export default function Onboarding({ userRole, userId }) {
     });
     return m;
   }, [steps]);
-
-  // Team-tier view: auto-select their own plan if they have one
-  useEffect(() => {
-    if (!isAdmin && myTeamMemberId && !selectedPlanId && plans.length) {
-      const mine = plans.find(p => p.team_member_id === myTeamMemberId && (p.status === "active" || p.status === "paused"));
-      if (mine) setSelectedPlanId(mine.id);
-    }
-  }, [isAdmin, myTeamMemberId, plans, selectedPlanId]);
 
   // ─── actions ──────────────────────────────────
   const handleToggleStep = async (step) => {
@@ -1049,41 +1061,60 @@ export default function Onboarding({ userRole, userId }) {
     </div>;
   }
 
-  // Team-tier view — no plan
+  // Team-tier view. The database already hands back only the plans and
+  // cards this person may see: their own plan from Day 1, plus any card
+  // assigned to them on someone else's plan.
   if (!isAdmin) {
-    const mine = plans.filter(p => p.team_member_id === myTeamMemberId);
-    if (mine.length === 0) {
+    const open = plans.filter(p => p.status === "active" || p.status === "paused");
+    const list = open.length ? open : plans;
+    if (list.length === 0) {
       return (
         <div style={{ padding: 20 }}>
           <Card>
-            <div style={{ fontSize: 14, color: T.slate800, marginBottom: 6, fontWeight: 600 }}>No onboarding plan yet</div>
+            <div style={{ fontSize: 14, color: T.slate800, marginBottom: 6, fontWeight: 600 }}>Nothing here for you yet</div>
             <div style={{ fontSize: 12, color: T.slate500 }}>
-              You don't have an onboarding schedule assigned. Reach out to Peter if you were expecting one.
+              Your onboarding plan, and any onboarding card assigned to you, will show up here.
             </div>
           </Card>
         </div>
       );
     }
-    // If a plan is selected, show it. Else, show the first active/paused plan.
-    const activePlan = mine.find(p => p.id === selectedPlanId) || mine.find(p => p.status === "active" || p.status === "paused") || mine[0];
+    const chosen = list.find(p => p.id === selectedPlanId) || (list.length === 1 ? list[0] : null);
+    if (chosen) {
+      return (
+        <div style={{ padding: 20 }}>
+          <PlanDetail
+            plan={chosen}
+            steps={stepsByPlan.get(chosen.id) || []}
+            subjectName={subjectName(chosen)}
+            isCandidate={!chosen.team_member_id}
+            phaseMeta={phaseMeta}
+            ownerName={ownerName}
+            onBack={() => setSelectedPlanId(null)}
+            onToggleStep={handleToggleStep}
+            onToggleSubstep={handleToggleSubstep}
+            onUpdateStepNotes={handleUpdateStepNotes}
+            onDeletePlan={handleDeletePlan}
+            onChangeStatus={handleChangeStatus}
+            isAdmin={false}
+            showBack={list.length > 1}
+          />
+          {actionError && <Card style={{ marginTop: 10, background: T.redLt }}><div style={{ color: T.red, fontSize: 12 }}>{actionError}</div></Card>}
+        </div>
+      );
+    }
     return (
       <div style={{ padding: 20 }}>
-        <PlanDetail
-          plan={activePlan}
-          steps={stepsByPlan.get(activePlan.id) || []}
-          subjectName={subjectName(activePlan)}
-          isCandidate={!activePlan.team_member_id}
-          phaseMeta={phaseMeta}
-          ownerName={ownerName}
-          onBack={() => setSelectedPlanId(null)}
-          onToggleStep={handleToggleStep}
-          onToggleSubstep={handleToggleSubstep}
-          onUpdateStepNotes={handleUpdateStepNotes}
-          onDeletePlan={handleDeletePlan}
-          onChangeStatus={handleChangeStatus}
-          isAdmin={false}
-        />
-        {actionError && <Card style={{ marginTop: 10, background: T.redLt }}><div style={{ color: T.red, fontSize: 12 }}>{actionError}</div></Card>}
+        {list.map(plan => (
+          <PlanListCard
+            key={plan.id}
+            plan={plan}
+            steps={stepsByPlan.get(plan.id) || []}
+            subjectName={subjectName(plan)}
+            isCandidate={!plan.team_member_id}
+            onOpen={setSelectedPlanId}
+          />
+        ))}
       </div>
     );
   }

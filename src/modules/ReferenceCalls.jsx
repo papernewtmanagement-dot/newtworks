@@ -66,7 +66,10 @@ function Pill({ children, bg, fg }) {
   );
 }
 
-export default function ReferenceCalls() {
+// candidateId + embedded: the references card on an onboarding plan renders
+// this for its one candidate, with no page header. The server still decides
+// who may see which candidate; the filter here only narrows to the card.
+export default function ReferenceCalls({ candidateId = null, embedded = false }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
 
@@ -81,8 +84,9 @@ export default function ReferenceCalls() {
     setError("");
     const { data, error: err } = await supabase.rpc("rp_reference_calls");
     if (err) { setError(err.message); setRows([]); return; }
-    setRows(Array.isArray(data?.rows) ? data.rows : []);
-  }, []);
+    const all = Array.isArray(data?.rows) ? data.rows : [];
+    setRows(candidateId ? all.filter(r => r.candidate_id === candidateId) : all);
+  }, [candidateId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -128,7 +132,12 @@ export default function ReferenceCalls() {
   };
 
   return (
-    <div style={{ padding: _pad, display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ padding: embedded ? 0 : _pad, display: "flex", flexDirection: "column", gap: embedded ? 10 : 16 }}>
+      {embedded ? (
+        <div style={{ fontSize: 12, color: T.slate500, lineHeight: 1.5 }}>
+          Log every call, even the ones nobody picks up.
+        </div>
+      ) : (
       <div>
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.slate900 }}>
           Reference calls
@@ -138,6 +147,7 @@ export default function ReferenceCalls() {
           we email the candidate and ask them to get that person to call you back.
         </p>
       </div>
+      )}
 
       {error && (
         <div style={{ ...card, background: T.redLt, borderColor: T.red, color: T.slate900, fontSize: 13 }}>
@@ -149,7 +159,11 @@ export default function ReferenceCalls() {
         <div style={{ ...card, color: T.slate500, fontSize: 13 }}>Loading…</div>
       )}
 
-      {rows !== null && rows.length === 0 && (
+      {rows !== null && rows.length === 0 && embedded && (
+        <div style={{ fontSize: 12, color: T.slate500 }}>No reference contacts in yet.</div>
+      )}
+
+      {rows !== null && rows.length === 0 && !embedded && (
         <div style={{ ...card, color: T.slate500, fontSize: 13 }}>
           Nothing to call right now. This fills up when a candidate accepts an offer
           and gives us their references.
