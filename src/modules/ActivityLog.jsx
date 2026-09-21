@@ -334,7 +334,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [sourcedBy, setSourcedBy] = useState("");   // quotes only: who sourced the referral
   const [policies, setPolicies] = useState([]);      // [{id, line, type, status, premium, vehicles, isNewLine}]
   const [activePolicy, setActivePolicy] = useState(null);   // id of the policy pill being edited
-  const [cReason, setCReason] = useState("");
   const [scores, setScores] = useState({});                 // scorecard parts scored on this entry (blank = didn't come up)
   const [recTurned, setRecTurned] = useState(false);
   const [recUrl, setRecUrl] = useState("");
@@ -373,7 +372,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       setSourcedBy(d.sourced_by_team_member_id || ""); setEcrm(d.ecrm_url || "");
       setNote(d.note || "");
       setSuggest([]); setSuggestOpen(false); setOk(""); setErr(""); setAttempted(false); setLast(null);
-      setActivities([]); setPolicies([]); setActivePolicy(null); setScores({}); setCReason("");
+      setActivities([]); setPolicies([]); setActivePolicy(null); setScores({});
       setRecTurned(false); setRecUrl(""); setOnFileAnswer({});
       if (d.kind === "sale" || d.kind === "quote") {
         setPolicies((d.products || []).map(x => ({
@@ -390,7 +389,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           status: "canceled", premium: d.premium == null ? "" : String(d.premium),
           vehicles: d.vehicle_count == null ? "" : String(d.vehicle_count),
           isNewLine: false, addedToExisting: false, autopay: false }]);
-        setCReason(d.reason || "");
       } else if (d.kind === "activity") {
         setActivities([{ id: newPolicyId(), key: d.activity_key,
           line: d.save_line || d.policy_line || "", type: d.product_type || "",
@@ -548,6 +546,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       : "This needs the ECRM opportunity link.");
     if (activities.some(a => needsSite(a.key) && !a.site)) out.push("Say where the review was left: Google, Facebook or Yelp.");
     if (hasSale && !note.trim()) out.push("A sale needs a note on what happened.");
+    if (hasCxl && !note.trim()) out.push("A cancelation needs a note on why it canceled.");
     return out;
   };
   const needsCard = hasQuote || hasSale || cardChosen > 0;
@@ -597,7 +596,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     setSuggest([]);
     setRelationship(""); setSource(""); setSourcedBy("");
     setActivities([]);
-    setPolicies([]); setActivePolicy(null); setCReason(""); setScores({}); setRecTurned(false); setRecUrl(""); setEcrm(""); setNote(""); setOnFileAnswer({});
+    setPolicies([]); setActivePolicy(null); setScores({}); setRecTurned(false); setRecUrl(""); setEcrm(""); setNote(""); setOnFileAnswer({});
     setAttempted(false);
   };
 
@@ -651,7 +650,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         changes = { ...who, canceled_on: date, policy_line: one.line, product_type: one.type || null,
           premium: one.premium === "" ? null : Number(one.premium),
           vehicle_count: hasCars(one.line, one.type) && one.vehicles !== "" ? Number(one.vehicles) : null,
-          reason: cReason.trim(), note: note.trim() };
+          note: note.trim() };
       } else if (k === "activity") {
         const a = activities[0] || {};
         fn = "rp_edit_activity";
@@ -700,7 +699,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           on_file_answer: flagged.length ? (replaces.length ? "replaces" : flagged.some(p => onFileAnswer[p.id] === "added") ? "added" : "different") : null,
           replaced_sale_product_id: replaces.length ? oldOnFile(replaces[0]).sale_product_id : null,
         } : null,
-        cancelation: hasCxl ? { items: canceled.map(p => ({ ...row(p), ...money(p), ...matched(p) })), reason: cReason.trim() || null } : null,
+        cancelation: hasCxl ? { items: canceled.map(p => ({ ...row(p), ...money(p), ...matched(p) })) } : null,
         scorecard: hasCard ? { ...scores, recording_turned_in: !!recTurned, recording_url: recTurned ? (recUrl || null) : null } : null,
       };
       const { data, error } = await supabase.rpc("rp_log_entry", { p_payload: payload });
@@ -727,7 +726,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           vehicle_count: hasCars(o.line_of_business, o.product_type) ? Number(o.vehicle_count || 1) : null, matched_sale_product_id: o.sale_product_id, replacement: true }; });
         const c = await supabase.rpc("rp_log_entry", { p_payload: {
           customer_first: first.trim(), customer_last_initial: initial.trim(), customer_kind: custKind, phone_last4: phone, occurred_on: date, team_member_id: logFor, relationship_type: "existing",
-          cancelation: { items, reason: "Replaced by the new policy logged with the sale" },
+          ecrm_url: ecrm.trim(), note: "Replaced by the new policy logged with the sale",
+          cancelation: { items },
         } });
         if (c.error || !c.data?.ok) summary += ` The old ${replaces.map(p => PRODUCT_SHORT[p.line]).join(", ")} could not be canceled: ${errText(c.error || c.data)}. Cancel it on the Canceled tab.`;
         else { cxlResult = c.data; summary += ` Old policy ${summarizeEntry(c.data).replace(/^Logged for [^:]*: /, "")}`; }
@@ -1039,12 +1039,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               <button type="button" style={{ ...btnGhost, marginLeft: "auto", marginBottom: 6 }} onClick={() => setActivePolicy(null)}>Done</button>
             </div>
           )}
-          {hasCxl && (
-            <div style={{ marginTop: 10 }}>
-              <label style={labelStyle}>Why did it cancel? <span style={hintStyle}>(optional)</span></label>
-              <input style={inputBase} value={cReason} onChange={e => setCReason(e.target.value)} placeholder="what they told us" />
-            </div>
-          )}
           {flagged.map(p => {
             const r = oldOnFile(p);
             const oldLabel = typeLabel(types, r.line_of_business, r.product_type) || PRODUCT_SHORT[p.line];
@@ -1101,7 +1095,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
             </div>
           )}
           <div style={field(220)}>
-            <label style={labelStyle}>Note {hasReview ? <span style={{ color: T.red }}>(required for a policy review)</span> : null}</label>
+            <label style={labelStyle}>Note {hasCxl ? <span style={hintStyle}>(say why it canceled)</span> : hasReview ? <span style={{ color: T.red }}>(required for a policy review)</span> : null}</label>
             <input style={inputBase} value={note} onChange={e => setNote(e.target.value)} placeholder="Reviewed liability limits and umbrella; added rental reimbursement" />
           </div>
         </div>
@@ -3170,19 +3164,21 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
 //    Wrap-up processes page, behind the ⓘ on the right of the row.
 // =====================================================================
 
-// Sections are lines starting "1. " .. "6. ", taken in ascending order
+// Sections are lines starting "1. " .. "n. ", taken in ascending order
 // only, so an answer that happens to begin with a number is left alone.
-function splitWrapup(text) {
-  const out = ["", "", "", "", "", ""];
+// n is the number of wrap-up questions (five since Peter deleted the
+// lapse/cancel question on 2026-09-21 — the production log holds those now).
+function splitWrapup(text, n = 5) {
+  const out = Array.from({ length: n }, () => "");
   if (!text || !String(text).trim()) return out;
-  const buf = [[], [], [], [], [], []];
+  const buf = Array.from({ length: n }, () => []);
   let cur = -1;
   for (const ln of String(text).split("\n")) {
     const m = ln.match(/^(\d)\.\s+\S/);
-    if (m && Number(m[1]) === cur + 2) { cur = Number(m[1]) - 1; continue; }
+    if (m && Number(m[1]) === cur + 2 && Number(m[1]) <= n) { cur = Number(m[1]) - 1; continue; }
     if (cur >= 0) buf[cur].push(ln);
   }
-  for (let i = 0; i < 6; i++) out[i] = buf[i].join("\n").trim();
+  for (let i = 0; i < n; i++) out[i] = buf[i].join("\n").trim();
   return out;
 }
 
@@ -3955,7 +3951,7 @@ function ChecklistTab() {
   const [state, setState] = useState(null);
   const [openHelp, setOpenHelp] = useState(null);
   const [wrap, setWrap] = useState(null);
-  const [parts, setParts] = useState(["", "", "", "", "", ""]);
+  const [parts, setParts] = useState(["", "", "", "", ""]);
   // The wrap-up sits on screen every day now. Two pieces of state decide how
   // it looks: hiddenToday (they said it is not their last day, so it is put
   // away until tomorrow) and finished (they clicked that nothing is left to
@@ -4019,7 +4015,7 @@ function ChecklistTab() {
       if (!alive || !r?.data) return;
       const d = r.data;
       setWrap(d);
-      setParts(splitWrapup(d.wrapup_text));
+      setParts(splitWrapup(d.wrapup_text, (d.prompts || []).length || 5));
       setHiddenToday(!!d.hidden_today);
       setFinished(!!d.wrapup_finished);
     });
