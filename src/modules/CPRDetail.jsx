@@ -2082,90 +2082,31 @@ function PersonalChecklistSection({ details, team, weekEnding, editMode, formDet
   );
 }
 
-// 8 — Requirements (per-person Last Wk / This Wk / Cost / Total / Paid / Next Wk)
-function RequirementsSection({ details, team, runtimeReqs, editMode, formDetails, isDirty, onChange, weekDate }) {
-  if (!details || details.length === 0) {
-    return (
-      <div>
-        <SectionHeader icon="⭐" title="Requirements" />
-        <Card><Awaiting /></Card>
-      </div>
-    );
-  }
-  // Anyone already gone before this week started is dropped — they never worked it.
-  // Same cut the server makes in get_weekly_cpr_requirements.
-  const sorted = sortByTenure(details, team).filter(d => !leftBeforeWeek(d.__left, weekDate));
-  // Math (locked 2026-06-20):
-  //   Total      = (Last Wk + This Wk + Modified) × Cost
-  //   Paid       = team-pool allocation against the new Total (server-computed)
-  //   Next Wk    = Total − Paid
-  // In edit mode we live-recompute Total + Next Wk from the dirty form value of
-  // quotes_modified so the impact is visible before save. Paid is server-computed
-  // and won't refresh until save.
+// Requirements breakdown inside a person's Team Activity expansion (Peter 2026-09-21).
+// Replaces the old Requirements section. Shown only when requirements were charged.
+// Math (locked 2026-06-20): Total = (Last Wk + This Wk + Modified) × Cost;
+// Paid = team-pool allocation (server); Next Wk = Total − Paid.
+function RequirementsBreakdown({ r }) {
+  const cells = [
+    ["Last Wk", fmtQty(r.carryover)],
+    ["This Wk", fmtInt(r.missed)],
+    ["Modified", fmtSigned(Number(r.modified) || 0)],
+    ["Cost", fmtQty(r.cost)],
+    ["Total", fmtQty(r.total)],
+    ["Paid", fmtQty(r.paid)],
+    ["Next Wk", fmtQty(r.owed)],
+  ];
   return (
-    <div>
-      <SectionHeader
-        icon="⭐"
-        title="Requirements"
-      />
-      <Card style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 680 }}>
-            <thead>
-              <tr>
-                <Th align="left">Person</Th>
-                <Th align="right">Last Wk</Th>
-                <Th align="right">This Wk</Th>
-                <Th align="right">Modified</Th>
-                <Th align="right">Cost</Th>
-                <Th align="right">Total</Th>
-                <Th align="right">Paid</Th>
-                <Th align="right">Next Wk</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map(d => {
-                const r = runtimeReqs?.[d.team_member_id] || {};
-                const formMod = editMode ? (formDetails?.[d.id]?.quotes_modified ?? r.modified ?? 0) : (r.modified ?? 0);
-                const dirty = editMode ? isDirty?.(d.id, "quotes_modified") : false;
-                // Live-recompute Total + Next Wk when editing Modified.
-                // Total = (carryover + missed + modified) × cost
-                // Next Wk = Total − Paid  (Paid is server-computed; refreshes on save)
-                const liveTotal = editMode
-                  ? ((Number(r.carryover) || 0) + (Number(r.missed) || 0) + (Number(formMod) || 0)) * (Number(r.cost) || 1)
-                  : r.total;
-                const liveOwed = editMode
-                  ? ((Number(liveTotal) || 0) - (Number(r.paid) || 0))
-                  : r.owed;
-                return (
-                  <tr key={d.team_member_id}>
-                    <Td style={{ paddingLeft: 14, color: T.slate700, fontWeight: 600 }}>{firstName(d.__name)}</Td>
-                    <Td align="right">{fmtQty(r.carryover)}</Td>
-                    <Td align="right">{fmtInt(r.missed)}</Td>
-                    <Td align="right" style={{ padding: editMode ? 4 : undefined, background: dirty ? (T.amber50 || "#fef3c7") : undefined }}>
-                      {editMode ? (
-                        <NumberInput
-                          value={formMod}
-                          onChange={v => onChange(d.id, "quotes_modified", Number(v) || 0)}
-                          dirty={dirty}
-                          step={1}
-                          style={{ width: 70 }}
-                        />
-                      ) : (
-                        <span style={{ color: (Number(r.modified) || 0) === 0 ? T.slate500 : T.slate900 }}>{fmtSigned(Number(r.modified) || 0)}</span>
-                      )}
-                    </Td>
-                    <Td align="right">{fmtQty(r.cost)}</Td>
-                    <Td align="right">{fmtQty(liveTotal)}</Td>
-                    <Td align="right">{fmtQty(r.paid)}</Td>
-                    <Td align="right" style={{ fontWeight: 700, color: T.slate900 }}>{fmtQty(liveOwed)}</Td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+    <div style={{ padding: "10px 14px", borderBottom: `1px solid ${T.slate200}` }}>
+      <div style={{ fontSize: 10, fontWeight: 800, color: T.slate500, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 6 }}>Requirements</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px" }}>
+        {cells.map(([label, val]) => (
+          <div key={label} style={{ fontSize: 12 }}>
+            <span style={{ color: T.slate500 }}>{label} </span>
+            <span style={{ color: label === "Total" ? T.red : T.slate900, fontWeight: label === "Total" || label === "Next Wk" ? 700 : 400 }}>{val}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -3629,6 +3570,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
               <tr>
                 <Th align="left">Person</Th>
                 <Th align="right">Quotes</Th>
+                <Th align="right">Requirements</Th>
                 <Th align="right">Buyback</Th>
                 <Th align="right">Net Quotes</Th>
                 <Th align="right">Q Sales Pts</Th>
@@ -3650,10 +3592,12 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                 const paidNow = Number(r.paid) || 0;
                 const netPreview = quotesNow - paidNow;
                 // Per-person expansion (cycle-view weekly production table).
-                const totalCols = 6 + quarterList.length;
+                const totalCols = 7 + quarterList.length;
                 const isExpanded = expandedPersonId === d.team_member_id;
-                const hasCycleData = (cycleWeeklyDetails || []).some(x => x.team_member_id === d.team_member_id);
-                const canExpand = !editMode && cycleWeeks.length > 0 && hasCycleData;
+                const hasCycleData = cycleWeeks.length > 0 && (cycleWeeklyDetails || []).some(x => x.team_member_id === d.team_member_id);
+                const reqTotal = Number(r.total) || 0;
+                const charged = reqTotal > 0;
+                const canExpand = !editMode && (hasCycleData || charged);
                 return (
                   <Fragment key={d.team_member_id}>
                   <tr
@@ -3703,6 +3647,26 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                       </Td>
                     ) : (
                       <Td align="right">{fmtInt(d.quotes_discussed)}</Td>
+                    )}
+                    {/* Requirements total, red when positive. Edit mode holds the
+                        Modified adjustment that used to live in the Requirements section. */}
+                    {editMode ? (
+                      <Td align="right" style={{ padding: 6 }}>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ fontSize: 10, color: T.slate500 }}>Modified</span>
+                          <NumberInput
+                            value={row.quotes_modified ?? r.modified ?? 0}
+                            onChange={v => onChange(d.id, "quotes_modified", Number(v) || 0)}
+                            dirty={isDirty(d.id, "quotes_modified")}
+                            step={1}
+                            style={{ width: 70 }}
+                          />
+                        </div>
+                      </Td>
+                    ) : (
+                      <Td align="right" style={{ color: charged ? T.red : T.slate400, fontWeight: charged ? 700 : 400 }}>
+                        {charged ? fmtQty(reqTotal) : "—"}
+                      </Td>
                     )}
                     {(() => {
                       // Requirements-adjustment buy-back (locked 2026-08-15): folded directly
@@ -3803,12 +3767,15 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                   {isExpanded ? (
                     <tr>
                       <Td colSpan={totalCols} style={{ padding: 0, background: T.slate50 }}>
-                        <TeammateWeeklyProduction
-                          teammateId={d.team_member_id}
-                          teammateName={firstName(d.__name)}
-                          cycleWeeks={cycleWeeks}
-                          cycleWeeklyDetails={cycleWeeklyDetails}
-                        />
+                        {charged ? <RequirementsBreakdown r={r} /> : null}
+                        {hasCycleData ? (
+                          <TeammateWeeklyProduction
+                            teammateId={d.team_member_id}
+                            teammateName={firstName(d.__name)}
+                            cycleWeeks={cycleWeeks}
+                            cycleWeeklyDetails={cycleWeeklyDetails}
+                          />
+                        ) : null}
                       </Td>
                     </tr>
                   ) : null}
@@ -3819,6 +3786,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
               {/* Team Total row */}
               <tr style={{ borderTop: `2px solid ${T.slate200}` }}>
                 <Td style={{ paddingLeft: 14, fontWeight: 700, color: T.slate800 }}>Team Total</Td>
+                <Td align="right"></Td>
                 <Td align="right"></Td>
                 <Td align="right" style={{ fontWeight: 700, color: teamPoolRestored > 0 ? T.green : T.slate800 }}>
                   {teamPoolRestored > 0 ? `+${teamPoolRestored}` : "—"}
@@ -3841,6 +3809,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                 </Td>
                 <Td align="right"></Td>
                 <Td align="right"></Td>
+                <Td align="right"></Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate700 }}>{quoteGoal}</Td>
                 <Td align="right" style={{ fontWeight: 700, color: T.slate700 }}>{salesPtsGoal.toFixed(2)}</Td>
                 <Td align="right" style={{ background: _TINT_1PCT }}></Td>
@@ -3853,7 +3822,7 @@ function TeamActivitySection({ details, team, runtimeReqs, report, editMode, for
                   Right-aligned per Peter directive 2026-07-12 pm5. */}
               <tr>
                 <Td
-                  colSpan={5}
+                  colSpan={6}
                   align="right"
                   style={{ fontWeight: 700, color: (quotesPass && spPass) ? T.green : T.red, paddingRight: 10 }}
                 >
@@ -7037,19 +7006,6 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
       )}
 
-      {/* 8. Requirements — Modified column editable */}
-      <Section>
-        <RequirementsSection
-          details={data.details} team={data.team}
-          runtimeReqs={data.runtimeReqs}
-          weekDate={weekDate}
-          editMode={edit.active}
-          formDetails={edit.form.details}
-          isDirty={edit.isDetailDirty}
-          onChange={edit.setDetailField}
-        />
-      </Section>
-
       <Divider />
 
       {/* 10. Agency performance */}
@@ -7117,11 +7073,6 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         </div>
       </Section>
 
-      {/* Notes, Issued, Canceled — their own row, side by side. */}
-      <Section>
-        <LogChangesSection weekDate={weekDate} team={data.team} viewerTeamMemberId={viewerTeamMemberId} userRole={userRole} />
-      </Section>
-
       <Divider />
 
       {/* 16. Hours worked — read-only, runtime-computed from TimeClock */}
@@ -7151,6 +7102,11 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
 
       {/* 19. Payroll */}
       <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} marketingByTeammate={data.marketingByTeammate} retentionPointsByMember={data.retentionPointsByMember} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} cycleStartISO={data.cycleStartISO} cycleWeeklyDetails={data.cycleWeeklyDetails} /></Section>
+
+      {/* Notes, Issued, Canceled — under Payroll (Peter 2026-09-21). */}
+      <Section>
+        <LogChangesSection weekDate={weekDate} team={data.team} viewerTeamMemberId={viewerTeamMemberId} userRole={userRole} />
+      </Section>
 
       {/* 21. Leaderboards (merged: Gold/Silver/Bronze slots + All-Star floor + Trailblazer + running counts) — this-week crossings surface in the top MVP banner */}
       <Section><LeaderboardsSection
