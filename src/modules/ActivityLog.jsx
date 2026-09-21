@@ -1771,7 +1771,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
         if (r.error) throw r.error;
         setRows(Array.isArray(r.data) ? r.data : []);
       } else {
-        let q = supabase.from("retention_activity_log").select(ACT_SELECT).eq("agency_id", AGENCY_ID).eq("status", "active");
+        let q = supabase.from("retention_activity_now").select(ACT_SELECT).eq("agency_id", AGENCY_ID).eq("status", "active");
         if (scope === "week") q = q.eq("week_end_date", weekEnd);
         else q = q.gt("credit_available_on", today);
         const r = await q.order("occurred_on", { ascending: scope === "pending" });
@@ -2836,7 +2836,7 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, isAdmin, 
                         <><span style={{ fontWeight: 700, color: r.action === "delete" ? T.red : r.action === "update" ? T.amber : T.green }}>{verb[r.action] || r.action}</span> {r.item === "FIT scorecard" ? r.item : r.item.toLowerCase()}</>
                       )}
                     </td>
-                    <td style={tableTd}><CustomerName label={r.subject} phone4={r.phone_last4} /></td>
+                    <td style={tableTd}><CustomerName label={r.subject} phone4={r.phone_last4} />{r.phone_last4 ? <div style={{ fontSize: 11, color: T.slate400 }}>·{r.phone_last4}</div> : null}</td>
                     <td style={{ ...tableTd, maxWidth: 420 }}>
                       {r.action === "update" ? (
                         changeDiffList(r.changes).filter(onlyKind).some(c => !c.event || c.after)

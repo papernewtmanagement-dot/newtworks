@@ -54,9 +54,16 @@ export function isSpotItem(c) { return !!(c && c.field === "spot_check_note"); }
 // Which side of the toggle one entry of `changes` belongs on.
 export function changeItemKind(c) { return isIssueItem(c) ? "issue" : isSpotItem(c) ? "spot_check" : "change"; }
 
+// The full customer label: the name plus the last four of the phone, the way
+// the History tab shows it (Peter 2026-09-21).
 function Customer({ r }) {
   if (!r.subject) return null;
-  return <CustomerName label={r.subject} phone4={r.phone_last4} style={{ fontWeight: 600 }} />;
+  return (
+    <>
+      <CustomerName label={r.subject} phone4={r.phone_last4} style={{ fontWeight: 600 }} />
+      {r.phone_last4 ? <span style={{ color: T.slate400 }}>{` ·${r.phone_last4}`}</span> : null}
+    </>
+  );
 }
 
 // The timestamp on every change line: bold and in the accent color so the eye
