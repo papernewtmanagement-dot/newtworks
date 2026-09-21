@@ -219,6 +219,12 @@ function stopSummary(p) {
   return `${dow} ${part} ${pat}`;
 }
 
+function nextSunday() {
+  const d = new Date();
+  d.setDate(d.getDate() + (7 - d.getDay()));
+  return d;
+}
+
 function shortDate(d) {
   return new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
@@ -320,6 +326,7 @@ function StandingPrefBuilder({ me, onSubmitted, onClose }) {
   ]);
   const [trigger] = useState("wtw_won_prior_week");
   const [isPaid, setIsPaid] = useState(true);
+  const [effectiveFrom, setEffectiveFrom] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -337,6 +344,7 @@ function StandingPrefBuilder({ me, onSubmitted, onClose }) {
   async function submit() {
     if (!me?.id || !supabase) return;
     if (days.length === 0) { setError("Add at least one day to the pattern."); return; }
+    if (!effectiveFrom) { setError("Pick the first day you want this to start."); return; }
     setSubmitting(true);
     setError(null);
     try {
@@ -346,9 +354,10 @@ function StandingPrefBuilder({ me, onSubmitted, onClose }) {
         agency_id: AGENCY_ID,
         requester_team_id: me.id,
         request_type: "standing_time_off_preference",
-        // Submission date only. The new pattern starts the week after approval (set by the database).
-        start_date: isoDayLocal(new Date()),
-        end_date: isoDayLocal(new Date()),
+        // First day the teammate wants the new pattern. The database starts it that
+        // week, or the week after approval if that comes later.
+        start_date: effectiveFrom,
+        end_date: effectiveFrom,
         partial_day: "none",
         notes: notes || null,
         status: "voting",
@@ -444,8 +453,10 @@ function StandingPrefBuilder({ me, onSubmitted, onClose }) {
             <option value="unpaid">Unpaid</option>
           </select>
 
-          <div style={{ marginTop: 12, padding: "8px 10px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 6, fontSize: 12, color: "#0c4a6e" }}>
-            Starts the week after Peter approves it and replaces your current WtW day off. This week stays the same.
+          <label style={labelStyle}>First day you want off under this new pattern</label>
+          <input type="date" value={effectiveFrom} min={isoDayLocal(nextSunday())} onChange={e => setEffectiveFrom(e.target.value)} style={inputStyle} />
+          <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
+            Example: for Fridays off, pick the first Friday you want. It replaces your current WtW day off from that week on. The earliest it can start is the week after Peter approves it.
           </div>
 
           <label style={labelStyle}>Notes / context (optional)</label>
