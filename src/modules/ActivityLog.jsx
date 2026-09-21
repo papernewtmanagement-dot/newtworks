@@ -3,7 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink, hrefWithParam } from "../lib/routing.jsx";
 import { AccountCtx, CustomerName, parseAcctToken } from "../lib/customerAccount.jsx";
-import { ChangeDiffs, changeDiffList, changeEvents, changeTone } from "../lib/changeLog.jsx";
+import { ChangeDiffs, changeDiffList, changeEvents, changeTone, isIssueItem, ChangeEntry, IssueEntry, ChangeKindToggle } from "../lib/changeLog.jsx";
 import TimeHub from "./TimeHub.jsx";
 import PFA from "./PFA.jsx";
 import Development from "./Development.jsx";
@@ -2588,7 +2588,7 @@ function changeSummary(r, ctx) {
 // Log tab collapse to one line. These are the same lines the daily alert and the
 // Telegram note carry, because all three read production_changes_for_day. The
 // Telegram link lands here: ?tab=changes&day=YYYY-MM-DD
-function ChangeDay({ day, setDay }) {
+function ChangeDay({ day, setDay, kind, setKind }) {
   const [lines, setLines] = useState(null);
   const [err, setErr] = useState("");
   useEffect(() => {
@@ -2605,12 +2605,16 @@ function ChangeDay({ day, setDay }) {
 
   const today = todayCentral();
   const arrow = { ...btnGhost, padding: "6px 12px", fontSize: 15, lineHeight: 1 };
+  const counts = {
+    change: (lines || []).filter(l => l.kind !== "issue").length,
+    issue: (lines || []).filter(l => l.kind === "issue").length,
+  };
+  const shownLines = (lines || []).filter(l => (kind === "issue") === (l.kind === "issue"));
   return (
     <div style={cardStyle}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>
           {day === today ? "Today" : fmtDate(day)}
-          {lines && lines.length > 0 ? <span style={{ color: T.slate500, fontWeight: 600, fontSize: 13 }}> &middot; {plural(lines.length, "change")}</span> : null}
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <button style={arrow} onClick={() => setDay(addDays(day, -1))} aria-label="previous day">&lsaquo;</button>
@@ -2619,15 +2623,22 @@ function ChangeDay({ day, setDay }) {
           <button style={arrow} disabled={day >= today} onClick={() => setDay(addDays(day, 1))} aria-label="next day">&rsaquo;</button>
         </div>
       </div>
+      <div style={{ marginBottom: 12 }}>
+        <ChangeKindToggle value={kind} onChange={setKind} counts={lines ? counts : {}} />
+      </div>
       {err && <Notice kind="error">{err}</Notice>}
       {lines === null ? (
         <div style={{ color: T.slate500, fontSize: 13 }}>Loading&hellip;</div>
-      ) : lines.length === 0 ? (
-        <div style={{ color: T.slate600, fontSize: 14 }}>Nothing was edited or removed on this day.</div>
+      ) : shownLines.length === 0 ? (
+        <div style={{ color: T.slate600, fontSize: 14 }}>
+          {kind === "issue" ? "No policies were issued or un-issued on this day." : "Nothing was edited or removed on this day."}
+        </div>
       ) : (
         <div style={{ display: "grid", gap: 8 }}>
-          {lines.map(l => (
-            <div key={l.txid} style={{ fontSize: 13, color: T.slate800, padding: "8px 10px", background: T.slate50, borderRadius: 8 }}>{l.line}</div>
+          {shownLines.map((l, i) => (
+            <div key={`${l.kind}-${l.txid}-${i}`} style={{ fontSize: 13, color: T.slate800, padding: "8px 10px", background: T.slate50, borderRadius: 8, lineHeight: 1.5 }}>
+              {l.kind === "issue" ? <IssueEntry r={l} /> : <ChangeEntry r={l} />}
+            </div>
           ))}
         </div>
       )}
@@ -2638,6 +2649,8 @@ function ChangeDay({ day, setDay }) {
 function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKey, onChanged }) {
   const [day, setDay] = useTabParam("day", "");
   const [view, setView] = useState("day");
+  // Edits and issued policies are kept apart (Peter 2026-09-21).
+  const [kind, setKind] = useState("change");
   const [days, setDays] = useState(30);
   const [who, setWho] = useState("");
   const [rows, setRows] = useState(null);
@@ -2706,13 +2719,23 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
     : { by, dir: by === "when" ? "desc" : "asc" });
   const sortArrow = (by) => sort.by !== by ? "" : sort.dir === "asc" ? " \u25B2" : " \u25BC";
 
+  // An issue row: a policy line whose issue date or issued premium moved.
+  const hasIssue = (r) => r.action === "update" && changeDiffList(r.changes).some(isIssueItem);
+  const hasOther = (r) => r.action !== "update" || changeDiffList(r.changes).some(c => !isIssueItem(c));
+  const inKind = (r) => kind === "issue" ? hasIssue(r) : hasOther(r);
+  const onlyKind = kind === "issue" ? isIssueItem : (c) => !isIssueItem(c);
+  const kindCounts = useMemo(() => ({
+    change: (rows || []).filter(hasOther).length,
+    issue: (rows || []).filter(hasIssue).length,
+  }), [rows]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const shown = useMemo(() => {
-    const list = rows || [];
+    const list = (rows || []).filter(inKind);
     if (!sort.by) return list;
     const keyOf = (r) => {
       if (sort.by === "when") return String(r.changed_at || "");
       if (sort.by === "who") return String(r.who || "").toLowerCase();
-      if (sort.by === "what") return (changeEvents(r.changes).map(c => c.label).join(" ") || `${r.item || ""} ${r.action || ""}`).toLowerCase();
+      if (sort.by === "what") return (changeEvents(r.changes).filter(onlyKind).map(c => c.label).join(" ") || `${r.item || ""} ${r.action || ""}`).toLowerCase();
       return String(r.subject || "").toLowerCase();
     };
     const dir = sort.dir === "asc" ? 1 : -1;
@@ -2720,16 +2743,16 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
       const x = keyOf(a), y = keyOf(b);
       return x < y ? -dir : x > y ? dir : 0;
     });
-  }, [rows, sort]);
+  }, [rows, sort, kind]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (view === "day") {
     return (
       <div style={{ display: "grid", gap: 12 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontSize: 13, color: T.slate500 }}>Edits and removals, one day at a time.</div>
+          <div style={{ fontSize: 13, color: T.slate500 }}>Edits, removals and issued policies, one day at a time.</div>
           <button style={btnGhost} onClick={() => setView("all")}>See every change</button>
         </div>
-        <ChangeDay day={day || todayCentral()} setDay={setDay} />
+        <ChangeDay day={day || todayCentral()} setDay={setDay} kind={kind} setKind={setKind} />
       </div>
     );
   }
@@ -2749,12 +2772,13 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
           </select>
         </div>
       </div>
+      <div><ChangeKindToggle value={kind} onChange={setKind} counts={rows ? kindCounts : {}} /></div>
       {flash && <Notice kind="ok">{flash}</Notice>}
       {err && <Notice kind="error">{err}</Notice>}
       {rows === null ? (
         <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading…</div>
-      ) : rows.length === 0 ? (
-        <div style={{ ...cardStyle, color: T.slate600, fontSize: 14 }}>No changes in the last {days} days.</div>
+      ) : shown.length === 0 ? (
+        <div style={{ ...cardStyle, color: T.slate600, fontSize: 14 }}>{kind === "issue" ? `No policies issued or un-issued in the last ${days} days.` : `No changes in the last ${days} days.`}</div>
       ) : (
         <div style={{ ...cardStyle, overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -2777,13 +2801,13 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
                 const canEdit = !!(target && target.id && r.action !== "delete" && statusNow.get(r.row_id) !== "void");
                 return (
                   <tr key={r.id} style={sameClick ? { background: T.slate50 } : undefined}>
-                    <td style={{ ...tableTd, whiteSpace: "nowrap", color: sameClick ? T.slate300 : T.slate800 }}>{sameClick ? "〃" : changeWhen(r.changed_at)}</td>
+                    <td style={{ ...tableTd, whiteSpace: "nowrap", fontWeight: sameClick ? 400 : 700, color: sameClick ? T.slate300 : T.blue }}>{sameClick ? "〃" : changeWhen(r.changed_at)}</td>
                     <td style={{ ...tableTd, whiteSpace: "nowrap", color: sameClick ? T.slate300 : T.slate800 }}>{sameClick ? "〃" : r.who}</td>
                     <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
                       {/* A named event (Policy issued, Sale removed...) says what happened
                           better than "Changed sold policy" does. */}
-                      {changeEvents(r.changes).length ? (
-                        changeEvents(r.changes).map((c, k) => (
+                      {changeEvents(r.changes).filter(onlyKind).length ? (
+                        changeEvents(r.changes).filter(onlyKind).map((c, k) => (
                           <div key={c.field + k} style={{ fontWeight: 700, color: changeTone(c) }}>{c.label}</div>
                         ))
                       ) : (
@@ -2793,8 +2817,8 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, refreshKe
                     <td style={tableTd}>{r.subject || "—"}</td>
                     <td style={{ ...tableTd, maxWidth: 420 }}>
                       {r.action === "update" ? (
-                        changeDiffList(r.changes).some(c => !c.event || c.after)
-                          ? <ChangeDiffs changes={r.changes} eventsAsDetail />
+                        changeDiffList(r.changes).filter(onlyKind).some(c => !c.event || c.after)
+                          ? <ChangeDiffs changes={r.changes} eventsAsDetail only={onlyKind} />
                           : <span style={{ color: T.slate500 }}>&mdash;</span>
                       ) : changeSummary(r, ctx)}
                     </td>

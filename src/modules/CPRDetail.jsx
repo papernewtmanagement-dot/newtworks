@@ -3,7 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T, BAND } from "../lib/theme.js";
 import { fmtMoney as _fmtMoney, fmtMoneyR as _fmtMoneyR } from "../lib/format.jsx";
 import { addDaysISO, currentWeekSaturdayCT } from "../lib/weeks.js";
-import { ChangeDiffs, changeDiffList } from "../lib/changeLog.jsx";
+import { ChangeEntry, IssueEntry } from "../lib/changeLog.jsx";
 
 
 // Sales Points band badge colours (Peter 2026-08-28). The badge shows the
@@ -3179,22 +3179,60 @@ function EURSection({ report, editMode, formReport, isReportDirty, onReportChang
   );
 }
 
-// 13.6 — Log Changes — every edit or removal made to the production logs during
-// the week, grouped by the person who made it. Replaced the Whiteboard Errors
-// box 2026-09-19 on Peter's instruction. Reads production_changes_for_range —
+// 13.6 — Log Changes and Issued Policies (Peter 2026-09-19, reworked
+// 2026-09-21). Two cards, both read live from production_changes_for_range —
 // the same function behind the daily change alert and the Activity Log Changes
-// tab, so the three surfaces can never disagree about what moved.
-// The field names and the readable values come back from
-// production_changes_for_range already done, in its `changes` column, built
-// by change_field_label / change_value_text in the database. ChangeDiffs
-// draws them, the same way the Activity Log Changes tab does.
-function changeWhen(ts) {
-  if (!ts) return "";
-  const d = new Date(ts);
-  if (!Number.isFinite(d.getTime())) return "";
-  return d.toLocaleString("en-US", {
-    timeZone: "America/Chicago", weekday: "short", hour: "numeric", minute: "2-digit",
+// tab, drawn by the same ChangeEntry / IssueEntry components, so the CPR and the
+// Changes tab read the same way. Nothing on either card is typed in or stored.
+//
+// Scope is the week, plus any change made later to a policy that issued in the
+// week (p_issued_in_range), since that change is what moved the week's sales
+// points. Entries are grouped by the teammate whose record it is, and each line
+// says who made the change — so a change the owner made to a teammate's sale is
+// listed under that teammate, while the owner never gets a group of their own.
+function groupByOwner(rows, team) {
+  const ownerIds = new Set((team || []).filter(t => t.role_level === "Owner").map(t => t.id));
+  const nameById = new Map((team || []).map(t => [
+    t.id,
+    [t.first_name, t.last_name].filter(Boolean).join(" ") || t.nickname || "Teammate",
+  ]));
+  const groups = [];
+  const byKey = new Map();
+  (rows || []).filter(r => !ownerIds.has(r.owner_id)).forEach(r => {
+    const key = r.owner_id || "none";
+    if (!byKey.has(key)) {
+      const g = { key, name: r.owner_id ? (nameById.get(r.owner_id) || r.owner_name || "Teammate") : "Other", isTeam: !!r.owner_id, rows: [] };
+      byKey.set(key, g);
+      groups.push(g);
+    }
+    byKey.get(key).rows.push(r);
   });
+  groups.sort((x, y) => (x.isTeam === y.isTeam ? x.name.localeCompare(y.name) : (x.isTeam ? -1 : 1)));
+  groups.forEach(g => g.rows.sort((x, y) => String(x.changed_at).localeCompare(String(y.changed_at))));
+  return groups;
+}
+
+function ChangeGroups({ groups, Entry, noun }) {
+  return (
+    <div style={{ maxHeight: 380, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+      {groups.map(g => (
+        <div key={g.key} style={{ marginBottom: 14 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 8, marginBottom: 5 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{g.name}</span>
+            <span style={{ fontSize: 11, color: T.slate500 }}>{g.rows.length} {g.rows.length === 1 ? noun : `${noun}s`}</span>
+          </div>
+          {g.rows.map((r, i) => (
+            <div key={`${r.txid}-${i}`} style={{
+              fontSize: 12, color: T.slate700, lineHeight: 1.5, paddingLeft: 10, marginBottom: 3,
+              borderLeft: `2px solid ${T.slate200}`, boxSizing: "border-box",
+            }}>
+              <Entry r={r} withDay />
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function LogChangesSection({ weekDate, team }) {
@@ -3211,6 +3249,7 @@ function LogChangesSection({ weekDate, team }) {
         p_agency_id: AGENCY_ID,
         p_start: addDaysISO(weekDate, -6),
         p_end: weekDate,
+        p_issued_in_range: true,
       });
       if (!alive) return;
       if (error) { setLoadError(error.message || "Could not load log changes."); setRows([]); return; }
@@ -3219,86 +3258,42 @@ function LogChangesSection({ weekDate, team }) {
     return () => { alive = false; };
   }, [weekDate]);
 
-  // Owner stays off the CPR page, here as everywhere else on it.
-  const ownerIds = new Set((team || []).filter(t => t.role_level === "Owner").map(t => t.id));
-  const nameById = new Map((team || []).map(t => [
-    t.id,
-    [t.first_name, t.last_name].filter(Boolean).join(" ") || t.nickname || "Teammate",
-  ]));
+  const changeGroups = groupByOwner((rows || []).filter(r => r.kind !== "issue"), team);
+  const issueGroups = groupByOwner((rows || []).filter(r => r.kind === "issue"), team);
+  const count = (gs) => gs.reduce((n, g) => n + g.rows.length, 0);
+  const note = { fontSize: 11, color: T.slate500, marginBottom: 10, lineHeight: 1.4 };
+  const quiet = { fontSize: 13, color: T.slate400, fontStyle: "italic" };
 
-  const visible = (rows || []).filter(r => !ownerIds.has(r.team_member_id));
-  const groups = [];
-  const byKey = new Map();
-  visible.forEach(r => {
-    const key = r.team_member_id || `who:${r.who || "Unknown"}`;
-    if (!byKey.has(key)) {
-      const g = {
-        key,
-        name: r.team_member_id ? (nameById.get(r.team_member_id) || r.who || "Teammate") : (r.who || "Unknown"),
-        isTeam: !!r.team_member_id,
-        rows: [],
-      };
-      byKey.set(key, g);
-      groups.push(g);
-    }
-    byKey.get(key).rows.push(r);
-  });
-  groups.sort((a, b) => (a.isTeam === b.isTeam ? a.name.localeCompare(b.name) : (a.isTeam ? -1 : 1)));
-  groups.forEach(g => g.rows.sort((a, b) => String(a.changed_at).localeCompare(String(b.changed_at))));
+  const body = (groups, Entry, noun, empty) => loadError
+    ? <div style={{ fontSize: 13, color: T.red }}>{loadError}</div>
+    : rows === null
+      ? <div style={quiet}>Loading…</div>
+      : groups.length === 0
+        ? <div style={quiet}>{empty}</div>
+        : <ChangeGroups groups={groups} Entry={Entry} noun={noun} />;
 
   return (
-    <div>
-      <SectionHeader
-        icon="📝"
-        title="Log Changes"
-        accessory={rows === null ? null : (visible.length === 1 ? "1 this week" : `${visible.length} this week`)}
-      />
-      <Card>
-        <div style={{ fontSize: 11, color: T.slate500, marginBottom: 10, lineHeight: 1.4 }}>
-          Every edit or removal made to a sale, quote, cancelation or activity entry this week, by the person who made it. Adding a brand new entry is not a change and is not listed here.
-        </div>
-        {loadError ? (
-          <div style={{ fontSize: 13, color: T.red }}>{loadError}</div>
-        ) : rows === null ? (
-          <div style={{ fontSize: 13, color: T.slate400, fontStyle: "italic" }}>Loading…</div>
-        ) : groups.length === 0 ? (
-          <div style={{ fontSize: 13, color: T.slate400, fontStyle: "italic" }}>No log changes this week.</div>
-        ) : (
-          <div style={{ maxHeight: 380, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
-            {groups.map(g => (
-              <div key={g.key} style={{ marginBottom: 14 }}>
-                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 8, marginBottom: 5 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{g.name}</span>
-                  <span style={{ fontSize: 11, color: T.slate500 }}>
-                    {g.rows.length === 1 ? "1 change" : `${g.rows.length} changes`}
-                  </span>
-                </div>
-                {g.rows.map(r => (
-                  <div
-                    key={r.txid}
-                    style={{
-                      fontSize: 12, color: T.slate700, lineHeight: 1.5,
-                      paddingLeft: 10, marginBottom: 3,
-                      borderLeft: `2px solid ${T.slate200}`, boxSizing: "border-box",
-                    }}
-                  >
-                    <span style={{ color: T.slate500 }}>{changeWhen(r.changed_at)}</span>
-                    {" · "}
-                    <span style={{ fontWeight: 700, color: r.what === "removed" ? T.red : T.slate800 }}>
-                      {r.what === "removed" ? "Removed" : "Edited"}
-                    </span>
-                    {` a ${String(r.item || "record").toLowerCase()}`}
-                    {r.subject ? ` — ${r.subject}` : ""}
-                    {r.what !== "removed" && changeDiffList(r.changes).length
-                      ? <ChangeDiffs changes={r.changes} inline />
-                      : null}
-                  </div>
-                ))}
-              </div>
-            ))}
+    <div style={{ display: "grid", gap: 16 }}>
+      <div>
+        <SectionHeader icon="📝" title="Log Changes"
+          accessory={rows === null ? null : `${count(changeGroups)} this week`} />
+        <Card>
+          <div style={note}>
+            Every edit or removal to a sale, quote, cancelation or activity entry made this week, plus any made later to a policy that issued this week. Listed under the teammate whose entry it is. Adding a brand new entry is not a change.
           </div>
-        )}
-      </Card>
+          {body(changeGroups, ChangeEntry, "change", "No log changes this week.")}
+        </Card>
+      </div>
+      <div>
+        <SectionHeader icon="✅" title="Issued Policies"
+          accessory={rows === null ? null : `${count(issueGroups)} this week`} />
+        <Card>
+          <div style={note}>
+            Every policy marked issued or not issued this week, or issued this week and corrected later, with the issued premium against what was submitted.
+          </div>
+          {body(issueGroups, IssueEntry, "policy", "No policies issued this week.")}
+        </Card>
+      </div>
     </div>
   );
 }

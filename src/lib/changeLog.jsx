@@ -1,46 +1,75 @@
 // src/lib/changeLog.jsx
 //
-// One place to draw the before and after on a change record (Peter 2026-09-19).
+// One place to draw a change record (Peter 2026-09-19, reworked 2026-09-21).
+// The Activity Log Changes tab and the CPR both draw with these, so the two
+// read the same way.
 //
 // Nothing here decides what a field is called or how a value reads. The
-// database does all of that: change_field_label gives the plain-English name,
-// change_field_hidden drops the bookkeeping columns, change_value_text turns a
-// stored value into something readable, and change_diff puts the three
-// together. production_changes_for_range and change_log_recent both return the
-// result as a `changes` column, so the Activity Log day view, the Activity Log
-// full history and the CPR Log Changes box all read the same pairs and can
-// never disagree about what moved.
+// database does all of that: change_items names the events and hands every
+// other field to change_diff (change_field_label, change_field_hidden,
+// change_value_text). production_changes_for_range and change_log_recent both
+// return the result as a `changes` column.
 //
 // Each entry in `changes` is one of two shapes:
 //   a field that moved:  { field, label, before, after, count }
 //   a named event:       { event: true, field, label, after, tone, count }
-// Events come first. change_items names them (Peter 2026-09-21): "Policy
-// issued" instead of issued date and issued premium going blank -> value,
-// "Sale removed" instead of a status flip, and so on. `after` on an event is
-// its detail and can be empty. count is above 1 only when one click made the
-// same move on several records.
+// Events come first. "Policy issued" instead of issued date and issued premium
+// going blank -> value, "Sale removed" instead of a status flip, "ECRM link
+// added" instead of the whole address. `after` on an event is its detail and
+// can be empty. count is above 1 only when one click made the same move on
+// several records.
+//
+// production_changes_for_range rows come in two kinds (Peter 2026-09-21):
+//   kind "change" — one click's edits or removals. ChangeEntry draws it.
+//   kind "issue"  — one policy issued, marked not issued, or its issue
+//                   corrected. `policy` carries the issue date, the issued
+//                   premium and how far it is from the submitted premium.
+//                   IssueEntry draws it.
+// They are kept apart on screen: a toggle on the Changes tab, two cards on the
+// CPR.
 
 import { T } from "./theme.js";
+
+const TONE = { green: T.green, red: T.red, amber: T.amber, slate: T.slate600 };
+export function changeTone(c) { return (c && TONE[c.tone]) || T.slate800; }
 
 export function changeDiffList(changes) {
   return Array.isArray(changes) ? changes.filter(c => c && c.label) : [];
 }
-
-const TONE = { green: T.green, red: T.red, amber: T.amber };
-export function changeTone(c) { return (c && TONE[c.tone]) || T.slate800; }
 export function changeEvents(changes) { return changeDiffList(changes).filter(c => c.event); }
 
+// The entries that belong on the issued-policies side rather than with edits.
+const ISSUE_FIELDS = new Set(["event:issued", "event:unissued", "event:issued_premium", "issued_date", "issued_premium"]);
+export function isIssueItem(c) { return !!(c && ISSUE_FIELDS.has(c.field)); }
+
+// The timestamp on every change line: bold and in the accent color so the eye
+// can run down the times.
+export function changeWhenText(ts, withDay = false) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (!Number.isFinite(d.getTime())) return "";
+  return d.toLocaleString("en-US", {
+    timeZone: "America/Chicago",
+    ...(withDay ? { weekday: "short", month: "numeric", day: "numeric" } : {}),
+    hour: "numeric", minute: "2-digit",
+  });
+}
+export function ChangeStamp({ ts, withDay = false }) {
+  return <span style={{ fontWeight: 700, color: T.blue, whiteSpace: "nowrap" }}>{changeWhenText(ts, withDay)}</span>;
+}
+
 function Pair({ c, muted, detailOnly }) {
+  const times = Number(c.count) > 1 ? <span style={{ color: muted }}>{` ×${c.count}`}</span> : null;
   if (c.event) {
     if (detailOnly) {
       if (!c.after) return null;
-      return <span>{c.after}{Number(c.count) > 1 ? <span style={{ color: muted }}>{` ×${c.count}`}</span> : null}</span>;
+      return <span>{c.field === "event:removed" ? `reason: ${c.after}` : c.after}{times}</span>;
     }
     return (
       <>
         <span style={{ fontWeight: 700, color: changeTone(c) }}>{c.label}</span>
         {c.after ? <span>{`: ${c.after}`}</span> : null}
-        {Number(c.count) > 1 ? <span style={{ color: muted }}>{` ×${c.count}`}</span> : null}
+        {times}
       </>
     );
   }
@@ -50,17 +79,20 @@ function Pair({ c, muted, detailOnly }) {
       <span>{c.before}</span>
       <span style={{ color: muted }}> → </span>
       <span>{c.after}</span>
-      {Number(c.count) > 1 ? <span style={{ color: muted }}>{` ×${c.count}`}</span> : null}
+      {times}
     </>
   );
 }
 
 // inline=false → one pair per line, for a table cell with room.
 // inline=true  → all pairs in brackets on the end of a sentence.
-// eventsAsDetail → the event names are already shown elsewhere on the row, so
-// an event draws only its detail, and an event with no detail draws nothing.
-export function ChangeDiffs({ changes, inline = false, muted = T.slate500, eventsAsDetail = false }) {
-  const list = changeDiffList(changes).filter(c => !(eventsAsDetail && c.event && !c.after));
+// eventsAsDetail → the event names are shown elsewhere on the row, so an event
+//   draws only its detail, and an event with no detail draws nothing.
+// only → optional filter on which entries to draw.
+export function ChangeDiffs({ changes, inline = false, muted = T.slate500, eventsAsDetail = false, only = null }) {
+  const list = changeDiffList(changes)
+    .filter(c => !only || only(c))
+    .filter(c => !(eventsAsDetail && c.event && !c.after));
   if (!list.length) return null;
   if (inline) {
     return (
@@ -77,4 +109,112 @@ export function ChangeDiffs({ changes, inline = false, muted = T.slate500, event
     );
   }
   return <>{list.map((c, i) => <div key={c.field + i}><Pair c={c} muted={muted} detailOnly={eventsAsDetail} /></div>)}</>;
+}
+
+// One click's edits or removals, from production_changes_for_range.
+export function ChangeEntry({ r, withDay = false, showWho = true }) {
+  const removed = r.what === "removed";
+  const item = String(r.item || "record").toLowerCase();
+  return (
+    <span>
+      <ChangeStamp ts={r.changed_at} withDay={withDay} />
+      {" · "}
+      {showWho ? <span style={{ color: T.slate800 }}>{r.who} </span> : null}
+      <span style={{ fontWeight: 700, color: removed ? T.red : T.slate800 }}>{removed ? "removed" : "edited"}</span>
+      {` ${/^[aeiou]/.test(item) ? "an" : "a"} ${item}`}
+      {r.subject ? <> — <span style={{ fontWeight: 600 }}>{r.subject}</span></> : null}
+      <ChangeDiffs changes={r.changes} inline eventsAsDetail={removed} />
+      {Number(r.row_count) > 1 ? <span style={{ color: T.slate500 }}>{` [${r.row_count} records]`}</span> : null}
+      {r.spot_note ? <span style={{ color: T.slate500, fontStyle: "italic" }}>{` — spot-check: ${r.spot_note}`}</span> : null}
+    </span>
+  );
+}
+
+function money(v) {
+  if (v == null || v === "") return "no issued premium yet";
+  const n = Number(v);
+  return Number.isFinite(n) ? `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : String(v);
+}
+function day(iso) {
+  if (!iso) return "blank";
+  const d = new Date(`${String(iso).slice(0, 10)}T12:00:00`);
+  return Number.isFinite(d.getTime()) ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : String(iso);
+}
+function Difference({ p }) {
+  if (p.difference == null) return null;
+  const d = Number(p.difference);
+  if (!Number.isFinite(d)) return null;
+  if (d === 0) return <span style={{ color: T.slate500 }}> · same as submitted</span>;
+  return (
+    <span style={{ color: d > 0 ? T.green : T.red, fontWeight: 600 }}>
+      {` · ${money(Math.abs(d))} ${d > 0 ? "more" : "less"} than submitted`}
+    </span>
+  );
+}
+
+// One policy issued, marked not issued, or its issue corrected.
+export function IssueEntry({ r, withDay = false, showWho = true }) {
+  const p = r.policy || {};
+  const what = [p.line_of_business ? p.line_of_business[0].toUpperCase() + p.line_of_business.slice(1) : "", p.product || ""]
+    .filter(Boolean).join(" ");
+  let body;
+  if (r.what === "unissued") {
+    body = (
+      <>
+        <span style={{ fontWeight: 700, color: T.red }}>Marked not issued</span>
+        <span style={{ color: T.slate500 }}>{` · was issued ${day(p.was_issued_date)} at ${money(p.was_issued_premium)}`}</span>
+      </>
+    );
+  } else if (r.what === "corrected") {
+    const parts = [];
+    if (String(p.was_issued_date || "") !== String(p.issued_date || "")) parts.push(`issued date ${day(p.was_issued_date)} → ${day(p.issued_date)}`);
+    if (Number(p.was_issued_premium ?? NaN) !== Number(p.issued_premium ?? NaN)) {
+      parts.push(`issued premium ${p.was_issued_premium == null ? "blank" : money(p.was_issued_premium)} → ${p.issued_premium == null ? "blank" : money(p.issued_premium)}`);
+    }
+    body = (
+      <>
+        <span style={{ fontWeight: 700, color: T.amber }}>Issue corrected</span>
+        <span>{parts.length ? ` · ${parts.join("; ")}` : ""}</span>
+        <Difference p={p} />
+      </>
+    );
+  } else {
+    body = (
+      <>
+        <span style={{ fontWeight: 700, color: T.green }}>Issued {day(p.issued_date)}</span>
+        <span>{` · ${money(p.issued_premium)}`}</span>
+        <Difference p={p} />
+      </>
+    );
+  }
+  return (
+    <span>
+      <ChangeStamp ts={r.changed_at} withDay={withDay} />
+      {" · "}
+      <span style={{ fontWeight: 600 }}>{r.subject || "Customer"}</span>
+      {what ? <span style={{ color: T.slate600 }}>{` — ${what}`}</span> : null}
+      {" · "}
+      {body}
+      {showWho ? <span style={{ color: T.slate500 }}>{` · by ${r.who}`}</span> : null}
+    </span>
+  );
+}
+
+// The two-way switch between edits and issued policies.
+export function ChangeKindToggle({ value, onChange, counts = {} }) {
+  const opts = [{ key: "change", label: "Changes" }, { key: "issue", label: "Issued policies" }];
+  return (
+    <div role="group" style={{ display: "inline-flex", border: `1px solid ${T.slate300}`, borderRadius: 8, overflow: "hidden" }}>
+      {opts.map(o => {
+        const on = value === o.key;
+        return (
+          <button key={o.key} type="button" onClick={() => onChange(o.key)} aria-pressed={on}
+            style={{ border: "none", padding: "6px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                     background: on ? T.blue : T.white, color: on ? T.white : T.slate700 }}>
+            {o.label}{counts[o.key] != null ? ` (${counts[o.key]})` : ""}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
