@@ -1244,8 +1244,11 @@ function renderCommitHost(kind, items) {
   return `<div class="nw-commit-host" data-nw-commit="${kind}" data-nw-items="${escapeAttr(JSON.stringify(items || []))}"></div>`;
 }
 
-function expandCommits(md, slots) {
-  if (md.indexOf("[Commits]") === -1 && md.indexOf("{{commit-bridge}}") === -1) return md;
+// Walks the page once, handing each [Commits] block's items to onBlock and
+// putting whatever onBlock returns in the block's place. The one reader of the
+// block format: expandCommits (the Kickoff page) and commitOptions (the
+// Dashboard's Checklist tab) both go through it.
+function scanCommits(md, onBlock) {
   const kept = [];
   let items = null;
   for (const line of md.split(/\r?\n/)) {
@@ -1255,19 +1258,35 @@ function expandCommits(md, slots) {
       continue;
     }
     if (COMMITS_END_RE.test(line)) {
-      slots.push(renderCommitHost("pick", items));
-      kept.push(RP_SLOT(slots.length - 1));
+      kept.push(onBlock(items));
       items = null;
       continue;
     }
     const m = COMMIT_ITEM_RE.exec(line);
     if (m) items.push(parseCommitItem(m[1]));
   }
-  if (items !== null) {
+  if (items !== null) kept.push(onBlock(items));
+  return kept.join("\n");
+}
+
+function expandCommits(md, slots) {
+  if (md.indexOf("[Commits]") === -1 && md.indexOf("{{commit-bridge}}") === -1) return md;
+  return scanCommits(md, (items) => {
     slots.push(renderCommitHost("pick", items));
-    kept.push(RP_SLOT(slots.length - 1));
-  }
-  return kept.join("\n").replace(COMMIT_BRIDGE_RE, "");
+    return RP_SLOT(slots.length - 1);
+  }).replace(COMMIT_BRIDGE_RE, "");
+}
+
+// The commit choices for one week of the cycle, as [{ text, note }]. Runs the
+// same week and day filter the Kickoff page renders with, so the Checklist tab
+// offers exactly the lines the page shows (Peter 2026-09-21).
+export function commitOptions(md, week, day) {
+  const src = String(md || "");
+  if (src.indexOf("[Commits]") === -1) return [];
+  const filtered = expandSelector(src, { openerState: { week: week ?? null, day: day ?? null } });
+  const found = [];
+  scanCommits(filtered, (items) => { found.push(...items); return ""; });
+  return found;
 }
 
 // ─── Page hosts ───────────────────────────────────────────────

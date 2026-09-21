@@ -31,6 +31,8 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 import { MarkdownTextarea } from "../lib/markdownEditor.jsx";
 import { handleModuleLinkClick, useTabParam } from "../lib/routing.jsx";
 import { fillLiveFormulas } from "../lib/liveFormulas.js";
+import { kickoffToday, pickCycleValue } from "../lib/kickoff.js";
+import CommitPicker, { CommitNote } from "../components/CommitPicker.jsx";
 
 // ─── Per-manual configuration ─────────────────────────────────
 // Every manual_type has one entry. To add a new manual:
@@ -1027,37 +1029,8 @@ function nwEnableSmoothDetails(container) {
   });
 }
 
-// ─── Kickoff cycle: today's week and day ──────────────────────
-// The Daily Kickoff runs a 13-week cycle that restarts the first Monday of
-// every quarter. Worked out in Central time. Saturday and Sunday point at the
-// coming Monday, since that is the next kickoff. A quarter with a 14th week
-// stays on week 13.
-function nwKickoffToday() {
-  const DAY = 86400000;
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Chicago", year: "numeric", month: "numeric", day: "numeric",
-  }).formatToParts(new Date());
-  const get = (t) => Number((parts.find((p) => p.type === t) || {}).value);
-  let d = new Date(Date.UTC(get("year"), get("month") - 1, get("day")));
-  const dow = d.getUTCDay();
-  if (dow === 6) d = new Date(d.getTime() + 2 * DAY);
-  if (dow === 0) d = new Date(d.getTime() + DAY);
-  const firstMonday = (y, q) => {
-    const first = new Date(Date.UTC(y, q * 3, 1));
-    return new Date(first.getTime() + ((8 - first.getUTCDay()) % 7) * DAY);
-  };
-  let y = d.getUTCFullYear();
-  let q = Math.floor(d.getUTCMonth() / 3);
-  let start = firstMonday(y, q);
-  if (d < start) {
-    q -= 1;
-    if (q < 0) { q = 3; y -= 1; }
-    start = firstMonday(y, q);
-  }
-  const week = Math.min(13, Math.floor((d.getTime() - start.getTime()) / (7 * DAY)) + 1);
-  const day = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][d.getUTCDay()];
-  return { week: String(week), day };
-}
+// Kickoff cycle week and day: kickoffToday() and pickCycleValue() in
+// src/lib/kickoff.js, shared with the Checklist tab on the Dashboard.
 
 // ─── Script selector bar ──────────────────────────────────────
 // Three dropdowns that decide what a script page shows: which opener, pivot
@@ -1266,31 +1239,11 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
 // next morning.
 // A login with no team record sees the examples as a plain list and nothing
 // to save.
-const COMMIT_BTN = {
-  padding: "6px 12px", borderRadius: 7, border: "1px solid #CBD5C0", background: "#fff",
-  color: "#334155", font: "inherit", fontSize: 13, fontWeight: 600, cursor: "pointer",
-};
-const COMMIT_BTN_PRIMARY = { ...COMMIT_BTN, background: T.blue, borderColor: T.blue, color: T.white, fontWeight: 700 };
 const COMMIT_CARD = { background: "#F8FAF3", borderRadius: 7, padding: "10px 12px", margin: "8px 0 14px 0" };
-
-// The explanation behind a commit option. The option itself is a short line so it
-// reads cleanly on the Telegram messages; anything that needs more words sits in
-// here (Peter 2026-09-19).
-function CommitNote({ note }) {
-  return (
-    <details style={{ margin: "2px 0 0 24px" }}>
-      <summary style={{ cursor: "pointer", fontSize: 12, color: T.slate500, listStyle: "none" }}>What this means</summary>
-      <div style={{ fontSize: 13, color: "#334155", marginTop: 4 }}>{note}</div>
-    </details>
-  );
-}
 
 function KickoffCommits({ hosts, week }) {
   const [info, setInfo] = useState(null);      // { member_id, today_date, today }
   const [error, setError] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [choice, setChoice] = useState(null);  // index into items, or "other"
-  const [other, setOther] = useState("");
 
   const items = useMemo(() => {
     const raw = hosts.pick && typeof hosts.pick.getAttribute === "function" ? hosts.pick.getAttribute("data-nw-items") : null;
@@ -1311,20 +1264,6 @@ function KickoffCommits({ hosts, week }) {
     setInfo(data && typeof data === "object" ? data : null);
   }, []);
   useEffect(() => { load(); }, [load]);
-
-  const save = async () => {
-    const text = choice === "other" ? other.trim() : (choice != null ? (items[choice] && items[choice].text) || "" : "");
-    if (!text) { setError("Pick a commit or write one."); return; }
-    setBusy(true); setError(null);
-    const { data, error: e } = await supabase.rpc("kickoff_commit_save", {
-      p_text: text,
-      p_source: choice === "other" ? "other" : "example",
-      p_week: Number.isFinite(Number(week)) && Number(week) > 0 ? Number(week) : null,
-    });
-    setBusy(false);
-    if (e) { setError(e.message); return; }
-    setInfo((prev) => ({ ...(prev || {}), today: data }));
-  };
 
   const today = info?.today || null;
   const canSave = !!info?.member_id;
@@ -1351,36 +1290,7 @@ function KickoffCommits({ hosts, week }) {
   } else {
     pick = (
       <div style={COMMIT_CARD}>
-        {items.map((t, i) => (
-          <div key={i} style={{ margin: "4px 0" }}>
-            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
-              <input type="radio" name="nw-commit" checked={choice === i} onChange={() => setChoice(i)} style={{ marginTop: 5, flexShrink: 0 }} />
-              <span>{t.text}</span>
-            </label>
-            {t.note ? <CommitNote note={t.note} /> : null}
-          </div>
-        ))}
-        <label style={{ display: "flex", alignItems: "flex-start", gap: 8, margin: "4px 0", cursor: "pointer" }}>
-          <input type="radio" name="nw-commit" checked={choice === "other"} onChange={() => setChoice("other")} style={{ marginTop: 5, flexShrink: 0 }} />
-          <span style={{ flex: "1 1 200px", minWidth: 0 }}>
-            Other
-            {choice === "other" && (
-              <input
-                type="text"
-                value={other}
-                onChange={(e) => setOther(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); save(); } }}
-                placeholder="your own commit, with a number"
-                maxLength={400}
-                autoFocus
-                style={{ display: "block", width: "100%", boxSizing: "border-box", marginTop: 6, padding: "6px 10px", font: "inherit", fontSize: 13, border: "1px solid #CBD5C0", borderRadius: 6, background: "#fff" }}
-              />
-            )}
-          </span>
-        </label>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-          <button type="button" style={COMMIT_BTN_PRIMARY} disabled={busy || choice == null} onClick={save}>{busy ? "Saving…" : "Save commit"}</button>
-        </div>
+        <CommitPicker items={items} week={week} onSaved={(row) => setInfo((prev) => ({ ...(prev || {}), today: row }))} />
         {err}
       </div>
     );
@@ -1940,13 +1850,9 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     const sc = scanSelector(bodyMd);
     return { weeks: sc.weeks || [], days: sc.days || [] };
   }, [bodyMd]);
-  const todayCycle = useMemo(() => nwKickoffToday(), [page?.id]);
-  const activeWeek = cycleOpts.weeks.length
-    ? (cycleOpts.weeks.find((w) => w.value === weekPick) || cycleOpts.weeks.find((w) => w.value === todayCycle.week) || cycleOpts.weeks[0]).value
-    : null;
-  const activeDay = cycleOpts.days.length
-    ? (cycleOpts.days.find((x) => x.value === dayPick) || cycleOpts.days.find((x) => x.value === todayCycle.day) || cycleOpts.days[0]).value
-    : null;
+  const todayCycle = useMemo(() => kickoffToday(), [page?.id]);
+  const activeWeek = pickCycleValue(cycleOpts.weeks, weekPick, todayCycle.week);
+  const activeDay = pickCycleValue(cycleOpts.days, dayPick, todayCycle.day);
   const html = useMemo(
     () => mdToHtml(bodyMd, {
       resolveInclude, resolveGlossary, resolveExcerpt, resolveFaq,

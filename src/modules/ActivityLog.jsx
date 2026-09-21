@@ -9,7 +9,9 @@ import PFA from "./PFA.jsx";
 import Development from "./Development.jsx";
 import { T } from "../lib/theme.js";
 import BackfillTab from "../components/BackfillTab.jsx";
-import { mdToHtml } from "../lib/markdown.js";
+import { mdToHtml, commitOptions } from "../lib/markdown.js";
+import { kickoffToday } from "../lib/kickoff.js";
+import CommitPicker from "../components/CommitPicker.jsx";
 import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 
@@ -3973,6 +3975,13 @@ function ChecklistTab() {
   // Everyone's commit for today, so the row names who has ticked theirs off —
   // same visibility the rest of the personal list has (Peter 2026-09-16).
   const [commitPeople, setCommitPeople] = useState([]);
+  // Until today's commit is saved, the week's commit choices sit at the top
+  // of the personal list; once saved, that spot shows the commit itself
+  // (Peter 2026-09-21). hasMember is false for a login with no team record,
+  // which has nothing to save a commit against.
+  const [hasMember, setHasMember] = useState(false);
+  const [commitChoices, setCommitChoices] = useState([]);
+  const kickoffWeek = useMemo(() => kickoffToday(), []);
   // Editing the list itself is the owner's alone. The server says so too
   // (checklist_require_owner), so hiding the controls is not the only guard.
   const [editMode, setEditMode] = useState(false);
@@ -3990,9 +3999,22 @@ function ChecklistTab() {
   useEffect(() => {
     let alive = true;
     supabase.rpc("kickoff_commits_mine")
-      .then(r => { if (alive) setCommit(r?.data?.today || null); });
+      .then(r => {
+        if (!alive) return;
+        setCommit(r?.data?.today || null);
+        setHasMember(!!r?.data?.member_id);
+      });
     return () => { alive = false; };
   }, [tickKey]);
+
+  // The choices come off the Daily Kickoff page, filtered to this week of the
+  // cycle by the same code the page renders with.
+  useEffect(() => {
+    let alive = true;
+    supabase.rpc("kickoff_commit_block")
+      .then(r => { if (alive) setCommitChoices(commitOptions(r?.data || "", kickoffWeek.week, kickoffWeek.day)); });
+    return () => { alive = false; };
+  }, [kickoffWeek]);
 
   useEffect(() => {
     let alive = true;
@@ -4339,6 +4361,14 @@ function ChecklistTab() {
         <div style={cardStyle}>
           <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900 }}>Personal checklist</div>
           <div style={{ fontSize: 11, color: T.slate500, marginBottom: 6 }}>Everyone ticks these for themselves. The whole team can see who has.</div>
+          {!commit && hasMember ? (
+            <div style={{ padding: "8px 10px", margin: "4px 0 8px", background: T.slate50, borderRadius: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>🎯 Pick today's commit</div>
+              <div style={{ fontSize: 11, color: T.slate500, marginBottom: 4 }}>Once saved it is locked for the day.</div>
+              <CommitPicker items={commitChoices} week={kickoffWeek.week}
+                            onSaved={(row) => { setCommit(row || null); setTickKey(k => k + 1); }} />
+            </div>
+          ) : (
           <ChecklistRow
             item={{ id: commit ? commit.id : "nocommit", title: commit ? `Commit completed \u2014 ${commit.commit_text}` : "Commit completed", help_text: COMMIT_HELP }}
             checked={!!commit && commit.hit === true}
@@ -4352,6 +4382,7 @@ function ChecklistTab() {
             onEdit={() => {}}
             onMove={() => {}}
           />
+          )}
           {personal.map(it => (
             <ChecklistRow
               key={it.id}
