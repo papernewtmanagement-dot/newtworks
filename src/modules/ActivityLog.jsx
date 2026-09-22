@@ -4370,7 +4370,7 @@ function ChecklistTab() {
             <div style={{ padding: "8px 10px", margin: "4px 0 8px", background: T.slate50, borderRadius: 8 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>🎯 Pick today's commit</div>
               <div style={{ fontSize: 11, color: T.slate500, marginBottom: 4 }}>Once saved it is locked for the day.</div>
-              <CommitPicker items={commitChoices} week={kickoffWeek.week}
+              <CommitPicker items={commitChoices} week={kickoffWeek.week} style={{ fontSize: 13, lineHeight: 1.4, color: T.slate800 }}
                             onSaved={(row) => { setCommit(row || null); setTickKey(k => k + 1); }} />
             </div>
           ) : (
