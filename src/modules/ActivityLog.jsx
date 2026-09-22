@@ -4610,13 +4610,25 @@ const ENTRY_KIND_FILTERS = [
   { key: "scorecard", label: "Conversation scores" },
 ];
 
+// Peter 2026-09-22: History opens on the last 13 weeks, filled into the date
+// boxes so it is plain what is showing. Any range can be picked.
+const HISTORY_DEFAULT_WEEKS = 13;
+const HISTORY_LIMIT = 2000;
+function historyDefaultFrom() {
+  const d = new Date(todayCentral() + "T12:00:00");
+  d.setDate(d.getDate() - HISTORY_DEFAULT_WEEKS * 7);
+  return d.toISOString().slice(0, 10);
+}
+
 function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
+  const defFrom = historyDefaultFrom();
+  const defTo = todayCentral();
   const [rows, setRows] = useState(null);
   const [who, setWho] = useState("");
   const [q, setQ] = useState("");
   const [term, setTerm] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [from, setFrom] = useState(defFrom);
+  const [to, setTo] = useState(defTo);
   const [recKind, setRecKind] = useState("");
   const [err, setErr] = useState("");
   const [busyId, setBusyId] = useState(null);
@@ -4631,8 +4643,10 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
     (async () => {
       setErr("");
       const r = await supabase.rpc("rp_recent_entries", {
-        p_days: 14, p_team_member_id: who || null, p_limit: 200, p_search: term || null,
-        p_from: from || null, p_to: to || null, p_kind: recKind || null,
+        // A name search reaches all the way back unless the dates were changed.
+        p_days: 14, p_team_member_id: who || null, p_limit: HISTORY_LIMIT, p_search: term || null,
+        p_from: (term && from === defFrom && to === defTo) ? null : (from || null),
+        p_to: (term && from === defFrom && to === defTo) ? null : (to || null), p_kind: recKind || null,
       });
       if (!alive) return;
       if (r.error) { setErr(errText(r.error)); setRows([]); return; }
@@ -4674,7 +4688,7 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>History</div>
-          <div style={{ fontSize: 13, color: T.slate500 }}>The last two weeks. Search a name, or set a From date, to go further back.</div>
+          <div style={{ fontSize: 13, color: T.slate500 }}>Anything dated or entered between these dates. A name search looks all the way back.</div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           <select value={recKind} onChange={e => setRecKind(e.target.value)} style={selectStyle}>
@@ -4684,8 +4698,8 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
             onChange={e => setFrom(e.target.value)} style={selectStyle} />
           <input type="date" value={to} min={from || undefined} max={todayCentral()} title="To"
             onChange={e => setTo(e.target.value)} style={selectStyle} />
-          {(from || to || recKind) && (
-            <button type="button" style={miniBtn} onClick={() => { setFrom(""); setTo(""); setRecKind(""); }}>Clear</button>
+          {(from !== defFrom || to !== defTo || recKind) && (
+            <button type="button" style={miniBtn} onClick={() => { setFrom(defFrom); setTo(defTo); setRecKind(""); }}>Clear</button>
           )}
           {isAdmin && (
             <select value={who} onChange={e => setWho(e.target.value)} style={selectStyle}>
@@ -4702,9 +4716,12 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
       {rows === null ? (
         <div style={{ color: T.slate500, fontSize: 13 }}>Loading…</div>
       ) : rows.length === 0 ? (
-        <div style={{ color: T.slate600, fontSize: 14 }}>{term ? `Nothing on file for “${term}”.` : (from || to || recKind) ? "Nothing matches those filters." : "Nothing logged in the last two weeks."}</div>
+        <div style={{ color: T.slate600, fontSize: 14 }}>{term ? `Nothing on file for “${term}”.` : "Nothing matches those filters."}</div>
       ) : (
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+          {rows.length >= HISTORY_LIMIT && (
+            <div style={{ fontSize: 13, color: T.slate600, margin: "4px 0 10px" }}>Showing the newest {HISTORY_LIMIT.toLocaleString()}. Narrow the dates to see the rest.</div>
+          )}
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
