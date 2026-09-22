@@ -25,6 +25,7 @@ import CandidateAssessment from "./src/modules/CandidateAssessment.jsx";
 import InterviewScheduler from "./src/modules/InterviewScheduler.jsx";
 import OfferAccept from "./src/modules/OfferAccept.jsx";
 import ActivityLog from "./src/modules/ActivityLog.jsx";
+import Family from "./src/modules/Family.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
@@ -116,6 +117,8 @@ const NAV_ITEMS = [
   { id: "admin",       label: "Admin",       icon: "briefcase",     roles: ADMIN_ROLES },
   { id: "editor",      label: "Editor",      icon: "pencil",        roles: ADMIN_ROLES },
   { id: "settings",    label: "Settings",    icon: "settings",      roles: ADMIN_ROLES },
+  { type: "divider",   id: "_div_family" },
+  { id: "family",      label: "Family",      icon: "home",          roles: ADMIN_ROLES },
 ];
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
@@ -152,6 +155,7 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     calendarOff:<svg style={s} viewBox="0 0 24 24" {...p}><path d="M4.2 4.2A2 2 0 0 0 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 1.8-1.2"/><path d="M21 15.5V6a2 2 0 0 0-2-2H9.5"/><line x1="3" y1="10" x2="14" y2="10"/><path d="M16 2v4"/><path d="M8 2v2"/><line x1="2" y1="2" x2="22" y2="22"/></svg>,
     trendingUp:<svg style={s} viewBox="0 0 24 24" {...p}><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>,
     clipboardList:<svg style={s} viewBox="0 0 24 24" {...p}><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>,
+    home:       <svg style={s} viewBox="0 0 24 24" {...p}><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/></svg>,
     briefcase:<svg style={s} viewBox="0 0 24 24" {...p}><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
   };
   return icons[name] || null;
@@ -676,6 +680,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     marketing:   <ErrorBoundary name="Marketing"><Marketing /></ErrorBoundary>,
     editor:      <ErrorBoundary name="Editor"><ContentEditor userRole={userRole} /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
+    family:      <ErrorBoundary name="Family"><Family /></ErrorBoundary>,
   };
   // Access guard — enforce nav role at the module level so direct URL
   // navigation (e.g. /financials) cannot bypass the sidebar filter. Mirrors
