@@ -248,13 +248,16 @@ function WeekGrid({ kid, board, checklists, extras, isParent, day, today, weekSt
     const g = [];
     for (const [key, label] of PARTS) {
       const rows = list.filter(r => r.frequency === "daily" && (r.part_of_day || "anytime") === key);
-      if (rows.length) g.push({ key, label, rows });
+      const lock = rows.map(r => cellMap.get(r.chore_id)?.get(day)?.locked_by).find(Boolean) || null;
+      if (rows.length) g.push({ key, label, rows, lock });
     }
-    const weekly = list.filter(r => r.frequency === "weekly");
+    // This week, a weekly chore with a due day shows from that day on. Past weeks show everything.
+    const thisWeek = today >= weekStart && today <= addDays(weekStart, 6);
+    const weekly = list.filter(r => r.frequency === "weekly" && !(thisWeek && r.due_dow != null && r.occurrence_date > today));
     if (weekly.length) g.push({ key: "weekly", label: "Weekly", rows: weekly });
     g.push({ key: "extra", label: "Extra Chores", rows: list.filter(r => r.frequency === "extra") });
     return { groups: g, cells: cellMap };
-  }, [board]);
+  }, [board, day, today, weekStart]);
 
   const activeW = isParent ? 150 : 76;
   const pick = async () => {
@@ -271,6 +274,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, day, today, weekSt
     const active = c.can_act && (d === day || anyDay);
     const st = c.status ? STATUS[c.status] : null;
     if (!active) {
+      if (!st && c.locked_by && d === day) return <span title={`Finish ${c.locked_by} first`} style={{ fontSize: 12 }}>🔒</span>;
       if (!st) return <span style={{ color: T.slate300 }}>{d < today && d >= kid.tracking_start ? "" : "·"}</span>;
       return <span title={`${st.label}${Number(c.amount) ? " " + money(c.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>;
     }
@@ -344,7 +348,10 @@ function GroupRows({ g, days, day, cellView, checklists, openInfo, setOpenInfo, 
   return (
     <>
       <tr>
-        <td colSpan={8} style={{ padding: "10px 10px 4px", fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em", borderTop: `1px solid ${T.slate100}` }}>{g.label}</td>
+        <td colSpan={8} style={{ padding: "10px 10px 4px", fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em", borderTop: `1px solid ${T.slate100}` }}>
+          {g.label}
+          {g.lock && <span style={{ marginLeft: 8, color: T.amber, textTransform: "none", letterSpacing: 0 }}>Finish {g.lock} first</span>}
+        </td>
       </tr>
       {g.rows.map(r => {
         const list = checklists.find(c => c.id === r.checklist_id);
@@ -399,8 +406,8 @@ function CellActions({ row, isParent, busy, setStatus }) {
       <div>
         {owed}
         {wrap(<>
-          <button disabled={busy} style={btn("primary", true)} onClick={() => act("claimed")}>Done</button>
-          {row.is_burpees && <button disabled={busy} style={btn("soft", true)} onClick={() => act("carried")}>Carry</button>}
+          {!row.locked_by && <button disabled={busy} style={btn("primary", true)} onClick={() => act("claimed")}>Done</button>}
+          {row.is_burpees && !row.locked_by && <button disabled={busy} style={btn("soft", true)} onClick={() => act("carried")}>Carry</button>}
           {isParent && row.frequency !== "extra" && <button disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>}
           {isParent && row.frequency !== "extra" && <button disabled={busy} style={btn("danger", true)} onClick={() => act("missed")}>Missed</button>}
           {row.status === "picked" && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Put it back">✕</button>}
