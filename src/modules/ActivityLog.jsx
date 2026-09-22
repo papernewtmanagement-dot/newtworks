@@ -4620,6 +4620,9 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
   const [recKind, setRecKind] = useState("");
   const [err, setErr] = useState("");
   const [busyId, setBusyId] = useState(null);
+  // Cancelations still inside their reinstatement window (home 30 days, auto 15).
+  // The server decides the window; this only shows the button where it would allow it.
+  const [reinstate, setReinstate] = useState({});
 
   useEffect(() => { const t = setTimeout(() => setTerm(q.trim()), 300); return () => clearTimeout(t); }, [q]);
 
@@ -4634,9 +4637,24 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
       if (!alive) return;
       if (r.error) { setErr(errText(r.error)); setRows([]); return; }
       setRows(Array.isArray(r.data) ? r.data : []);
+      const ri = await supabase.rpc("rp_reinstatable_cancelations");
+      if (alive && !ri.error) setReinstate(Object.fromEntries((ri.data || []).map(x => [x.id, x])));
     })();
     return () => { alive = false; };
   }, [who, term, from, to, recKind, refreshKey]);
+
+  const doReinstate = async (row) => {
+    if (!window.confirm(`Reinstate this policy for ${row.customer_label || "this customer"}? The chargeback comes back, less the days it was out of force.`)) return;
+    setBusyId(row.id); setErr("");
+    try {
+      const { data, error } = await supabase.rpc("rp_reinstate_cancelation", { p_id: row.id });
+      if (error) { setErr(errText(error)); return; }
+      const today = todayCentral();
+      setReinstate(m => ({ ...m, [row.id]: { ...(m[row.id] || {}), reinstated_on: (data && data.reinstated_on) || today } }));
+      setRows(list => (list || []).map(x => x.id === row.id && x.kind === row.kind
+        ? { ...x, summary: `${x.summary || ""} · Reinstated ${fmtDate((data && data.reinstated_on) || today)}` } : x));
+    } catch (e) { setErr(errText(e)); } finally { setBusyId(null); }
+  };
 
   const remove = async (row) => {
     const what = kindMeta(row.kind).label.toLowerCase();
@@ -4726,6 +4744,11 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
                       : <span style={{ color: T.slate300 }}>—</span>}
                   </td>
                   <td style={{ ...tableTd, whiteSpace: "nowrap", textAlign: "right" }}>
+                    {r.kind === "cancelation" && reinstate[r.id] && !reinstate[r.id].reinstated_on && (
+                      <button style={{ ...miniBtn, marginRight: 6, color: T.green }} disabled={busyId === r.id}
+                        title={`Can be reinstated through ${fmtDate(reinstate[r.id].reinstate_until)}`}
+                        onClick={() => doReinstate(r)}>Reinstate</button>
+                    )}
                     {r.can_change ? (
                       <>
                         <button style={{ ...miniBtn, marginRight: 6 }} disabled={busyId === r.id} onClick={() => onEdit({ kind: r.kind, id: r.id })}>Edit</button>
