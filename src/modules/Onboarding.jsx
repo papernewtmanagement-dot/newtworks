@@ -13,9 +13,9 @@
 // Data: team_onboarding_plans + team_onboarding_steps.
 // Plan creation compiles from onboarding_step_templates via RPC
 // create_onboarding_plan_from_templates(team_member_id, start_date, notes).
-// Templates are snapshotted at create-time into
-// team_onboarding_steps — later template edits do NOT retro-mutate a
-// running plan.
+// Template edits flow straight into every active or paused plan through
+// onboarding_sync_plan() — ticks, notes and completed steps are kept.
+// Sub-items with pop-up instructions match onboarding_instructions by label.
 //
 // RLS on the underlying tables enforces admin RW / team-tier read-own +
 // update-own-steps. This UI mirrors that scoping.
@@ -24,7 +24,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
-import { TabLink, useTabParam } from "../lib/routing.jsx";
+import { TabLink, useTabParam, hrefWithParams } from "../lib/routing.jsx";
+import { useViewport } from "../lib/hooks.js";
+import { mdToHtml } from "../lib/markdown.js";
+import InfoDot from "../components/InfoDot.jsx";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
@@ -69,6 +72,7 @@ function useOnboardingData(userId, isAdmin) {
     candidates: [],      // hiring candidates a plan can be started on at offer
     myTeamMemberId: null,
     planNames: {},       // plan_id -> name, for plans a teammate can see but whose person they cannot look up
+    instructions: {},    // sub-item label -> { title, body_md } pop-up instructions
   });
 
   const load = useCallback(async () => {
@@ -77,7 +81,7 @@ function useOnboardingData(userId, isAdmin) {
       return;
     }
     try {
-      const [plansRes, teamRes, phasesRes, candsRes] = await Promise.all([
+      const [plansRes, teamRes, phasesRes, candsRes, instrRes] = await Promise.all([
         supabase.from("team_onboarding_plans")
           .select("id, agency_id, team_member_id, candidate_id, attached_at, role_snapshot, role_category_snapshot, role_level_snapshot, start_date, status, notes, created_by, created_at, updated_at")
           .eq("agency_id", AGENCY_ID)
@@ -94,12 +98,17 @@ function useOnboardingData(userId, isAdmin) {
           .select("id, candidate_name, first_name, last_name, status, offer_job_title, offer_role_key, offer_start_date")
           .eq("agency_id", AGENCY_ID)
           .in("status", ["reference_check", "offer"]),
+        supabase.from("onboarding_instructions")
+          .select("substep_label, title, body_md")
+          .eq("agency_id", AGENCY_ID),
       ]);
 
       const plans = plansRes.data || [];
       const team = teamRes.data || [];
       const phases = phasesRes.data || [];
       const candidates = candsRes.data || [];
+      const instructions = {};
+      (instrRes.data || []).forEach(r => { instructions[r.substep_label] = r; });
 
       let steps = [];
       if (plans.length) {
@@ -122,7 +131,7 @@ function useOnboardingData(userId, isAdmin) {
         myTeamMemberId = mine?.id || null;
       }
 
-      setState({ loading: false, error: null, plans, steps, team, phases, candidates, myTeamMemberId, planNames });
+      setState({ loading: false, error: null, plans, steps, team, phases, candidates, myTeamMemberId, planNames, instructions });
     } catch (e) {
       setState(s => ({ ...s, loading: false, error: e.message || "Failed to load onboarding data." }));
     }
@@ -171,8 +180,43 @@ function progress(steps) {
 }
 
 // ─── plan detail (steps by phase/category) ───────────────
-function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleStep, onToggleSubstep, onUpdateStepNotes, onDeletePlan, onChangeStatus, isAdmin, phaseMeta, ownerName, showBack = true }) {
+// ─── pop-up instructions for a sub-item ─────────────
+function InstructionsModal({ item, onClose }) {
+  if (!item) return null;
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 16, zIndex: 1000, boxSizing: "border-box",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: T.white, borderRadius: 12, padding: "18px 20px",
+          width: "100%", maxWidth: 640, maxHeight: "85vh",
+          overflowY: "auto", overflowX: "hidden", boxSizing: "border-box",
+          boxShadow: "0 20px 50px rgba(0,0,0,0.25)", ...wrapLongText,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{item.title}</div>
+          <Button variant="secondary" onClick={onClose}>Close</Button>
+        </div>
+        <div
+          style={{ fontSize: 13, color: T.slate700, lineHeight: 1.55 }}
+          dangerouslySetInnerHTML={{ __html: mdToHtml(item.body_md || "") }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleStep, onToggleSubstep, onUpdateStepNotes, onDeletePlan, onChangeStatus, isAdmin, phaseMeta, ownerName, instructions = {}, showBack = true }) {
   const [expandedStep, setExpandedStep] = useState(null);
+  const [openInstr, setOpenInstr] = useState(null);
   const [editingNote, setEditingNote] = useState(null); // {stepId, text}
   const [savingId, setSavingId] = useState(null);
   const p = progress(steps);
@@ -281,6 +325,8 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
           </div>
         ) : null}
       </Card>
+
+      <InstructionsModal item={openInstr} onClose={() => setOpenInstr(null)} />
 
       {/* Phases */}
       {byPhase.map(([phase, phaseSteps]) => {
@@ -464,14 +510,15 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                 <div style={{ display: "grid", gap: 5 }}>
                                   {g.items.map((label, ix) => {
                                     const sd = subsDone.includes(label);
+                                    const instr = instructions[label];
                                     return (
+                                      <div key={ix} style={{ display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0 }}>
                                       <button
-                                        key={ix}
                                         onClick={() => onToggleSubstep(step, label)}
                                         style={{
                                           display: "flex", gap: 7, alignItems: "flex-start",
                                           background: "none", border: "none", padding: 0,
-                                          cursor: "pointer", textAlign: "left", width: "100%", minWidth: 0,
+                                          cursor: "pointer", textAlign: "left", flex: 1, minWidth: 0,
                                         }}
                                       >
                                         <span style={{
@@ -489,6 +536,10 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                           textDecoration: sd ? "line-through" : "none",
                                         }}>{label}</span>
                                       </button>
+                                      {instr && (
+                                        <InfoDot title="Instructions" onClick={() => setOpenInstr(instr)} />
+                                      )}
+                                      </div>
                                     );
                                   })}
                                 </div>
@@ -874,55 +925,57 @@ function PlanListCard({ plan, steps, subjectName, isCandidate, onOpen }) {
   );
 }
 
-// ─── tabs + template library ────────────────────────
-const TABS = [
-  { id: "plans",    label: "Plans" },
-  { id: "template", label: "Template" },
-];
-
-function ModuleHeader({ tab, tabHref, onSelectTab, action = null }) {
+// ─── left sidebar (admin) ───────────────────────────
+// New plan on top, then every plan, then the template. Peter 2026-09-21.
+function OnboardingSidebar({ plans, activePlanId, onTemplate, onNew, subjectName, progressFor, onSelectPlan, onSelectTemplate, isPhone }) {
+  const divider = <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />;
+  const itemStyle = (on) => ({
+    display: "block", width: "100%", boxSizing: "border-box",
+    padding: "7px 10px", borderRadius: 6, fontSize: 13,
+    fontWeight: on ? 700 : 500,
+    color: on ? T.blue : T.slate700,
+    background: on ? T.blueLt : "transparent",
+    textDecoration: "none", ...wrapLongText,
+  });
   return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-        <div>
-          <div style={{ fontSize: 12, color: T.slate500 }}>
-            {tab === "template"
-              ? "The master step list every new plan is built from."
-              : "Onboarding plans in progress for new team members."}
-          </div>
-        </div>
-        {action}
-      </div>
-      <div style={{
-        display: "flex", gap: 4, marginTop: 12, flexWrap: "wrap",
-        borderBottom: `1px solid ${T.slate200}`,
-      }}>
-        {TABS.map(t => {
-          const on = t.id === tab;
-          return (
-            <TabLink
-              key={t.id}
-              href={tabHref(t.id)}
-              onSelect={() => onSelectTab(t.id)}
-              style={{
-                flexShrink: 0, padding: "8px 14px", fontSize: 13, fontWeight: 600,
-                color: on ? T.blue : T.slate600,
-                background: "transparent",
-                borderBottom: `2px solid ${on ? T.blue : "transparent"}`,
-                marginBottom: -1, textDecoration: "none",
-              }}
-            >{t.label}</TabLink>
-          );
-        })}
-      </div>
-    </div>
+    <nav style={{
+      flex: isPhone ? "1 1 100%" : "0 0 190px", minWidth: 0,
+      background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12,
+      padding: 8, boxSizing: "border-box",
+    }}>
+      <Button variant="primary" onClick={onNew} style={{ width: "100%" }}>+ New plan</Button>
+      {plans.length > 0 && divider}
+      {plans.map(pl => {
+        const on = pl.id === activePlanId;
+        const pct = progressFor(pl.id);
+        return (
+          <TabLink
+            key={pl.id}
+            href={hrefWithParams([["subtab", "plans", "plans"], ["plan", pl.id, null]])}
+            onSelect={() => onSelectPlan(pl.id)}
+            style={itemStyle(on)}
+          >
+            {subjectName(pl)}
+            <span style={{ display: "block", fontSize: 10, fontWeight: 500, color: T.slate400, marginTop: 1 }}>
+              {pl.status === "active" ? `${pct}%` : (STATUS_COLORS[pl.status]?.label || pl.status)}
+            </span>
+          </TabLink>
+        );
+      })}
+      {divider}
+      <TabLink
+        href={hrefWithParams([["subtab", "template", "plans"], ["plan", null, null]])}
+        onSelect={onSelectTemplate}
+        style={itemStyle(onTemplate)}
+      >Template</TabLink>
+    </nav>
   );
 }
 
 // ─── main component ────────────────────────────────
 export default function Onboarding({ userRole, userId }) {
   const isAdmin = ADMIN_ROLES.includes(userRole);
-  const { loading, error, plans, steps, team, phases, candidates, myTeamMemberId, planNames, reload } = useOnboardingData(userId, isAdmin);
+  const { loading, error, plans, steps, team, phases, candidates, myTeamMemberId, planNames, instructions, reload } = useOnboardingData(userId, isAdmin);
 
   // URL-persisted so refresh keeps the same plan open. Replaces the prior
   // useState + manual ?plan= useEffect pair — useTabParam handles both the
@@ -931,6 +984,7 @@ export default function Onboarding({ userRole, userId }) {
   const [tab, setTab, tabHref] = useTabParam("subtab", "plans", ["plans", "template"]);
   const [showCreate, setShowCreate] = useState(false);
   const [actionError, setActionError] = useState("");
+  const vp = useViewport();
 
   const teamById = useMemo(() => {
     const m = new Map();
@@ -1101,6 +1155,7 @@ export default function Onboarding({ userRole, userId }) {
             isCandidate={!chosen.team_member_id}
             phaseMeta={phaseMeta}
             ownerName={ownerName}
+            instructions={instructions}
             onBack={() => setSelectedPlanId(null)}
             onToggleStep={handleToggleStep}
             onToggleSubstep={handleToggleSubstep}
@@ -1130,101 +1185,68 @@ export default function Onboarding({ userRole, userId }) {
     );
   }
 
-  // Admin view
-  if (tab === "template") {
-    return (
-      <div style={{ padding: 20 }}>
-        <ModuleHeader tab={tab} tabHref={tabHref} onSelectTab={setTab} />
-        <OnboardingTemplateEditor
-          phaseMeta={phaseMeta}
-          ownerName={ownerName}
-          team={team}
-          phases={phases}
-          canEdit={isAdmin}
-        />
-      </div>
-    );
-  }
-
-  const selectedPlan = plans.find(p => p.id === selectedPlanId);
-
-  if (selectedPlan) {
-    return (
-      <div style={{ padding: 20 }}>
-        <PlanDetail
-          plan={selectedPlan}
-          steps={stepsByPlan.get(selectedPlan.id) || []}
-          subjectName={subjectName(selectedPlan)}
-          isCandidate={!selectedPlan.team_member_id}
-          phaseMeta={phaseMeta}
-          ownerName={ownerName}
-          onBack={() => setSelectedPlanId(null)}
-          onToggleStep={handleToggleStep}
-          onToggleSubstep={handleToggleSubstep}
-          onUpdateStepNotes={handleUpdateStepNotes}
-          onDeletePlan={handleDeletePlan}
-          onChangeStatus={handleChangeStatus}
-          isAdmin={true}
-        />
-        {actionError && <Card style={{ marginTop: 10, background: T.redLt }}><div style={{ color: T.red, fontSize: 12 }}>{actionError}</div></Card>}
-      </div>
-    );
-  }
-
-  // Admin list
-  const grouped = {
-    active:    plans.filter(p => p.status === "active"),
-    paused:    plans.filter(p => p.status === "paused"),
-    completed: plans.filter(p => p.status === "completed"),
-    archived:  plans.filter(p => p.status === "archived"),
-  };
+  // Admin view. Left sidebar: New plan, every plan, Template.
+  const openPlans = plans.filter(p => p.status === "active" || p.status === "paused");
+  const selectedPlan = plans.find(p => p.id === selectedPlanId)
+    || (tab === "plans" ? (openPlans[0] || plans[0] || null) : null);
+  const statusRank = { active: 0, paused: 1, completed: 2, archived: 3 };
+  const sidebarPlans = [...plans].sort((a, b) => (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9));
 
   return (
-    <div style={{ padding: 20 }}>
-      <ModuleHeader
-        tab={tab}
-        tabHref={tabHref}
-        onSelectTab={setTab}
-        action={<Button variant="primary" onClick={() => setShowCreate(true)}>+ New plan</Button>}
+    <div style={{
+      padding: vp.isPhone ? 12 : 20, display: "flex", gap: 16, alignItems: "flex-start",
+      flexWrap: vp.isPhone ? "wrap" : "nowrap", boxSizing: "border-box",
+    }}>
+      <OnboardingSidebar
+        plans={sidebarPlans}
+        activePlanId={tab === "plans" ? selectedPlan?.id : null}
+        onTemplate={tab === "template"}
+        onNew={() => setShowCreate(true)}
+        subjectName={subjectName}
+        progressFor={(id) => progress(stepsByPlan.get(id) || []).pct}
+        onSelectPlan={(id) => { setTab("plans"); setSelectedPlanId(id); }}
+        onSelectTemplate={() => { setSelectedPlanId(null); setTab("template"); }}
+        isPhone={vp.isPhone}
       />
 
-      {actionError && <Card style={{ marginBottom: 12, background: T.redLt }}><div style={{ color: T.red, fontSize: 12 }}>{actionError}</div></Card>}
+      <div style={{ flex: "1 1 0", minWidth: 0 }}>
+        {actionError && <Card style={{ marginBottom: 12, background: T.redLt }}><div style={{ color: T.red, fontSize: 12 }}>{actionError}</div></Card>}
 
-      {plans.length === 0 && (
-        <Card>
-          <div style={{ fontSize: 14, color: T.slate800, marginBottom: 6, fontWeight: 600 }}>No onboarding plans yet</div>
-          <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
-            Compile a plan for a new hire and the appropriate steps will be pulled from the step library based on their role.
-          </div>
-          <Button variant="primary" onClick={() => setShowCreate(true)}>+ Create the first plan</Button>
-        </Card>
-      )}
-
-      {["active", "paused", "completed", "archived"].map(status => {
-        const rows = grouped[status];
-        if (!rows.length) return null;
-        const col = STATUS_COLORS[status];
-        return (
-          <div key={status} style={{ marginBottom: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: T.slate700, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                {col.label}
-              </div>
-              <div style={{ fontSize: 11, color: T.slate400 }}>({rows.length})</div>
+        {tab === "template" ? (
+          <OnboardingTemplateEditor
+            phaseMeta={phaseMeta}
+            ownerName={ownerName}
+            team={team}
+            phases={phases}
+            canEdit={isAdmin}
+          />
+        ) : selectedPlan ? (
+          <PlanDetail
+            plan={selectedPlan}
+            steps={stepsByPlan.get(selectedPlan.id) || []}
+            subjectName={subjectName(selectedPlan)}
+            isCandidate={!selectedPlan.team_member_id}
+            phaseMeta={phaseMeta}
+            ownerName={ownerName}
+            instructions={instructions}
+            onBack={() => setSelectedPlanId(null)}
+            onToggleStep={handleToggleStep}
+            onToggleSubstep={handleToggleSubstep}
+            onUpdateStepNotes={handleUpdateStepNotes}
+            onDeletePlan={handleDeletePlan}
+            onChangeStatus={handleChangeStatus}
+            isAdmin={true}
+            showBack={false}
+          />
+        ) : (
+          <Card>
+            <div style={{ fontSize: 14, color: T.slate800, marginBottom: 6, fontWeight: 600 }}>No onboarding plans yet</div>
+            <div style={{ fontSize: 12, color: T.slate500 }}>
+              Start one with New plan. The steps are pulled from the template for their role.
             </div>
-            {rows.map(plan => (
-              <PlanListCard
-                key={plan.id}
-                plan={plan}
-                steps={stepsByPlan.get(plan.id) || []}
-                subjectName={subjectName(plan)}
-                isCandidate={!plan.team_member_id}
-                onOpen={setSelectedPlanId}
-              />
-            ))}
-          </div>
-        );
-      })}
+          </Card>
+        )}
+      </div>
 
       {showCreate && (
         <CreatePlanModal
