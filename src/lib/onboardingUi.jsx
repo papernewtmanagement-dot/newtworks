@@ -103,21 +103,6 @@ export function subAll(substeps) {
 
 // Sub-items as plain text for editing. One item per line. A heading line
 // ends with a colon and starts a group.
-export function substepsToText(substeps) {
-  const lines = [];
-  subGroups(substeps, { keepEmpty: true }).forEach(g => {
-    if (g.group || g.altFor || g.fill) {
-      if (lines.length) lines.push("");
-      const name = g.group || (g.altFor ? "Archived" : "Team");
-      lines.push(g.altFor ? `${name} (instead of: ${g.altFor}):` : `${name}:`);
-    }
-    g.info.forEach(it => lines.push(`${INFO_PREFIX}${it}`));
-    if (g.fill === "team_list") lines.push(TEAM_LIST_TOKEN);
-    g.items.forEach(it => lines.push(it));
-  });
-  return lines.join("\n");
-}
-
 // Typed on its own line under a heading, this makes the group fill itself
 // with the current team.
 export const TEAM_LIST_TOKEN = "[Team list]";
@@ -125,6 +110,30 @@ export const TEAM_LIST_TOKEN = "[Team list]";
 // A line that starts with this goes behind the (i) on the heading above it.
 export const INFO_PREFIX = "> ";
 
+// A sub-item that would read as markup (ends in a colon, starts with > or \,
+// or is --- or the team-list token) is written with a leading \ so it comes
+// back as the same plain line.
+function escapeSubItem(it) {
+  return (it.endsWith(":") || it.startsWith(">") || it.startsWith("\\") || it === "---"
+    || it.toLowerCase() === TEAM_LIST_TOKEN.toLowerCase()) ? `\\${it}` : it;
+}
+export function substepsToText(substeps) {
+  const lines = [];
+  subGroups(substeps, { keepEmpty: true }).forEach(g => {
+    if (g.group || g.altFor || g.fill) {
+      if (lines.length) lines.push("");
+      const name = g.group || (g.altFor ? "Archived" : "Team");
+      lines.push(g.altFor ? `${name} (instead of: ${g.altFor}):` : `${name}:`);
+    } else if (lines.length) {
+      // Plain lines after a heading: --- ends the heading above.
+      lines.push("", "---");
+    }
+    g.info.forEach(it => lines.push(`${INFO_PREFIX}${it}`));
+    if (g.fill === "team_list") lines.push(TEAM_LIST_TOKEN);
+    g.items.forEach(it => lines.push(escapeSubItem(it)));
+  });
+  return lines.join("\n");
+}
 // Inverse of substepsToText. Keeps the flat shape when no headings were
 // used so a plain list never silently turns into a one-group object.
 export function textToSubsteps(text) {
@@ -132,8 +141,25 @@ export function textToSubsteps(text) {
   const groups = [];
   let cur = null;
   let sawHeading = false;
+  const push = (item) => {
+    if (!cur) { cur = { group: null, items: [] }; groups.push(cur); }
+    cur.items.push(item);
+  };
   lines.forEach(line => {
     if (!line) return;
+    if (line.startsWith("\\")) { push(line.slice(1)); return; }
+    if (line.startsWith(">")) {
+      sawHeading = true;
+      if (!cur) { cur = { group: null, items: [] }; groups.push(cur); }
+      cur.info = (cur.info || []).concat(line.replace(/^>\s?/, ""));
+      return;
+    }
+    if (line === "---") {
+      sawHeading = true;
+      cur = { group: null, items: [] };
+      groups.push(cur);
+      return;
+    }
     if (line.length > 1 && line.endsWith(":")) {
       sawHeading = true;
       const head = line.slice(0, -1).trim();
@@ -144,20 +170,13 @@ export function textToSubsteps(text) {
       groups.push(cur);
       return;
     }
-    if (line.startsWith(">")) {
-      sawHeading = true;
-      if (!cur) { cur = { group: null, items: [] }; groups.push(cur); }
-      cur.info = (cur.info || []).concat(line.replace(/^>\s?/, ""));
-      return;
-    }
     if (line.toLowerCase() === TEAM_LIST_TOKEN.toLowerCase()) {
       sawHeading = true;
       if (!cur) { cur = { group: "Team", items: [] }; groups.push(cur); }
       cur.fill = "team_list";
       return;
     }
-    if (!cur) { cur = { group: null, items: [] }; groups.push(cur); }
-    cur.items.push(line);
+    push(line);
   });
   const kept = groups.filter(g => g.items.length || g.fill || (g.info && g.info.length));
   if (!kept.length) return null;
