@@ -780,7 +780,9 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
           </div>
         </div>
         {r.description && (
-          <div style={{ fontSize: 11, color: T.slate500, marginTop: 3, lineHeight: 1.45 }}>{r.description}</div>
+          <div style={{ fontSize: 11, color: T.slate500, marginTop: 3, lineHeight: 1.45 }}>
+            <LabelText text={r.description} pathColor={T.teal} linkColor={T.blue} />
+          </div>
         )}
         {groups.map((g, gi) => (
           <div key={gi} style={{ marginTop: 8 }}>

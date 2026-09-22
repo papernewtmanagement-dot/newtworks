@@ -685,7 +685,7 @@ function readyToSubmit(formType, data, secure, ssnOnFile) {
   return false;
 }
 
-function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBack }) {
+function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBack, backLabel = "Back to forms" }) {
   const [data, setData] = useState(submission?.data || {});
   const [employer, setEmployer] = useState(submission?.employer_section || {});
   const [secure, setSecure] = useState({ ssn: "", banks: [{ ...EMPTY_BANK }] });
@@ -778,7 +778,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
       <button onClick={onBack} style={{
         background: "none", border: "none", padding: 0, cursor: "pointer",
         color: T.slate500, fontSize: 13, fontWeight: 600, fontFamily: "inherit",
-      }}>Back to forms</button>
+      }}>{backLabel}</button>
 
       <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <div style={{ fontSize: 19, fontWeight: 700, color: T.slate900, letterSpacing: "-0.01em" }}>
@@ -843,7 +843,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
 
 // ─── the list, and the destroy button ───────────────────────────────────
 
-export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, embedded = false }) {
+export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, embedded = false, onlyForm = null, onClose = null }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
 
@@ -874,7 +874,14 @@ export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, em
   const [docs, setDocs] = useState({});
   const [hasSecure, setHasSecure] = useState(0);
   // The open form rides in the URL (?form=i9), so a link can go straight to it.
-  const [open, setOpen] = useTabParam("form", null, FORMS.map(f => f.id));
+  // In a pop-up (onlyForm) the open form lives here, not in the page address,
+  // and closing it closes the pop-up.
+  const [urlOpen, setUrlOpen] = useTabParam("form", null, FORMS.map(f => f.id));
+  const [localOpen, setLocalOpen] = useState(onlyForm);
+  const open = onlyForm ? localOpen : urlOpen;
+  const setOpen = onlyForm
+    ? (v) => { setLocalOpen(v); if (!v && onClose) onClose(); }
+    : setUrlOpen;
   const [loading, setLoading] = useState(true);
   const [purging, setPurging] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -949,6 +956,7 @@ export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, em
           docs={docs}
           onBack={() => setOpen(null)}
           onDone={() => { setOpen(null); load(); }}
+          backLabel={onlyForm ? "Close" : "Back to forms"}
         />
       ) : (
         <>

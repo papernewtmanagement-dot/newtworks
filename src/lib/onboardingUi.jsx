@@ -10,9 +10,14 @@
 // slowly drifts.
 // =========================================================================
 
-import { useState } from "react";
+import { useState, createContext, useContext } from "react";
 import { T } from "./theme.js";
 import InfoDot from "../components/InfoDot.jsx";
+import TeamForms from "../components/TeamForms.jsx";
+
+// A link to a site form opens that form in a pop-up over the page instead of
+// leaving it. FormPopupProvider supplies the opener; LabelText uses it.
+const FormLinkContext = createContext(null);
 
 // ─── colour maps ────────────────────────────────────
 export const STAGE_LABELS = {
@@ -276,6 +281,7 @@ function pathPieces(text) {
 }
 
 export function LabelText({ text, icon = null, pathColor, linkColor }) {
+  const openForm = useContext(FormLinkContext);
   const parts = [];
   let last = 0;
   let m;
@@ -306,7 +312,11 @@ export function LabelText({ text, icon = null, pathColor, linkColor }) {
     <>
       {parts.map((p, i) => p.href ? (
         <a key={i} href={p.href} target={p.href.startsWith("/") ? undefined : "_blank"} rel="noreferrer"
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            const fid = formIdOf(p.href);
+            if (fid && openForm) { e.preventDefault(); openForm(fid); }
+          }}
           style={{ color: linkColor, textDecoration: "underline" }}>{p.t}</a>
       ) : renderPlain(p.t, i))}
       {icon && (
@@ -355,5 +365,42 @@ export function GroupHead({ label, info = [], extra = null, labelStyle = {}, sty
         </div>
       )}
     </div>
+  );
+}
+
+// ─── form pop-up ─────────────────────────────────────
+// teamId: whose forms. null = not on the team yet (a candidate's plan);
+// left out = the person signed in (the template page).
+export function FormPopupProvider({ teamId, onClosed, children }) {
+  const [formId, setFormId] = useState(null);
+  const close = () => { setFormId(null); if (onClosed) onClosed(); };
+  return (
+    <FormLinkContext.Provider value={setFormId}>
+      {children}
+      {formId && (
+        <div onClick={close} style={{
+          position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.45)",
+          display: "flex", alignItems: "flex-start", justifyContent: "center",
+          padding: "5vh 12px", boxSizing: "border-box", overflowY: "auto",
+        }}>
+          <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{
+            position: "relative", width: "100%", maxWidth: 820, background: T.white,
+            borderRadius: 12, boxShadow: "0 20px 50px rgba(15,23,42,0.25)", minWidth: 0,
+          }}>
+            <button onClick={close} aria-label="Close" style={{
+              position: "absolute", top: 10, right: 12, border: "none", background: "none",
+              fontSize: 22, lineHeight: 1, cursor: "pointer", color: T.slate500, zIndex: 1,
+            }}>×</button>
+            {teamId === null ? (
+              <div style={{ padding: 24, fontSize: 13, color: T.slate600 }}>
+                The forms open once they are on the team.
+              </div>
+            ) : (
+              <TeamForms teamId={teamId || undefined} onlyForm={formId} onClose={close} embedded />
+            )}
+          </div>
+        </div>
+      )}
+    </FormLinkContext.Provider>
   );
 }

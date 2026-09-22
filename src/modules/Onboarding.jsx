@@ -31,7 +31,7 @@ import InfoDot from "../components/InfoDot.jsx";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
-  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf,
+  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider,
 } from "../lib/onboardingUi.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
 import ReferenceCalls from "./ReferenceCalls.jsx";
@@ -461,7 +461,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
 
                         {!collapsed && step.description && (
                           <div style={{ fontSize: 11, color: T.slate500, marginTop: 3, lineHeight: 1.45 }}>
-                            {step.description}
+                            <LabelText text={step.description} pathColor={T.teal} linkColor={T.blue} />
                           </div>
                         )}
 
@@ -1203,6 +1203,7 @@ export default function Onboarding({ userRole, userId }) {
     if (chosen) {
       return (
         <div style={{ padding: 20 }}>
+          <FormPopupProvider teamId={chosen.team_member_id || null} onClosed={load}>
           <PlanDetail
             plan={chosen}
             steps={stepsByPlan.get(chosen.id) || []}
@@ -1221,6 +1222,7 @@ export default function Onboarding({ userRole, userId }) {
             isAdmin={false}
             showBack={list.length > 1}
           />
+          </FormPopupProvider>
           {actionError && <Card style={{ marginTop: 10, background: T.redLt }}><div style={{ color: T.red, fontSize: 12 }}>{actionError}</div></Card>}
         </div>
       );
@@ -1269,6 +1271,7 @@ export default function Onboarding({ userRole, userId }) {
         {actionError && <Card style={{ marginBottom: 12, background: T.redLt }}><div style={{ color: T.red, fontSize: 12 }}>{actionError}</div></Card>}
 
         {tab === "template" ? (
+          <FormPopupProvider>
           <OnboardingTemplateEditor
             phaseMeta={phaseMeta}
             ownerName={ownerName}
@@ -1276,7 +1279,9 @@ export default function Onboarding({ userRole, userId }) {
             phases={phases}
             canEdit={isAdmin}
           />
+          </FormPopupProvider>
         ) : selectedPlan ? (
+          <FormPopupProvider teamId={selectedPlan.team_member_id || null} onClosed={load}>
           <PlanDetail
             plan={selectedPlan}
             steps={stepsByPlan.get(selectedPlan.id) || []}
@@ -1295,6 +1300,7 @@ export default function Onboarding({ userRole, userId }) {
             isAdmin={true}
             showBack={false}
           />
+          </FormPopupProvider>
         ) : (
           <Card>
             <div style={{ fontSize: 14, color: T.slate800, marginBottom: 6, fontWeight: 600 }}>No onboarding plans yet</div>
