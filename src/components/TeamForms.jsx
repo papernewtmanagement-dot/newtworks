@@ -3,6 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 import { mdToHtml } from "../lib/markdown.js";
+import { useTabParam } from "../lib/routing.jsx";
 
 // =========================================================================
 // TeamForms.jsx
@@ -20,7 +21,9 @@ import { mdToHtml } from "../lib/markdown.js";
 // is not security — the policies on team_form_secure are.
 // =========================================================================
 
-const FORMS = [
+// Exported so the onboarding template can link each form without keeping a
+// second list of them.
+export const FORMS = [
   { id: "combined_onboarding", label: "Onboarding form",
     blurb: "Your details, your story, and payroll setup." },
   { id: "non_compete", label: "Non-compete",
@@ -713,7 +716,8 @@ export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, em
   const [subs, setSubs] = useState([]);
   const [docs, setDocs] = useState({});
   const [hasSecure, setHasSecure] = useState(0);
-  const [open, setOpen] = useState(null);
+  // The open form rides in the URL (?form=i9), so a link can go straight to it.
+  const [open, setOpen] = useTabParam("form", null, FORMS.map(f => f.id));
   const [loading, setLoading] = useState(true);
   const [purging, setPurging] = useState(false);
   const [notice, setNotice] = useState(null);

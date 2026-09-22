@@ -24,8 +24,9 @@ import {
   CATEGORY_COLORS, CATEGORY_KEYS, STAGE_LABELS,
   subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText,
 } from "../lib/onboardingUi.jsx";
+import { FORMS } from "./TeamForms.jsx";
 
-const COLS = "id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by, is_active, unlock_rule";
+const COLS = "id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by, is_active, unlock_rule, widget";
 
 const NEW_ID = "new";
 
@@ -381,6 +382,7 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
               <label style={fieldLabel}>Who does it</label>
               <select style={inputBase} value={form.owner} onChange={(e) => set({ owner: e.target.value })}>
                 <option value="new_hire">New hire</option>
+                <option value="team">Everyone on the team</option>
                 <option value="admin">Admin (anyone)</option>
                 {people.map(p => (
                   <option key={p.id} value={`person:${p.id}`}>{personName(p)}</option>
@@ -751,6 +753,21 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
             </ul>
           </div>
         ))}
+        {r.widget === "team_forms" && (
+          <div style={{ marginTop: 8 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{
+              fontSize: 10, fontWeight: 700, color: T.slate500,
+              textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3,
+            }}>Forms on the site</div>
+            <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 3 }}>
+              {FORMS.map(f => (
+                <li key={f.id} style={{ fontSize: 12, lineHeight: 1.4 }}>
+                  <a href={`/development?area=forms&form=${f.id}`} style={{ color: T.blue }}>{f.label}</a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {r.unlock_rule === "friday_before_start" && (
           <div style={{ fontSize: 10, color: T.amber, marginTop: 8, fontWeight: 600 }}>
             Opens the Friday before they start

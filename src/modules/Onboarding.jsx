@@ -1066,6 +1066,7 @@ export default function Onboarding({ userRole, userId }) {
       if (t) return memberName(t);
     }
     if (step.owner_kind === "agent") return "Peter";
+    if (step.owner_kind === "team") return "Everyone";
     if (step.owner_kind === "admin") return "Admin";
     return "New hire";
   }, [team]);
