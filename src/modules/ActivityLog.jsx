@@ -1691,9 +1691,9 @@ const RECORD_KINDS = [
   { key: "activities",   label: "Activities" },
   { key: "sales",        label: "Sales" },
 ];
-const SALE_SELECT = "id, team_member_id, submitted_date, week_end_date, customer_label, customer_first_name, customer_last_initial, customer_kind, phone_last4, household_status, marketing_source, vehicle_count, total_premium, note, ecrm_opportunity_url, on_file_answer, entry_source, sales_log_products(id, line_of_business, product_type, premium, policy_count, vehicle_count, is_new_line, is_added_to_existing, issued_date, issued_premium, autopay_enrolled)";
-const APPT_SELECT = "id, team_member_id, escalated_to_team_member_id, set_on, week_end_date, kept_on, no_show_on, sold_on, customer_label, customer_first_name, customer_last_initial, customer_kind, phone_last4, line_of_business, product_type, starts_at, duration_minutes, is_video, meet_url, calendar_error, note, ecrm_url";
-const ACT_SELECT = "id, team_member_id, activity_key, occurred_on, customer_label, customer_first_name, customer_last_initial, customer_kind, phone_last4, note, points, source, policy_line, product_type, premium, credit_available_on, ecrm_url";
+const SALE_SELECT = "id, team_member_id, created_at, can_change:rp_sale_can_change, can_edit:rp_sale_edit_ok, submitted_date, week_end_date, customer_label, customer_first_name, customer_last_initial, customer_kind, phone_last4, household_status, marketing_source, vehicle_count, total_premium, note, ecrm_opportunity_url, on_file_answer, entry_source, sales_log_products(id, line_of_business, product_type, premium, policy_count, vehicle_count, is_new_line, is_added_to_existing, issued_date, issued_premium, autopay_enrolled, can_reissue:rp_issue_change_ok, can_autopay:rp_autopay_ok)";
+const APPT_SELECT = "id, team_member_id, created_at, can_change:rp_appt_can_change, can_mark:rp_appt_mark_ok, escalated_to_team_member_id, set_on, week_end_date, kept_on, no_show_on, sold_on, customer_label, customer_first_name, customer_last_initial, customer_kind, phone_last4, line_of_business, product_type, starts_at, duration_minutes, is_video, meet_url, calendar_error, note, ecrm_url";
+const ACT_SELECT = "id, team_member_id, created_at, can_change:rp_act_can_change, activity_key, occurred_on, customer_label, customer_first_name, customer_last_initial, customer_kind, phone_last4, note, points, source, policy_line, product_type, premium, credit_available_on, ecrm_url";
 const relLabel = (k) => k === "new" ? "New" : k === "winback" ? "Winback" : "Existing";
 const onFileLabel = (k) => k === "replaces" ? "replaced old policy" : k === "added" ? "added to on-file" : "different household";
 const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000);
@@ -1924,7 +1924,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                           {p.id && (
                             <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: p.autopay_enrolled ? T.green : T.slate500, cursor: busy === p.id ? "wait" : "pointer" }}
                               title="Tick this when the customer signs up for automatic payment, even if that happens after the sale. One autopay credit per policy.">
-                              <input type="checkbox" checked={!!p.autopay_enrolled} disabled={busy === p.id}
+                              <input type="checkbox" checked={!!p.autopay_enrolled} disabled={busy === p.id || p.can_autopay === false}
                                 onChange={e => setAutopay(p.id, e.target.checked)} />
                               Autopay
                             </label>
@@ -1932,7 +1932,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                           {p.issued_date ? (
                             <span style={{ fontSize: 11, color: T.green }}>
                               issued {fmtDate(p.issued_date)}{p.issued_premium != null ? ` · $${fmtPts(p.issued_premium)}` : ""}
-                              {canTouch(r.team_member_id) && <button type="button" style={{ ...miniBtn, marginLeft: 6 }} onClick={() => unIssue(p)}>Undo</button>}
+                              {p.can_reissue && <button type="button" style={{ ...miniBtn, marginLeft: 6 }} onClick={() => unIssue(p)}>Undo</button>}
                             </span>
                           ) : (
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
@@ -1961,12 +1961,11 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                       {wait == null ? "—" : `${wait}d`}
                     </td>
                     <td style={tableTd}>
-                      {canTouch(r.team_member_id) && (
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          <button type="button" style={miniBtn} onClick={() => setEditing({ kind: "sale", row: r })}>Edit</button>
-                          <button type="button" style={{ ...miniBtn, color: T.red }} onClick={() => removeRow("sale", r.id, "sale")}>Delete</button>
-                        </div>
-                      )}
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {r.can_edit && <button type="button" style={miniBtn} onClick={() => setEditing({ kind: "sale", row: r })}>Edit</button>}
+                        {r.can_change && <button type="button" style={{ ...miniBtn, color: T.red }} onClick={() => removeRow("sale", r.id, "sale")}>Delete</button>}
+                        {!r.can_change && canTouch(r.team_member_id) && <AddNoteButton kind="sale" id={r.id} onSaved={after} />}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -2003,7 +2002,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                         : r.kept_on ? <div style={{ fontSize: 11, color: T.slate500 }}>{fmtDate(r.kept_on)}</div> : null}
                     </td>
                     <td style={tableTd}>
-                      {canTouch(apptHost(r)) ? (
+                      {r.can_mark ? (
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                           <input type="date" title="Date it happened"
                             value={dates[r.id] || todayCentral()} min={r.set_on} max={todayCentral()}
@@ -2022,12 +2021,13 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                         {canTouch(apptHost(r)) && !r.sold_on && (
                           <button type="button" style={miniBtn} onClick={() => setLogging(r)}>Log the sale</button>
                         )}
-                        {canTouch(r.team_member_id) && (
+                        {r.can_change && (
                           <>
                             <button type="button" style={miniBtn} onClick={() => setEditing({ kind: "appointment", row: r })}>Edit</button>
                             <button type="button" style={{ ...miniBtn, color: T.red }} onClick={() => removeRow("appointment", r.id, "appointment")}>Delete</button>
                           </>
                         )}
+                        {!r.can_change && (canTouch(r.team_member_id) || canTouch(apptHost(r))) && <AddNoteButton kind="appointment" id={r.id} onSaved={after} />}
                       </div>
                     </td>
                   </tr>
@@ -2049,12 +2049,13 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                   <td style={tableTd}>{r.credit_available_on ? fmtDate(r.credit_available_on) : "—"}</td>
                   <td style={tableTd}>{r.note || "—"}</td>
                   <td style={tableTd}>
-                    {canTouch(r.team_member_id) && r.source === "manual" && (
+                    {r.can_change && r.source === "manual" && (
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                         <button type="button" style={miniBtn} onClick={() => setEditing({ kind: "activity", row: r })}>Edit</button>
                         <button type="button" style={{ ...miniBtn, color: T.red }} onClick={() => removeRow("activity", r.id, "entry")}>Delete</button>
                       </div>
                     )}
+                    {!r.can_change && r.source === "manual" && canTouch(r.team_member_id) && <AddNoteButton kind="activity" id={r.id} onSaved={after} />}
                   </td>
                 </tr>
               ))}
@@ -2312,10 +2313,18 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
   };
 
   const titleWord = kind === "sale" ? "sale" : kind === "appointment" ? "appointment" : "entry";
+  // Peter 2026-09-22: after the day a sale was entered, only its policies that
+  // have not issued can be fixed. The server enforces it; this greys the rest.
+  const limited = kind === "sale" && row.can_change === false;
   // bare drops the popup shell, for when this is opened inside one already.
   const body = (
       <div style={{ ...cardStyle, display: "grid", gap: 12 }}>
         {err && <Notice kind="error">{err}</Notice>}
+        {limited && (
+          <div style={{ fontSize: 13, color: T.slate600 }}>
+            Only policies that have not issued can be changed now. Notes stay as written. Use Add note to add one.
+          </div>
+        )}
         {kind === "sale" && row.entry_source === "historical_backfill" && (
           <div style={{ justifySelf: "start", padding: "3px 9px", borderRadius: 999, background: T.amberLt, color: T.amber, fontSize: 12, fontWeight: 700 }}>
             Saving moves this out of the historical load and into the production log
@@ -2434,7 +2443,7 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
         </div>
 
         {kind === "sale" && f.products.map((p, i) => (
-          <div key={p.id || i} style={policyRow}>
+          <div key={p.id || i} style={limited && p.issued_date ? { ...policyRow, opacity: 0.55, pointerEvents: "none" } : policyRow}>
             <div>
               <label style={labelStyle}>Policy</label>
               <select value={p.product_type || ""} onChange={e => setProd(i, "product_type", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
@@ -2474,7 +2483,7 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
 
         <div>
           <label style={labelStyle}>Note</label>
-          <input value={f.note} onChange={e => set("note", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px" }} {...noPwManager("enote")} />
+          <input value={f.note} readOnly={limited} onChange={e => set("note", e.target.value)} style={{ ...smallInput, width: "100%", padding: "9px 10px", ...(limited ? { background: T.slate50, color: T.slate500 } : {}) }} {...noPwManager("enote")} />
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -2498,6 +2507,44 @@ function IssuedTab({ values, sources, types, roster, nameOf, isOwner, isAdmin, m
   );
 }
 
+
+// Peter 2026-09-22: once a record is closed, the person it belongs to can still add
+// a note. Earlier notes stay as written; the server dates and names the new one.
+function AddNoteButton({ kind, id, onSaved }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const close = () => { setOpen(false); setText(""); setErr(""); };
+  const save = async () => {
+    if (!text.trim()) { setErr("Write the note first."); return; }
+    setBusy(true); setErr("");
+    const { data, error } = await supabase.rpc("rp_add_note", { p_kind: kind, p_id: id, p_note: text.trim() });
+    setBusy(false);
+    if (error || !data?.ok) { setErr(errText(error || data)); return; }
+    close();
+    if (onSaved) onSaved(data);
+  };
+  return (
+    <>
+      <button type="button" style={miniBtn} onClick={() => setOpen(true)}>Add note</button>
+      {open && (
+        <Modal title="Add a note" onClose={close}>
+          <div style={{ ...cardStyle, display: "grid", gap: 10 }}>
+            {err && <Notice kind="error">{err}</Notice>}
+            <textarea value={text} onChange={e => setText(e.target.value)} rows={4} autoFocus
+              style={{ ...smallInput, width: "100%", padding: "9px 10px", fontFamily: "inherit", resize: "vertical" }} />
+            <div style={{ fontSize: 12, color: T.slate500 }}>It is added under the notes already there, with today's date and your name.</div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button type="button" style={btnPrimary(busy)} disabled={busy} onClick={save}>{busy ? "Saving…" : "Add note"}</button>
+              <button type="button" style={btnGhost} onClick={close}>Cancel</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
 
 function Modal({ title, onClose, children }) {
   return (
@@ -2991,7 +3038,6 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
   // says which blocks a week is allowed to show; older sessions default to all four.
   const show = board?.show || { marketing: true, sales: true, quotes: true, retention: true };
   const reported = board?.mode === "reported";
-  const canRemove = (tm) => isAdmin || tm === myTeamId;
   const toggle = (card) => (id) => setOpen(o => ({ ...o, [card]: o[card] === id ? null : id }));
   const cardN = people.reduce((s, p) => s + Number(p.conversations?.scorecards || 0), 0);
   const teamAvg = cardN ? people.reduce((s, p) => s + Number(p.conversations?.avg || 0) * Number(p.conversations?.scorecards || 0), 0) / cardN : null;
@@ -3027,7 +3073,7 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
         <span>{it.types || (it.products || []).map(k => PRODUCT_SHORT[k] || k).join(", ") || "—"}</span>
         {it.source && <span style={{ color: T.slate400 }}>{it.source}</span>}
         {it.dup && <span style={{ color: T.amber, fontWeight: 700 }} title="This household was already quoted this week. It counts once.">repeat this week</span>}
-        {canRemove(p.team_member_id) && <button type="button" style={miniBtn} onClick={() => voidRow("rp_void_quote", it.id, "quote")}>Remove</button>}
+        {it.can_change && <button type="button" style={miniBtn} onClick={() => voidRow("rp_void_quote", it.id, "quote")}>Remove</button>}
       </div>
     ));
   };
@@ -4570,7 +4616,7 @@ function HistoryTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster
   const openEdit = (target) => { setFlash(""); setEditing(target); };
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      <RecentEntries isAdmin={isAdmin} roster={roster} refreshKey={refreshKey + listKey} onEdit={openEdit} flash={flash} />
+      <RecentEntries isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} refreshKey={refreshKey + listKey} onEdit={openEdit} flash={flash} />
       {editing && (
         <Modal title="Editing a record already on file" onClose={() => closeEdit("")}>
           <RecordEditor target={editing} values={values} sources={sources} types={types} isOwner={isOwner}
@@ -4620,7 +4666,7 @@ function historyDefaultFrom() {
   return d.toISOString().slice(0, 10);
 }
 
-function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
+function RecentEntries({ isAdmin, myTeamId, roster, refreshKey, onEdit, flash }) {
   const defFrom = historyDefaultFrom();
   const defTo = todayCentral();
   const [rows, setRows] = useState(null);
@@ -4635,6 +4681,7 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
   // Cancelations still inside their reinstatement window (home 30 days, auto 15).
   // The server decides the window; this only shows the button where it would allow it.
   const [reinstate, setReinstate] = useState({});
+  const [noted, setNoted] = useState(0);   // bumps after a note is added so the list reloads
 
   useEffect(() => { const t = setTimeout(() => setTerm(q.trim()), 300); return () => clearTimeout(t); }, [q]);
 
@@ -4655,7 +4702,7 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
       if (alive && !ri.error) setReinstate(Object.fromEntries((ri.data || []).map(x => [x.id, x])));
     })();
     return () => { alive = false; };
-  }, [who, term, from, to, recKind, refreshKey]);
+  }, [who, term, from, to, recKind, refreshKey, noted]);
 
   const doReinstate = async (row) => {
     if (!window.confirm(`Reinstate this policy for ${row.customer_label || "this customer"}? The chargeback comes back, less the days it was out of force.`)) return;
@@ -4771,7 +4818,9 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
                         <button style={{ ...miniBtn, marginRight: 6 }} disabled={busyId === r.id} onClick={() => onEdit({ kind: r.kind, id: r.id })}>Edit</button>
                         <button style={{ ...miniBtn, color: T.red }} disabled={busyId === r.id} onClick={() => remove(r)}>Delete</button>
                       </>
-                    ) : <span style={{ color: T.slate400, fontSize: 12 }}>closed</span>}
+                    ) : (isAdmin || r.team_member_id === myTeamId) && r.kind !== "scorecard"
+                      ? <AddNoteButton kind={r.kind} id={r.id} onSaved={() => setNoted(n => n + 1)} />
+                      : <span style={{ color: T.slate400, fontSize: 12 }}>closed</span>}
                   </td>
                 </tr>
               ))}
