@@ -328,7 +328,7 @@ version of Outlook you have. This only works in Outlook Classic. If there is
 a "New Outlook" switch in the top right corner of your Outlook window, turn
 it off and let Outlook restart, then carry on.
 
-Three steps to install:
+Four steps to install:
 
 1. Save the ZIP anywhere, then double-click to unzip. You'll get one file
    called "${htmName}" and one folder called
@@ -338,9 +338,20 @@ Three steps to install:
    %AppData%\\Roaming\\Microsoft\\Signatures and press Enter. Drag BOTH
    the .htm file and the folder into that window.
 
-3. Open Outlook: File > Options > Mail > Signatures. In the dropdowns on
-   the right, set both "New messages" and "Replies/forwards" to
-   "${signatureName}". Click OK.
+3. Open Outlook, and go to File > Options > Mail. For "Compose messages in
+   this format", set it to HTML. Click on the Signatures button. In the
+   dropdowns on the right, set both "New messages" and "Replies/forwards"
+   to "${signatureName}". Click OK.
+
+4. Then:
+   - Open Outlook - File - Settings - Mail - Signatures
+   - Click Email Account drop-down and select "Signatures on this device".
+     The new signature will be there. Select the signature and copy it.
+   - Click Email Account drop-down again and go back to your State Farm
+     email. Click "New" and put in a name for the signature. Paste the
+     signature into the signature box.
+   - Set both new messages and replies/forwards to use the new signature.
+     Hit ok.
 
 Send yourself a test email to check it looks right. If anything's off,
 reply to this email and let me know.
