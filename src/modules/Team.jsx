@@ -5,7 +5,7 @@ import InterviewSlotsManager from "../components/InterviewSlotsManager.jsx";
 import HiringEmailTemplates from "../components/HiringEmailTemplates.jsx";
 import MemberAvatar from "../lib/MemberAvatar.jsx";
 import { fmtMoney } from "../lib/format.jsx";
-import { ROLE_LEVELS } from "../lib/roleLevels.js";
+import { ROLE_LEVELS, ROLES, roleCategoryFor } from "../lib/roleLevels.js";
 
 
 // Returns true if a staff member holds any one of the three license types.
@@ -1781,18 +1781,11 @@ const StaffDirectory = ({ staff }) => {
               <label style={labelStyle}>Role</label>
               <select style={inputStyle} value={addForm.role} onChange={e => {
                 const r = e.target.value;
-                const rc = (r === "Outbound" || r === "Inbound" || r === "In-Book") ? "Sales"
-                         : (r === "Reception" || r === "Escalation" || r === "Support") ? "Retention"
-                         : addForm.role_category;
+                const rc = roleCategoryFor(r) || addForm.role_category;
                 setAddForm(f => ({ ...f, role: r, role_category: rc }));
               }}>
                 <option value="">—</option>
-                <option value="Outbound">Outbound</option>
-                <option value="Inbound">Inbound</option>
-                <option value="In-Book">In-Book</option>
-                <option value="Reception">Reception</option>
-                <option value="Escalation">Escalation</option>
-                <option value="Support">Support</option>
+                {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
             <div>
@@ -2611,12 +2604,7 @@ const StaffDirectory = ({ staff }) => {
                   <div><label style={labelStyle}>Role (function)</label>
                     <select style={inputStyle} value={form.role} onChange={e=>setForm({...form, role:e.target.value})}>
                       <option value="">—</option>
-                      <option value="Outbound">Outbound</option>
-                      <option value="Inbound">Inbound</option>
-                      <option value="In-Book">In-Book</option>
-                      <option value="Reception">Reception</option>
-                      <option value="Escalation">Escalation</option>
-                      <option value="Support">Support</option>
+                      {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
                     </select>
                   </div>
                   <div><label style={labelStyle}>Role category</label>

@@ -35,3 +35,12 @@ export const roleLevelRank = (roleLevel) => {
   const i = ROLE_LEVELS.indexOf(roleLevel || "");
   return i === -1 ? 99 : i;
 };
+
+// The functions a teammate can do, and which side of the office each sits on.
+// One list for every role dropdown (Team add, Team edit, the offer letter).
+export const ROLES = ["Outbound", "Inbound", "In-Book", "Reception", "Escalation", "Support"];
+export const ROLE_CATEGORIES = ["Sales", "Retention"];
+export const roleCategoryFor = (role) =>
+  ["Outbound", "Inbound", "In-Book"].includes(role || "") ? "Sales"
+  : ["Reception", "Escalation", "Support"].includes(role || "") ? "Retention"
+  : null;

@@ -3,6 +3,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 import CopyButton from "./CopyButton.jsx";
+import { ROLE_LEVELS, ROLES, ROLE_CATEGORIES, roleCategoryFor } from "../lib/roleLevels.js";
 
 // Offer letter form. Opens when a candidate is moved to the Offer stage.
 //
@@ -90,6 +91,11 @@ export default function OfferLetterModal({ candidate, onClose, onSaved }) {
 
   const [jobTitle, setJobTitle]       = useState(candidate?.offer_job_title || candidate?.position || "");
   const [roleKey, setRoleKey]         = useState(candidate?.offer_role_key || "");
+  // Copied onto their team record when they accept.
+  const [teamRole, setTeamRole]       = useState(candidate?.offer_role || "");
+  const [teamCategory, setTeamCategory] = useState(candidate?.offer_role_category || "");
+  const [teamLevel, setTeamLevel]     = useState(candidate?.offer_role_level
+    || (ROLE_LEVELS.includes(candidate?.offer_job_title) ? candidate.offer_job_title : ""));
   const [tierKey, setTierKey]         = useState("");
   const [payType, setPayType]         = useState(candidate?.offer_pay_type || "");
   const [amount, setAmount]           = useState(candidate?.offer_pay_amount != null ? String(candidate.offer_pay_amount) : "");
@@ -229,7 +235,7 @@ export default function OfferLetterModal({ candidate, onClose, onSaved }) {
 
   const canSave = Boolean(jobTitle) && Boolean(payType) && amount !== ""
     && Number.isFinite(Number(amount)) && Number(amount) > 0
-    && Boolean(startDate) && !saving;
+    && Boolean(startDate) && Boolean(teamRole) && Boolean(teamCategory) && Boolean(teamLevel) && !saving;
 
   const save = async () => {
     if (!candidate?.id || !canSave) return;
@@ -242,6 +248,9 @@ export default function OfferLetterModal({ candidate, onClose, onSaved }) {
         status_updated_at: nowIso,
         offer_job_title:   jobTitle,
         offer_role_key:    roleKey || null,
+        offer_role:          teamRole || null,
+        offer_role_category: teamCategory || null,
+        offer_role_level:    teamLevel || null,
         offer_pay_type:    payType,
         offer_pay_amount:  Number(amount),
         offer_pay_period:  payPeriod,
@@ -334,6 +343,37 @@ export default function OfferLetterModal({ candidate, onClose, onSaved }) {
                   </select>
                 </div>
               )}
+            </div>
+
+            {/* What goes on their team record when they accept */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                          gap: 10, marginTop: 10 }}>
+              <div>
+                <label style={label}>Role</label>
+                <select style={input} value={teamRole} onChange={(e) => {
+                  const r = e.target.value;
+                  setTeamRole(r);
+                  const rc = roleCategoryFor(r);
+                  if (rc) setTeamCategory(rc);
+                }}>
+                  <option value="">—</option>
+                  {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={label}>Role category</label>
+                <select style={input} value={teamCategory} onChange={(e) => setTeamCategory(e.target.value)}>
+                  <option value="">—</option>
+                  {ROLE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={label}>Role level</label>
+                <select style={input} value={teamLevel} onChange={(e) => setTeamLevel(e.target.value)}>
+                  <option value="">—</option>
+                  {ROLE_LEVELS.filter(l => l !== "Owner").map(l => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </div>
             </div>
 
             {payRow && (
