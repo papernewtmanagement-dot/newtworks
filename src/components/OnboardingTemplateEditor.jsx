@@ -10,8 +10,8 @@
 // use the small arrows to move it, use the dashed row at the bottom of a
 // phase to add one.
 //
-// Table: onboarding_step_templates. Changing this list does not touch plans
-// that are already running — plan creation snapshots the steps it copies.
+// Table: onboarding_step_templates. Changes flow into every running plan
+// through onboarding_sync_plan(); ticked boxes stay ticked.
 // =========================================================================
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -22,10 +22,10 @@ import { useViewport } from "../lib/hooks.js";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, CATEGORY_KEYS, STAGE_LABELS,
-  subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText,
+  subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText,
 } from "../lib/onboardingUi.jsx";
 
-const COLS = "id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by, is_active";
+const COLS = "id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by, is_active, unlock_rule";
 
 const NEW_ID = "new";
 
@@ -109,6 +109,7 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
     track_order: row.track_order || 0,
     sort_order: row.sort_order || 100,
     blocked_by: Array.isArray(row.blocked_by) ? row.blocked_by : [],
+    unlock_rule: row.unlock_rule || "",
     applies_to_roles: Array.isArray(row.applies_to_roles) ? row.applies_to_roles : [],
     applies_to_role_categories: Array.isArray(row.applies_to_role_categories) ? row.applies_to_role_categories : [],
     applies_to_role_levels: Array.isArray(row.applies_to_role_levels) ? row.applies_to_role_levels : [],
@@ -180,6 +181,7 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
       track_order: Number(form.track_order) || 0,
       sort_order: Number(form.sort_order) || 100,
       blocked_by: nz(form.blocked_by),
+      unlock_rule: form.unlock_rule || null,
       applies_to_roles: nz(form.applies_to_roles),
       applies_to_role_categories: nz(form.applies_to_role_categories),
       applies_to_role_levels: nz(form.applies_to_role_levels),
@@ -330,7 +332,6 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
               <label style={fieldLabel}>Who does it</label>
               <select style={inputBase} value={form.owner} onChange={(e) => set({ owner: e.target.value })}>
                 <option value="new_hire">New hire</option>
-                <option value="agent">Peter</option>
                 <option value="admin">Admin (anyone)</option>
                 {people.map(p => (
                   <option key={p.id} value={`person:${p.id}`}>{personName(p)}</option>
@@ -420,6 +421,14 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
                 <div style={{ fontSize: 11, color: T.slate500, marginTop: 4 }}>
                   The step stays greyed out on a plan until these are ticked.
                 </div>
+              </div>
+
+              <div>
+                <label style={fieldLabel}>Opens</label>
+                <select style={inputBase} value={form.unlock_rule} onChange={(e) => set({ unlock_rule: e.target.value })}>
+                  <option value="">As soon as what it waits on is done</option>
+                  <option value="friday_before_start">Friday before they start</option>
+                </select>
               </div>
 
               <div>
@@ -562,7 +571,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
         track: sibs.length && sibs.every(s => s.track === sibs[0].track) ? sibs[0].track : null,
         track_order: last?.track_order || 0,
         sort_order: sibs.reduce((m, s) => Math.max(m, s.sort_order || 0), 0) + 10,
-        blocked_by: null, applies_to_roles: null,
+        blocked_by: null, unlock_rule: null, applies_to_roles: null,
         applies_to_role_categories: null, applies_to_role_levels: null,
         notes: "", is_active: true,
       };
@@ -615,7 +624,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
 
   const renderRow = (r, sibs) => {
     const cat = CATEGORY_COLORS[r.category] || { fg: T.slate700, bg: T.slate100, label: r.category || "Step" };
-    const groups = subGroups(r.substeps);
+    const groups = subGroups(r.substeps, { keepEmpty: true });
     const after = (r.blocked_by || []).map(k => titleByKey.get(k) || k);
     const idx = sibs.findIndex(s => s.id === r.id);
     const arrow = {
@@ -671,19 +680,33 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
         )}
         {groups.map((g, gi) => (
           <div key={gi} style={{ marginTop: 8 }}>
-            {g.group && (
+            {(g.group || g.altFor) && (
               <div style={{
                 fontSize: 10, fontWeight: 700, color: T.slate500,
                 textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3,
-              }}>{g.group}</div>
+              }}>{g.group || "Archived"}{g.altFor && (
+                <span style={{ textTransform: "none", fontWeight: 500 }}> — instead of: {g.altFor}</span>
+              )}</div>
             )}
             <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 3 }}>
+              {g.fill === "team_list" && (
+                <li style={{ fontSize: 12, color: T.slate500, lineHeight: 1.4, fontStyle: "italic" }}>
+                  Every teammate, filled in from the team list
+                </li>
+              )}
               {g.items.map((label2, ix) => (
-                <li key={ix} style={{ fontSize: 12, color: T.slate700, lineHeight: 1.4 }}>{label2}</li>
+                <li key={ix} style={{ fontSize: 12, color: T.slate700, lineHeight: 1.4 }}>
+                  <LabelText text={label2} pathColor={T.teal} linkColor={T.blue} />
+                </li>
               ))}
             </ul>
           </div>
         ))}
+        {r.unlock_rule === "friday_before_start" && (
+          <div style={{ fontSize: 10, color: T.amber, marginTop: 8, fontWeight: 600 }}>
+            Opens the Friday before they start
+          </div>
+        )}
         {after.length > 0 && (
           <div style={{ fontSize: 10, color: T.amber, marginTop: 8, fontWeight: 600 }}>
             After: {after.join(", ")}
@@ -713,7 +736,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <div style={{ fontSize: 12, color: T.slate800, lineHeight: 1.55, flex: "1 1 260px" }}>
             {activeRows.length} steps. Creating a plan copies the ones that match that person's role into their own
-            checklist. Changing this list does not change plans that are already running.
+            checklist. Changes here flow into plans that are already running, and ticked boxes stay ticked.
           </div>
           {canEdit && retiredCount > 0 && (
             <div style={{ fontSize: 12, color: T.red, fontWeight: 600, flex: "0 1 auto" }}>
@@ -743,7 +766,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
         const cols = trackColumns(phRows);
         const gridStyle = {
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
           gap: cols ? 16 : 10, alignItems: "start",
         };
         return (

@@ -46,19 +46,45 @@ export const STATUS_COLORS = {
 // ─── sub-item helpers ───────────────────────────────
 // Sub-items arrive either as a flat list of strings or as groups the old
 // paper checklists used ({ group, items }). Normalize both to groups.
-export function subGroups(substeps) {
+// Two extra keys a group can carry:
+//   alt_for  — the group is another way to do that one line (the archived
+//              login process, say). Shown in place of the line on request.
+//   fill     — "team_list": the database fills the items with the current
+//              team when it copies the step onto a plan. In the template the
+//              group is empty on purpose.
+export function subGroups(substeps, { keepEmpty = false } = {}) {
   if (!Array.isArray(substeps)) return [];
   const out = [];
   let flat = null;
   substeps.forEach(s => {
     if (s && typeof s === "object" && Array.isArray(s.items)) {
-      out.push({ group: s.group || null, items: s.items.filter(x => typeof x === "string") });
+      out.push({
+        group: s.group || null,
+        items: s.items.filter(x => typeof x === "string"),
+        altFor: s.alt_for || null,
+        fill: s.fill || null,
+      });
     } else if (typeof s === "string") {
-      if (!flat) { flat = { group: null, items: [] }; out.push(flat); }
+      if (!flat) { flat = { group: null, items: [], altFor: null, fill: null }; out.push(flat); }
       flat.items.push(s);
     }
   });
-  return out.filter(g => g.items.length);
+  return out.filter(g => g.items.length || (keepEmpty && g.fill));
+}
+
+// How far a step's sub-items are. A line that has an alternative counts as
+// done when it is ticked, or when every line of the alternative is ticked.
+// Mirrors onboarding_substeps_missing() in the database, which is what
+// actually decides whether the step can be completed.
+export function subProgress(substeps, done) {
+  const groups = subGroups(substeps);
+  const d = Array.isArray(done) ? done : [];
+  const alts = groups.filter(g => g.altFor);
+  const required = groups.filter(g => !g.altFor).reduce((acc, g) => acc.concat(g.items), []);
+  const ok = (label) => d.includes(label)
+    || alts.some(a => a.altFor === label && a.items.length && a.items.every(i => d.includes(i)));
+  const doneCount = required.filter(ok).length;
+  return { total: required.length, done: doneCount, complete: required.length > 0 && doneCount === required.length };
 }
 
 export function subAll(substeps) {
@@ -68,17 +94,22 @@ export function subAll(substeps) {
 // Sub-items as plain text for editing. One item per line. A heading line
 // ends with a colon and starts a group.
 export function substepsToText(substeps) {
-  const groups = subGroups(substeps);
   const lines = [];
-  groups.forEach(g => {
-    if (g.group) {
+  subGroups(substeps, { keepEmpty: true }).forEach(g => {
+    if (g.group || g.altFor || g.fill) {
       if (lines.length) lines.push("");
-      lines.push(`${g.group}:`);
+      const name = g.group || (g.altFor ? "Archived" : "Team");
+      lines.push(g.altFor ? `${name} (instead of: ${g.altFor}):` : `${name}:`);
     }
+    if (g.fill === "team_list") lines.push(TEAM_LIST_TOKEN);
     g.items.forEach(it => lines.push(it));
   });
   return lines.join("\n");
 }
+
+// Typed on its own line under a heading, this makes the group fill itself
+// with the current team.
+export const TEAM_LIST_TOKEN = "[Team list]";
 
 // Inverse of substepsToText. Keeps the flat shape when no headings were
 // used so a plain list never silently turns into a one-group object.
@@ -91,14 +122,24 @@ export function textToSubsteps(text) {
     if (!line) return;
     if (line.length > 1 && line.endsWith(":")) {
       sawHeading = true;
-      cur = { group: line.slice(0, -1).trim(), items: [] };
+      const head = line.slice(0, -1).trim();
+      const alt = /^(.*?)\s*\(instead of:\s*(.+)\)$/.exec(head);
+      cur = alt
+        ? { group: alt[1].trim() || "Archived", alt_for: alt[2].trim(), items: [] }
+        : { group: head, items: [] };
       groups.push(cur);
+      return;
+    }
+    if (line.toLowerCase() === TEAM_LIST_TOKEN.toLowerCase()) {
+      sawHeading = true;
+      if (!cur) { cur = { group: "Team", items: [] }; groups.push(cur); }
+      cur.fill = "team_list";
       return;
     }
     if (!cur) { cur = { group: null, items: [] }; groups.push(cur); }
     cur.items.push(line);
   });
-  const kept = groups.filter(g => g.items.length);
+  const kept = groups.filter(g => g.items.length || g.fill);
   if (!kept.length) return null;
   if (!sawHeading) return kept[0].items;
   return kept;
@@ -195,3 +236,60 @@ export const inputBase = {
   border: `1px solid ${T.slate300}`, borderRadius: 8,
   outline: "none",
 };
+
+// ─── sub-item text ───────────────────────────────────
+// Renders one sub-item label. [text](url) and bare web addresses become
+// links. A click path written with " > " (File > Options > Mail) is shown in
+// its own colour so it reads as a path. An icon, when one is on file for the
+// label, sits right after the text.
+const LINK_RE = /\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s)]+)/g;
+
+function pathPieces(text) {
+  const first = text.indexOf(" > ");
+  if (first < 0) return null;
+  const head = text.slice(0, first);
+  const cut = Math.max(head.lastIndexOf(": "), head.lastIndexOf(" - "), head.lastIndexOf("go to "));
+  const at = cut < 0 ? 0 : cut + (head.slice(cut).startsWith("go to ") ? 6 : 2);
+  return { lead: text.slice(0, at), path: text.slice(at).split(" > ") };
+}
+
+export function LabelText({ text, icon = null, pathColor, linkColor }) {
+  const parts = [];
+  let last = 0;
+  let m;
+  LINK_RE.lastIndex = 0;
+  while ((m = LINK_RE.exec(text))) {
+    if (m.index > last) parts.push({ t: text.slice(last, m.index) });
+    parts.push(m[3] ? { href: m[3], t: m[3] } : { href: m[2], t: m[1] });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push({ t: text.slice(last) });
+
+  const renderPlain = (t, key) => {
+    const pp = pathPieces(t);
+    if (!pp) return <span key={key}>{t}</span>;
+    return (
+      <span key={key}>
+        {pp.lead}
+        <span style={{ color: pathColor, fontWeight: 600 }}>
+          {pp.path.map((seg, i) => (
+            <span key={i}>{i > 0 && <span style={{ opacity: 0.7 }}> &gt; </span>}{seg}</span>
+          ))}
+        </span>
+      </span>
+    );
+  };
+
+  return (
+    <>
+      {parts.map((p, i) => p.href ? (
+        <a key={i} href={p.href} target={p.href.startsWith("/") ? undefined : "_blank"} rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          style={{ color: linkColor, textDecoration: "underline" }}>{p.t}</a>
+      ) : renderPlain(p.t, i))}
+      {icon && (
+        <img src={icon} alt="" style={{ height: 14, width: 14, marginLeft: 5, verticalAlign: "-2px" }} />
+      )}
+    </>
+  );
+}

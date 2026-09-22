@@ -31,8 +31,9 @@ import InfoDot from "../components/InfoDot.jsx";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
-  subGroups, subAll, trackColumns, wrapLongText,
+  subGroups, subProgress, trackColumns, wrapLongText, LabelText,
 } from "../lib/onboardingUi.jsx";
+import TeamForms from "../components/TeamForms.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
 import ReferenceCalls from "./ReferenceCalls.jsx";
 
@@ -45,14 +46,14 @@ const ADMIN_ROLES = ["owner", "manager"];
 // Fallback only. The real phase list lives in onboarding_phases so milestones
 // can be added without a deploy.
 const PHASE_LABELS = {
-  10: { name: "On offer",                    blurb: "Offer out. Licensing starts, prior appointments end." },
+  10: { name: "Before start",                blurb: "Everything before Day 1." },
   15: { name: "References and background",   blurb: "Runs as soon as they reply to the offer email." },
   20: { name: "Two weeks before start",      blurb: "System access, equipment, cards, nameplate." },
   25: { name: "Once they have an alias",     blurb: "Softphone and logins." },
   30: { name: "Once they have an extension", blurb: "Team list and call flow." },
   35: { name: "Workspace ready",             blurb: "Desk, hardware, keys. Confirmed working before Day 1." },
   40: { name: "Friday before start",         blurb: "Welcome call, schedule, printed packet." },
-  50: { name: "Day 1",                       blurb: "Tech setup, paperwork, keys, first walkthrough." },
+  50: { name: "Tech setup",                  blurb: "Log in first. The other tech cards and Weeks 1-2 open once Login is done." },
   55: { name: "Weeks 1-2",                   blurb: "Orientation, courses, shadowing. No production target." },
   60: { name: "Weeks 3-4",                   blurb: "First independent work, daily wrap-ups, weekly 1:1s." },
   65: { name: "Weeks 5-8",                   blurb: "Review cadence begins, Life pipeline starts, half shadow." },
@@ -73,6 +74,7 @@ function useOnboardingData(userId, isAdmin) {
     myTeamMemberId: null,
     planNames: {},       // plan_id -> name, for plans a teammate can see but whose person they cannot look up
     instructions: {},    // sub-item label -> { title, body_md } pop-up instructions
+    icons: {},           // sub-item label -> icon url, shown after the text
   });
 
   const load = useCallback(async () => {
@@ -81,7 +83,7 @@ function useOnboardingData(userId, isAdmin) {
       return;
     }
     try {
-      const [plansRes, teamRes, phasesRes, candsRes, instrRes] = await Promise.all([
+      const [plansRes, teamRes, phasesRes, candsRes, instrRes, iconRes] = await Promise.all([
         supabase.from("team_onboarding_plans")
           .select("id, agency_id, team_member_id, candidate_id, attached_at, role_snapshot, role_category_snapshot, role_level_snapshot, start_date, status, notes, created_by, created_at, updated_at")
           .eq("agency_id", AGENCY_ID)
@@ -101,6 +103,9 @@ function useOnboardingData(userId, isAdmin) {
         supabase.from("onboarding_instructions")
           .select("substep_label, title, body_md")
           .eq("agency_id", AGENCY_ID),
+        supabase.from("onboarding_substep_icons")
+          .select("substep_label, icon_url")
+          .eq("agency_id", AGENCY_ID),
       ]);
 
       const plans = plansRes.data || [];
@@ -109,12 +114,14 @@ function useOnboardingData(userId, isAdmin) {
       const candidates = candsRes.data || [];
       const instructions = {};
       (instrRes.data || []).forEach(r => { instructions[r.substep_label] = r; });
+      const icons = {};
+      (iconRes.data || []).forEach(r => { icons[r.substep_label] = r.icon_url; });
 
       let steps = [];
       if (plans.length) {
         const planIds = plans.map(p => p.id);
         const stepsRes = await supabase.from("team_onboarding_steps")
-          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, owner_kind, assigned_to, task_id, track, track_order, blocked_by, auto_source, auto_summary")
+          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, owner_kind, assigned_to, task_id, track, track_order, blocked_by, auto_source, auto_summary, unlock_rule, unlocks_on, widget")
           .in("plan_id", planIds)
           .order("phase", { ascending: true })
           .order("sort_order", { ascending: true });
@@ -131,7 +138,7 @@ function useOnboardingData(userId, isAdmin) {
         myTeamMemberId = mine?.id || null;
       }
 
-      setState({ loading: false, error: null, plans, steps, team, phases, candidates, myTeamMemberId, planNames, instructions });
+      setState({ loading: false, error: null, plans, steps, team, phases, candidates, myTeamMemberId, planNames, instructions, icons });
     } catch (e) {
       setState(s => ({ ...s, loading: false, error: e.message || "Failed to load onboarding data." }));
     }
@@ -214,8 +221,11 @@ function InstructionsModal({ item, onClose }) {
   );
 }
 
-function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleStep, onToggleSubstep, onUpdateStepNotes, onDeletePlan, onChangeStatus, isAdmin, phaseMeta, ownerName, instructions = {}, showBack = true }) {
+function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleStep, onToggleSubstep, onUpdateStepNotes, onDeletePlan, onChangeStatus, isAdmin, phaseMeta, ownerName, instructions = {}, icons = {}, showBack = true }) {
   const [expandedStep, setExpandedStep] = useState(null);
+  // step id -> true when someone chose the archived way of doing a line.
+  const [altOn, setAltOn] = useState({});
+  const todayCT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
   const [openInstr, setOpenInstr] = useState(null);
   const [editingNote, setEditingNote] = useState(null); // {stepId, text}
   const [savingId, setSavingId] = useState(null);
@@ -357,19 +367,39 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                 const isEditingThis = editingNote?.stepId === step.id;
                 const isSaving = savingId === step.id;
                 const groups = subGroups(step.substeps);
-                const subs = subAll(step.substeps);
                 const subsDone = Array.isArray(step.substeps_done) ? step.substeps_done : [];
+                const sp = subProgress(step.substeps, subsDone);
                 const done = !!step.completed_at;
                 const waitingOn = (step.blocked_by || [])
                   .filter(k => blockersOpen.has(k))
                   .map(k => blockersOpen.get(k));
-                const locked = !done && waitingOn.length > 0;
+                // Some steps open on a date (the Friday before start), not just
+                // when the steps before them are done.
+                const notYet = !done && step.unlocks_on && step.unlocks_on > todayCT;
+                const locked = !done && (waitingOn.length > 0 || notYet);
+                // A line with an archived alternative. Show the alternative
+                // when chosen, or when any of it is already ticked.
+                const altGroups = groups.filter(g => g.altFor);
+                const altActive = altGroups.length > 0 && (altOn[step.id] ??
+                  altGroups.some(g => g.items.some(i => subsDone.includes(i))));
+                const altToggle = altGroups.length > 0 && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setAltOn(m => ({ ...m, [step.id]: !altActive })); }}
+                    style={{
+                      background: "none", border: "none", padding: 0, marginLeft: 8,
+                      fontSize: 11, fontWeight: 600, color: T.blue, cursor: "pointer",
+                      textTransform: "none", letterSpacing: 0,
+                    }}
+                  >{altActive ? "Use the current process instead"
+                    : `Work ${(altGroups[0].group || "archived").toLowerCase()} process instead`}</button>
+                );
+                const altFor = new Set(altGroups.map(g => g.altFor));
                 // Some steps fill themselves in from elsewhere in Newtworks.
                 // They carry a short summary instead of hand checkboxes.
                 const isAuto = !!step.auto_source;
                 const autoSum = step.auto_summary && typeof step.auto_summary === "object" ? step.auto_summary : null;
                 // A step with sub-items cannot be ticked until they are all ticked.
-                const gated = !done && !isAuto && subs.length > 0 && !subs.every(s => subsDone.includes(s));
+                const gated = !done && !isAuto && sp.total > 0 && !sp.complete;
                 const boxOff = locked || gated || isAuto;
 
                 return (
@@ -393,7 +423,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                         }}
                         title={
                           isAuto ? "This one fills itself in"
-                          : gated ? `Finish all ${subs.length} sub-items first`
+                          : gated ? `Finish all ${sp.total} sub-items first`
                           : done ? "Mark incomplete" : "Mark complete"
                         }
                       >
@@ -412,6 +442,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                             }}
                           >
                             {step.title}
+                            {!collapsed && !locked && groups.some(g => !g.group && !g.altFor && g.items.some(i => altFor.has(i))) && altToggle}
                             {!step.is_required && (
                               <span style={{ marginLeft: 8, fontSize: 10, color: T.slate400, fontWeight: 500 }}>optional</span>
                             )}
@@ -430,9 +461,24 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                           </div>
                         )}
 
-                        {!collapsed && locked && (
+                        {!collapsed && locked && waitingOn.length > 0 && (
                           <div style={{ fontSize: 11, color: T.amber, marginTop: 4, fontWeight: 600 }}>
                             Waiting on: {waitingOn.join(", ")}
+                          </div>
+                        )}
+                        {!collapsed && notYet && (
+                          <div style={{ fontSize: 11, color: T.amber, marginTop: 4, fontWeight: 600 }}>
+                            Opens {fmtDate(step.unlocks_on)}
+                          </div>
+                        )}
+
+                        {!collapsed && !locked && step.widget === "team_forms" && (
+                          <div style={{ marginTop: 10, border: `1px solid ${T.slate200}`, borderRadius: 8, overflow: "hidden" }}>
+                            {plan.team_member_id
+                              ? <TeamForms teamId={plan.team_member_id} embedded />
+                              : <div style={{ fontSize: 12, color: T.slate500, padding: "10px 12px" }}>
+                                  The forms open once they are added to the team.
+                                </div>}
                           </div>
                         )}
 
@@ -499,18 +545,21 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
 
                         {!collapsed && !locked && groups.length > 0 && (
                           <div style={{ marginTop: 8 }}>
-                            {groups.map((g, gi) => (
+                            {groups.filter(g => !g.altFor).map((g, gi) => (
                               <div key={gi} style={{ marginTop: gi === 0 ? 0 : 10 }}>
                                 {g.group && (
                                   <div style={{
                                     fontSize: 10, fontWeight: 700, color: T.slate500,
                                     textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4,
-                                  }}>{g.group}</div>
+                                  }}>{g.group}{g.items.some(i => altFor.has(i)) && altToggle}</div>
                                 )}
                                 <div style={{ display: "grid", gap: 5 }}>
-                                  {g.items.map((label, ix) => {
+                                  {g.items.flatMap(label => (altActive && altFor.has(label))
+                                    ? altGroups.filter(a => a.altFor === label).flatMap(a => a.items)
+                                    : [label]).map((label, ix) => {
                                     const sd = subsDone.includes(label);
                                     const instr = instructions[label];
+                                    const icon = icons[label] || null;
                                     return (
                                       <div key={ix} style={{ display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0 }}>
                                       <button
@@ -534,7 +583,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                           fontSize: 12, lineHeight: 1.4,
                                           color: sd ? T.slate400 : T.slate700,
                                           textDecoration: sd ? "line-through" : "none",
-                                        }}>{label}</span>
+                                        }}><LabelText text={label} icon={icon} pathColor={sd ? T.slate400 : T.teal} linkColor={T.blue} /></span>
                                       </button>
                                       {instr && (
                                         <InfoDot title="Instructions" onClick={() => setOpenInstr(instr)} />
@@ -546,7 +595,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                               </div>
                             ))}
                             <div style={{ fontSize: 10, color: gated ? T.amber : T.slate400, marginTop: 6 }}>
-                              {subsDone.length}/{subs.length} done
+                              {sp.done}/{sp.total} done
                               {gated ? " — tick them all to finish this step" : ""}
                             </div>
                           </div>
@@ -620,7 +669,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
             const cols = trackColumns(phaseSteps);
             const gridStyle = {
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
               gap: cols ? 16 : 10, alignItems: "start",
             };
             if (!cols) return <div style={gridStyle}>{phaseSteps.map(renderStep)}</div>;
@@ -975,7 +1024,7 @@ function OnboardingSidebar({ plans, activePlanId, onTemplate, onNew, subjectName
 // ─── main component ────────────────────────────────
 export default function Onboarding({ userRole, userId }) {
   const isAdmin = ADMIN_ROLES.includes(userRole);
-  const { loading, error, plans, steps, team, phases, candidates, myTeamMemberId, planNames, instructions, reload } = useOnboardingData(userId, isAdmin);
+  const { loading, error, plans, steps, team, phases, candidates, myTeamMemberId, planNames, instructions, icons, reload } = useOnboardingData(userId, isAdmin);
 
   // URL-persisted so refresh keeps the same plan open. Replaces the prior
   // useState + manual ?plan= useEffect pair — useTabParam handles both the
@@ -1046,10 +1095,9 @@ export default function Onboarding({ userRole, userId }) {
       return;
     }
     if (!step.completed_at) {
-      const subs = subAll(step.substeps);
-      const already = Array.isArray(step.substeps_done) ? step.substeps_done : [];
-      if (subs.length && !subs.every(s => already.includes(s))) {
-        setActionError(`Finish all ${subs.length} sub-items first.`);
+      const sp = subProgress(step.substeps, step.substeps_done);
+      if (sp.total && !sp.complete) {
+        setActionError(`Finish all ${sp.total} sub-items first.`);
         return;
       }
     }
@@ -1064,10 +1112,9 @@ export default function Onboarding({ userRole, userId }) {
   // Ticking the last sub-item completes the step; unticking any re-opens it.
   const handleToggleSubstep = async (step, label) => {
     setActionError("");
-    const subs = subAll(step.substeps);
     const cur = Array.isArray(step.substeps_done) ? step.substeps_done : [];
     const next = cur.includes(label) ? cur.filter(l => l !== label) : [...cur, label];
-    const allDone = subs.length > 0 && subs.every(s => next.includes(s));
+    const allDone = subProgress(step.substeps, next).complete;
     const patch = { substeps_done: next };
     if (allDone && !step.completed_at) {
       patch.completed_at = new Date().toISOString();
@@ -1156,6 +1203,7 @@ export default function Onboarding({ userRole, userId }) {
             phaseMeta={phaseMeta}
             ownerName={ownerName}
             instructions={instructions}
+            icons={icons}
             onBack={() => setSelectedPlanId(null)}
             onToggleStep={handleToggleStep}
             onToggleSubstep={handleToggleSubstep}
@@ -1229,6 +1277,7 @@ export default function Onboarding({ userRole, userId }) {
             phaseMeta={phaseMeta}
             ownerName={ownerName}
             instructions={instructions}
+            icons={icons}
             onBack={() => setSelectedPlanId(null)}
             onToggleStep={handleToggleStep}
             onToggleSubstep={handleToggleSubstep}
