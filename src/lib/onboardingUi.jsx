@@ -73,9 +73,10 @@ export function subGroups(substeps, { keepEmpty = false } = {}) {
         altFor: s.alt_for || null,
         fill: s.fill || null,
         info: Array.isArray(s.info) ? s.info.filter(x => typeof x === "string") : [],
+        itemInfo: s.item_info && typeof s.item_info === "object" ? s.item_info : {},
       });
     } else if (typeof s === "string") {
-      if (!flat) { flat = { group: null, items: [], altFor: null, fill: null, info: [] }; out.push(flat); }
+      if (!flat) { flat = { group: null, items: [], altFor: null, fill: null, info: [], itemInfo: {} }; out.push(flat); }
       flat.items.push(s);
     }
   });
@@ -130,7 +131,10 @@ export function substepsToText(substeps) {
     }
     g.info.forEach(it => lines.push(`${INFO_PREFIX}${it}`));
     if (g.fill === "team_list") lines.push(TEAM_LIST_TOKEN);
-    g.items.forEach(it => lines.push(escapeSubItem(it)));
+    g.items.forEach(it => {
+      lines.push(escapeSubItem(it));
+      (g.itemInfo[it] || []).forEach(l => lines.push(`${INFO_PREFIX}${l}`));
+    });
   });
   return lines.join("\n");
 }
@@ -149,9 +153,18 @@ export function textToSubsteps(text) {
     if (!line) return;
     if (line.startsWith("\\")) { push(line.slice(1)); return; }
     if (line.startsWith(">")) {
+      // Right under a heading it goes behind the heading's (i); under a line,
+      // behind that line's (i).
       sawHeading = true;
+      const text = line.replace(/^>\s?/, "");
       if (!cur) { cur = { group: null, items: [] }; groups.push(cur); }
-      cur.info = (cur.info || []).concat(line.replace(/^>\s?/, ""));
+      if (cur.items.length) {
+        const last = cur.items[cur.items.length - 1];
+        cur.item_info = { ...(cur.item_info || {}) };
+        cur.item_info[last] = [...(cur.item_info[last] || []), text];
+      } else {
+        cur.info = (cur.info || []).concat(text);
+      }
       return;
     }
     if (line === "---") {
@@ -356,33 +369,55 @@ export function GroupHead({ label, info = [], extra = null, labelStyle = {}, sty
   return (
     <div style={style}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
-        {label && <span style={labelStyle}>{label}</span>}
+        {label && <span style={labelStyle}><LabelText text={label} pathColor={pathColor} linkColor={linkColor} /></span>}
         {extra}
         {hasInfo && (
           <InfoDot open={open} title="How to"
             onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }} />
         )}
       </div>
-      {hasInfo && open && (
-        <div style={{
-          margin: "5px 0 8px", padding: "8px 10px", boxSizing: "border-box",
-          background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 6,
-          fontSize: 12, color: T.slate700, lineHeight: 1.5, display: "grid", gap: 3,
-        }}>
-          {info.map((line, i) => line.trim().endsWith(":") ? (
-            <div key={i} style={{ fontWeight: 600 }}>
-              <LabelText text={line} pathColor={pathColor} linkColor={linkColor} />
-            </div>
-          ) : (
-            <div key={i} style={{ display: "flex", gap: 6, minWidth: 0 }}>
-              <span style={{ color: T.slate400 }}>•</span>
-              <span style={{ minWidth: 0 }}>
-                <LabelText text={line} pathColor={pathColor} linkColor={linkColor} />
-              </span>
-            </div>
-          ))}
+      {hasInfo && open && <InfoBox lines={info} pathColor={pathColor} linkColor={linkColor} />}
+    </div>
+  );
+}
+
+// The opened (i): how-to lines under a heading or a line.
+export function InfoBox({ lines = [], pathColor, linkColor }) {
+  return (
+    <div style={{
+      margin: "5px 0 8px", padding: "8px 10px", boxSizing: "border-box",
+      background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 6,
+      fontSize: 12, color: T.slate700, lineHeight: 1.5, display: "grid", gap: 3,
+      textTransform: "none", letterSpacing: 0,
+    }}>
+      {lines.map((line, i) => line.trim().endsWith(":") ? (
+        <div key={i} style={{ fontWeight: 600 }}>
+          <LabelText text={line} pathColor={pathColor} linkColor={linkColor} />
         </div>
-      )}
+      ) : (
+        <div key={i} style={{ display: "flex", gap: 6, minWidth: 0 }}>
+          <span style={{ color: T.slate400 }}>•</span>
+          <span style={{ minWidth: 0 }}>
+            <LabelText text={line} pathColor={pathColor} linkColor={linkColor} />
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// A sub-item line with its own (i): children is the line, lines open under it.
+export function ItemInfo({ lines = [], children, pathColor, linkColor }) {
+  const [open, setOpen] = useState(false);
+  if (!lines.length) return children;
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
+        <InfoDot open={open} title="How to"
+          onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }} />
+      </div>
+      {open && <InfoBox lines={lines} pathColor={pathColor} linkColor={linkColor} />}
     </div>
   );
 }

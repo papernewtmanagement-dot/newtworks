@@ -31,7 +31,7 @@ import InfoDot from "../components/InfoDot.jsx";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
-  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider,
+  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo,
 } from "../lib/onboardingUi.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
 import ReferenceCalls from "./ReferenceCalls.jsx";
@@ -379,6 +379,8 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                 // A line with an archived alternative. Show the alternative
                 // when chosen, or when any of it is already ticked.
                 const altGroups = groups.filter(g => g.altFor);
+                // line -> its own (i) lines, across every group on the card
+                const itemInfo = Object.assign({}, ...groups.map(g => g.itemInfo));
                 const altActive = altGroups.length > 0 && (altOn[step.id] ??
                   altGroups.some(g => g.items.some(i => subsDone.includes(i))));
                 const altToggle = altGroups.length > 0 && (
@@ -564,7 +566,8 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                     const instr = instructions[label];
                                     const icon = icons[label] || null;
                                     return (
-                                      <div key={ix} style={{ display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0 }}>
+                                      <ItemInfo key={ix} lines={itemInfo[label] || []} pathColor={T.teal} linkColor={T.blue}>
+                                      <div style={{ display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0 }}>
                                       <button
                                         onClick={byForm ? undefined : () => onToggleSubstep(step, label)}
                                         title={byForm ? "Ticks itself when the form is done" : undefined}
@@ -593,6 +596,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                         <InfoDot title="Instructions" onClick={() => setOpenInstr(instr)} />
                                       )}
                                       </div>
+                                      </ItemInfo>
                                     );
                                   })}
                                 </div>

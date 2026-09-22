@@ -22,7 +22,7 @@ import { useViewport } from "../lib/hooks.js";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, CATEGORY_KEYS, STAGE_LABELS,
-  subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText, GroupHead,
+  subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText, GroupHead, ItemInfo,
 } from "../lib/onboardingUi.jsx";
 
 const COLS = "id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by, is_active, unlock_rule, widget, assign_role_category, updated_at";
@@ -374,7 +374,7 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
             />
             <div style={{ fontSize: 11, color: T.slate500, marginTop: 4 }}>
               One per line. A line ending in a colon becomes a heading for the lines under it.
-              A line starting with &gt; goes behind the (i) on the heading above it.
+              A line starting with &gt; goes behind an (i): on the heading when it sits right under the heading, otherwise on the line above it.
             </div>
           </div>
 
@@ -807,7 +807,9 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
               ))}
               {g.items.map((label2, ix) => (
                 <li key={ix} style={{ fontSize: 12, color: T.slate700, lineHeight: 1.4 }}>
-                  <LabelText text={label2} pathColor={T.teal} linkColor={T.blue} />
+                  <ItemInfo lines={g.itemInfo[label2] || []} pathColor={T.teal} linkColor={T.blue}>
+                    <LabelText text={label2} pathColor={T.teal} linkColor={T.blue} />
+                  </ItemInfo>
                 </li>
               ))}
             </ul>
