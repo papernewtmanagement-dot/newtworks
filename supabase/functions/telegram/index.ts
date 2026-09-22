@@ -447,7 +447,7 @@ async function loadHealthTeamAliases(): Promise<{
 }> {
   const { data: allTeam } = await sb.from("team")
     .select("id, first_name, nickname, include_in_health_checkins, category")
-    .eq("agency_id", AGENCY_ID).is("archived_at", null).neq("is_test_user", true);
+    .eq("agency_id", AGENCY_ID).is("archived_at", null).eq("is_active", true).neq("is_test_user", true);
   const expectedTeam = (allTeam || []).filter((t: any) => {
     if (t.include_in_health_checkins === true) return true;
     if (t.include_in_health_checkins === false) return false;
@@ -904,7 +904,7 @@ async function handleTelegramWebhook(update: any): Promise<Response> {
     if (active) {
       const { data: allTeam } = await sb.from("team")
         .select("id, first_name, nickname, include_in_team_checkins, include_in_health_checkins, category, role")
-        .eq("agency_id", AGENCY_ID).is("archived_at", null).neq("is_test_user", true);
+        .eq("agency_id", AGENCY_ID).is("archived_at", null).eq("is_active", true).neq("is_test_user", true);
       const isHealth = active.checkin_type === "health_eve";
       const expectedTeam = (allTeam || []).filter((t: any) => {
         if (isHealth) {

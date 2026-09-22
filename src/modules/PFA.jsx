@@ -1183,7 +1183,7 @@ export default function PFA({ userRole, embedded = false }) {
     fetchAccount(false);
 
     supabase.from("team_directory").select("id, first_name").eq("agency_id", AGENCY_ID)
-      .is("archived_at", null).eq("is_admin_backoffice", false)
+      .is("archived_at", null).eq("is_active", true).eq("is_admin_backoffice", false)
       .order("first_name")
       .then(({ data, error }) => {
         if (cancelled) return;

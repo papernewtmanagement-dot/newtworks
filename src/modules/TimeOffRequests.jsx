@@ -1159,6 +1159,7 @@ function HistoryView({ me }) {
         .eq("agency_id", AGENCY_ID)
         .eq("category", "agency")
         .eq("is_admin_backoffice", false)
+        .eq("is_active", true)
         .is("archived_at", null)
         .order("first_name");
       setTeam(Array.isArray(data) ? data : []);
@@ -1344,6 +1345,7 @@ function LogTimeOffForm({ onLogged }) {
         .eq("agency_id", AGENCY_ID)
         .eq("category", "agency")
         .eq("is_admin_backoffice", false)
+        .eq("is_active", true)
         .is("archived_at", null)
         .neq("is_test_user", true)
         .order("first_name");
