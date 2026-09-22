@@ -1,61 +1,72 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink } from "../lib/routing.jsx";
+import InfoDot from "../components/InfoDot.jsx";
+import { DayDoneStyles, Confetti, Dancer, CritterIcon } from "../components/Critters.jsx";
 
 // =========================================================================
-// Family.jsx — kids' chores and chore money.
-// All money math lives in the database, one function per job:
-//   family_set_status()   records an outcome and snapshots its dollar effect
-//   family_sweep_missed() marks past, unlogged chores missed (with the fine)
-//   family_balances()     spend / tithe / invest per kid
-//   family_board()        what shows for one kid on one day, with due dates
-// This screen never computes a fine, a balance, or a due date itself.
-// The family login (role "family") sees This week + Money only and cannot excuse.
-// Week runs Sunday to Saturday, dates in Central time.
+// Family.jsx — kids' chores, chore money, and the weekly close-out.
+// All money rules live in the database, one function per job:
+//   family_set_status()      records a chore outcome and its dollar effect
+//   family_sweep_missed()    end of day: open chores are fined, stale extra picks go back
+//   family_week_board()      the week grid for one kid
+//   family_extras_available() extra chores anyone can pick on a day
+//   family_week_register()   where the money started and each event of a week
+//   family_close_week()      posts the week's chore pay and the 10% set-asides
+//   family_balances()        spending / tithe / investments per kid
+// This screen never works out a fine, a balance, a due date or a set-aside.
+// The close-out adds and subtracts the numbers it is given; that is the lesson.
+// Family login (role "family"): Done, Carry and extra chores only. Week, Money.
 // =========================================================================
 
+const PARENT_ROLES = ["owner", "manager"];
 const TABS = ["week", "money", "setup"];
-const TAB_LABELS = { week: "This week", money: "Money", setup: "Chores" };
-const PARTS = [["morning", "Morning"], ["afternoon", "Afternoon"], ["evening", "Evening"]];
+const TAB_LABELS = { week: "Week", money: "Money", setup: "Chores" };
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const PARENT_ROLES = ["owner", "manager"];
+const PARTS = [["morning", "Morning"], ["afternoon", "Afternoon"], ["evening", "Evening"], ["anytime", "Any Time"]];
+const DONE_STATES = ["claimed", "verified", "excused", "carried"];
 const LEDGER_KINDS = [
-  { kind: "payout",      bucket: "spend",  label: "Paid out cash",   sign: -1 },
-  { kind: "tithe_given", bucket: "tithe",  label: "Gave tithe",      sign: -1 },
-  { kind: "invested",    bucket: "invest", label: "Invested",        sign: -1 },
-  { kind: "bonus",       bucket: "spend",  label: "Bonus",           sign: 1 },
+  { kind: "payout",      bucket: "spend",  label: "Paid out cash",    sign: -1 },
+  { kind: "tithe_given", bucket: "tithe",  label: "Gave tithe",       sign: -1 },
+  { kind: "invested",    bucket: "invest", label: "Invested",         sign: -1 },
+  { kind: "bonus",       bucket: "spend",  label: "Bonus",            sign: 1 },
   { kind: "adjustment",  bucket: "spend",  label: "Adjustment (+/−)", sign: 0 },
 ];
 const KIND_LABELS = { opening_balance: "Starting balance" };
+
+const STATUS = {
+  claimed:     { icon: "✓", fg: T.blue,     label: "Done" },
+  verified:    { icon: "✓", fg: T.green,    label: "Checked" },
+  missed:      { icon: "✗", fg: T.amber,    label: "Not done" },
+  false_claim: { icon: "✗", fg: T.red,      label: "Said done, wasn't" },
+  excused:     { icon: "–", fg: T.slate400, label: "Excused" },
+  carried:     { icon: "→", fg: T.slate500, label: "Carried" },
+  picked:      { icon: "•", fg: T.blue,     label: "Picked" },
+};
 
 const money = (n) => {
   const v = Number(n);
   if (!Number.isFinite(v)) return "$0.00";
   return (v < 0 ? "−$" : "$") + Math.abs(v).toFixed(2);
 };
+const cents = (n) => Math.round(Number(n || 0) * 100);
+const fromCents = (c) => c / 100;
 const todayCentral = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
 const parseDate = (s) => { const [y, m, d] = String(s).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)); };
 const fmtDate = (dt) => dt.toISOString().slice(0, 10);
 const addDays = (s, n) => { const d = parseDate(s); d.setUTCDate(d.getUTCDate() + n); return fmtDate(d); };
 const weekStartOf = (s) => addDays(s, -parseDate(s).getUTCDay());
 const isDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+const shortDate = (s) => parseDate(s).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
-const STATUS = {
-  claimed:     { label: "Says done",           bg: T.blueLt,  fg: T.blue },
-  verified:    { label: "Checked",             bg: T.greenLt, fg: T.green },
-  missed:      { label: "Missed",              bg: T.amberLt, fg: T.amber },
-  false_claim: { label: "Said done, wasn't",   bg: T.redLt,   fg: T.red },
-  excused:     { label: "Excused",             bg: T.slate100, fg: T.slate500 },
-};
-
-const btn = (kind = "soft") => ({
+const btn = (kind = "soft", small = false) => ({
   border: `1px solid ${kind === "primary" ? T.blue : kind === "danger" ? T.red : T.slate200}`,
   background: kind === "primary" ? T.blue : T.white,
   color: kind === "primary" ? T.white : kind === "danger" ? T.red : T.slate700,
-  borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600,
+  borderRadius: 8, padding: small ? "4px 7px" : "6px 10px", fontSize: small ? 11 : 12, fontWeight: 600,
   cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", boxSizing: "border-box",
 });
 const card = { background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 14, boxSizing: "border-box" };
@@ -71,20 +82,23 @@ export default function Family({ userRole }) {
 
   const [kids, setKids] = useState([]);
   const [chores, setChores] = useState([]);
-  const [board, setBoard] = useState([]);
   const [checklists, setChecklists] = useState([]);
   const [balances, setBalances] = useState([]);
   const [ledger, setLedger] = useState([]);
   const [settings, setSettings] = useState(null);
+  const [board, setBoard] = useState([]);
+  const [extras, setExtras] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);
-  const [openChecklist, setOpenChecklist] = useState(null);
+  const [celebrate, setCelebrate] = useState(null);
+  const [closing, setClosing] = useState(null);
 
   const today = todayCentral();
-  const day = isDate(dateParam) ? dateParam : today;
-  const weekStart = weekStartOf(day);
+  const day = isDate(dateParam) && dateParam <= today ? dateParam : today;
+  const viewWeek = isDate(dateParam) ? weekStartOf(dateParam) : weekStartOf(today);
   const kid = kids.find(k => k.id === kidParam) || kids[0] || null;
+  const kidId = kid?.id || null;
   const visibleTabs = isParent ? TABS : TABS.filter(t => t !== "setup");
   const activeTab = visibleTabs.includes(tab) ? tab : "week";
 
@@ -96,45 +110,62 @@ export default function Family({ userRole }) {
         supabase.from("family_kids").select("*").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("family_chores").select("*").eq("agency_id", AGENCY_ID).order("sort_order"),
         supabase.from("family_checklists").select("*").eq("agency_id", AGENCY_ID),
-        supabase.rpc("family_balances", { p_week_start: weekStart }),
-        supabase.from("family_ledger").select("*").eq("agency_id", AGENCY_ID).order("entry_date", { ascending: false }).order("created_at", { ascending: false }).limit(50),
+        supabase.rpc("family_balances", { p_week_start: viewWeek }),
+        supabase.from("family_ledger").select("*").eq("agency_id", AGENCY_ID).order("entry_date", { ascending: false }).order("created_at", { ascending: false }).limit(60),
         supabase.from("family_settings").select("*").eq("agency_id", AGENCY_ID).maybeSingle(),
       ]);
       const firstErr = [k, c, cl, b, lg, s].find(r => r?.error)?.error;
       if (firstErr) throw firstErr;
-      setKids(k.data || []); setChores(c.data || []);
-      setChecklists(cl.data || []); setBalances(b.data || []); setLedger(lg.data || []);
-      setSettings(s.data || null);
+      setKids(k.data || []); setChores(c.data || []); setChecklists(cl.data || []);
+      setBalances(b.data || []); setLedger(lg.data || []); setSettings(s.data || null);
     } catch (e) {
       setErr(e?.message || String(e));
     } finally {
       setLoading(false);
     }
-  }, [weekStart]);
-
+  }, [viewWeek]);
   useEffect(() => { load(); }, [load]);
 
-  const kidId = kid?.id || null;
   const loadBoard = useCallback(async () => {
     if (!kidId) { setBoard([]); return; }
-    const { data, error } = await supabase.rpc("family_board", { p_kid_id: kidId, p_date: day });
-    if (error) { setErr(error.message); return; }
-    setBoard(Array.isArray(data) ? data : []);
-  }, [kidId, day]);
+    const [b, x] = await Promise.all([
+      supabase.rpc("family_week_board", { p_kid_id: kidId, p_week_start: viewWeek }),
+      supabase.rpc("family_extras_available", { p_date: day }),
+    ]);
+    if (b.error || x.error) { setErr((b.error || x.error).message); return; }
+    setBoard(Array.isArray(b.data) ? b.data : []);
+    setExtras(Array.isArray(x.data) ? x.data : []);
+  }, [kidId, viewWeek, day]);
   useEffect(() => { loadBoard(); }, [loadBoard]);
 
+  const todayDone = (rows) => {
+    const mine = (rows || []).filter(r => r.day === today && r.frequency !== "extra");
+    return mine.length > 0 && mine.every(r => DONE_STATES.includes(r.status));
+  };
+
   const setStatus = async (row, status) => {
-    setBusy(row.chore_id);
-    const { error } = await supabase.rpc("family_set_status", { p_chore_id: row.chore_id, p_occurrence_date: row.occurrence_date, p_status: status });
+    const wasDone = todayDone(board);
+    setBusy(row.chore_id + row.day);
+    const { error } = await supabase.rpc("family_set_status", {
+      p_chore_id: row.chore_id, p_occurrence_date: row.occurrence_date || row.day, p_status: status, p_kid_id: kidId,
+    });
     setBusy(null);
     if (error) { setErr(error.message); return; }
-    load(); loadBoard();
+    const { data } = await supabase.rpc("family_week_board", { p_kid_id: kidId, p_week_start: viewWeek });
+    const rows = Array.isArray(data) ? data : board;
+    setBoard(rows);
+    if (!wasDone && todayDone(rows) && kid) setCelebrate(kid);
+    load();
+    const x = await supabase.rpc("family_extras_available", { p_date: day });
+    if (!x.error) setExtras(x.data || []);
   };
 
   if (loading) return <div style={{ padding: _pad, color: T.slate500, fontSize: 13 }}>Loading…</div>;
 
+  const bal = balances.find(b => b.kid_id === kidId);
+
   return (
-    <div style={{ padding: _pad, maxWidth: 980, margin: "0 auto", boxSizing: "border-box" }}>
+    <div style={{ padding: _pad, maxWidth: 1080, margin: "0 auto", boxSizing: "border-box" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900 }}>Family</div>
         <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap" }}>
@@ -147,28 +178,32 @@ export default function Family({ userRole }) {
         </div>
       </div>
 
-      {err && <div style={{ ...card, background: T.redLt, borderColor: T.red, color: T.red, fontSize: 13, marginBottom: 12 }}>{err}</div>}
-
-      {activeTab !== "setup" && (
-        <KidPicker kids={kids} kid={kid} balances={balances} kidHref={kidHref} setKid={setKidParam} />
+      {err && (
+        <div style={{ ...card, background: T.redLt, borderColor: T.red, color: T.red, fontSize: 13, marginBottom: 12, display: "flex", justifyContent: "space-between", gap: 8 }}>
+          <span>{err}</span><button style={btn("soft", true)} onClick={() => setErr(null)}>OK</button>
+        </div>
       )}
+
+      {activeTab !== "setup" && <KidPicker kids={kids} kid={kid} balances={balances} kidHref={kidHref} setKid={setKidParam} />}
 
       {activeTab === "week" && kid && (
-        <WeekView
-          kid={kid} board={board} checklists={checklists} isParent={isParent}
-          day={day} today={today} weekStart={weekStart} dateHref={dateHref} setDate={setDateParam}
-          busy={busy} setStatus={setStatus} openChecklist={openChecklist} setOpenChecklist={setOpenChecklist}
-          balance={balances.find(b => b.kid_id === kid.id)}
-        />
+        <WeekGrid kid={kid} board={board} checklists={checklists} extras={extras} isParent={isParent}
+          day={day} today={today} weekStart={viewWeek} dateHref={dateHref} setDate={setDateParam}
+          busy={busy} setStatus={setStatus} balance={bal} />
       )}
       {activeTab === "money" && kid && (
-        <MoneyView kid={kid} balance={balances.find(b => b.kid_id === kid.id)}
-          ledger={ledger.filter(l => l.kid_id === kid.id)} onSaved={load} setErr={setErr} />
+        <MoneyView kid={kid} balance={bal} isParent={isParent} ledger={ledger.filter(l => l.kid_id === kid.id)}
+          onSaved={load} setErr={setErr} onClose={(ws) => setClosing({ kid, ws })} />
       )}
       {activeTab === "setup" && isParent && (
-        <SetupView kids={kids} chores={chores} checklists={checklists} settings={settings}
-          today={today} onSaved={load} setErr={setErr} />
+        <SetupView kids={kids} chores={chores} checklists={checklists} settings={settings} today={today} onSaved={load} setErr={setErr} />
       )}
+
+      {closing && (
+        <CloseOut kid={closing.kid} weekStart={closing.ws} isParent={isParent} setErr={setErr}
+          onDone={() => { setClosing(null); load(); loadBoard(); }} onCancel={() => setClosing(null)} />
+      )}
+      {celebrate && <Celebration kid={celebrate} onClose={() => setCelebrate(null)} />}
     </div>
   );
 }
@@ -181,10 +216,12 @@ function KidPicker({ kids, kid, balances, kidHref, setKid }) {
         const on = kid?.id === k.id;
         return (
           <TabLink key={k.id} href={kidHref(k.id)} onSelect={() => setKid(k.id)}
-            style={{ flexShrink: 0, textDecoration: "none", borderRadius: 999, padding: "8px 14px",
+            style={{ flexShrink: 0, textDecoration: "none", borderRadius: 999, padding: "5px 12px 5px 6px",
               border: `1px solid ${on ? T.blue : T.slate200}`, background: on ? T.blueLt : T.white,
-              color: T.slate900, fontSize: 13, fontWeight: 600 }}>
-            {k.name} <span style={{ color: Number(b?.spend) < 0 ? T.red : T.slate500, fontWeight: 500, marginLeft: 4 }}>{money(b?.spend)}</span>
+              color: T.slate900, fontSize: 13, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <CritterIcon which={k.animal} size={26} />
+            {k.name}
+            <span style={{ color: Number(b?.spend) < 0 ? T.red : T.slate500, fontWeight: 500 }}>{money(b?.spend)}</span>
           </TabLink>
         );
       })}
@@ -192,19 +229,53 @@ function KidPicker({ kids, kid, balances, kidHref, setKid }) {
   );
 }
 
-function WeekView({ kid, board, checklists, isParent, day, today, weekStart, dateHref, setDate, busy, setStatus, openChecklist, setOpenChecklist, balance }) {
-  const rows = Array.isArray(board) ? board : [];
-  const daily = rows.filter(r => r.frequency === "daily");
-  const dueToday = rows.filter(r => r.frequency === "weekly" && r.due_dow != null);
-  const anyDay = rows.filter(r => r.frequency === "weekly" && r.due_dow == null);
+// ─── Week grid ────────────────────────────────────────────────────────────
+function WeekGrid({ kid, board, checklists, extras, isParent, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
+  const _vp = useViewport();
+  const [openInfo, setOpenInfo] = useState(null);
+  const [pickId, setPickId] = useState("");
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
-  const row = (r) => (
-    <ChoreRow key={r.chore_id} row={r} isParent={isParent}
-      checklist={checklists.find(x => x.id === r.checklist_id)}
-      busy={busy === r.chore_id} setStatus={setStatus}
-      open={openChecklist === r.chore_id} toggle={() => setOpenChecklist(openChecklist === r.chore_id ? null : r.chore_id)} />
-  );
+  const { groups, cells } = useMemo(() => {
+    const meta = new Map();
+    const cellMap = new Map();
+    for (const r of (board || [])) {
+      if (!meta.has(r.chore_id)) meta.set(r.chore_id, r);
+      if (!cellMap.has(r.chore_id)) cellMap.set(r.chore_id, new Map());
+      cellMap.get(r.chore_id).set(r.day, r);
+    }
+    const list = [...meta.values()];
+    const g = [];
+    for (const [key, label] of PARTS) {
+      const rows = list.filter(r => r.frequency === "daily" && (r.part_of_day || "anytime") === key);
+      if (rows.length) g.push({ key, label, rows });
+    }
+    const weekly = list.filter(r => r.frequency === "weekly");
+    if (weekly.length) g.push({ key: "weekly", label: "Weekly", rows: weekly });
+    g.push({ key: "extra", label: "Extra Chores", rows: list.filter(r => r.frequency === "extra") });
+    return { groups: g, cells: cellMap };
+  }, [board]);
+
+  const activeW = isParent ? 150 : 76;
+  const pick = async () => {
+    if (!pickId) return;
+    await setStatus({ chore_id: pickId, day, occurrence_date: day }, "picked");
+    setPickId("");
+  };
+  const canPick = (isParent ? day <= today : day === today) && day >= kid.tracking_start;
+
+  const cellView = (r, d) => {
+    const c = cells.get(r.chore_id)?.get(d);
+    if (!c) return <span style={{ color: T.slate200 }}>·</span>;
+    const anyDay = r.frequency === "weekly" && r.due_dow == null && day >= weekStart && day <= addDays(weekStart, 6);
+    const active = c.can_act && (d === day || anyDay);
+    const st = c.status ? STATUS[c.status] : null;
+    if (!active) {
+      if (!st) return <span style={{ color: T.slate300 }}>{d < today && d >= kid.tracking_start ? "" : "·"}</span>;
+      return <span title={`${st.label}${Number(c.amount) ? " " + money(c.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>;
+    }
+    return <CellActions row={c} isParent={isParent} busy={busy === c.chore_id + c.day} setStatus={setStatus} />;
+  };
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -214,79 +285,164 @@ function WeekView({ kid, board, checklists, isParent, day, today, weekStart, dat
         <Stat label="Could earn" value={money(balance?.week_possible)} />
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 6, overflowX: "auto", whiteSpace: "nowrap" }}>
-        <TabLink href={dateHref(addDays(weekStart, -7))} onSelect={() => setDate(addDays(weekStart, -7))} style={{ ...btn(), flexShrink: 0, textDecoration: "none" }} ariaLabel="Previous week">‹</TabLink>
-        {days.map(d => (
-          <TabLink key={d} href={dateHref(d === today ? null : d)} onSelect={() => setDate(d === today ? null : d)}
-            style={{ ...btn(d === day ? "primary" : "soft"), flexShrink: 0, textDecoration: "none", minWidth: 48, textAlign: "center" }}>
-            {DAY_NAMES[parseDate(d).getUTCDay()]}<br /><span style={{ fontWeight: 500, fontSize: 11 }}>{Number(d.slice(8))}</span>
-          </TabLink>
-        ))}
-        <TabLink href={dateHref(addDays(weekStart, 7))} onSelect={() => setDate(addDays(weekStart, 7))} style={{ ...btn(), flexShrink: 0, textDecoration: "none" }} ariaLabel="Next week">›</TabLink>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <TabLink href={dateHref(addDays(weekStart, -7))} onSelect={() => setDate(addDays(weekStart, -7))} style={{ ...btn(), textDecoration: "none" }} ariaLabel="Previous week">‹</TabLink>
+        <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{shortDate(weekStart)} – {shortDate(addDays(weekStart, 6))}</div>
+        {addDays(weekStart, 7) <= today && (
+          <TabLink href={dateHref(addDays(weekStart, 7) > weekStartOf(today) ? null : addDays(weekStart, 7))}
+            onSelect={() => setDate(addDays(weekStart, 7) > weekStartOf(today) ? null : addDays(weekStart, 7))}
+            style={{ ...btn(), textDecoration: "none" }} ariaLabel="Next week">›</TabLink>
+        )}
       </div>
 
-      {day < kid.tracking_start && (
-        <div style={{ fontSize: 12, color: T.slate500 }}>Tracking for {kid.name} starts {kid.tracking_start}.</div>
-      )}
+      <div style={{ ...card, padding: 0, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+          <thead>
+            <tr>
+              <th style={{ position: "sticky", left: 0, background: T.white, zIndex: 1, textAlign: "left", padding: "10px", color: T.slate500, fontSize: 11, minWidth: _vp.isPhone ? 130 : 200 }}>Chore</th>
+              {days.map(d => {
+                const isActive = d === day;
+                const clickable = isParent && d <= today;
+                const label = <>{DAY_NAMES[parseDate(d).getUTCDay()]}<br /><span style={{ fontWeight: 500 }}>{Number(d.slice(8))}</span></>;
+                return (
+                  <th key={d} style={{ padding: "6px 4px", fontSize: 11, textAlign: "center", color: isActive ? T.blue : T.slate500,
+                    background: isActive ? T.blueLt : "transparent", minWidth: isActive ? activeW : 34, boxSizing: "border-box" }}>
+                    {clickable
+                      ? <TabLink href={dateHref(d === today ? null : d)} onSelect={() => setDate(d === today ? null : d)} style={{ color: "inherit", textDecoration: "none", fontWeight: 700 }}>{label}</TabLink>
+                      : <span style={{ fontWeight: 700 }}>{label}</span>}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map(g => (
+              <GroupRows key={g.key} g={g} days={days} day={day} cellView={cellView} checklists={checklists}
+                openInfo={openInfo} setOpenInfo={setOpenInfo} isPhone={_vp.isPhone} />
+            ))}
+          </tbody>
+        </table>
+      </div>
 
-      {PARTS.map(([key, label]) => {
-        const list = daily.filter(r => r.part_of_day === key);
-        if (!list.length) return null;
-        return <Section key={key} title={label}>{list.map(row)}</Section>;
-      })}
-
-      {dueToday.length > 0 && <Section title={`Weekly · due ${DAY_FULL[parseDate(day).getUTCDay()]}`}>{dueToday.map(row)}</Section>}
-      {anyDay.length > 0 && <Section title="Weekly · any day, due by Saturday">{anyDay.map(row)}</Section>}
-    </div>
-  );
-}
-
-function ChoreRow({ row, isParent, checklist, busy, setStatus, open, toggle }) {
-  const st = row.status ? STATUS[row.status] : null;
-  const act = (s) => setStatus(row, s);
-  const canAct = !!row.can_act;
-  return (
-    <div style={{ borderTop: `1px solid ${T.slate100}`, padding: "10px 0" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <div style={{ flex: "1 1 180px", minWidth: 0 }}>
-          <div style={{ fontSize: 14, color: T.slate900, fontWeight: 500 }}>
-            {row.group_label && <span style={{ fontSize: 11, color: T.slate500, marginRight: 6 }}>{row.group_label}</span>}
-            {row.title}
-            {checklist && (
-              <button onClick={toggle} style={{ border: "none", background: "none", color: T.blue, fontSize: 12, cursor: "pointer", marginLeft: 6, padding: 0, fontFamily: "inherit" }}>
-                {open ? "hide list" : "list"}
-              </button>
-            )}
-          </div>
-          <div style={{ fontSize: 12, color: T.slate500 }}>{Number(row.pay) > 0 ? money(row.pay) : "Expected, no pay"}</div>
+      {canPick && (
+        <div style={{ ...card, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700 }}>Want to earn more on {DAY_FULL[parseDate(day).getUTCDay()]}?</div>
+          <select value={pickId} onChange={e => setPickId(e.target.value)} style={{ ...input, flex: "1 1 200px" }}>
+            <option value="">Pick an extra chore…</option>
+            {(extras || []).map(x => <option key={x.chore_id} value={x.chore_id}>{x.title} · {money(x.pay)}</option>)}
+          </select>
+          <button style={btn("primary")} disabled={!pickId} onClick={pick}>Add</button>
         </div>
-        {st && (
-          <span style={{ background: st.bg, color: st.fg, borderRadius: 999, padding: "3px 9px", fontSize: 12, fontWeight: 600 }}>
-            {st.label} {Number(row.amount) !== 0 && money(row.amount)}
-          </span>
-        )}
-        {canAct && (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {!row.status && <button disabled={busy} style={btn("primary")} onClick={() => act("claimed")}>Done</button>}
-            {!row.status && isParent && <button disabled={busy} style={btn()} onClick={() => act("excused")}>Excuse</button>}
-            {row.status === "claimed" && <button disabled={busy} style={btn("primary")} onClick={() => act("verified")}>Checked</button>}
-            {row.status === "claimed" && <button disabled={busy} style={btn("danger")} onClick={() => act("false_claim")}>Wasn't done</button>}
-            {row.status === "missed" && <button disabled={busy} style={btn()} onClick={() => act("claimed")}>Done late</button>}
-            {row.status === "missed" && isParent && <button disabled={busy} style={btn()} onClick={() => act("excused")}>Excuse</button>}
-            {row.status && row.status !== "missed" && <button disabled={busy} style={btn()} onClick={() => act(null)}>Undo</button>}
-          </div>
-        )}
-      </div>
-      {open && checklist && (
-        <ul style={{ margin: "8px 0 0 0", paddingLeft: 20, fontSize: 13, color: T.slate700, lineHeight: 1.7 }}>
-          {(checklist.items || []).map((it, i) => <li key={i}>{it}</li>)}
-        </ul>
       )}
+      {day < kid.tracking_start && <div style={{ fontSize: 12, color: T.slate500 }}>Tracking for {kid.name} starts {shortDate(kid.tracking_start)}.</div>}
     </div>
   );
 }
 
-function MoneyView({ kid, balance, ledger, onSaved, setErr }) {
+function GroupRows({ g, days, day, cellView, checklists, openInfo, setOpenInfo, isPhone }) {
+  if (!g.rows.length) return null;
+  return (
+    <>
+      <tr>
+        <td colSpan={8} style={{ padding: "10px 10px 4px", fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em", borderTop: `1px solid ${T.slate100}` }}>{g.label}</td>
+      </tr>
+      {g.rows.map(r => {
+        const list = checklists.find(c => c.id === r.checklist_id);
+        const open = openInfo === r.chore_id;
+        const sub = r.is_burpees ? "Owed count in today's box"
+          : r.frequency === "weekly" ? (r.due_dow == null ? "Any day this week" : `Due ${DAY_FULL[r.due_dow]}`)
+          : Number(r.pay) > 0 ? money(r.pay) : "Expected, no pay";
+        return (
+          <FragmentRow key={r.chore_id}>
+            <tr style={{ borderTop: `1px solid ${T.slate100}` }}>
+              <td style={{ position: "sticky", left: 0, background: T.white, zIndex: 1, padding: "8px 10px", verticalAlign: "middle" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ color: T.slate900, fontWeight: 500, fontSize: isPhone ? 12 : 13 }}>
+                    {r.group_label && <span style={{ fontSize: 10, color: T.slate500, marginRight: 4 }}>{r.group_label}</span>}
+                    {r.title}
+                  </span>
+                  {list && <InfoDot open={open} onClick={() => setOpenInfo(open ? null : r.chore_id)} title="How to do it" />}
+                </div>
+                <div style={{ fontSize: 11, color: T.slate500 }}>{r.frequency === "weekly" && Number(r.pay) > 0 ? `${money(r.pay)} · ` : ""}{sub}</div>
+              </td>
+              {days.map(d => (
+                <td key={d} style={{ textAlign: "center", padding: "4px", background: d === day ? T.blueLt : "transparent", fontSize: 15 }}>{cellView(r, d)}</td>
+              ))}
+            </tr>
+            {open && list && (
+              <tr>
+                <td colSpan={8} style={{ padding: "0 10px 10px 16px" }}>
+                  <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: T.slate700, lineHeight: 1.7 }}>
+                    {(list.items || []).map((it, i) => <li key={i}>{it}</li>)}
+                  </ol>
+                </td>
+              </tr>
+            )}
+          </FragmentRow>
+        );
+      })}
+    </>
+  );
+}
+function FragmentRow({ children }) { return <>{children}</>; }
+
+function CellActions({ row, isParent, busy, setStatus }) {
+  const act = (s) => setStatus(row, s);
+  const st = row.status ? STATUS[row.status] : null;
+  const owed = row.is_burpees && row.burpees_owed != null ? (
+    <div style={{ fontSize: 12, fontWeight: 700, color: T.slate700, marginBottom: 3 }}>{row.burpees_owed}</div>
+  ) : null;
+  const wrap = (children) => <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap" }}>{children}</div>;
+
+  if (!row.status || row.status === "picked") {
+    return (
+      <div>
+        {owed}
+        {wrap(<>
+          <button disabled={busy} style={btn("primary", true)} onClick={() => act("claimed")}>Done</button>
+          {row.is_burpees && <button disabled={busy} style={btn("soft", true)} onClick={() => act("carried")}>Carry</button>}
+          {isParent && row.frequency !== "extra" && <button disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>}
+          {isParent && row.frequency !== "extra" && <button disabled={busy} style={btn("danger", true)} onClick={() => act("missed")}>Missed</button>}
+          {row.status === "picked" && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Put it back">✕</button>}
+        </>)}
+      </div>
+    );
+  }
+  if (isParent && row.status === "claimed") {
+    return wrap(<>
+      <span style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>
+      <button disabled={busy} style={btn("primary", true)} onClick={() => act("verified")}>Done</button>
+      <button disabled={busy} style={btn("danger", true)} onClick={() => act("false_claim")}>Missed</button>
+    </>);
+  }
+  return wrap(<>
+    <span title={`${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>
+      {st.icon}{row.is_burpees && row.status === "carried" ? ` ${row.burpees_owed}` : ""}
+    </span>
+    {isParent && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)}>Undo</button>}
+  </>);
+}
+
+function Celebration({ kid, onClose }) {
+  const _vp = useViewport();
+  const size = _vp.isPhone ? 76 : 120;
+  const troupe = [kid.animal, kid.favorite_animal, "beagle", "pug"].filter(Boolean);
+  useEffect(() => { const t = setTimeout(onClose, 12000); return () => clearTimeout(t); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.92)", zIndex: 60, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 20, boxSizing: "border-box" }}>
+      <DayDoneStyles />
+      <Confetti />
+      <div style={{ fontSize: _vp.isPhone ? 26 : 34, fontWeight: 800, color: T.slate900, textAlign: "center" }}>{kid.name}'s day is done!</div>
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "center" }}>
+        {troupe.map((w, i) => <Dancer key={w + i} which={w} size={size} delay={i * 120} />)}
+      </div>
+      <button style={btn("primary")} onClick={onClose}>Yay!</button>
+    </div>
+  );
+}
+
+// ─── Money ────────────────────────────────────────────────────────────────
+function MoneyView({ kid, balance, isParent, ledger, onSaved, setErr, onClose }) {
   const [kind, setKind] = useState("payout");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -296,11 +452,10 @@ function MoneyView({ kid, balance, ledger, onSaved, setErr }) {
   const save = async () => {
     const n = Number(amount);
     if (!Number.isFinite(n) || n === 0) return;
-    const signed = def.sign === 0 ? n : def.sign * Math.abs(n);
     setSaving(true);
     const { error } = await supabase.from("family_ledger").insert({
-      agency_id: AGENCY_ID, kid_id: kid.id, bucket: def.bucket, kind, amount: signed, note: note || null,
-      entry_date: todayCentral(),
+      agency_id: AGENCY_ID, kid_id: kid.id, bucket: def.bucket, kind,
+      amount: def.sign === 0 ? n : def.sign * Math.abs(n), note: note || null, entry_date: todayCentral(),
     });
     setSaving(false);
     if (error) { setErr(error.message); return; }
@@ -309,30 +464,38 @@ function MoneyView({ kid, balance, ledger, onSaved, setErr }) {
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
-      <div style={{ ...card, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+      <div style={{ ...card, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
         <Stat label="Spending money" value={money(balance?.spend)} tone={Number(balance?.spend) < 0 ? "red" : null} big />
         <Stat label={`Tithe (${Number(kid.tithe_pct)}%)`} value={money(balance?.tithe)} big />
-        <Stat label={`Invest (${Number(kid.invest_pct)}%)`} value={money(balance?.invest)} big />
+        <Stat label={`Investments (${Number(kid.invest_pct)}%)`} value={money(balance?.invest)} big />
+        {Number(balance?.pending_pay) > 0 && <Stat label="Paid at close-out" value={money(balance?.pending_pay)} big />}
       </div>
 
-      <Section title="Record money in or out">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, paddingTop: 10 }}>
-          <select value={kind} onChange={e => setKind(e.target.value)} style={input}>
-            {LEDGER_KINDS.map(k => <option key={k.kind} value={k.kind}>{k.label}</option>)}
-          </select>
-          <input value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" placeholder="Amount" style={input} />
-          <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note (optional)" style={input} />
-          <button disabled={saving || !amount} onClick={save} style={btn("primary")}>{saving ? "Saving…" : "Save"}</button>
+      {balance?.next_close && (
+        <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, borderColor: T.blue }}>
+          <div style={{ fontSize: 14, color: T.slate900 }}>The week of <b>{shortDate(balance.next_close)}</b> is over. Close it out to get paid.</div>
+          <button style={btn("primary")} onClick={() => onClose(balance.next_close)}>Close Out Week</button>
         </div>
-      </Section>
+      )}
+
+      {isParent && (
+        <Section title="Record money in or out">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, paddingTop: 10 }}>
+            <select value={kind} onChange={e => setKind(e.target.value)} style={input}>
+              {LEDGER_KINDS.map(k => <option key={k.kind} value={k.kind}>{k.label}</option>)}
+            </select>
+            <input value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" placeholder="Amount" style={input} />
+            <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note (optional)" style={input} />
+            <button disabled={saving || !amount} onClick={save} style={btn("primary")}>{saving ? "Saving…" : "Save"}</button>
+          </div>
+        </Section>
+      )}
 
       {ledger.length > 0 && (
         <Section title="History">
           {ledger.map(l => (
             <div key={l.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, borderTop: `1px solid ${T.slate100}`, padding: "8px 0", fontSize: 13 }}>
-              <div style={{ color: T.slate700 }}>
-                {l.entry_date} · {LEDGER_KINDS.find(k => k.kind === l.kind)?.label || KIND_LABELS[l.kind] || l.kind}{l.note ? ` · ${l.note}` : ""}
-              </div>
+              <div style={{ color: T.slate700 }}>{shortDate(l.entry_date)} · {LEDGER_KINDS.find(k => k.kind === l.kind)?.label || KIND_LABELS[l.kind] || l.kind}{l.note && l.note !== "Starting balance" ? ` · ${l.note}` : ""}</div>
               <div style={{ color: Number(l.amount) < 0 ? T.red : T.green, fontWeight: 600 }}>{money(l.amount)}</div>
             </div>
           ))}
@@ -342,26 +505,320 @@ function MoneyView({ kid, balance, ledger, onSaved, setErr }) {
   );
 }
 
+// ─── Close-out: the week's money, one problem at a time ──────────────────
+// Turns the register from the database into steps. Balances change only
+// when a step that moves money is solved.
+function buildSteps(reg) {
+  const pctT = Number(reg?.tithe_pct ?? 10), pctI = Number(reg?.invest_pct ?? 10);
+  const bal = { spend: cents(reg?.start?.spend), tithe: cents(reg?.start?.tithe), invest: cents(reg?.start?.invest) };
+  const start = { ...bal };
+  const steps = [];
+  for (const e of (reg?.events || [])) {
+    const amt = cents(e.amount);
+    if (e.is_income) {
+      const t = cents(e.tithe), iv = cents(e.invest);
+      steps.push({ kind: "pct", head: e.label, text: `What is ${pctT}% of ${money(fromCents(amt))}?`, base: amt, answer: t, after: { ...bal } });
+      if (pctI !== pctT) steps.push({ kind: "pct", head: e.label, text: `What is ${pctI}% of ${money(fromCents(amt))}?`, base: amt, answer: iv, after: { ...bal } });
+      steps.push({ kind: "col", head: e.label, text: "Take out your tithe.", a: amt, sign: -1, b: t, after: { ...bal } });
+      steps.push({ kind: "col", head: e.label, text: "Take out your investment.", a: amt - t, sign: -1, b: iv, after: { ...bal } });
+      bal.tithe += t;
+      steps.push({ kind: "col", head: "Tithe", text: "Add it to your tithe.", a: bal.tithe - t, sign: 1, b: t, after: { ...bal } });
+      bal.invest += iv;
+      steps.push({ kind: "col", head: "Investments", text: "Add it to your investments.", a: bal.invest - iv, sign: 1, b: iv, after: { ...bal } });
+      const net = amt - t - iv;
+      bal.spend += net;
+      steps.push({ kind: "col", head: "Spending money", text: "Add the rest to your spending money.", a: bal.spend - net, sign: 1, b: net, after: { ...bal } });
+    } else {
+      const bucket = ["spend", "tithe", "invest"].includes(e.bucket) ? e.bucket : "spend";
+      const before = bal[bucket];
+      bal[bucket] += amt;
+      steps.push({ kind: "col", head: e.label, text: amt < 0 ? "Take it out." : "Add it in.", a: before, sign: amt < 0 ? -1 : 1, b: Math.abs(amt), after: { ...bal } });
+    }
+  }
+  return { steps, start, end: { ...bal } };
+}
+
+function CloseOut({ kid, weekStart, isParent, setErr, onDone, onCancel }) {
+  const [reg, setReg] = useState(null);
+  const [idx, setIdx] = useState(0);
+  const [solved, setSolved] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    supabase.rpc("family_week_register", { p_kid_id: kid.id, p_week_start: weekStart }).then(({ data, error }) => {
+      if (!live) return;
+      if (error) { setErr(error.message); onCancel(); return; }
+      setReg(data);
+    });
+    return () => { live = false; };
+  }, [kid.id, weekStart]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const plan = useMemo(() => buildSteps(reg), [reg]);
+  const finished = reg && idx >= plan.steps.length;
+  const shown = !reg ? null : idx === 0 ? plan.start : plan.steps[Math.min(idx, plan.steps.length) - 1]?.after || plan.start;
+  const step = reg && !finished ? plan.steps[idx] : null;
+
+  const finish = async () => {
+    setSaving(true);
+    const { error } = await supabase.rpc("family_close_week", { p_kid_id: kid.id, p_week_start: weekStart, p_solved_by_parent: solved });
+    setSaving(false);
+    if (error) { setErr(error.message); return; }
+    onDone();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 55, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: 12, boxSizing: "border-box" }}>
+      <div style={{ ...card, width: "100%", maxWidth: 640, marginTop: 20, display: "grid", gap: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <CritterIcon which={kid.animal} size={30} />
+            <div style={{ fontSize: 17, fontWeight: 700, color: T.slate900 }}>{kid.name} · Week of {shortDate(weekStart)}</div>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {isParent && !finished && reg && <button style={btn()} onClick={() => { setSolved(true); setIdx(plan.steps.length); }}>Solve for Me</button>}
+            <button style={btn()} onClick={onCancel}>Close</button>
+          </div>
+        </div>
+
+        {!reg ? <div style={{ fontSize: 13, color: T.slate500 }}>Loading…</div> : (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 8 }}>
+              <MoneyBox label="Spending money" c={shown.spend} />
+              <MoneyBox label="Tithe" c={shown.tithe} />
+              <MoneyBox label="Investments" c={shown.invest} />
+            </div>
+            {plan.steps.length > 0 && !finished && <div style={{ fontSize: 12, color: T.slate500 }}>Step {idx + 1} of {plan.steps.length}</div>}
+            {step && (
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>{step.head}</div>
+                <div style={{ fontSize: 16, color: T.slate900, fontWeight: 600 }}>{step.text}</div>
+                {step.kind === "pct"
+                  ? <PercentStep key={idx} base={step.base} answer={step.answer} onSolved={() => setIdx(i => i + 1)} />
+                  : <ColumnMath key={idx} a={step.a} sign={step.sign} b={step.b} onSolved={() => setIdx(i => i + 1)} />}
+              </div>
+            )}
+            {finished && (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: T.green }}>
+                  {plan.steps.length ? "All done. Your money is up to date." : "No money moved this week."}
+                </div>
+                <button style={btn("primary")} disabled={saving} onClick={finish}>{saving ? "Saving…" : "Finish Week"}</button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MoneyBox({ label, c }) {
+  return (
+    <div style={{ border: `1px solid ${T.slate200}`, borderRadius: 10, padding: "8px 10px", background: T.slate50 }}>
+      <div style={{ fontSize: 11, color: T.slate500 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 800, color: c < 0 ? T.red : T.slate900 }}>{money(fromCents(c))}</div>
+    </div>
+  );
+}
+
+// Works out how to write a + sign·b as a column problem a kid can do: always
+// the bigger number on top, and a plain-English line when the answer is below zero.
+function planColumn(a, sign, b) {
+  const r = a + sign * b;
+  if (a >= 0 && sign > 0) return { top: a, bottom: b, op: "+", r, note: null };
+  if (a >= 0) return a >= b
+    ? { top: a, bottom: b, op: "−", r, note: null }
+    : { top: b, bottom: a, op: "−", r, note: "This takes more than you have. Subtract the smaller number from the bigger one. The answer is below zero." };
+  if (sign < 0) return { top: -a, bottom: b, op: "+", r, note: "You were already below zero, so this takes you further below. Add them. The answer stays below zero." };
+  return b >= -a
+    ? { top: b, bottom: -a, op: "−", r, note: "This pays back what you owed. Subtract what you owed from what came in." }
+    : { top: -a, bottom: b, op: "−", r, note: "This pays back part of what you owe. Subtract, and the answer is still below zero." };
+}
+const digitsOf = (n, len) => Array.from({ length: len }, (_, i) => Math.floor(n / Math.pow(10, i)) % 10);
+
+// Column addition or subtraction, one digit place at a time, right to left.
+// Carries show up after a column is answered; borrows are made for them before
+// they answer the column that needs one.
+function ColumnMath({ a, sign, b, onSolved }) {
+  const p = useMemo(() => planColumn(a, sign, b), [a, sign, b]);
+  const res = Math.abs(p.r);
+  const len = Math.max(String(p.top).length, String(p.bottom).length, String(res).length, 3);
+  const ansLen = Math.max(String(res).length, 3);
+  const top = digitsOf(p.top, len), bot = digitsOf(p.bottom, len), ans = digitsOf(res, len);
+
+  const work = useMemo(() => {
+    const carries = Array(len + 1).fill(0);
+    const snaps = [];
+    if (p.op === "+") {
+      let c = 0;
+      for (let i = 0; i < len; i++) { const s = top[i] + bot[i] + c; c = s >= 10 ? 1 : 0; carries[i + 1] = c; }
+    } else {
+      const t = [...top];
+      const crossed = Array(len).fill(false);
+      const ten = Array(len).fill(false);
+      for (let i = 0; i < len; i++) {
+        if (t[i] < bot[i]) {
+          let j = i + 1;
+          while (j < len && t[j] === 0) { t[j] = 9; crossed[j] = true; j++; }
+          if (j < len) { t[j] -= 1; crossed[j] = true; }
+          t[i] += 10; ten[i] = true;
+        }
+        snaps.push({ t: [...t], crossed: [...crossed], ten: [...ten] });
+      }
+    }
+    return { carries, snaps };
+  }, [p, len]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [place, setPlace] = useState(0);
+  const [got, setGot] = useState({});
+  const [wrong, setWrong] = useState(false);
+  const [val, setVal] = useState("");
+
+  const snap = p.op === "−" ? work.snaps[Math.min(place, len - 1)] : null;
+  const hint = () => {
+    if (p.op === "+") {
+      const c = work.carries[place];
+      return `${top[place]} + ${bot[place]}${c ? " + 1 carried" : ""} = ${top[place] + bot[place] + c}. Write the last digit.`;
+    }
+    return `${snap.t[place]} − ${bot[place]} = ${snap.t[place] - bot[place]}.`;
+  };
+
+  const tryDigit = (d) => {
+    if (!/^[0-9]$/.test(d)) return;
+    if (Number(d) === ans[place]) {
+      const next = { ...got, [place]: Number(d) };
+      setGot(next); setWrong(false); setVal("");
+      if (place + 1 >= ansLen) { setPlace(ansLen); setTimeout(onSolved, 700); }
+      else setPlace(place + 1);
+    } else { setWrong(true); setVal(""); }
+  };
+
+  const cols = [];
+  for (let i = len - 1; i >= 0; i--) { cols.push(i); if (i === 2) cols.push("."); }
+  const cellW = 30;
+  const colStyle = { width: cellW, textAlign: "center", fontSize: 22, fontFamily: "ui-monospace, Menlo, monospace", lineHeight: "30px", boxSizing: "border-box" };
+  const doneAll = place >= ansLen;
+  const showCarry = (i) => p.op === "+" && work.carries[i] && got[i - 1] !== undefined;
+  const topDigit = (i) => {
+    if (p.op !== "−" || !snap) return top[i];
+    const s = doneAll ? work.snaps[len - 1] : snap;
+    if (s.crossed[i] || s.ten[i]) return s.t[i];
+    return top[i];
+  };
+  const isCrossed = (i) => p.op === "−" && (doneAll ? work.snaps[len - 1] : snap)?.crossed[i];
+  const leading = (n, i) => i >= String(n).length && i > 2;
+
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      {p.note && <div style={{ fontSize: 13, color: T.slate700, background: T.amberLt, borderRadius: 8, padding: "8px 10px" }}>{p.note}</div>}
+      <div style={{ display: "inline-grid", justifyContent: "start", overflowX: "auto" }}>
+        <div style={{ display: "flex", paddingLeft: cellW }}>
+          {cols.map((i, k) => i === "." ? <div key={k} style={{ ...colStyle, width: 10 }} /> : (
+            <div key={k} style={{ ...colStyle, fontSize: 13, lineHeight: "16px", color: T.blue, fontWeight: 700 }}>
+              {showCarry(i) ? "1" : isCrossed(i) && !leading(p.top, i) ? topDigit(i) : ""}
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", paddingLeft: cellW }}>
+          {cols.map((i, k) => i === "." ? <div key={k} style={{ ...colStyle, width: 10 }}>.</div> : (
+            <div key={k} style={{ ...colStyle, color: leading(p.top, i) ? "transparent" : T.slate900, textDecoration: isCrossed(i) ? "line-through" : "none", textDecorationColor: T.red }}>
+              {(p.op === "−" && (doneAll ? work.snaps[len - 1] : snap)?.ten[i]) ? <span><sup style={{ fontSize: 11, color: T.blue }}>1</sup>{top[i]}</span> : top[i]}
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", borderBottom: `2px solid ${T.slate900}` }}>
+          <div style={{ ...colStyle, fontWeight: 700 }}>{p.op}</div>
+          {cols.map((i, k) => i === "." ? <div key={k} style={{ ...colStyle, width: 10 }}>.</div> : (
+            <div key={k} style={{ ...colStyle, color: leading(p.bottom, i) ? "transparent" : T.slate900 }}>{bot[i]}</div>
+          ))}
+        </div>
+        <div style={{ display: "flex" }}>
+          <div style={{ ...colStyle, fontWeight: 700, color: T.red }}>{p.r < 0 && doneAll ? "−" : ""}</div>
+          {cols.map((i, k) => {
+            if (i === ".") return <div key={k} style={{ ...colStyle, width: 10 }}>.</div>;
+            if (i >= ansLen) return <div key={k} style={colStyle} />;
+            if (got[i] !== undefined) return <div key={k} style={{ ...colStyle, color: T.green, fontWeight: 700 }}>{got[i]}</div>;
+            if (i === place) return (
+              <div key={k} style={colStyle}>
+                <input autoFocus value={val} inputMode="numeric" maxLength={1} aria-label="Digit"
+                  onChange={e => { const d = e.target.value.slice(-1); setVal(d); tryDigit(d); }}
+                  style={{ width: 26, height: 28, textAlign: "center", fontSize: 18, fontFamily: "inherit", boxSizing: "border-box", borderRadius: 6,
+                    border: `2px solid ${wrong ? T.red : T.blue}`, background: wrong ? T.redLt : T.white, padding: 0 }} />
+              </div>
+            );
+            return <div key={k} style={{ ...colStyle, color: T.slate300 }}>_</div>;
+          })}
+        </div>
+      </div>
+      {doneAll
+        ? <div style={{ fontSize: 14, fontWeight: 700, color: T.green }}>Right! {money(fromCents(p.r))}</div>
+        : wrong
+          ? <div style={{ fontSize: 13, color: T.red }}>Not quite. Try again. {hint()}</div>
+          : <div style={{ fontSize: 12, color: T.slate500 }}>Fill in the {place === 0 ? "pennies" : place === 1 ? "dimes" : place === 2 ? "dollars" : place === 3 ? "tens" : "next"} place.{p.op === "−" && snap?.ten[place] ? " We borrowed 10 for you." : ""}</div>}
+    </div>
+  );
+}
+
+// 10% of an amount. Fill in each digit place, then check. Rounds to the cent.
+function PercentStep({ base, answer, onSolved }) {
+  const len = Math.max(String(answer).length, 3);
+  const want = digitsOf(answer, len);
+  const [vals, setVals] = useState(Array(len).fill(""));
+  const [checked, setChecked] = useState(false);
+  const [tries, setTries] = useState(0);
+  const places = [];
+  for (let i = len - 1; i >= 0; i--) { places.push(i); if (i === 2) places.push("."); }
+  const right = vals.every((v, i) => v !== "" && Number(v) === want[i]);
+  const check = () => {
+    setChecked(true); setTries(t => t + 1);
+    if (right) setTimeout(onSolved, 700);
+  };
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 22, marginRight: 4 }}>$</span>
+        {places.map((i, k) => i === "." ? <span key={k} style={{ fontSize: 22 }}>.</span> : (
+          <input key={k} value={vals[i]} inputMode="numeric" maxLength={1} aria-label="Digit"
+            onChange={e => { const d = e.target.value.slice(-1); if (d && !/^[0-9]$/.test(d)) return; const n = [...vals]; n[i] = d; setVals(n); setChecked(false); }}
+            style={{ width: 30, height: 34, textAlign: "center", fontSize: 20, boxSizing: "border-box", borderRadius: 6, padding: 0, fontFamily: "inherit",
+              border: `2px solid ${checked ? (Number(vals[i]) === want[i] && vals[i] !== "" ? T.green : T.red) : T.slate300}` }} />
+        ))}
+        <button style={{ ...btn("primary"), marginLeft: 8 }} disabled={vals.some(v => v === "")} onClick={check}>Check</button>
+      </div>
+      {checked && right && <div style={{ fontSize: 14, fontWeight: 700, color: T.green }}>Right! {money(fromCents(answer))}</div>}
+      {checked && !right && (
+        <div style={{ fontSize: 13, color: T.red }}>
+          Not quite. 10% means move the decimal point one place to the left{tries > 1 ? `: ${money(fromCents(base))} becomes $${(base / 1000).toFixed(3)}` : ""}. Then round to the nearest cent.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Chores setup (parents) ───────────────────────────────────────────────
 function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr }) {
   const [draft, setDraft] = useState({});
   const [adding, setAdding] = useState(null);
-  const current = (k) => chores.filter(c => c.kid_id === k.id && (!c.active_to || c.active_to >= today));
+  const [addingExtra, setAddingExtra] = useState(null);
+  const current = (k) => chores.filter(c => c.kid_id === k.id && c.frequency !== "extra" && (!c.active_to || c.active_to >= today));
+  const extras = chores.filter(c => c.frequency === "extra" && (!c.active_to || c.active_to >= today));
 
   const saveChore = async (c) => {
     const d = draft[c.id]; if (!d) return;
     const patch = {};
+    if (d.title !== undefined) patch.title = d.title;
     if (d.pay !== undefined) patch.pay = Number(d.pay) || 0;
     if (d.fine !== undefined) patch.fine = d.fine === "" ? null : Number(d.fine);
-    if (d.title !== undefined) patch.title = d.title;
     if (d.due_dow !== undefined) patch.due_dow = d.due_dow === "" ? null : Number(d.due_dow);
+    if (d.repeat_days !== undefined) patch.repeat_days = d.repeat_days === "" ? null : Math.max(1, Number(d.repeat_days) || 1);
     const { error } = await supabase.from("family_chores").update(patch).eq("id", c.id);
     if (error) { setErr(error.message); return; }
     setDraft(x => { const n = { ...x }; delete n[c.id]; return n; });
     onSaved();
   };
-
   const removeChore = async (c) => {
-    if (!window.confirm(`Remove "${c.title}" from ${kids.find(k => k.id === c.kid_id)?.name}'s chores?`)) return;
+    if (!window.confirm(`Remove "${c.title}"?`)) return;
     const { count } = await supabase.from("family_chore_log").select("id", { count: "exact", head: true }).eq("chore_id", c.id);
     const res = count
       ? await supabase.from("family_chores").update({ active_to: addDays(today, -1) }).eq("id", c.id)
@@ -369,7 +826,6 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
     if (res.error) { setErr(res.error.message); return; }
     onSaved();
   };
-
   const addChore = async () => {
     const a = adding; if (!a?.title) return;
     const { error } = await supabase.from("family_chores").insert({
@@ -381,7 +837,16 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
     if (error) { setErr(error.message); return; }
     setAdding(null); onSaved();
   };
-
+  const addExtra = async () => {
+    const a = addingExtra; if (!a?.title) return;
+    const { error } = await supabase.from("family_chores").insert({
+      agency_id: AGENCY_ID, kid_id: null, title: a.title, frequency: "extra", pay: Number(a.pay) || 0,
+      repeat_days: a.repeat_days === "" || a.repeat_days == null ? null : Math.max(1, Number(a.repeat_days) || 1),
+      checklist_id: a.checklist_id || null, sort_order: 99, active_from: today,
+    });
+    if (error) { setErr(error.message); return; }
+    setAddingExtra(null); onSaved();
+  };
   const saveSetting = async (patch) => {
     const { error } = await supabase.from("family_settings").update({ ...patch, updated_at: new Date().toISOString() }).eq("agency_id", AGENCY_ID);
     if (error) setErr(error.message); else onSaved();
@@ -390,26 +855,74 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
     const { error } = await supabase.from("family_kids").update(patch).eq("id", k.id);
     if (error) setErr(error.message); else onSaved();
   };
+  const cellIn = (c, field, fallback, w = 70, placeholder) => {
+    const d = draft[c.id] || {};
+    return <input value={d[field] ?? (fallback ?? "")} placeholder={placeholder} inputMode={field === "title" ? "text" : "decimal"}
+      onChange={e => setDraft(x => ({ ...x, [c.id]: { ...(x[c.id] || {}), [field]: e.target.value } }))}
+      style={{ ...input, width: w }} />;
+  };
+  const th = { padding: "6px 4px", color: T.slate500, textAlign: "left", fontSize: 11 };
+  const td = { padding: "6px 4px" };
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <Section title="Fines">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, paddingTop: 10, fontSize: 13, color: T.slate700 }}>
-          <label>Smallest fine for a skipped chore
-            <input key={"mf" + settings?.min_fine} defaultValue={settings?.min_fine ?? ""} inputMode="decimal" style={{ ...input, width: "100%", marginTop: 4 }}
-              onBlur={e => Number(e.target.value) !== Number(settings?.min_fine) && saveSetting({ min_fine: Number(e.target.value) || 0 })} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, paddingTop: 10, fontSize: 13, color: T.slate700 }}>
+          <label>Fine for a chore not done by the end of the day
+            <input key={"mf" + settings?.missed_fine} defaultValue={settings?.missed_fine ?? ""} inputMode="decimal" style={{ ...input, width: "100%", marginTop: 4 }}
+              onBlur={e => Number(e.target.value) !== Number(settings?.missed_fine) && saveSetting({ missed_fine: Number(e.target.value) || 0 })} />
           </label>
           <label>Saying it's done when it isn't costs this many times the fine
             <input key={"fm" + settings?.false_claim_multiplier} defaultValue={settings?.false_claim_multiplier ?? ""} inputMode="decimal" style={{ ...input, width: "100%", marginTop: 4 }}
               onBlur={e => Number(e.target.value) !== Number(settings?.false_claim_multiplier) && saveSetting({ false_claim_multiplier: Math.max(1, Number(e.target.value) || 1) })} />
           </label>
         </div>
-        <div style={{ fontSize: 12, color: T.slate500, paddingTop: 8 }}>A skipped chore loses its pay and costs its own fine, or its pay if no fine is set, never less than the smallest fine.</div>
+        <div style={{ fontSize: 12, color: T.slate500, paddingTop: 8 }}>A chore's own fine, if you set one below, wins over this.</div>
+      </Section>
+
+      <Section title="Extra Chores">
+        <div style={{ fontSize: 12, color: T.slate500, paddingTop: 6 }}>Paid the moment they're done. "Comes back" is the number of days before it shows up again. Leave it blank for a one-time job.</div>
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", marginTop: 8 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr><th style={th}>Chore</th><th style={th}>Price</th><th style={th}>Comes back (days)</th><th /></tr></thead>
+            <tbody>
+              {extras.map(c => (
+                <tr key={c.id} style={{ borderTop: `1px solid ${T.slate100}` }}>
+                  <td style={{ ...td, minWidth: 180 }}>{cellIn(c, "title", c.title, "100%")}</td>
+                  <td style={td}>{cellIn(c, "pay", c.pay)}</td>
+                  <td style={td}>{cellIn(c, "repeat_days", c.repeat_days, 70, "once")}</td>
+                  <td style={{ ...td, whiteSpace: "nowrap", textAlign: "right" }}>
+                    {draft[c.id] && <button style={btn("primary")} onClick={() => saveChore(c)}>Save</button>}{" "}
+                    <button style={btn()} onClick={() => removeChore(c)} aria-label="Remove">✕</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {addingExtra ? (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, paddingTop: 10 }}>
+            <input autoFocus value={addingExtra.title} onChange={e => setAddingExtra({ ...addingExtra, title: e.target.value })} placeholder="Extra chore" style={input} />
+            <input value={addingExtra.pay} onChange={e => setAddingExtra({ ...addingExtra, pay: e.target.value })} inputMode="decimal" placeholder="Price" style={input} />
+            <input value={addingExtra.repeat_days} onChange={e => setAddingExtra({ ...addingExtra, repeat_days: e.target.value })} inputMode="numeric" placeholder="Comes back (days)" style={input} />
+            <select value={addingExtra.checklist_id || ""} onChange={e => setAddingExtra({ ...addingExtra, checklist_id: e.target.value || null })} style={input}>
+              <option value="">No instructions</option>
+              {checklists.map(cl => <option key={cl.id} value={cl.id}>{cl.name}</option>)}
+            </select>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button style={btn("primary")} onClick={addExtra} disabled={!addingExtra.title}>Add</button>
+              <button style={btn()} onClick={() => setAddingExtra(null)}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <button style={{ ...btn(), marginTop: 10 }} onClick={() => setAddingExtra({ title: "", pay: "", repeat_days: "", checklist_id: null })}>+ Add extra chore</button>
+        )}
       </Section>
 
       {kids.map(k => (
         <Section key={k.id} title={k.name}>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", paddingTop: 10, fontSize: 12, color: T.slate700 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", paddingTop: 10, fontSize: 12, color: T.slate700, alignItems: "center" }}>
+            <CritterIcon which={k.animal} size={28} />
             <label>Tithe % <input key={"t" + k.tithe_pct} defaultValue={k.tithe_pct} inputMode="decimal" style={{ ...input, width: 64 }}
               onBlur={e => Number(e.target.value) !== Number(k.tithe_pct) && saveKid(k, { tithe_pct: Number(e.target.value) || 0 })} /></label>
             <label>Invest % <input key={"i" + k.invest_pct} defaultValue={k.invest_pct} inputMode="decimal" style={{ ...input, width: 64 }}
@@ -417,37 +930,25 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
           </div>
           <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", marginTop: 8 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-              <thead>
-                <tr style={{ color: T.slate500, textAlign: "left", fontSize: 11 }}>
-                  <th style={{ padding: "6px 4px" }}>Chore</th><th style={{ padding: "6px 4px" }}>When</th>
-                  <th style={{ padding: "6px 4px" }}>Pay</th><th style={{ padding: "6px 4px" }}>Fine</th><th />
-                </tr>
-              </thead>
+              <thead><tr><th style={th}>Chore</th><th style={th}>When</th><th style={th}>Pay</th><th style={th}>Fine</th><th /></tr></thead>
               <tbody>
                 {current(k).map(c => {
                   const d = draft[c.id] || {};
-                  const set = (f, v) => setDraft(x => ({ ...x, [c.id]: { ...(x[c.id] || {}), [f]: v } }));
                   return (
                     <tr key={c.id} style={{ borderTop: `1px solid ${T.slate100}` }}>
-                      <td style={{ padding: "6px 4px", minWidth: 160 }}>
-                        <input value={d.title ?? c.title} onChange={e => set("title", e.target.value)} style={{ ...input, width: "100%" }} />
-                      </td>
-                      <td style={{ padding: "6px 4px", color: T.slate500, whiteSpace: "nowrap" }}>
-                        {c.frequency === "daily" ? (PARTS.find(p => p[0] === c.part_of_day)?.[1] || "Daily") : (
-                          <select value={d.due_dow ?? (c.due_dow ?? "")} onChange={e => set("due_dow", e.target.value)} style={{ ...input, padding: "5px 6px" }}>
+                      <td style={{ ...td, minWidth: 170 }}>{cellIn(c, "title", c.title, "100%")}</td>
+                      <td style={{ ...td, color: T.slate500, whiteSpace: "nowrap" }}>
+                        {c.frequency === "daily" ? (PARTS.find(p => p[0] === (c.part_of_day || "anytime"))?.[1] || "Daily") : (
+                          <select value={d.due_dow ?? (c.due_dow ?? "")} onChange={e => setDraft(x => ({ ...x, [c.id]: { ...(x[c.id] || {}), due_dow: e.target.value } }))} style={{ ...input, padding: "5px 6px" }}>
                             <option value="">Any day</option>
                             {DAY_FULL.map((n, i) => <option key={n} value={i}>{n}</option>)}
                           </select>
                         )}
                         {c.group_label && <span style={{ marginLeft: 6, fontSize: 11 }}>{c.group_label}</span>}
                       </td>
-                      <td style={{ padding: "6px 4px" }}>
-                        <input value={d.pay ?? c.pay} onChange={e => set("pay", e.target.value)} inputMode="decimal" style={{ ...input, width: 70 }} />
-                      </td>
-                      <td style={{ padding: "6px 4px" }}>
-                        <input value={d.fine ?? (c.fine ?? "")} onChange={e => set("fine", e.target.value)} inputMode="decimal" placeholder="auto" style={{ ...input, width: 70 }} />
-                      </td>
-                      <td style={{ padding: "6px 4px", whiteSpace: "nowrap", textAlign: "right" }}>
+                      <td style={td}>{cellIn(c, "pay", c.pay)}</td>
+                      <td style={td}>{cellIn(c, "fine", c.fine, 70, "auto")}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap", textAlign: "right" }}>
                         {draft[c.id] && <button style={btn("primary")} onClick={() => saveChore(c)}>Save</button>}{" "}
                         <button style={btn()} onClick={() => removeChore(c)} aria-label="Remove">✕</button>
                       </td>
@@ -473,7 +974,7 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
               )}
               <input value={adding.pay} onChange={e => setAdding({ ...adding, pay: e.target.value })} inputMode="decimal" placeholder="Pay" style={input} />
               <select value={adding.checklist_id || ""} onChange={e => setAdding({ ...adding, checklist_id: e.target.value || null })} style={input}>
-                <option value="">No checklist</option>
+                <option value="">No instructions</option>
                 {checklists.map(cl => <option key={cl.id} value={cl.id}>{cl.name}</option>)}
               </select>
               <div style={{ display: "flex", gap: 6 }}>
@@ -482,7 +983,7 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
               </div>
             </div>
           ) : (
-            <button style={{ ...btn(), marginTop: 10 }} onClick={() => setAdding({ kid_id: k.id, title: "", frequency: "daily", part_of_day: "morning", pay: "", checklist_id: null })}>+ Add chore</button>
+            <button style={{ ...btn(), marginTop: 10 }} onClick={() => setAdding({ kid_id: k.id, title: "", frequency: "daily", part_of_day: "morning", pay: "", due_dow: "", checklist_id: null })}>+ Add chore</button>
           )}
         </Section>
       ))}
