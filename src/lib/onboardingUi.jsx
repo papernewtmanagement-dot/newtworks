@@ -10,7 +10,9 @@
 // slowly drifts.
 // =========================================================================
 
+import { useState } from "react";
 import { T } from "./theme.js";
+import InfoDot from "../components/InfoDot.jsx";
 
 // ─── colour maps ────────────────────────────────────
 export const STAGE_LABELS = {
@@ -52,6 +54,8 @@ export const STATUS_COLORS = {
 //   fill     — "team_list": the database fills the items with the current
 //              team when it copies the step onto a plan. In the template the
 //              group is empty on purpose.
+//   info     — lines shown when the (i) on the heading is opened. How-to
+//              detail, not checkboxes; they never count toward finishing.
 export function subGroups(substeps, { keepEmpty = false } = {}) {
   if (!Array.isArray(substeps)) return [];
   const out = [];
@@ -63,13 +67,14 @@ export function subGroups(substeps, { keepEmpty = false } = {}) {
         items: s.items.filter(x => typeof x === "string"),
         altFor: s.alt_for || null,
         fill: s.fill || null,
+        info: Array.isArray(s.info) ? s.info.filter(x => typeof x === "string") : [],
       });
     } else if (typeof s === "string") {
-      if (!flat) { flat = { group: null, items: [], altFor: null, fill: null }; out.push(flat); }
+      if (!flat) { flat = { group: null, items: [], altFor: null, fill: null, info: [] }; out.push(flat); }
       flat.items.push(s);
     }
   });
-  return out.filter(g => g.items.length || (keepEmpty && g.fill));
+  return out.filter(g => g.items.length || g.info.length || (keepEmpty && g.fill));
 }
 
 // How far a step's sub-items are. A line that has an alternative counts as
@@ -101,6 +106,7 @@ export function substepsToText(substeps) {
       const name = g.group || (g.altFor ? "Archived" : "Team");
       lines.push(g.altFor ? `${name} (instead of: ${g.altFor}):` : `${name}:`);
     }
+    g.info.forEach(it => lines.push(`${INFO_PREFIX}${it}`));
     if (g.fill === "team_list") lines.push(TEAM_LIST_TOKEN);
     g.items.forEach(it => lines.push(it));
   });
@@ -110,6 +116,9 @@ export function substepsToText(substeps) {
 // Typed on its own line under a heading, this makes the group fill itself
 // with the current team.
 export const TEAM_LIST_TOKEN = "[Team list]";
+
+// A line that starts with this goes behind the (i) on the heading above it.
+export const INFO_PREFIX = "> ";
 
 // Inverse of substepsToText. Keeps the flat shape when no headings were
 // used so a plain list never silently turns into a one-group object.
@@ -130,6 +139,12 @@ export function textToSubsteps(text) {
       groups.push(cur);
       return;
     }
+    if (line.startsWith(">")) {
+      sawHeading = true;
+      if (!cur) { cur = { group: null, items: [] }; groups.push(cur); }
+      cur.info = (cur.info || []).concat(line.replace(/^>\s?/, ""));
+      return;
+    }
     if (line.toLowerCase() === TEAM_LIST_TOKEN.toLowerCase()) {
       sawHeading = true;
       if (!cur) { cur = { group: "Team", items: [] }; groups.push(cur); }
@@ -139,7 +154,7 @@ export function textToSubsteps(text) {
     if (!cur) { cur = { group: null, items: [] }; groups.push(cur); }
     cur.items.push(line);
   });
-  const kept = groups.filter(g => g.items.length || g.fill);
+  const kept = groups.filter(g => g.items.length || g.fill || (g.info && g.info.length));
   if (!kept.length) return null;
   if (!sawHeading) return kept[0].items;
   return kept;
@@ -291,5 +306,47 @@ export function LabelText({ text, icon = null, pathColor, linkColor }) {
         <img src={icon} alt="" style={{ height: 14, width: 14, marginLeft: 5, verticalAlign: "-2px" }} />
       )}
     </>
+  );
+}
+
+// ─── a sub-item heading ──────────────────────────────
+// The heading of a group of sub-items. When the group carries info lines it
+// gets the (i); opening it shows those lines under the heading. extra is
+// anything else that sits on the heading line (the archived-process link).
+export function GroupHead({ label, info = [], extra = null, labelStyle = {}, style = {}, pathColor, linkColor }) {
+  const [open, setOpen] = useState(false);
+  const hasInfo = info.length > 0;
+  if (!label && !hasInfo && !extra) return null;
+  return (
+    <div style={style}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
+        {label && <span style={labelStyle}>{label}</span>}
+        {extra}
+        {hasInfo && (
+          <InfoDot open={open} title="How to"
+            onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }} />
+        )}
+      </div>
+      {hasInfo && open && (
+        <div style={{
+          margin: "5px 0 8px", padding: "8px 10px", boxSizing: "border-box",
+          background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 6,
+          fontSize: 12, color: T.slate700, lineHeight: 1.5, display: "grid", gap: 3,
+        }}>
+          {info.map((line, i) => line.trim().endsWith(":") ? (
+            <div key={i} style={{ fontWeight: 600 }}>
+              <LabelText text={line} pathColor={pathColor} linkColor={linkColor} />
+            </div>
+          ) : (
+            <div key={i} style={{ display: "flex", gap: 6, minWidth: 0 }}>
+              <span style={{ color: T.slate400 }}>•</span>
+              <span style={{ minWidth: 0 }}>
+                <LabelText text={line} pathColor={pathColor} linkColor={linkColor} />
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

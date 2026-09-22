@@ -31,7 +31,7 @@ import InfoDot from "../components/InfoDot.jsx";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
-  subGroups, subProgress, trackColumns, wrapLongText, LabelText,
+  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead,
 } from "../lib/onboardingUi.jsx";
 import TeamForms from "../components/TeamForms.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
@@ -552,11 +552,18 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                           <div style={{ marginTop: 8 }}>
                             {groups.filter(g => !g.altFor).map((g, gi) => (
                               <div key={gi} style={{ marginTop: gi === 0 ? 0 : 10 }}>
-                                {g.group && (
-                                  <div style={{
-                                    fontSize: 10, fontWeight: 700, color: T.slate500,
-                                    textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4,
-                                  }}>{g.group}{g.items.some(i => altFor.has(i)) && altToggle}</div>
+                                {(g.group || g.info.length > 0) && (
+                                  <GroupHead
+                                    label={g.group}
+                                    info={g.info}
+                                    extra={g.items.some(i => altFor.has(i)) ? altToggle : null}
+                                    style={{ marginBottom: 4 }}
+                                    labelStyle={{
+                                      fontSize: 10, fontWeight: 700, color: T.slate500,
+                                      textTransform: "uppercase", letterSpacing: 0.4,
+                                    }}
+                                    pathColor={T.teal} linkColor={T.blue}
+                                  />
                                 )}
                                 <div style={{ display: "grid", gap: 5 }}>
                                   {g.items.flatMap(label => (altActive && altFor.has(label))

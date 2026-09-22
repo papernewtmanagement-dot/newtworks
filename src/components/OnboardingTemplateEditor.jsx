@@ -22,11 +22,11 @@ import { useViewport } from "../lib/hooks.js";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, CATEGORY_KEYS, STAGE_LABELS,
-  subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText,
+  subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText, GroupHead,
 } from "../lib/onboardingUi.jsx";
 import { FORMS } from "./TeamForms.jsx";
 
-const COLS = "id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by, is_active, unlock_rule, widget";
+const COLS = "id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by, is_active, unlock_rule, widget, updated_at";
 
 const NEW_ID = "new";
 
@@ -215,11 +215,19 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
           .insert({ ...patch, agency_id: AGENCY_ID, is_active: true });
         if (error) throw error;
       } else {
-        const { error } = await supabase
+        // Only save over the version that was opened. If the step changed
+        // since (a migration, another tab), nothing is written, so an old
+        // copy in this form can never put back what was taken out.
+        const { data: saved, error } = await supabase
           .from("onboarding_step_templates")
           .update(patch)
-          .eq("id", row.id);
+          .eq("id", row.id)
+          .eq("updated_at", row.updated_at)
+          .select("id");
         if (error) throw error;
+        if (!saved || !saved.length) {
+          throw new Error("This step changed after you opened it, so nothing was saved. Close it, open it again, and make your edit on the latest version.");
+        }
 
         // Renaming a key would orphan every step waiting on it, so carry
         // the new name into their "waits on" lists in the same breath.
@@ -337,6 +345,7 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
             />
             <div style={{ fontSize: 11, color: T.slate500, marginTop: 4 }}>
               One per line. A line ending in a colon becomes a heading for the lines under it.
+              A line starting with &gt; goes behind the (i) on the heading above it.
             </div>
           </div>
 
@@ -731,13 +740,20 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
         )}
         {groups.map((g, gi) => (
           <div key={gi} style={{ marginTop: 8 }}>
-            {(g.group || g.altFor) && (
-              <div style={{
-                fontSize: 10, fontWeight: 700, color: T.slate500,
-                textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3,
-              }}>{g.group || "Archived"}{g.altFor && (
-                <span style={{ textTransform: "none", fontWeight: 500 }}> — instead of: {g.altFor}</span>
-              )}</div>
+            {(g.group || g.altFor || g.info.length > 0) && (
+              <GroupHead
+                label={g.group || (g.altFor ? "Archived" : null)}
+                info={g.info}
+                extra={g.altFor ? (
+                  <span style={{ fontSize: 10, color: T.slate500 }}>instead of: {g.altFor}</span>
+                ) : null}
+                style={{ marginBottom: 3 }}
+                labelStyle={{
+                  fontSize: 10, fontWeight: 700, color: T.slate500,
+                  textTransform: "uppercase", letterSpacing: 0.4,
+                }}
+                pathColor={T.teal} linkColor={T.blue}
+              />
             )}
             <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 3 }}>
               {g.fill === "team_list" && (
