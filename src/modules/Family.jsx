@@ -10,7 +10,9 @@ import { useTabParam, TabLink } from "../lib/routing.jsx";
 //   family_set_status()   records an outcome and snapshots its dollar effect
 //   family_sweep_missed() marks past, unlogged chores missed (with the fine)
 //   family_balances()     spend / tithe / invest per kid
-// This screen never computes a fine or a balance itself.
+//   family_board()        what shows for one kid on one day, with due dates
+// This screen never computes a fine, a balance, or a due date itself.
+// The family login (role "family") sees This week + Money only and cannot excuse.
 // Week runs Sunday to Saturday, dates in Central time.
 // =========================================================================
 
@@ -18,6 +20,8 @@ const TABS = ["week", "money", "setup"];
 const TAB_LABELS = { week: "This week", money: "Money", setup: "Chores" };
 const PARTS = [["morning", "Morning"], ["afternoon", "Afternoon"], ["evening", "Evening"]];
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const PARENT_ROLES = ["owner", "manager"];
 const LEDGER_KINDS = [
   { kind: "payout",      bucket: "spend",  label: "Paid out cash",   sign: -1 },
   { kind: "tithe_given", bucket: "tithe",  label: "Gave tithe",      sign: -1 },
@@ -25,6 +29,7 @@ const LEDGER_KINDS = [
   { kind: "bonus",       bucket: "spend",  label: "Bonus",           sign: 1 },
   { kind: "adjustment",  bucket: "spend",  label: "Adjustment (+/−)", sign: 0 },
 ];
+const KIND_LABELS = { opening_balance: "Starting balance" };
 
 const money = (n) => {
   const v = Number(n);
@@ -56,7 +61,8 @@ const btn = (kind = "soft") => ({
 const card = { background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 14, boxSizing: "border-box" };
 const input = { border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", background: T.white, color: T.slate900 };
 
-export default function Family() {
+export default function Family({ userRole }) {
+  const isParent = PARENT_ROLES.includes(userRole);
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
   const [tab, setTab, tabHref] = useTabParam("tab", "week", TABS);
@@ -65,7 +71,7 @@ export default function Family() {
 
   const [kids, setKids] = useState([]);
   const [chores, setChores] = useState([]);
-  const [logs, setLogs] = useState([]);
+  const [board, setBoard] = useState([]);
   const [checklists, setChecklists] = useState([]);
   const [balances, setBalances] = useState([]);
   const [ledger, setLedger] = useState([]);
@@ -79,23 +85,24 @@ export default function Family() {
   const day = isDate(dateParam) ? dateParam : today;
   const weekStart = weekStartOf(day);
   const kid = kids.find(k => k.id === kidParam) || kids[0] || null;
+  const visibleTabs = isParent ? TABS : TABS.filter(t => t !== "setup");
+  const activeTab = visibleTabs.includes(tab) ? tab : "week";
 
   const load = useCallback(async () => {
     setErr(null);
     try {
       await supabase.rpc("family_sweep_missed");
-      const [k, c, l, cl, b, lg, s] = await Promise.all([
+      const [k, c, cl, b, lg, s] = await Promise.all([
         supabase.from("family_kids").select("*").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("family_chores").select("*").eq("agency_id", AGENCY_ID).order("sort_order"),
-        supabase.from("family_chore_log").select("*").eq("agency_id", AGENCY_ID).gte("occurrence_date", weekStart).lte("occurrence_date", addDays(weekStart, 6)),
         supabase.from("family_checklists").select("*").eq("agency_id", AGENCY_ID),
         supabase.rpc("family_balances", { p_week_start: weekStart }),
         supabase.from("family_ledger").select("*").eq("agency_id", AGENCY_ID).order("entry_date", { ascending: false }).order("created_at", { ascending: false }).limit(50),
         supabase.from("family_settings").select("*").eq("agency_id", AGENCY_ID).maybeSingle(),
       ]);
-      const firstErr = [k, c, l, cl, b, lg, s].find(r => r?.error)?.error;
+      const firstErr = [k, c, cl, b, lg, s].find(r => r?.error)?.error;
       if (firstErr) throw firstErr;
-      setKids(k.data || []); setChores(c.data || []); setLogs(l.data || []);
+      setKids(k.data || []); setChores(c.data || []);
       setChecklists(cl.data || []); setBalances(b.data || []); setLedger(lg.data || []);
       setSettings(s.data || null);
     } catch (e) {
@@ -107,12 +114,21 @@ export default function Family() {
 
   useEffect(() => { load(); }, [load]);
 
-  const setStatus = async (chore, occ, status) => {
-    setBusy(chore.id + occ);
-    const { error } = await supabase.rpc("family_set_status", { p_chore_id: chore.id, p_occurrence_date: occ, p_status: status });
+  const kidId = kid?.id || null;
+  const loadBoard = useCallback(async () => {
+    if (!kidId) { setBoard([]); return; }
+    const { data, error } = await supabase.rpc("family_board", { p_kid_id: kidId, p_date: day });
+    if (error) { setErr(error.message); return; }
+    setBoard(Array.isArray(data) ? data : []);
+  }, [kidId, day]);
+  useEffect(() => { loadBoard(); }, [loadBoard]);
+
+  const setStatus = async (row, status) => {
+    setBusy(row.chore_id);
+    const { error } = await supabase.rpc("family_set_status", { p_chore_id: row.chore_id, p_occurrence_date: row.occurrence_date, p_status: status });
     setBusy(null);
     if (error) { setErr(error.message); return; }
-    load();
+    load(); loadBoard();
   };
 
   if (loading) return <div style={{ padding: _pad, color: T.slate500, fontSize: 13 }}>Loading…</div>;
@@ -122,9 +138,9 @@ export default function Family() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900 }}>Family</div>
         <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap" }}>
-          {TABS.map(t => (
+          {visibleTabs.map(t => (
             <TabLink key={t} href={tabHref(t)} onSelect={() => setTab(t)}
-              style={{ ...btn(tab === t ? "primary" : "soft"), flexShrink: 0, textDecoration: "none" }}>
+              style={{ ...btn(activeTab === t ? "primary" : "soft"), flexShrink: 0, textDecoration: "none" }}>
               {TAB_LABELS[t]}
             </TabLink>
           ))}
@@ -133,23 +149,23 @@ export default function Family() {
 
       {err && <div style={{ ...card, background: T.redLt, borderColor: T.red, color: T.red, fontSize: 13, marginBottom: 12 }}>{err}</div>}
 
-      {tab !== "setup" && (
+      {activeTab !== "setup" && (
         <KidPicker kids={kids} kid={kid} balances={balances} kidHref={kidHref} setKid={setKidParam} />
       )}
 
-      {tab === "week" && kid && (
+      {activeTab === "week" && kid && (
         <WeekView
-          kid={kid} chores={chores.filter(c => c.kid_id === kid.id)} logs={logs} checklists={checklists}
+          kid={kid} board={board} checklists={checklists} isParent={isParent}
           day={day} today={today} weekStart={weekStart} dateHref={dateHref} setDate={setDateParam}
           busy={busy} setStatus={setStatus} openChecklist={openChecklist} setOpenChecklist={setOpenChecklist}
           balance={balances.find(b => b.kid_id === kid.id)}
         />
       )}
-      {tab === "money" && kid && (
+      {activeTab === "money" && kid && (
         <MoneyView kid={kid} balance={balances.find(b => b.kid_id === kid.id)}
           ledger={ledger.filter(l => l.kid_id === kid.id)} onSaved={load} setErr={setErr} />
       )}
-      {tab === "setup" && (
+      {activeTab === "setup" && isParent && (
         <SetupView kids={kids} chores={chores} checklists={checklists} settings={settings}
           today={today} onSaved={load} setErr={setErr} />
       )}
@@ -176,18 +192,18 @@ function KidPicker({ kids, kid, balances, kidHref, setKid }) {
   );
 }
 
-function WeekView({ kid, chores, logs, checklists, day, today, weekStart, dateHref, setDate, busy, setStatus, openChecklist, setOpenChecklist, balance }) {
-  const live = (c, occ) => c.active_from <= occ && (!c.active_to || c.active_to >= occ);
-  const daily = chores.filter(c => c.frequency === "daily" && live(c, day));
-  const weekly = chores.filter(c => c.frequency === "weekly" && live(c, addDays(weekStart, 6)));
-  const logFor = (c, occ) => (logs || []).find(l => l.chore_id === c.id && l.occurrence_date === occ);
+function WeekView({ kid, board, checklists, isParent, day, today, weekStart, dateHref, setDate, busy, setStatus, openChecklist, setOpenChecklist, balance }) {
+  const rows = Array.isArray(board) ? board : [];
+  const daily = rows.filter(r => r.frequency === "daily");
+  const dueToday = rows.filter(r => r.frequency === "weekly" && r.due_dow != null);
+  const anyDay = rows.filter(r => r.frequency === "weekly" && r.due_dow == null);
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
-  const row = (c, occ, canAct) => (
-    <ChoreRow key={c.id + occ} chore={c} occ={occ} log={logFor(c, occ)} canAct={canAct}
-      checklist={checklists.find(x => x.id === c.checklist_id)}
-      busy={busy === c.id + occ} setStatus={setStatus}
-      open={openChecklist === c.id} toggle={() => setOpenChecklist(openChecklist === c.id ? null : c.id)} />
+  const row = (r) => (
+    <ChoreRow key={r.chore_id} row={r} isParent={isParent}
+      checklist={checklists.find(x => x.id === r.checklist_id)}
+      busy={busy === r.chore_id} setStatus={setStatus}
+      open={openChecklist === r.chore_id} toggle={() => setOpenChecklist(openChecklist === r.chore_id ? null : r.chore_id)} />
   );
 
   return (
@@ -210,58 +226,54 @@ function WeekView({ kid, chores, logs, checklists, day, today, weekStart, dateHr
       </div>
 
       {day < kid.tracking_start && (
-        <div style={{ fontSize: 12, color: T.slate500 }}>Tracking for {kid.name} started {kid.tracking_start}.</div>
+        <div style={{ fontSize: 12, color: T.slate500 }}>Tracking for {kid.name} starts {kid.tracking_start}.</div>
       )}
 
       {PARTS.map(([key, label]) => {
-        const list = daily.filter(c => c.part_of_day === key);
+        const list = daily.filter(r => r.part_of_day === key);
         if (!list.length) return null;
-        return (
-          <Section key={key} title={label}>{list.map(c => row(c, day, day <= today && day >= kid.tracking_start))}</Section>
-        );
+        return <Section key={key} title={label}>{list.map(row)}</Section>;
       })}
 
-      {weekly.length > 0 && (
-        <Section title="Every week">
-          {weekly.map(c => row(c, weekStart, weekStart <= today && addDays(weekStart, 6) >= kid.tracking_start))}
-        </Section>
-      )}
+      {dueToday.length > 0 && <Section title={`Weekly · due ${DAY_FULL[parseDate(day).getUTCDay()]}`}>{dueToday.map(row)}</Section>}
+      {anyDay.length > 0 && <Section title="Weekly · any day, due by Saturday">{anyDay.map(row)}</Section>}
     </div>
   );
 }
 
-function ChoreRow({ chore, occ, log, canAct, checklist, busy, setStatus, open, toggle }) {
-  const st = log ? STATUS[log.status] : null;
-  const act = (s) => setStatus(chore, occ, s);
+function ChoreRow({ row, isParent, checklist, busy, setStatus, open, toggle }) {
+  const st = row.status ? STATUS[row.status] : null;
+  const act = (s) => setStatus(row, s);
+  const canAct = !!row.can_act;
   return (
     <div style={{ borderTop: `1px solid ${T.slate100}`, padding: "10px 0" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <div style={{ flex: "1 1 180px", minWidth: 0 }}>
           <div style={{ fontSize: 14, color: T.slate900, fontWeight: 500 }}>
-            {chore.group_label && <span style={{ fontSize: 11, color: T.slate500, marginRight: 6 }}>{chore.group_label}</span>}
-            {chore.title}
+            {row.group_label && <span style={{ fontSize: 11, color: T.slate500, marginRight: 6 }}>{row.group_label}</span>}
+            {row.title}
             {checklist && (
               <button onClick={toggle} style={{ border: "none", background: "none", color: T.blue, fontSize: 12, cursor: "pointer", marginLeft: 6, padding: 0, fontFamily: "inherit" }}>
                 {open ? "hide list" : "list"}
               </button>
             )}
           </div>
-          <div style={{ fontSize: 12, color: T.slate500 }}>{Number(chore.pay) > 0 ? money(chore.pay) : "Expected, no pay"}</div>
+          <div style={{ fontSize: 12, color: T.slate500 }}>{Number(row.pay) > 0 ? money(row.pay) : "Expected, no pay"}</div>
         </div>
         {st && (
           <span style={{ background: st.bg, color: st.fg, borderRadius: 999, padding: "3px 9px", fontSize: 12, fontWeight: 600 }}>
-            {st.label} {Number(log.amount) !== 0 && money(log.amount)}
+            {st.label} {Number(row.amount) !== 0 && money(row.amount)}
           </span>
         )}
         {canAct && (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {!log && <button disabled={busy} style={btn("primary")} onClick={() => act("claimed")}>Done</button>}
-            {!log && <button disabled={busy} style={btn()} onClick={() => act("excused")}>Excuse</button>}
-            {log?.status === "claimed" && <button disabled={busy} style={btn("primary")} onClick={() => act("verified")}>Checked</button>}
-            {log?.status === "claimed" && <button disabled={busy} style={btn("danger")} onClick={() => act("false_claim")}>Wasn't done</button>}
-            {log?.status === "missed" && <button disabled={busy} style={btn()} onClick={() => act("claimed")}>Done late</button>}
-            {log?.status === "missed" && <button disabled={busy} style={btn()} onClick={() => act("excused")}>Excuse</button>}
-            {log && log.status !== "missed" && <button disabled={busy} style={btn()} onClick={() => act(null)}>Undo</button>}
+            {!row.status && <button disabled={busy} style={btn("primary")} onClick={() => act("claimed")}>Done</button>}
+            {!row.status && isParent && <button disabled={busy} style={btn()} onClick={() => act("excused")}>Excuse</button>}
+            {row.status === "claimed" && <button disabled={busy} style={btn("primary")} onClick={() => act("verified")}>Checked</button>}
+            {row.status === "claimed" && <button disabled={busy} style={btn("danger")} onClick={() => act("false_claim")}>Wasn't done</button>}
+            {row.status === "missed" && <button disabled={busy} style={btn()} onClick={() => act("claimed")}>Done late</button>}
+            {row.status === "missed" && isParent && <button disabled={busy} style={btn()} onClick={() => act("excused")}>Excuse</button>}
+            {row.status && row.status !== "missed" && <button disabled={busy} style={btn()} onClick={() => act(null)}>Undo</button>}
           </div>
         )}
       </div>
@@ -319,7 +331,7 @@ function MoneyView({ kid, balance, ledger, onSaved, setErr }) {
           {ledger.map(l => (
             <div key={l.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, borderTop: `1px solid ${T.slate100}`, padding: "8px 0", fontSize: 13 }}>
               <div style={{ color: T.slate700 }}>
-                {l.entry_date} · {LEDGER_KINDS.find(k => k.kind === l.kind)?.label || l.kind}{l.note ? ` · ${l.note}` : ""}
+                {l.entry_date} · {LEDGER_KINDS.find(k => k.kind === l.kind)?.label || KIND_LABELS[l.kind] || l.kind}{l.note ? ` · ${l.note}` : ""}
               </div>
               <div style={{ color: Number(l.amount) < 0 ? T.red : T.green, fontWeight: 600 }}>{money(l.amount)}</div>
             </div>
@@ -341,6 +353,7 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
     if (d.pay !== undefined) patch.pay = Number(d.pay) || 0;
     if (d.fine !== undefined) patch.fine = d.fine === "" ? null : Number(d.fine);
     if (d.title !== undefined) patch.title = d.title;
+    if (d.due_dow !== undefined) patch.due_dow = d.due_dow === "" ? null : Number(d.due_dow);
     const { error } = await supabase.from("family_chores").update(patch).eq("id", c.id);
     if (error) { setErr(error.message); return; }
     setDraft(x => { const n = { ...x }; delete n[c.id]; return n; });
@@ -362,6 +375,7 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
     const { error } = await supabase.from("family_chores").insert({
       agency_id: AGENCY_ID, kid_id: a.kid_id, title: a.title, frequency: a.frequency,
       part_of_day: a.frequency === "daily" ? a.part_of_day : null, pay: Number(a.pay) || 0,
+      due_dow: a.frequency === "weekly" && a.due_dow !== "" && a.due_dow != null ? Number(a.due_dow) : null,
       checklist_id: a.checklist_id || null, sort_order: 99, active_from: today,
     });
     if (error) { setErr(error.message); return; }
@@ -419,7 +433,13 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
                         <input value={d.title ?? c.title} onChange={e => set("title", e.target.value)} style={{ ...input, width: "100%" }} />
                       </td>
                       <td style={{ padding: "6px 4px", color: T.slate500, whiteSpace: "nowrap" }}>
-                        {c.frequency === "daily" ? (PARTS.find(p => p[0] === c.part_of_day)?.[1] || "Daily") : (c.group_label ? `Weekly · ${c.group_label}` : "Weekly")}
+                        {c.frequency === "daily" ? (PARTS.find(p => p[0] === c.part_of_day)?.[1] || "Daily") : (
+                          <select value={d.due_dow ?? (c.due_dow ?? "")} onChange={e => set("due_dow", e.target.value)} style={{ ...input, padding: "5px 6px" }}>
+                            <option value="">Any day</option>
+                            {DAY_FULL.map((n, i) => <option key={n} value={i}>{n}</option>)}
+                          </select>
+                        )}
+                        {c.group_label && <span style={{ marginLeft: 6, fontSize: 11 }}>{c.group_label}</span>}
                       </td>
                       <td style={{ padding: "6px 4px" }}>
                         <input value={d.pay ?? c.pay} onChange={e => set("pay", e.target.value)} inputMode="decimal" style={{ ...input, width: 70 }} />
@@ -445,6 +465,12 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
                 {PARTS.map(([v, l]) => <option key={v} value={v}>Daily · {l}</option>)}
                 <option value="weekly">Weekly</option>
               </select>
+              {adding.frequency === "weekly" && (
+                <select value={adding.due_dow ?? ""} onChange={e => setAdding({ ...adding, due_dow: e.target.value })} style={input}>
+                  <option value="">Any day</option>
+                  {DAY_FULL.map((n, i) => <option key={n} value={i}>{n}</option>)}
+                </select>
+              )}
               <input value={adding.pay} onChange={e => setAdding({ ...adding, pay: e.target.value })} inputMode="decimal" placeholder="Pay" style={input} />
               <select value={adding.checklist_id || ""} onChange={e => setAdding({ ...adding, checklist_id: e.target.value || null })} style={input}>
                 <option value="">No checklist</option>

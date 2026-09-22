@@ -81,6 +81,18 @@ const MANUAL_CONFIG = {
     glossaryParentId: null,
     dynamicPages: {},
   },
+  financial_literacy: {
+    basePath: "/course",
+    moduleTitle: "Financial Literacy",
+    moduleSubtitle: "Homeschool co-op course",
+    searchPlaceholder: "Search the course…",
+    emptyLabel: "course pages",
+    chipLabel: "Course",
+    askContextLabel: "our financial literacy course",
+    hasGlossary: false,
+    glossaryParentId: null,
+    dynamicPages: {},
+  },
 };
 
 // ─── Section icon picker ──────────────────────────────────────

@@ -97,6 +97,8 @@ const AGENCY_DEFAULTS = {
 // row is hidden from non-admin viewers (see CPRList.jsx + CPRDetail.jsx gate).
 const ADMIN_ROLES = ["owner", "manager"];
 const TEAM_VISIBLE_ROLES = ["owner", "manager", "staff", "readonly", "accountant"];
+// Family login (role "family"): sees only the modules below the family divider.
+const FAMILY_ROLES = ["owner", "manager", "family"];
 const NAV_ITEMS = [
   { id: "dashboard",   label: "Dashboard",   icon: "grid",          roles: TEAM_VISIBLE_ROLES },
   { id: "cpr",         label: "CPR",         icon: "trendingUp",    roles: TEAM_VISIBLE_ROLES },
@@ -118,7 +120,8 @@ const NAV_ITEMS = [
   { id: "editor",      label: "Editor",      icon: "pencil",        roles: ADMIN_ROLES },
   { id: "settings",    label: "Settings",    icon: "settings",      roles: ADMIN_ROLES },
   { type: "divider",   id: "_div_family" },
-  { id: "family",      label: "Family",      icon: "home",          roles: ADMIN_ROLES },
+  { id: "family",      label: "Family",      icon: "home",          roles: FAMILY_ROLES },
+  { id: "course",      label: "Course",      icon: "graduation",    roles: FAMILY_ROLES },
 ];
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
@@ -155,6 +158,7 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     calendarOff:<svg style={s} viewBox="0 0 24 24" {...p}><path d="M4.2 4.2A2 2 0 0 0 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 1.8-1.2"/><path d="M21 15.5V6a2 2 0 0 0-2-2H9.5"/><line x1="3" y1="10" x2="14" y2="10"/><path d="M16 2v4"/><path d="M8 2v2"/><line x1="2" y1="2" x2="22" y2="22"/></svg>,
     trendingUp:<svg style={s} viewBox="0 0 24 24" {...p}><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>,
     clipboardList:<svg style={s} viewBox="0 0 24 24" {...p}><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>,
+    graduation: <svg style={s} viewBox="0 0 24 24" {...p}><path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/><path d="M22 10v6"/></svg>,
     home:       <svg style={s} viewBox="0 0 24 24" {...p}><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/></svg>,
     briefcase:<svg style={s} viewBox="0 0 24 24" {...p}><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
   };
@@ -680,7 +684,8 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     marketing:   <ErrorBoundary name="Marketing"><Marketing /></ErrorBoundary>,
     editor:      <ErrorBoundary name="Editor"><ContentEditor userRole={userRole} /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
-    family:      <ErrorBoundary name="Family"><Family /></ErrorBoundary>,
+    family:      <ErrorBoundary name="Family"><Family userRole={userRole} /></ErrorBoundary>,
+    course:      <ErrorBoundary key="course" name="Course"><Manual manualType="financial_literacy" userRole={userRole} /></ErrorBoundary>,
   };
   // Access guard — enforce nav role at the module level so direct URL
   // navigation (e.g. /financials) cannot bypass the sidebar filter. Mirrors
@@ -1099,6 +1104,10 @@ export default function NewtworksApp() {
     }
     visibleNav.push(item);
   }
+  // Family login lands on its first module; anything else it asks for is out of reach.
+  const _isFamilyLogin = agency.user.role === "family";
+  const _navIds = visibleNav.filter(n => n.type !== "divider").map(n => n.id);
+  const effectiveModule = (_isFamilyLogin && !_navIds.includes(activeModule)) ? (_navIds[0] || activeModule) : activeModule;
 
   return (
     <AppContext.Provider value={{ agency, activeModule, setActiveModule }}>
@@ -1137,10 +1146,12 @@ export default function NewtworksApp() {
 
           <div style={css.headerRight}>
             {/* Alerts Bell */}
+            {!_isFamilyLogin && (
             <div style={css.bellWrap} title={`${agency.alerts} active alerts`}>
               <Icon name="bell" size={18} color={TOKENS.chromeText} />
               {agency.alerts > 0 && <span style={css.bellBadge}>{agency.alerts}</span>}
             </div>
+            )}
 
             {/* User Menu */}
             <div style={{ position: "relative" }}>
@@ -1166,7 +1177,7 @@ export default function NewtworksApp() {
                   <div style={{ padding: "8px 10px", fontSize: 11, color: TOKENS.slate500, borderBottom: `1px solid ${TOKENS.slate200}`, marginBottom: 4 }}>
                     {sessionEmail || agency.user.email}
                   </div>
-                  {["Profile", "Notification Settings", "Team Access"].map(item => (
+                  {(_isFamilyLogin ? [] : ["Profile", "Notification Settings", "Team Access"]).map(item => (
                     <a
                       key={item}
                       href={urlForState("settings", null)}
@@ -1197,7 +1208,7 @@ export default function NewtworksApp() {
         </header>
 
         {/* ── Agency Identity Ribbon — persistent below header on every route ── */}
-        <AgencyIdentityRibbon />
+        {!_isFamilyLogin && <AgencyIdentityRibbon />}
 
         {/* ── Body ── */}
         <div style={css.body} onClick={() => userMenuOpen && setUserMenuOpen(false)}>
@@ -1221,7 +1232,7 @@ export default function NewtworksApp() {
                 if (item.type === "divider") {
                   return <div key={item.id} style={css.navDivider} aria-hidden="true" />;
                 }
-                const active = activeModule === item.id;
+                const active = effectiveModule === item.id;
                 // On phone the nav is always rendered expanded inside the drawer,
                 // so force collapsed=false for nav-item styling there.
                 const itemCollapsed = viewport.isPhone ? false : navCollapsed;
@@ -1275,7 +1286,7 @@ export default function NewtworksApp() {
               {cprWeekDate ? (
                 <ErrorBoundary name="CPR Detail"><CPRDetail weekDate={cprWeekDate} onClose={handleCloseCPR} onNavigateWeek={handleNavigateCPRWeek} userRole={agency?.user?.role} viewerTeamMemberId={agency?.user?.teamMemberId || null} /></ErrorBoundary>
               ) : (
-                <ModuleRouter active={activeModule} onNavigate={setActiveModule} userRole={agency.user.role} userId={agency.user.id} />
+                <ModuleRouter active={effectiveModule} onNavigate={setActiveModule} userRole={agency.user.role} userId={agency.user.id} />
               )}
             </div>
 
