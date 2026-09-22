@@ -31,9 +31,8 @@ import InfoDot from "../components/InfoDot.jsx";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
-  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead,
+  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf,
 } from "../lib/onboardingUi.jsx";
-import TeamForms from "../components/TeamForms.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
 import ReferenceCalls from "./ReferenceCalls.jsx";
 
@@ -121,7 +120,7 @@ function useOnboardingData(userId, isAdmin) {
       if (plans.length) {
         const planIds = plans.map(p => p.id);
         const stepsRes = await supabase.from("team_onboarding_steps")
-          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, owner_kind, assigned_to, task_id, track, track_order, blocked_by, auto_source, auto_summary, unlock_rule, unlocks_on, widget")
+          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, owner_kind, assigned_to, task_id, track, track_order, blocked_by, auto_source, auto_summary, unlock_rule, unlocks_on, widget, assign_role_category")
           .in("plan_id", planIds)
           .order("phase", { ascending: true })
           .order("sort_order", { ascending: true });
@@ -477,16 +476,6 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                           </div>
                         )}
 
-                        {!collapsed && !locked && step.widget === "team_forms" && (
-                          <div style={{ marginTop: 10, border: `1px solid ${T.slate200}`, borderRadius: 8, overflow: "hidden" }}>
-                            {plan.team_member_id
-                              ? <TeamForms teamId={plan.team_member_id} embedded />
-                              : <div style={{ fontSize: 12, color: T.slate500, padding: "10px 12px" }}>
-                                  The forms open once they are added to the team.
-                                </div>}
-                          </div>
-                        )}
-
                         {!collapsed && !locked && isAuto && (
                           <div style={{
                             marginTop: 8, padding: "8px 10px",
@@ -570,16 +559,19 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                     ? altGroups.filter(a => a.altFor === label).flatMap(a => a.items)
                                     : [label]).map((label, ix) => {
                                     const sd = subsDone.includes(label);
+                                    // A line that links to a site form ticks itself.
+                                    const byForm = !!formIdOf(label);
                                     const instr = instructions[label];
                                     const icon = icons[label] || null;
                                     return (
                                       <div key={ix} style={{ display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0 }}>
                                       <button
-                                        onClick={() => onToggleSubstep(step, label)}
+                                        onClick={byForm ? undefined : () => onToggleSubstep(step, label)}
+                                        title={byForm ? "Ticks itself when the form is done" : undefined}
                                         style={{
                                           display: "flex", gap: 7, alignItems: "flex-start",
                                           background: "none", border: "none", padding: 0,
-                                          cursor: "pointer", textAlign: "left", flex: 1, minWidth: 0,
+                                          cursor: byForm ? "default" : "pointer", textAlign: "left", flex: 1, minWidth: 0,
                                         }}
                                       >
                                         <span style={{
@@ -1068,10 +1060,12 @@ export default function Onboarding({ userRole, userId }) {
 
   // "Alvi" / "Peter" / whoever owns a step that is not the new hire's own.
   const ownerName = useCallback((step) => {
+    const plus = step.assign_role_category ? ` + ${step.assign_role_category}` : "";
     if (step.assigned_to) {
       const t = (team || []).find(x => x.id === step.assigned_to);
-      if (t) return memberName(t);
+      if (t) return memberName(t) + plus;
     }
+    if (plus) return step.assign_role_category;
     if (step.owner_kind === "agent") return "Peter";
     if (step.owner_kind === "team") return "Everyone";
     if (step.owner_kind === "admin") return "Admin";
@@ -1124,6 +1118,7 @@ export default function Onboarding({ userRole, userId }) {
 
   // Ticking the last sub-item completes the step; unticking any re-opens it.
   const handleToggleSubstep = async (step, label) => {
+    if (formIdOf(label)) return; // follows the form, not a click
     setActionError("");
     const cur = Array.isArray(step.substeps_done) ? step.substeps_done : [];
     const next = cur.includes(label) ? cur.filter(l => l !== label) : [...cur, label];

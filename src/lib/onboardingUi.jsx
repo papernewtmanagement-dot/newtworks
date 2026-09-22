@@ -252,6 +252,13 @@ export const inputBase = {
   outline: "none",
 };
 
+// A sub-item that links to a site form (…?form=<id>) ticks itself when that
+// form is done. Mirrors onboarding_substep_form_id() in the database.
+export function formIdOf(label) {
+  const m = /[?&]form=([a-z0-9_]+)/.exec(String(label || ""));
+  return m ? m[1] : null;
+}
+
 // ─── sub-item text ───────────────────────────────────
 // Renders one sub-item label. [text](url) and bare web addresses become
 // links. A click path written with " > " (File > Options > Mail) is shown in

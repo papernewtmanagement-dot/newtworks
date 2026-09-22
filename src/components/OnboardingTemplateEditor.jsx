@@ -24,9 +24,8 @@ import {
   CATEGORY_COLORS, CATEGORY_KEYS, STAGE_LABELS,
   subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText, GroupHead,
 } from "../lib/onboardingUi.jsx";
-import { FORMS } from "./TeamForms.jsx";
 
-const COLS = "id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by, is_active, unlock_rule, widget, updated_at";
+const COLS = "id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by, is_active, unlock_rule, widget, assign_role_category, updated_at";
 
 const NEW_ID = "new";
 
@@ -105,6 +104,7 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
     phase: row.phase,
     category: row.category || "training",
     owner: ownerValue(row),
+    assign_role_category: row.assign_role_category || "",
     is_required: row.is_required !== false,
     track: row.track || "",
     track_order: row.track_order || 0,
@@ -156,11 +156,39 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
     };
   }, [rows, people]);
 
-  const trackOptions = useMemo(() => {
-    const s = new Set();
-    rows.forEach(r => { if (r.track) s.add(r.track); });
-    return [...s].sort();
-  }, [rows]);
+  // The columns already in the chosen phase, left to right. Picking one puts
+  // the step in that column's place and at the bottom of it, so nobody has to
+  // know the column's position number.
+  const phaseColumns = useMemo(() => {
+    const m = new Map();
+    rows.forEach(r => {
+      if (Number(r.phase) === Number(form.phase) && r.track && !m.has(r.track)) m.set(r.track, r.track_order || 0);
+    });
+    return [...m.entries()]
+      .map(([name, order]) => ({ name, order }))
+      .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+  }, [rows, form.phase]);
+  const [newCol, setNewCol] = useState(false);
+  const pickColumn = (v) => {
+    if (v === "__new") {
+      setNewCol(true);
+      set({ track: "", track_order: Math.max(0, ...phaseColumns.map(c => c.order)) + 1 });
+      return;
+    }
+    setNewCol(false);
+    if (!v) { set({ track: "", track_order: 0 }); return; }
+    const c = phaseColumns.find(x => x.name === v);
+    const patchCol = { track: v, track_order: c ? c.order : 0 };
+    if (v !== (row.track || "")) {
+      const inCol = rows.filter(r => Number(r.phase) === Number(form.phase) && r.track === v && r.id !== row.id);
+      patchCol.sort_order = Math.max(0, ...inCol.map(r => r.sort_order || 0)) + 10;
+    }
+    set(patchCol);
+  };
+  const roleGroups = useMemo(
+    () => [...new Set(people.map(p => p.role_category).filter(Boolean))].sort(),
+    [people]
+  );
 
   // Only steps that could plausibly come first are offered as blockers.
   const blockerOptions = useMemo(() => {
@@ -194,6 +222,7 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
       phase: Number(form.phase),
       category: form.category,
       is_required: !!form.is_required,
+      assign_role_category: form.assign_role_category || null,
       track: form.track.trim() || null,
       track_order: Number(form.track_order) || 0,
       sort_order: Number(form.sort_order) || 100,
@@ -412,6 +441,33 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
             </div>
           </div>
 
+          <div style={twoUp}>
+            <div>
+              <label style={fieldLabel}>Also assign</label>
+              <select style={inputBase} value={form.assign_role_category}
+                onChange={(e) => set({ assign_role_category: e.target.value })}>
+                <option value="">Nobody else</option>
+                {roleGroups.map(g => <option key={g} value={g}>{`${g} team`}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={fieldLabel}>Column</label>
+              <select style={inputBase} value={newCol ? "__new" : (form.track || "")}
+                onChange={(e) => pickColumn(e.target.value)}>
+                <option value="">No column</option>
+                {phaseColumns.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                {form.track && !newCol && !phaseColumns.some(c => c.name === form.track) && (
+                  <option value={form.track}>{form.track}</option>
+                )}
+                <option value="__new">New column…</option>
+              </select>
+              {newCol && (
+                <input style={{ ...inputBase, marginTop: 6 }} placeholder="New column name"
+                  value={form.track} onChange={(e) => set({ track: e.target.value })} />
+              )}
+            </div>
+          </div>
+
           <button
             onClick={() => setMore(m => !m)}
             style={{
@@ -422,29 +478,6 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
 
           {more && (
             <div style={{ display: "grid", gap: 12, borderTop: `1px solid ${T.slate200}`, paddingTop: 12 }}>
-              <div style={twoUp}>
-                <div>
-                  <label style={fieldLabel}>Column</label>
-                  <input
-                    style={inputBase}
-                    value={form.track}
-                    list="onb-track-options"
-                    placeholder="Leave blank for one column"
-                    onChange={(e) => set({ track: e.target.value })}
-                  />
-                  <datalist id="onb-track-options">
-                    {trackOptions.map(t => <option key={t} value={t} />)}
-                  </datalist>
-                </div>
-                <div>
-                  <label style={fieldLabel}>Column position</label>
-                  <input
-                    style={inputBase} type="number" value={form.track_order}
-                    onChange={(e) => set({ track_order: e.target.value })}
-                  />
-                </div>
-              </div>
-
               <div>
                 <label style={fieldLabel}>Order in the phase</label>
                 <input
@@ -577,6 +610,17 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // The current agency team, from the same database rule that fills the
+  // team lists on each plan (there, minus the new hire).
+  const [teamNames, setTeamNames] = useState([]);
+  useEffect(() => {
+    if (!supabase || !AGENCY_ID) return;
+    let alive = true;
+    supabase.rpc("onboarding_team_list_names", { p_agency_id: AGENCY_ID })
+      .then(({ data }) => { if (alive) setTeamNames(Array.isArray(data) ? data : []); });
+    return () => { alive = false; };
+  }, [team]);
 
   const rows = state.rows;
   const activeRows = useMemo(() => rows.filter(r => r.is_active), [rows]);
@@ -756,11 +800,9 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
               />
             )}
             <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 3 }}>
-              {g.fill === "team_list" && (
-                <li style={{ fontSize: 12, color: T.slate500, lineHeight: 1.4, fontStyle: "italic" }}>
-                  Every teammate, filled in from the team list
-                </li>
-              )}
+              {g.fill === "team_list" && teamNames.map(n => (
+                <li key={n} style={{ fontSize: 12, color: T.slate700, lineHeight: 1.4 }}>{n}</li>
+              ))}
               {g.items.map((label2, ix) => (
                 <li key={ix} style={{ fontSize: 12, color: T.slate700, lineHeight: 1.4 }}>
                   <LabelText text={label2} pathColor={T.teal} linkColor={T.blue} />
@@ -769,21 +811,6 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
             </ul>
           </div>
         ))}
-        {r.widget === "team_forms" && (
-          <div style={{ marginTop: 8 }} onClick={(e) => e.stopPropagation()}>
-            <div style={{
-              fontSize: 10, fontWeight: 700, color: T.slate500,
-              textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3,
-            }}>Forms on the site</div>
-            <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 3 }}>
-              {FORMS.map(f => (
-                <li key={f.id} style={{ fontSize: 12, lineHeight: 1.4 }}>
-                  <a href={`/development?area=forms&form=${f.id}`} style={{ color: T.blue }}>{f.label}</a>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
         {r.unlock_rule === "friday_before_start" && (
           <div style={{ fontSize: 10, color: T.amber, marginTop: 8, fontWeight: 600 }}>
             Opens the Friday before they start

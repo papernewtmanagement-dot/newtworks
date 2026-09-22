@@ -26,6 +26,8 @@ import { useTabParam } from "../lib/routing.jsx";
 export const FORMS = [
   { id: "combined_onboarding", label: "Onboarding form",
     blurb: "Your details, your story, and payroll setup." },
+  { id: "w4", label: "W-4",
+    blurb: "Federal tax withholding for your paycheck." },
   { id: "non_compete", label: "Non-compete",
     blurb: "Read it and agree. A copy is emailed to you." },
   { id: "i9", label: "I-9",
@@ -518,10 +520,164 @@ function I9EmployerSection({ data, setData, canEdit, locked }) {
 
 // ─── the form shell ─────────────────────────────────────────────────────
 
+// ─── W-4 (2026) ─────────────────────────────────────────────────────────
+// The IRS Employee's Withholding Certificate, Steps 1 to 5. The worksheets
+// on the IRS form's later pages are linked, not rebuilt: whoever needs one
+// works it there and types the result here. The Social Security number is
+// not asked twice; it comes from the Onboarding form or the offer.
+
+const W4_FILING = [
+  { v: "single", label: "Single or Married filing separately" },
+  { v: "joint", label: "Married filing jointly or Qualifying surviving spouse" },
+  { v: "head", label: "Head of household (only if you're unmarried and pay more than half the costs of keeping up a home for yourself and a qualifying individual)" },
+];
+const W4_PER_CHILD = 2200;
+const W4_PER_OTHER = 500;
+const W4_IRS_PDF = "https://www.irs.gov/pub/irs-pdf/fw4.pdf";
+
+function w4Money(v) {
+  const n = Number(String(v || "").replace(/[^0-9.]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+function w4Count(v) {
+  const n = parseInt(String(v || "").replace(/[^0-9]/g, ""), 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+export function w4Step3Total(data) {
+  return w4Count(data.children) * W4_PER_CHILD
+       + w4Count(data.other_dependents) * W4_PER_OTHER
+       + w4Money(data.other_credits);
+}
+
+function W4Form({ data, setData, ssnOnFile, teamId }) {
+  const set = (k) => (v) => setData({ ...data, [k]: v });
+  const total = w4Step3Total(data);
+
+  // Name and address start from the team record so the hire only checks them.
+  useEffect(() => {
+    if (!supabase || !teamId || data.first_name || data.last_name) return;
+    let cancelled = false;
+    supabase.from("team")
+      .select("first_name, last_name, address_line1, address_line2, city, state, zip_code")
+      .eq("id", teamId).maybeSingle()
+      .then(({ data: t }) => {
+        if (cancelled || !t) return;
+        const street = [t.address_line1, t.address_line2].filter(Boolean).join(", ");
+        const place = [t.city, [t.state, t.zip_code].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+        setData(d => ({
+          ...d,
+          first_name: d.first_name || t.first_name || "",
+          last_name: d.last_name || t.last_name || "",
+          address: d.address || street,
+          city_state_zip: d.city_state_zip || place,
+        }));
+      });
+    return () => { cancelled = true; };
+  }, [teamId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div>
+      <Section title="Step 1: Enter personal information">
+        <Grid min={200}>
+          <Field label="First name and middle initial"><Text value={data.first_name} onChange={set("first_name")} /></Field>
+          <Field label="Last name"><Text value={data.last_name} onChange={set("last_name")} /></Field>
+          <Field wide label="Address"><Text value={data.address} onChange={set("address")} /></Field>
+          <Field wide label="City or town, state, and ZIP code"><Text value={data.city_state_zip} onChange={set("city_state_zip")} /></Field>
+          <Field label="Social Security number">
+            <div style={{ fontSize: 14, color: T.slate600, padding: "9px 0" }}>
+              {ssnOnFile ? "On file" : "Goes on your Onboarding form"}
+            </div>
+          </Field>
+        </Grid>
+        <div style={{ display: "grid", gap: 8, marginTop: 14 }}>
+          {W4_FILING.map(f => (
+            <label key={f.v} style={{
+              display: "flex", gap: 10, alignItems: "center", cursor: "pointer",
+              padding: "11px 14px", boxSizing: "border-box",
+              border: `1px solid ${data.filing_status === f.v ? T.blue : T.slate200}`,
+              background: data.filing_status === f.v ? T.blueLt : T.white, borderRadius: 8,
+            }}>
+              <input type="radio" name="w4filing" checked={data.filing_status === f.v}
+                onChange={() => setData({ ...data, filing_status: f.v })}
+                style={{ width: 16, height: 16, accentColor: T.blue, flexShrink: 0 }} />
+              <span style={{ fontSize: 13.5, color: T.slate800 }}>{f.label}</span>
+            </label>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Step 2: Multiple jobs or spouse works"
+        note="Only if you hold more than one job at a time, or you're married filing jointly and your spouse also works.">
+        <Check checked={data.two_jobs} onChange={set("two_jobs")}>
+          There are only two jobs total. Check this box on the W-4 for both jobs.
+        </Check>
+        <div style={{ fontSize: 12, color: T.slate500, marginTop: 8, lineHeight: 1.5 }}>
+          More than two jobs? Use the Multiple Jobs Worksheet on page 3 of the{" "}
+          <a href={W4_IRS_PDF} target="_blank" rel="noreferrer" style={{ color: T.blue }}>IRS form</a>{" "}
+          and put the result in Step 4(c).
+        </div>
+      </Section>
+
+      <Section title="Step 3: Claim dependent and other credits"
+        note="If your total income will be $200,000 or less ($400,000 or less if married filing jointly).">
+        <Grid min={200}>
+          <Field label="Qualifying children under age 17" hint={`Number of children. $${W4_PER_CHILD.toLocaleString()} each.`}>
+            <Text value={data.children} onChange={set("children")} placeholder="0" />
+          </Field>
+          <Field label="Other dependents" hint={`Number of dependents. $${W4_PER_OTHER} each.`}>
+            <Text value={data.other_dependents} onChange={set("other_dependents")} placeholder="0" />
+          </Field>
+          <Field label="Other credits" hint="Step 3(b). Dollar amount, if any.">
+            <Text value={data.other_credits} onChange={set("other_credits")} placeholder="$0" />
+          </Field>
+          <Field label="Step 3 total">
+            <div style={{ fontSize: 14, fontWeight: 600, color: T.slate800, padding: "9px 0" }}>
+              ${total.toLocaleString()}
+            </div>
+          </Field>
+        </Grid>
+      </Section>
+
+      <Section title="Step 4: Other adjustments">
+        <Grid min={200}>
+          <Field label="(a) Other income (not from jobs)" hint="For the year, if any.">
+            <Text value={data.other_income} onChange={set("other_income")} placeholder="$0" />
+          </Field>
+          <Field label="(b) Deductions" hint="From the Deductions Worksheet on page 4 of the IRS form. Leave blank to use the standard deduction.">
+            <Text value={data.deductions} onChange={set("deductions")} placeholder="$0" />
+          </Field>
+          <Field label="(c) Extra withholding" hint="Each pay period, if any.">
+            <Text value={data.extra_withholding} onChange={set("extra_withholding")} placeholder="$0" />
+          </Field>
+        </Grid>
+        <div style={{ marginTop: 12 }}>
+          <Check checked={data.exempt} onChange={set("exempt")}>
+            I claim exemption from withholding for 2026. I had no federal income tax liability in 2025 and expect none in 2026.
+          </Check>
+        </div>
+      </Section>
+
+      <Section title="Step 5: Sign here">
+        <div style={{ fontSize: 13, color: T.slate700, lineHeight: 1.55, marginBottom: 10 }}>
+          Under penalties of perjury, I declare that this certificate, to the best of my knowledge and belief,
+          is true, correct, and complete.
+        </div>
+        <Grid min={200}>
+          <Field label="Type your full name to sign"><Text value={data.signature} onChange={set("signature")} /></Field>
+        </Grid>
+      </Section>
+    </div>
+  );
+}
+
 function readyToSubmit(formType, data, secure, ssnOnFile) {
   if (formType === "non_compete" || formType === "handbook_ack") return !!data.agreed;
   if (formType === "annual_certification") return !!data.agreed && !!data.completed_on;
   if (formType === "i9") return !!data.attested && !!data.signature && !!data.status;
+  if (formType === "w4") {
+    return !!data.first_name && !!data.last_name && !!data.address && !!data.city_state_zip
+      && !!data.filing_status && !!data.signature;
+  }
   if (formType === "combined_onboarding") {
     return !!data.why_statement && (!!secure.ssn || !!ssnOnFile) &&
       (secure.banks || []).some(b => b.bank_name && b.account_number && b.routing_number);
@@ -539,7 +695,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
   const [ssnOnFile, setSsnOnFile] = useState(false);
 
   useEffect(() => {
-    if (!supabase || form.id !== "combined_onboarding" || !teamId) return;
+    if (!supabase || (form.id !== "combined_onboarding" && form.id !== "w4") || !teamId) return;
     let cancelled = false;
     supabase.rpc("onboarding_ssn_on_file", { p_team_id: teamId })
       .then(({ data: onFile }) => { if (!cancelled) setSsnOnFile(onFile === true); });
@@ -565,7 +721,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
         form_type: form.id,
         cycle_key: cycleKey,
         document_id: doc ? doc.id : null,
-        data,
+        data: form.id === "w4" ? { ...data, step3_total: w4Step3Total(data) } : data,
         status: submit ? "submitted" : "in_progress",
       };
       if (form.id === "i9" && isAdmin && employer && employer.attested) {
@@ -646,6 +802,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
       <div style={locked && form.id !== "i9" ? { pointerEvents: "none", opacity: 0.65 } : null}>
         {form.id === "combined_onboarding" &&
           <CombinedForm data={data} setData={setData} secure={secure} setSecure={setSecure} ssnOnFile={ssnOnFile} />}
+        {form.id === "w4" && <W4Form data={data} setData={setData} ssnOnFile={ssnOnFile} teamId={teamId} />}
         {form.id === "non_compete" && <NonCompeteForm doc={doc} data={data} setData={setData} />}
         {form.id === "handbook_ack" && <HandbookForm doc={doc} data={data} setData={setData} />}
         {form.id === "annual_certification" && <CertificationForm data={data} setData={setData} />}
