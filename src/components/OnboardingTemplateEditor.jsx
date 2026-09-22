@@ -120,6 +120,22 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
+  // Pop-up instructions for the step itself live in onboarding_instructions,
+  // matched to the step by its title, the same way sub-items match theirs.
+  const [instr, setInstr] = useState({ id: null, text: "" });
+  const [instrOpen, setInstrOpen] = useState(false);
+  useEffect(() => {
+    if (isNew || !row.title) return undefined;
+    let cancelled = false;
+    supabase.from("onboarding_instructions")
+      .select("id, body_md")
+      .eq("agency_id", AGENCY_ID)
+      .eq("substep_label", row.title)
+      .maybeSingle()
+      .then(({ data }) => { if (!cancelled && data) setInstr({ id: data.id, text: data.body_md || "" }); });
+    return () => { cancelled = true; };
+  }, [isNew, row.title]);
+
   const set = (patch) => setForm(f => ({ ...f, ...patch }));
 
   // A new step names itself from its title until the key is edited by hand.
@@ -217,6 +233,21 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
           }
         }
       }
+      // The step's pop-up instructions follow its title.
+      const body = instr.text.trim();
+      if (instr.id && !body) {
+        const { error: ie } = await supabase.from("onboarding_instructions").delete().eq("id", instr.id);
+        if (ie) throw ie;
+      } else if (instr.id) {
+        const { error: ie } = await supabase.from("onboarding_instructions")
+          .update({ substep_label: title, body_md: body, updated_at: new Date().toISOString() })
+          .eq("id", instr.id);
+        if (ie) throw ie;
+      } else if (body) {
+        const { error: ie } = await supabase.from("onboarding_instructions")
+          .insert({ agency_id: AGENCY_ID, substep_label: title, title, body_md: body });
+        if (ie) throw ie;
+      }
       await onSaved();
       onClose();
     } catch (e) {
@@ -307,6 +338,24 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
               One per line. A line ending in a colon becomes a heading for the lines under it.
             </div>
           </div>
+
+          {(instr.text || instrOpen) ? (
+            <div>
+              <label style={fieldLabel}>Pop-up instructions</label>
+              <textarea
+                style={{ ...inputBase, minHeight: 120, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }}
+                value={instr.text}
+                placeholder="Opens from the ⓘ next to the step."
+                onChange={(e) => setInstr(v => ({ ...v, text: e.target.value }))}
+              />
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setInstrOpen(true)}
+              style={{ alignSelf: "flex-start", justifySelf: "start", background: "none", border: "none", padding: 0, color: T.blue, fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+            >Add pop-up instructions</button>
+          )}
 
           <div style={twoUp}>
             <div>

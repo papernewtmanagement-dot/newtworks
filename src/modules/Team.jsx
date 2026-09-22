@@ -46,6 +46,7 @@ import { useTabParam, TabLink } from "../lib/routing.jsx";
 import TeamForms from "../components/TeamForms.jsx";
 import TeamPayroll from "./TeamPayroll.jsx";
 import TeamCTSReference from "./TeamCTSReference.jsx";
+import TeamTermination from "./TeamTermination.jsx";
 import { useVerdictThresholds } from "../lib/hooks.js";
 // ─── Pipeline Stage Config ────────────────────────────────────
 // Shared with the candidate detail stepper — see src/lib/hiringStages.js.
@@ -3092,7 +3093,7 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
 
 export default function Team({ userRole }) {
   const { data: roi } = useProducerROI();
-  const [section, setSection, sectionHref] = useTabParam("tab", "members", ["members","growth","payroll","cts"]);
+  const [section, setSection, sectionHref] = useTabParam("tab", "members", ["members","growth","payroll","cts","termination"]);
   const [applicants,  setApplicants]  = useState([]);
   const [applicantsLoading, setApplicantsLoading] = useState(true);
   const [applicantsError,   setApplicantsError]   = useState(false);
@@ -3280,6 +3281,7 @@ export default function Team({ userRole }) {
     { id:"growth",   label:"Growth"   },
     { id:"payroll",  label:"Payroll"  },
     { id:"cts",      label:"CTS Ref"  },
+    { id:"termination", label:"Termination" },
   ];
 
   return (
@@ -3310,6 +3312,7 @@ export default function Team({ userRole }) {
       )}
       {section === "payroll" && <TeamPayroll />}
       {section === "cts"     && <TeamCTSReference />}
+      {section === "termination" && <TeamTermination />}
       {section === "growth"   && <GrowthTab  applicants={applicants.filter(a => a.status !== "former" && a.status !== "declined")} declined={applicants.filter(a => a.status === "declined")} former={applicants.filter(a => a.status === "former")} onUpdate={updateApplicantStage} loading={applicantsLoading} error={applicantsError} onRetry={retryApplicants} userRole={userRole} />}
     </div>
   );

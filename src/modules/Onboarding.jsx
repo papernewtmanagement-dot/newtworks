@@ -446,6 +446,11 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                             {!step.is_required && (
                               <span style={{ marginLeft: 8, fontSize: 10, color: T.slate400, fontWeight: 500 }}>optional</span>
                             )}
+                            {instructions[step.title] && (
+                              <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>
+                                <InfoDot title="Instructions" onClick={() => setOpenInstr(instructions[step.title])} />
+                              </span>
+                            )}
                           </div>
                           <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
                             {step.owner_kind !== "new_hire" && (

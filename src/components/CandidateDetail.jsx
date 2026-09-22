@@ -1705,6 +1705,14 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
                       <strong style={{ color: T.red }}>Concern:</strong> {p.concern}
                     </div>
                   )}
+                  {Array.isArray(p?.followups) && p.followups.length > 0 && (
+                    <div style={{ fontSize: 11, color: T.slate700, marginBottom: 6 }}>
+                      <strong style={{ color: T.slate600 }}>Follow-ups:</strong>
+                      <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
+                        {p.followups.map((f, fi) => <li key={fi} style={{ marginTop: 2 }}>{f}</li>)}
+                      </ul>
+                    </div>
+                  )}
                   <textarea
                     value={currentAnswer}
                     onChange={(e) => updateAnswer(src, e.target.value)}

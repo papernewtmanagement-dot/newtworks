@@ -1,7 +1,8 @@
 // terminate-team-member edge function (v2)
 //
 // Orchestrates a State Farm team-member termination:
-//   1. Loads the team member + the "Termination" admin_pages checklist.
+//   1. Loads the team member + the termination checklist (Team → Termination
+//      tab, public.termination_checklist).
 //   2. Composes an HTML notification email with identity, contact (incl. physical
 //      address), SF identifiers (alias + ext), and the verbatim AAO checklist
 //      pre-filled with name/alias/extension.
@@ -168,15 +169,14 @@ Deno.serve(async (req: Request) => {
     const fullName = `${member.first_name} ${member.last_name}`;
     auditLog.push(`Loaded ${fullName}`);
 
-    // 2) Load termination checklist
-    const { data: termPage } = await sb.from("manuals")
-      .select("content")
+    // 2) Load the termination checklist (Team → Termination tab).
+    const { data: termRow } = await sb.from("termination_checklist")
+      .select("content_md")
       .eq("agency_id", AGENCY_ID)
-      .eq("manual_type", "admin")
-      .eq("title", "Termination")
-      .eq("is_active", true)
       .maybeSingle();
-    let checklistMd = termPage?.content || "(Termination checklist not found in the admin manual.)";
+    let checklistMd = (termRow?.content_md || "").trim()
+      ? termRow.content_md
+      : "(No termination checklist saved. Add one on the Team → Termination tab.)";
     // Pre-fill the AAO request-details placeholders with the actual values.
     const aliasFill = member.sf_alias || "(no alias on file)";
     const extFill = member.phone_extension || "(no extension on file)";
