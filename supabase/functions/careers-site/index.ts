@@ -1,21 +1,22 @@
-// careers-site edge function — APPLICATION INTAKE ONLY.
+// careers-site edge function — the careers page's data source and intake.
 //
 // Supabase Edge Functions cannot serve HTML: any GET response with a
 // content type of text/html is rewritten to text/plain and given a
 // locked-down security header, so pages arrive as unstyled raw source.
 // That is a documented platform restriction.
 //
-// Page rendering therefore lives on Vercel at api/careers.js. This function
-// keeps only the one job Supabase is right for: receiving the submitted
-// application form, writing it to the database, and routing it into the
-// hiring pipeline. That is a plain data operation and is fully supported.
+// Page rendering therefore lives on Vercel at api/careers.js. The database
+// is closed to the no-login key, so that page reads through this function,
+// which holds the privileged key.
 //
-// ROUTE (single):
-//   POST /careers/<slug>/apply   — via the vercel.json rewrite
+// ROUTES:
+//   GET  /postings              open positions for the listing (JSON)
+//   GET  /<slug>                one open position + its screener questions (JSON)
+//   POST /careers/<slug>/apply  the application form, via the vercel.json rewrite
 //
-// This function needs the privileged key because it inserts into
-// job_applications and hiring_candidates. The Vercel page-rendering side
-// deliberately uses the browser-safe key and cannot write.
+// The two GET routes are what /careers and every job page read. Dropping them
+// breaks the whole careers site: that happened 2026-09-18, when this file was
+// redeployed from a copy that no longer had them.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -30,16 +31,66 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 );
 
-async function handleApply(slug: string, req: Request): Promise<Response> {
-  const form = await req.formData();
+// What the public careers page may show about a posting. Nothing internal.
+const PUBLIC_POSTING_COLUMNS =
+  "posting_slug, job_title, employment_type, location_mode, city, state, salary_min, salary_max, salary_period";
 
-  const { data: posting } = await supabase
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// The one definition of "an open posting", shared by the job page and the
+// application form so the two can never disagree about what is open.
+async function findOpenPosting(slug: string, columns: string) {
+  const { data } = await supabase
     .from("job_postings")
-    .select("id, screener_codes, job_title")
+    .select(columns)
     .eq("agency_id", AGENCY_ID)
     .eq("posting_slug", slug)
     .eq("is_active", true)
     .maybeSingle();
+  return data as any;
+}
+
+// GET /postings: the listing on /careers.
+async function handleListing(): Promise<Response> {
+  const { data, error } = await supabase
+    .from("job_postings")
+    .select(PUBLIC_POSTING_COLUMNS)
+    .eq("agency_id", AGENCY_ID)
+    .eq("is_active", true)
+    .order("job_title");
+  if (error) {
+    console.error("careers-site: listing failed", error);
+    return json({ error: "could not load postings" }, 500);
+  }
+  return json({ postings: data || [] });
+}
+
+// GET /<slug>: one job page, with its screener questions.
+async function handleDetail(slug: string): Promise<Response> {
+  const posting = await findOpenPosting(
+    slug,
+    PUBLIC_POSTING_COLUMNS + ", description_body, screener_codes",
+  );
+  if (!posting) return json({ error: "not found" }, 404);
+  const codes: string[] = posting.screener_codes || [];
+  const { data: questions } = await supabase
+    .from("job_screener_questions")
+    .select("question_code, question_text, answer_type, is_required")
+    .eq("agency_id", AGENCY_ID)
+    .eq("is_active", true)
+    .in("question_code", codes);
+  return json({ posting: { ...posting, screener_codes: codes }, questions: questions || [] });
+}
+
+async function handleApply(slug: string, req: Request): Promise<Response> {
+  const form = await req.formData();
+
+  const posting = await findOpenPosting(slug, "id, screener_codes, job_title");
 
   if (!posting) return new Response("Position not found.", { status: 404 });
 
@@ -163,12 +214,15 @@ Deno.serve(async (req) => {
   if (path === "") path = "/";
 
   try {
+    if (req.method === "GET") {
+      if (path === "/postings") return await handleListing();
+      const detailMatch = path.match(/^\/([^\/]+)$/);
+      if (detailMatch) return await handleDetail(decodeURIComponent(detailMatch[1]));
+      return new Response("Not found.", { status: 404 });
+    }
+
     if (req.method !== "POST") {
-      return new Response(
-        "This endpoint receives job applications only. Open positions are at " +
-          SITE_ORIGIN + "/careers",
-        { status: 405 }
-      );
+      return new Response("Method not allowed.", { status: 405 });
     }
 
     const applyMatch = path.match(/^\/([^\/]+)\/apply$/);
