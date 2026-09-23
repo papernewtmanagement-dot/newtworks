@@ -80,6 +80,14 @@ interface RunCtx {
   // Documents/<month>/<type> tree under driveParentFolderId if unset.
   driveCompDeductFolderId?: string | null;
   drivePayrollFolderId?: string | null;
+  // Fixed homes added 2026-09-23. Resumes, CTS results and PFA statements had
+  // no fixed folder, so they fell into the Documents/<month>/<type> tree, which
+  // sits at the TOP of Drive. Peter's ruling (2026-09-02): loose resumes live
+  // in Team > Hiring > Resumes. CTS results live beside them in Team > Hiring >
+  // CTS Profiles. See FIXED_DRIVE_FOLDER below.
+  driveHiringResumesFolderId?: string | null;
+  driveHiringCtsFolderId?: string | null;
+  drivePfaFolderId?: string | null;
 }
 
 interface ProcessedAttachment {
@@ -620,24 +628,115 @@ async function getAccountDriveFolderId(
  * Every step falls back one level up. A file in the right year but the wrong
  * type folder can be moved later; a file that never got filed cannot.
  */
+/**
+ * Doc types with one fixed home, keyed to the RunCtx field that carries the
+ * folder id (each loaded from a settings row by loadDriveFolders). This table is
+ * the ONLY place a fixed home is declared: documentFolderId reads it for the
+ * file itself, and the scanned-resume text recovery asks documentFolderId too,
+ * so the copy it makes lands in the same folder as the resume.
+ *
+ * 2026-09-23: resumes, CTS results and PFA statements added. Before this they
+ * fell through to the Documents/<month>/<type> tree under the fallback root,
+ * which is the top of Drive, and the text-recovery copies went to the top of
+ * Drive with no folder at all.
+ */
+type FixedFolderKey =
+  | "driveCompDeductFolderId" | "drivePayrollFolderId"
+  | "driveHiringResumesFolderId" | "driveHiringCtsFolderId" | "drivePfaFolderId";
+const FIXED_DRIVE_FOLDER: Partial<Record<DocType, FixedFolderKey>> = {
+  comp_recap_1h: "driveCompDeductFolderId",
+  comp_recap_daily: "driveCompDeductFolderId",
+  deduction_statement: "driveCompDeductFolderId",
+  adp_payroll: "drivePayrollFolderId",
+  surepayroll_payroll: "drivePayrollFolderId",
+  resume_manual_batch: "driveHiringResumesFolderId",
+  careerplug_applicant: "driveHiringResumesFolderId",
+  cts_profile: "driveHiringCtsFolderId",
+  bank_statement_pfa: "drivePfaFolderId",
+};
+
+/** Every Drive folder setting, read once per request and spread into every mode's RunCtx. */
+async function loadDriveFolders(agencyId: string): Promise<Pick<RunCtx,
+  "driveParentFolderId" | FixedFolderKey>> {
+  const [root, compDeduct, payroll, resumes, cts, pfa] = await Promise.all([
+    getSetting(agencyId, "drive_newtworks_root_folder_id"),
+    getSetting(agencyId, "drive_comp_deduct_folder_id"),
+    getSetting(agencyId, "drive_payroll_folder_id"),
+    getSetting(agencyId, "drive_hiring_resumes_folder_id"),
+    getSetting(agencyId, "drive_hiring_cts_folder_id"),
+    getSetting(agencyId, "drive_pfa_folder_id"),
+  ]);
+  return {
+    driveParentFolderId: root,
+    driveCompDeductFolderId: compDeduct,
+    drivePayrollFolderId: payroll,
+    driveHiringResumesFolderId: resumes,
+    driveHiringCtsFolderId: cts,
+    drivePfaFolderId: pfa,
+  };
+}
+
+/**
+ * Move files this run created to the Drive trash. Used only for copies the
+ * run itself made and no longer needs (see settleRecoveredDriveCopy). Trash,
+ * not delete: anything trashed by mistake is recoverable for 30 days.
+ * GOOGLEDRIVE_TRASH_FILE checked live at the pinned tool set on 2026-09-23.
+ */
+async function trashDriveFiles(ctx: RunCtx, fileIds: string[], why: string): Promise<void> {
+  if (!ctx.driveAccountId) return;
+  for (const fileId of fileIds) {
+    if (!fileId) continue;
+    const res = await callComposio({
+      apiKey: ctx.composioApiKey,
+      userId: ctx.composioUserId,
+      connectedAccountId: ctx.driveAccountId,
+      toolSlug: "GOOGLEDRIVE_TRASH_FILE",
+      toolArguments: { file_id: fileId },
+      toolkitVersion: DRIVE_FOLDER_TOOLKIT_VERSION,
+    });
+    if (!res.ok) {
+      console.warn(`[document-processor] could not trash Drive file ${fileId} (${why}): ${res.error}`);
+    }
+  }
+}
+
+/**
+ * One Drive copy per resume (Peter 2026-09-23). Text recognition makes a
+ * Google Doc copy of a scanned resume to read it. When the processor already
+ * filed the original, every file the recovery step made is an extra and goes
+ * to the trash. When the original never got filed, the recovered Doc IS the
+ * Drive copy: it goes on the documents row (the candidate's resume link already
+ * points at it) and any other file the step made goes to the trash. Only files
+ * this call created are ever trashed.
+ */
+async function settleRecoveredDriveCopy(
+  ctx: RunCtx, documentId: string, ownCopyFiled: boolean,
+  r: { recoveredDriveFileId?: string | null; recoveredDriveUrl?: string | null;
+       recoveryCreatedFileIds?: string[] },
+): Promise<void> {
+  const created = r.recoveryCreatedFileIds ?? [];
+  if (ownCopyFiled) {
+    await trashDriveFiles(ctx, created, "extra text-recognition copy; the original is already filed");
+    return;
+  }
+  if (r.recoveredDriveFileId) {
+    await sb.from("documents")
+      .update({ drive_file_id: r.recoveredDriveFileId, drive_url: r.recoveredDriveUrl ?? null })
+      .eq("id", documentId);
+  }
+  await trashDriveFiles(ctx, created.filter((id) => id !== r.recoveredDriveFileId),
+    "extra copy from the two-call recovery route; the recovered document is kept");
+}
+
 async function documentFolderId(
   ctx: RunCtx, docType: DocType, txnDate: string, accountCode?: string | null,
 ): Promise<string | null> {
   const acctFolder = await getAccountDriveFolderId(ctx.agencyId, accountCode ?? null);
   if (acctFolder) return acctFolder;
 
-  if (
-    (docType === "comp_recap_1h" || docType === "comp_recap_daily" || docType === "deduction_statement")
-    && ctx.driveCompDeductFolderId
-  ) {
-    return ctx.driveCompDeductFolderId;
-  }
-  if (
-    (docType === "adp_payroll" || docType === "surepayroll_payroll")
-    && ctx.drivePayrollFolderId
-  ) {
-    return ctx.drivePayrollFolderId;
-  }
+  const fixedKey = FIXED_DRIVE_FOLDER[docType];
+  const fixed = fixedKey ? ctx[fixedKey] : null;
+  if (fixed) return fixed;
 
   const root = ctx.driveParentFolderId ?? null;
   if (!root) return null;
@@ -1909,18 +2008,15 @@ async function processOneAttachment(
             composioUserId: ctx.composioUserId,
             gmailAccountId: ctx.gmailAccountId,
             driveAccountId: ctx.driveAccountId,
-            driveParentFolderId: ctx.driveParentFolderId ?? null,
+            // Same folder the resume itself files into. Was the fallback root,
+            // which is the top of Drive (fixed 2026-09-23).
+            driveParentFolderId: await documentFolderId(ctx, docType, att.receivedAt.slice(0, 10)),
           },
         });
         if (r.ok) {
-          // Text recognition produced a Drive copy. Keep it on the row — these
-          // resumes have otherwise never had one, because the normal Drive
-          // upload returns quietly when it fails.
-          if (r.recoveredDriveFileId && !drive?.driveFileId) {
-            await sb.from("documents")
-              .update({ drive_file_id: r.recoveredDriveFileId, drive_url: r.recoveredDriveUrl ?? null })
-              .eq("id", documentId);
-          }
+          // One Drive copy per resume: drop the text-recognition copy when the
+          // original is already filed, otherwise keep it as the Drive copy.
+          await settleRecoveredDriveCopy(ctx, documentId, !!drive?.driveFileId, r);
           await markDocument(documentId, "processed", 1, ["hiring_candidates"],
             `Resume ingested for ${r.candidateName ?? "unnamed candidate"} (${r.action}, identity via ${r.identitySource}, text via ${r.textSource ?? "pdf"}); candidate ${r.candidateId ?? "unknown"}`);
           await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
@@ -2158,7 +2254,7 @@ async function processResumeTextRecoveryMode(
 
   let q = sb
     .from("documents")
-    .select("id, file_name, gmail_message_id, gmail_attachment_id, uploaded_by, uploaded_at")
+    .select("id, file_name, gmail_message_id, gmail_attachment_id, uploaded_by, uploaded_at, drive_file_id")
     .eq("agency_id", ctx.agencyId)
     .eq("groq_classification", "resume_manual_batch")
     .eq("processing_status", "error");
@@ -2227,16 +2323,13 @@ async function processResumeTextRecoveryMode(
         composioUserId: ctx.composioUserId,
         gmailAccountId: ctx.gmailAccountId,
         driveAccountId: ctx.driveAccountId,
-        driveParentFolderId: ctx.driveParentFolderId ?? null,
+        driveParentFolderId: await documentFolderId(
+          ctx, "resume_manual_batch", String((row as any).uploaded_at ?? "").slice(0, 10)),
       },
     });
 
     if (r.ok) {
-      if (r.recoveredDriveFileId) {
-        await sb.from("documents")
-          .update({ drive_file_id: r.recoveredDriveFileId, drive_url: r.recoveredDriveUrl ?? null })
-          .eq("id", (row as any).id);
-      }
+      await settleRecoveredDriveCopy(ctx, (row as any).id, !!(row as any).drive_file_id, r);
       await markDocument((row as any).id, "processed", 1, ["hiring_candidates"],
         `Resume recovered by text recognition for ${r.candidateName ?? "unnamed candidate"} (${r.action}, identity via ${r.identitySource}); candidate ${r.candidateId ?? "unknown"}`);
       recovered++;
@@ -2514,9 +2607,9 @@ async function run(req: Request): Promise<Response> {
   const composioUserId = await getSetting(agencyId, "composio_user_id");
   const gmailAccountId = await getSetting(agencyId, "composio_gmail_account_id");
   const driveAccountId = await getSetting(agencyId, "composio_googledrive_account_id");
-  const driveFolderId = await getSetting(agencyId, "drive_newtworks_root_folder_id");
-  const driveCompDeductFolderId = await getSetting(agencyId, "drive_comp_deduct_folder_id");
-  const drivePayrollFolderId = await getSetting(agencyId, "drive_payroll_folder_id");
+  // Every Drive folder the processor files into, read once and spread into
+  // every mode below, so a new home is added in exactly one place.
+  const driveFolders = await loadDriveFolders(agencyId);
   if (!composioApiKey || !composioUserId || !gmailAccountId) {
     return jsonResponse({
       ok: false,
@@ -2572,8 +2665,7 @@ async function run(req: Request): Promise<Response> {
     // each one through Drive text recognition. See the note on the function.
     const trCtx: RunCtx = {
       agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
-      driveParentFolderId: driveFolderId,
-      driveCompDeductFolderId, drivePayrollFolderId,
+      ...driveFolders,
     };
     const startedAt = new Date().toISOString();
     const result = await processResumeTextRecoveryMode(trCtx, body);
@@ -2583,8 +2675,7 @@ async function run(req: Request): Promise<Response> {
     // File the Drive copies lost while the upload was silently failing.
     const bfCtx: RunCtx = {
       agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
-      driveParentFolderId: driveFolderId,
-      driveCompDeductFolderId, drivePayrollFolderId,
+      ...driveFolders,
     };
     const startedAt = new Date().toISOString();
     const result = await processDriveBackfillMode(bfCtx, body);
@@ -2594,8 +2685,7 @@ async function run(req: Request): Promise<Response> {
     // Read-only capability check. See the note on the function above.
     const prCtx: RunCtx = {
       agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
-      driveParentFolderId: driveFolderId,
-      driveCompDeductFolderId, drivePayrollFolderId,
+      ...driveFolders,
     };
     const startedAt = new Date().toISOString();
     const result = await processComposioProbeMode(prCtx, body);
@@ -2636,8 +2726,7 @@ async function run(req: Request): Promise<Response> {
 
   const ctx: RunCtx = {
     agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
-    driveParentFolderId: driveFolderId,
-      driveCompDeductFolderId, drivePayrollFolderId,
+    ...driveFolders,
   };
   const startedAt = new Date().toISOString();
   const allResults: ProcessedAttachment[] = [];

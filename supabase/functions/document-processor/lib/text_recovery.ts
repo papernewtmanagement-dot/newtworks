@@ -30,9 +30,11 @@
 //      of how well they work — see the note on the conversion step below.
 //   3. Read the new document back as plain text. Two doors here as well.
 //
-// The converted document is deliberately KEPT, not deleted. It becomes the
-// Drive copy these resumes have always been missing, and the caller writes its
-// id onto the documents row.
+// The converted document is handed back, not deleted here. The caller keeps
+// exactly one Drive copy per resume (settleRecoveredDriveCopy in index.ts,
+// 2026-09-23): when the processor already filed the original, this copy is an
+// extra and the caller trashes it; when the original never got filed, this copy
+// becomes the Drive copy on the documents row.
 //
 // EVERY FAILURE NAMES ITS STAGE AND ITS DOOR. The three stages have three
 // completely different fixes, and the log cannot be read after the fact, so
@@ -50,7 +52,11 @@ export interface TextRecoveryDeps {
   composioUserId: string;
   gmailAccountId: string;
   driveAccountId: string | null;
-  /** Optional Drive folder to file the converted document in. Null = My Drive root. */
+  /**
+   * Drive folder the converted document is filed in. Callers pass the folder the
+   * resume itself files into (documentFolderId). Null puts it at the top of
+   * Drive, which is how 33 copies ended up there before 2026-09-23.
+   */
   driveParentFolderId?: string | null;
 }
 
@@ -63,6 +69,12 @@ export type TextRecoveryResult =
       charCount: number;
       /** Which conversion door worked, and which read door. For the record. */
       via: string;
+      /**
+       * Set only when the two-call route ran: the faithful copy of the original
+       * it uploaded before converting. Otherwise undefined. The caller decides
+       * which of the files this run made to keep.
+       */
+      originalCopyId?: string;
     }
   | { ok: false; error: string; stage: "gmail" | "convert" | "read" };
 
@@ -209,6 +221,7 @@ export async function recoverTextFromScannedFile(opts: {
   let docId = "";
   let docUrl = "";
   let via = "";
+  let originalCopyId: string | undefined;
 
   const fromUrl = await drive("GOOGLEDRIVE_UPLOAD_FROM_URL", {
     source_url: sourceUrl,
@@ -272,6 +285,7 @@ export async function recoverTextFromScannedFile(opts: {
     docId = firstId(conv.data);
     docUrl = conv.data?.webViewLink ?? conv.data?.display_url ?? "";
     via = "upload_then_copy";
+    originalCopyId = originalId;
   }
 
   if (!docUrl) docUrl = `https://docs.google.com/document/d/${docId}/edit`;
@@ -360,5 +374,6 @@ export async function recoverTextFromScannedFile(opts: {
     driveUrl: docUrl,
     charCount: trimmed.length,
     via,
+    ...(originalCopyId ? { originalCopyId } : {}),
   };
 }

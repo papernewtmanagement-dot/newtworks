@@ -111,6 +111,10 @@ export interface RmbResult {
   // these resumes have otherwise never had, so the caller stores it.
   recoveredDriveFileId?: string | null;
   recoveredDriveUrl?: string | null;
+  // Every Drive file THIS call's recovery step created. Empty when the text was
+  // handed in. The caller keeps one copy per resume and trashes the rest; it
+  // never trashes a file it did not create.
+  recoveryCreatedFileIds?: string[];
   error?: string;
 }
 
@@ -240,6 +244,7 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
     isDocxAttachment(args.fileName) ? "docx" : "pdf";
   let recoveredDriveFileId: string | null = null;
   let recoveredDriveUrl: string | null = null;
+  const recoveryCreatedFileIds: string[] = [];
   let recoveryFailure: string | null = null;
 
   // Text handed in with the request, used in place of the file's own text layer
@@ -272,6 +277,7 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
       textSource = "text_recognition";
       recoveredDriveFileId = rec.driveFileId;
       recoveredDriveUrl = rec.driveUrl;
+      recoveryCreatedFileIds.push(rec.driveFileId, ...(rec.originalCopyId ? [rec.originalCopyId] : []));
       console.log(`[resume_manual_batch] ${args.fileName}: no text in the file; recovered ${rec.charCount} characters by Drive text recognition`);
     } else {
       recoveryFailure = `${rec.stage} stage: ${rec.error}`;
@@ -421,6 +427,7 @@ export async function processResumeManualBatch(args: RmbArgs): Promise<RmbResult
     textSource,
     recoveredDriveFileId,
     recoveredDriveUrl,
+    recoveryCreatedFileIds,
   };
 }
 
