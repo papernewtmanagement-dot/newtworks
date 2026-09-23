@@ -88,6 +88,10 @@ interface RunCtx {
   driveHiringResumesFolderId?: string | null;
   driveHiringCtsFolderId?: string | null;
   drivePfaFolderId?: string | null;
+  // Added 2026-09-23 (Peter decision 2A): zip bundles file in Accounts, team
+  // production reports in Team, commission reports in Comp - Deduct.
+  driveAccountsFolderId?: string | null;
+  driveTeamFolderId?: string | null;
 }
 
 interface ProcessedAttachment {
@@ -638,11 +642,15 @@ async function getAccountDriveFolderId(
  * 2026-09-23: resumes, CTS results and PFA statements added. Before this they
  * fell through to the Documents/<month>/<type> tree under the fallback root,
  * which is the top of Drive, and the text-recovery copies went to the top of
- * Drive with no folder at all.
+ * Drive with no folder at all. Same day (Peter decision 2A): zip bundles,
+ * commission reports and team production reports added, and the fallback root
+ * (drive_newtworks_root_folder_id) moved from the top of Drive to Operations,
+ * so a type with no home here files under Operations > Documents, never the top.
  */
 type FixedFolderKey =
   | "driveCompDeductFolderId" | "drivePayrollFolderId"
-  | "driveHiringResumesFolderId" | "driveHiringCtsFolderId" | "drivePfaFolderId";
+  | "driveHiringResumesFolderId" | "driveHiringCtsFolderId" | "drivePfaFolderId"
+  | "driveAccountsFolderId" | "driveTeamFolderId";
 const FIXED_DRIVE_FOLDER: Partial<Record<DocType, FixedFolderKey>> = {
   comp_recap_1h: "driveCompDeductFolderId",
   comp_recap_daily: "driveCompDeductFolderId",
@@ -653,18 +661,23 @@ const FIXED_DRIVE_FOLDER: Partial<Record<DocType, FixedFolderKey>> = {
   careerplug_applicant: "driveHiringResumesFolderId",
   cts_profile: "driveHiringCtsFolderId",
   bank_statement_pfa: "drivePfaFolderId",
+  archive_bundle: "driveAccountsFolderId",
+  commission_report: "driveCompDeductFolderId",
+  team_production: "driveTeamFolderId",
 };
 
 /** Every Drive folder setting, read once per request and spread into every mode's RunCtx. */
 async function loadDriveFolders(agencyId: string): Promise<Pick<RunCtx,
   "driveParentFolderId" | FixedFolderKey>> {
-  const [root, compDeduct, payroll, resumes, cts, pfa] = await Promise.all([
+  const [root, compDeduct, payroll, resumes, cts, pfa, accounts, team] = await Promise.all([
     getSetting(agencyId, "drive_newtworks_root_folder_id"),
     getSetting(agencyId, "drive_comp_deduct_folder_id"),
     getSetting(agencyId, "drive_payroll_folder_id"),
     getSetting(agencyId, "drive_hiring_resumes_folder_id"),
     getSetting(agencyId, "drive_hiring_cts_folder_id"),
     getSetting(agencyId, "drive_pfa_folder_id"),
+    getSetting(agencyId, "drive_accounts_folder_id"),
+    getSetting(agencyId, "drive_team_folder_id"),
   ]);
   return {
     driveParentFolderId: root,
@@ -673,6 +686,8 @@ async function loadDriveFolders(agencyId: string): Promise<Pick<RunCtx,
     driveHiringResumesFolderId: resumes,
     driveHiringCtsFolderId: cts,
     drivePfaFolderId: pfa,
+    driveAccountsFolderId: accounts,
+    driveTeamFolderId: team,
   };
 }
 
