@@ -23,7 +23,7 @@ import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, CATEGORY_KEYS, STAGE_LABELS,
   subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText, GroupHead, ItemInfo,
-  splitIndent,
+  splitIndent, columnStyle,
 } from "../lib/onboardingUi.jsx";
 
 const COLS = "id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by, is_active, unlock_rule, widget, assign_role_category, updated_at";
@@ -903,7 +903,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
         const gridStyle = {
           display: "grid",
           gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-          gap: cols ? 16 : 10, alignItems: "start",
+          gap: cols ? 12 : 10, alignItems: cols ? "stretch" : "start",
         };
         return (
           <Card key={ph} style={{ marginBottom: 12, padding: vp.isPhone ? "14px 12px" : "16px 18px" }}>
@@ -922,8 +922,8 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
 
             {cols ? (
               <div style={gridStyle}>
-                {cols.map(c => (
-                  <div key={c.name || "_"} style={{ display: "grid", gap: 10, alignContent: "start", minWidth: 0 }}>
+                {cols.map((c, ci) => (
+                  <div key={c.name || "_"} style={columnStyle(ci)}>
                     {c.name && <div style={trackHeadStyle}>{c.name}</div>}
                     {c.steps.map(r => renderRow(r, c.steps))}
                   </div>

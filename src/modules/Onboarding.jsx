@@ -32,7 +32,7 @@ import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
   subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo,
-  splitIndent,
+  splitIndent, columnStyle,
 } from "../lib/onboardingUi.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
 import ReferenceCalls from "./ReferenceCalls.jsx";
@@ -681,13 +681,13 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
             const gridStyle = {
               display: "grid",
               gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-              gap: cols ? 16 : 10, alignItems: "start",
+              gap: cols ? 12 : 10, alignItems: cols ? "stretch" : "start",
             };
             if (!cols) return <div style={gridStyle}>{phaseSteps.map(renderStep)}</div>;
             return (
               <div style={gridStyle}>
-                {cols.map(c => (
-                  <div key={c.name || "_"} style={{ display: "grid", gap: 10, alignContent: "start", minWidth: 0 }}>
+                {cols.map((c, ci) => (
+                  <div key={c.name || "_"} style={columnStyle(ci)}>
                     {c.name && <div style={trackHeadStyle}>{c.name}</div>}
                     {c.steps.map(renderStep)}
                   </div>

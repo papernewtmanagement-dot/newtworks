@@ -209,6 +209,16 @@ export function textToSubsteps(text) {
 
 // A phase with more than one track draws one column per track — the two
 // offer-stage columns both have to finish before the next milestone opens.
+// One column of a card. Columns alternate white and a faint gray, starting
+// white, so they read as separate lanes. Used by the plan and the template.
+export function columnStyle(index) {
+  return {
+    display: "grid", gap: 10, alignContent: "start", minWidth: 0,
+    background: index % 2 ? T.slate50 : T.white,
+    borderRadius: 10, padding: 8, boxSizing: "border-box",
+  };
+}
+
 export function trackColumns(steps) {
   const names = [];
   steps.forEach(s => {
