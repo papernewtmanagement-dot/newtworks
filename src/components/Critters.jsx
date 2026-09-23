@@ -570,6 +570,44 @@ function BossCatArt() {
   );
 }
 
+function BoxerDolphinArt() {
+  return (
+    <>
+      {/* A dolphin standing tall on its tail with huge biceps and red boxing
+          gloves. Joins the end-of-day dance now and then. Peter 2026-09-22. */}
+      <path d="M86 172 q-26 4 -34 16 q20 -2 36 -8 z" fill="#4E7FA8" />
+      <path d="M114 172 q26 4 34 16 q-20 -2 -36 -8 z" fill="#4E7FA8" />
+      <path d="M100 30 C132 30 142 70 138 110 C134 150 118 178 100 178 C82 178 66 150 62 110 C58 70 68 30 100 30 z" fill="#5B93C2" />
+      <path d="M100 70 C120 72 126 104 122 132 C118 158 108 172 100 172 C92 172 82 158 78 132 C74 104 80 72 100 70 z" fill="#DCEAF5" />
+      <path d="M66 70 q-22 -6 -26 -26 q18 6 30 16 z" fill="#4E7FA8" />
+      <path d="M124 52 q26 0 34 10 q-8 8 -30 6 z" fill="#5B93C2" />
+      <path d="M130 60 q14 2 26 2" fill="none" stroke="#3E6A8F" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="116" cy="48" r="5" fill="#15100F" />
+      <circle cx="117.5" cy="46.5" r="1.6" fill="#FFFFFF" />
+      <path d="M108 64 q10 8 22 2" fill="none" stroke="#15100F" strokeWidth="2.5" strokeLinecap="round" />
+      {/* Double-biceps flex: upper arms straight out, forearms up, gloves high. */}
+      <g className="nw-up" style={{ transformOrigin: "80% 80%" }}>
+        <rect x="26" y="98" width="42" height="18" rx="9" fill="#5B93C2" />
+        <ellipse cx="46" cy="94" rx="20" ry="17" fill="#6FA3CF" />
+        <path d="M34 90 q12 -12 24 0" fill="none" stroke="#3E6A8F" strokeWidth="2.5" strokeLinecap="round" />
+        <rect x="22" y="62" width="18" height="44" rx="9" fill="#5B93C2" />
+        <circle cx="31" cy="52" r="17" fill="#D63B33" />
+        <rect x="21" y="64" width="20" height="7" rx="3" fill="#FBF6EE" />
+        <path d="M24 48 q7 -6 14 0" fill="none" stroke="#A82A24" strokeWidth="2" strokeLinecap="round" />
+      </g>
+      <g className="nw-upB" style={{ transformOrigin: "20% 80%" }}>
+        <rect x="132" y="98" width="42" height="18" rx="9" fill="#5B93C2" />
+        <ellipse cx="154" cy="94" rx="20" ry="17" fill="#6FA3CF" />
+        <path d="M142 90 q12 -12 24 0" fill="none" stroke="#3E6A8F" strokeWidth="2.5" strokeLinecap="round" />
+        <rect x="160" y="62" width="18" height="44" rx="9" fill="#5B93C2" />
+        <circle cx="169" cy="52" r="17" fill="#D63B33" />
+        <rect x="159" y="64" width="20" height="7" rx="3" fill="#FBF6EE" />
+        <path d="M162 48 q7 -6 14 0" fill="none" stroke="#A82A24" strokeWidth="2" strokeLinecap="round" />
+      </g>
+    </>
+  );
+}
+
 export const DANCERS = [
   { key: "pug",        label: "pug",        Art: PugArt },
   { key: "axolotl",    label: "axolotl",    Art: AxolotlArt },
@@ -585,13 +623,14 @@ export const DANCERS = [
   { key: "woodpecker", label: "woodpecker", Art: WoodpeckerArt },
 ];
 
-// Guest dancers: not animals a kid picks, and not in the team's random draw.
-// Only called in by name (the Family day-done dance invites them now and then).
-const GUESTS = [
+// Guest dancers: not animals a kid picks. They drop into the Family day-done
+// dance now and then, and they are in the team's random day-done draw too.
+export const GUESTS = [
   { key: "ninja", label: "ninja", Art: NinjaArt },
   { key: "bosscat", label: "cat in a business suit", Art: BossCatArt },
+  { key: "boxerdolphin", label: "dolphin in boxing gloves", Art: BoxerDolphinArt },
 ];
-const ALL_DANCERS = [...DANCERS, ...GUESTS];
+export const ALL_DANCERS = [...DANCERS, ...GUESTS];
 
 // delay offsets the whole animal so a row of them is not in lockstep.
 export function Dancer({ which, size = 176, delay = 0 }) {

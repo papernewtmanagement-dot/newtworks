@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { DayDoneStyles, Confetti, Dancer, DANCERS } from "../components/Critters.jsx";
+import { DayDoneStyles, Confetti, Dancer, DANCERS, ALL_DANCERS } from "../components/Critters.jsx";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink, hrefWithParam } from "../lib/routing.jsx";
@@ -3364,7 +3364,8 @@ function DayDone({ stats, reduce, onBack, weekDone }) {
   // A fresh animal at random every time the panel comes up. Picked in a state
   // initialiser so it holds still for as long as the panel is showing and
   // re-rolls the next time it opens (Peter 2026-09-17).
-  const [which] = useState(() => DANCERS[Math.floor(Math.random() * DANCERS.length)].key);
+  // Guest dancers (ninja, boss cat, boxing dolphin) are in the draw too (Peter 2026-09-22).
+  const [which] = useState(() => ALL_DANCERS[Math.floor(Math.random() * ALL_DANCERS.length)].key);
   const _vp = useViewport();
   const [line, setLine] = useState(0);
   const [confettiOn, setConfettiOn] = useState(!reduce);
