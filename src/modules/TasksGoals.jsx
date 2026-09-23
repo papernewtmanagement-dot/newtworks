@@ -899,10 +899,52 @@ const ParentCloseModal = ({ task, openChildren, onConfirm, onCancel }) => {
   );
 };
 
+// ─── Person filter — shared by This Week and Overview ─────────
+// "all" | "mine" | an admin's user id. Owner only; managers see their own via RLS.
+const personMatch = (t, key, userId) =>
+  key === "all" ? true : key === "mine" ? t.assigned_to === userId : t.assigned_to === key;
+
+const PersonFilterChips = ({ pool, value, onChange, isOwner, userId, adminUsers = [] }) => {
+  if (!isOwner || adminUsers.length <= 1) return null;
+  const chips = [
+    { key:"all",  label:"All",  count: pool.length },
+    { key:"mine", label:"Mine", count: pool.filter(t => t.assigned_to === userId).length },
+    ...adminUsers
+      .filter(u => u.id !== userId)
+      .map(u => ({ key: u.id, label: (u.full_name || u.email || "Unknown").split(" ")[0], count: pool.filter(t => t.assigned_to === u.id).length })),
+  ];
+  return (
+    <div style={{ display:"flex", gap:6, marginBottom:10, overflowX:"auto", WebkitOverflowScrolling:"touch", paddingBottom:4 }}>
+      {chips.map(c => {
+        const active = value === c.key;
+        return (
+          <button key={c.key} onClick={() => onChange(c.key)}
+            style={{
+              flexShrink:0, whiteSpace:"nowrap",
+              display:"inline-flex", alignItems:"center", gap:5,
+              padding:"6px 11px", fontSize:11, fontWeight: active ? 700 : 500,
+              color: active ? T.white : T.slate700,
+              background: active ? T.blue : T.slate100,
+              border: active ? `1px solid ${T.blue}` : `1px solid ${T.slate200}`,
+              borderRadius:18, cursor:"pointer", transition:"all 0.12s",
+            }}>
+            <span>{c.label}</span>
+            <span style={{ fontSize:10, fontWeight:600, padding:"1px 6px", borderRadius:10,
+              background: active ? "rgba(255,255,255,0.25)" : T.white,
+              color: active ? T.white : T.slate600 }}>{c.count}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
 // ─── Section: This Week ───────────────────────────────────────
 // One person, one week, one budget. Items come from the Sunday run (scheduled_day set)
 // or from starring anything by hand (no day, shown at the bottom).
-const WeekSection = ({ tasks, budgets, onComplete, onNavigate, onToggleFocus, canEdit, onEdit, onDelete, onReopen, onSavePlanner, onReleaseLock, onProposeWeek, onApproveWeek }) => {
+const WeekSection = ({ tasks, budgets, userRole, userId, adminUsers = [], onComplete, onNavigate, onToggleFocus, canEdit, onEdit, onDelete, onReopen, onSavePlanner, onReleaseLock, onProposeWeek, onApproveWeek }) => {
+  const isOwner = userRole === "owner";
+  const [who, setWho] = useState("all");
   const [expanded, setExpanded] = useState(() => new Set());
   const toggleExpand = (id) => setExpanded(prev => {
     const next = new Set(prev);
@@ -931,7 +973,8 @@ const WeekSection = ({ tasks, budgets, onComplete, onNavigate, onToggleFocus, ca
   // Checklist rows never take a weekly slot, so they never show here.
   const focusOpen = tasks.filter(t => t.in_weekly_focus && t.status !== "completed" && t.backlog_state !== "checklist");
   const focusIds  = new Set(focusOpen.map(t => t.id));
-  const topLevel  = focusOpen.filter(t => !t.parent_task_id || !focusIds.has(t.parent_task_id));
+  const topAll    = focusOpen.filter(t => !t.parent_task_id || !focusIds.has(t.parent_task_id));
+  const topLevel  = isOwner ? topAll.filter(t => personMatch(t, who, userId)) : topAll;
 
   // Group by person, then by the day the planner gave them.
   const people = [];
@@ -1049,6 +1092,11 @@ const WeekSection = ({ tasks, budgets, onComplete, onNavigate, onToggleFocus, ca
         </Card>
       )}
 
+      {focusOpen.length > 0 && (
+        <PersonFilterChips pool={topAll} value={who} onChange={setWho}
+          isOwner={isOwner} userId={userId} adminUsers={adminUsers} />
+      )}
+
       {focusOpen.length === 0 ? (
         <Card>
           <div style={{ fontSize:13, color:T.slate500, textAlign:"center", padding:"24px 12px" }}>
@@ -1104,21 +1152,6 @@ const WeekSection = ({ tasks, budgets, onComplete, onNavigate, onToggleFocus, ca
 };
 
 // ─── Section: Tasks List ──────────────────────────────────────
-// Person order for the task list: assignee name A to Z, unassigned last.
-const personName = (t) => t.assigned_to_name || "";
-const byPerson = (a, b) => {
-  const pa = personName(a), pb = personName(b);
-  if (pa === pb) return 0;
-  if (!pa) return 1;
-  if (!pb) return -1;
-  return pa.localeCompare(pb);
-};
-const TYPE_RANK = { epic:0, story:1, task:2 };
-const byPersonThenTitle = (a, b) => byPerson(a, b) || (a.title || "").localeCompare(b.title || "");
-const byPersonTypeTitle = (a, b) => byPerson(a, b)
-  || (TYPE_RANK[a.task_type || "task"] ?? 2) - (TYPE_RANK[b.task_type || "task"] ?? 2)
-  || (a.title || "").localeCompare(b.title || "");
-
 const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, userRole, userId, adminUsers = [], canEdit, onEdit, onDelete, onSavePlanner, onReleaseLock }) => {
   const isOwner = userRole === "owner";
   // Owner picks All / Mine / each other admin. Managers see only own via RLS; chips hidden.
@@ -1176,13 +1209,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
     if (priority !== "all" && t.priority !== priority) return false;
     if (taskCat  !== "all" && t.task_category !== taskCat) return false;
     // Assignee scope (owner-only; managers are RLS-scoped to own).
-    if (isOwner && assigneeFilter !== "all") {
-      if (assigneeFilter === "mine") {
-        if (t.assigned_to !== userId) return false;
-      } else if (t.assigned_to !== assigneeFilter) {
-        return false;
-      }
-    }
+    if (isOwner && !personMatch(t, assigneeFilter, userId)) return false;
     return true;
   };
 
@@ -1200,12 +1227,10 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
     if (viewMode !== "nested") return null;
     const pass = (t) => statusPriorityCatPass(t);
     const passType = (t) => typeFilter === "all" || (t.task_type || "task") === typeFilter;
-    // Each top-level item (an epic with its open children, or a loose story/task)
-    // is one unit; units are sorted by person so the list reads person by person.
-    const units = [];
+    const rows = [];
     const seen = new Set();
     // Epics first
-    const epics = tasks.filter(t => (t.task_type === "epic") && pass(t)).sort(byPersonThenTitle);
+    const epics = tasks.filter(t => (t.task_type === "epic") && pass(t)).sort((a,b) => (a.title||"").localeCompare(b.title||""));
     for (const e of epics) {
       // If filtering by a child type, only show epic when it has matching descendants
       if (typeFilter !== "all" && typeFilter !== "epic") {
@@ -1216,8 +1241,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
             });
         if (!hasMatch) continue;
       } else if (!passType(e)) continue;
-      const unit = { lead:e, rows:[{ task:e, depth:0 }] };
-      units.push(unit);
+      rows.push({ task:e, depth:0 });
       seen.add(e.id);
       // Epic not expanded → mark every descendant as seen so they don't fall to the orphan bucket.
       if (!expandedIds.has(e.id)) {
@@ -1232,10 +1256,10 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
       }
       // Epic expanded → render its direct stories + direct tasks. Stories drill down further only if they too are expanded.
       const stories = tasks.filter(t => t.parent_task_id === e.id && t.task_type === "story" && pass(t))
-        .sort(byPersonThenTitle);
+        .sort((a,b) => (a.title||"").localeCompare(b.title||""));
       for (const s of stories) {
         if (typeFilter === "all" || typeFilter === "story" || typeFilter === "task") {
-          unit.rows.push({ task:s, depth:1 });
+          rows.push({ task:s, depth:1 });
           seen.add(s.id);
         }
         if (!expandedIds.has(s.id)) {
@@ -1246,38 +1270,33 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
           continue;
         }
         const grand = tasks.filter(t => t.parent_task_id === s.id && pass(t))
-          .sort(byPersonThenTitle);
+          .sort((a,b) => (a.title||"").localeCompare(b.title||""));
         for (const g of grand) {
           if (typeFilter === "all" || typeFilter === (g.task_type || "task")) {
-            unit.rows.push({ task:g, depth:2 });
+            rows.push({ task:g, depth:2 });
             seen.add(g.id);
           }
         }
       }
       const directTasks = tasks.filter(t => t.parent_task_id === e.id && t.task_type !== "story" && pass(t))
-        .sort(byPersonThenTitle);
+        .sort((a,b) => (a.title||"").localeCompare(b.title||""));
       for (const dt of directTasks) {
         if (typeFilter === "all" || typeFilter === (dt.task_type || "task")) {
-          unit.rows.push({ task:dt, depth:1 });
+          rows.push({ task:dt, depth:1 });
           seen.add(dt.id);
         }
       }
     }
     // Orphans — anything not already rendered and not under an in-view epic
-    const orphans = tasks.filter(t => !seen.has(t.id) && pass(t) && passType(t));
-    for (const o of orphans) units.push({ lead:o, rows:[{ task:o, depth:0 }] });
-    // Person first, then epics before stories before tasks, then title.
-    units.sort((a, b) => byPersonTypeTitle(a.lead, b.lead));
-    // Name divider between people, only when more than one person is showing.
-    const people = new Set(units.map(u => personName(u.lead)));
-    const rows = [];
-    let lastWho = null;
-    for (const u of units) {
-      const who = personName(u.lead);
-      if (people.size > 1 && who !== lastWho) rows.push({ header: who || "Unassigned" });
-      lastWho = who;
-      rows.push(...u.rows);
-    }
+    const orphans = tasks.filter(t => !seen.has(t.id) && pass(t) && passType(t))
+      .sort((a,b) => {
+        // Stories first, then tasks
+        const ar = a.task_type === "story" ? 0 : 1;
+        const br = b.task_type === "story" ? 0 : 1;
+        if (ar !== br) return ar - br;
+        return (a.title||"").localeCompare(b.title||"");
+      });
+    for (const o of orphans) rows.push({ task:o, depth:0 });
     return rows;
   }, [tasks, filter, priority, taskCat, typeFilter, viewMode, expandedIds, assigneeFilter, isOwner, userId]);
 
@@ -1307,38 +1326,8 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
         
       </div>
 
-      {/* Assignee filter chips — owner-only, shown when 2+ admins exist.
-          Manager sees only own tasks via RLS, so chips are hidden for them. */}
-      {isOwner && adminUsers.length > 1 && (
-        <div style={{ display:"flex", gap:6, marginBottom:10, overflowX:"auto", WebkitOverflowScrolling:"touch", paddingBottom:4 }}>
-          {[
-            { key:"all",  label:"All",  count: pool.length },
-            { key:"mine", label:"Mine", count: pool.filter(t => t.assigned_to === userId).length },
-            ...adminUsers
-              .filter(u => u.id !== userId)
-              .map(u => ({ key: u.id, label: (u.full_name || u.email || "Unknown").split(" ")[0], count: pool.filter(t => t.assigned_to === u.id).length })),
-          ].map(c => {
-            const active = assigneeFilter === c.key;
-            return (
-              <button key={c.key} onClick={() => setAssigneeFilter(c.key)}
-                style={{
-                  flexShrink:0, whiteSpace:"nowrap",
-                  display:"inline-flex", alignItems:"center", gap:5,
-                  padding:"6px 11px", fontSize:11, fontWeight: active ? 700 : 500,
-                  color: active ? T.white : T.slate700,
-                  background: active ? T.blue : T.slate100,
-                  border: active ? `1px solid ${T.blue}` : `1px solid ${T.slate200}`,
-                  borderRadius:18, cursor:"pointer", transition:"all 0.12s",
-                }}>
-                <span>{c.label}</span>
-                <span style={{ fontSize:10, fontWeight:600, padding:"1px 6px", borderRadius:10,
-                  background: active ? "rgba(255,255,255,0.25)" : T.white,
-                  color: active ? T.white : T.slate600 }}>{c.count}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+      <PersonFilterChips pool={pool} value={assigneeFilter} onChange={setAssigneeFilter}
+        isOwner={isOwner} userId={userId} adminUsers={adminUsers} />
 
       {/* Category chips — one tap to filter; horizontal scroll on phone */}
       <div style={{ display:"flex", gap:6, marginBottom:14, overflowX:"auto", WebkitOverflowScrolling:"touch", paddingBottom:4 }}>
@@ -1386,11 +1375,7 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
             No tasks match your current filters.
           </div>
         ) : viewMode === "nested" ? (
-          (nestedRows || []).map(({ task, depth, header }) => header ? (
-            <div key={`who:${header}`} style={{ fontSize:11, fontWeight:700, color:T.slate500, letterSpacing:0.3, padding:"10px 2px 2px" }}>
-              {header}
-            </div>
-          ) : (
+          (nestedRows || []).map(({ task, depth }) => (
             <TaskCard key={task.id} task={task} allTasks={tasks} depth={depth}
               onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus}
               isExpanded={expandedIds.has(task.id)}
@@ -1952,7 +1937,7 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
       </div>
 
       {/* Section Content */}
-      {section === "todos"     && <WeekSection       tasks={tasksWithDisplay} budgets={budgets} onComplete={requestComplete} onNavigate={onNavigate||(()=>{})} onToggleFocus={toggleFocus} canEdit={canEdit} onEdit={openEditTaskModal} onDelete={deleteTask} onReopen={reopenTask} onSavePlanner={savePlanner} onReleaseLock={releasePlannerLock} onProposeWeek={proposeWeek} onApproveWeek={approveWeek} />}
+      {section === "todos"     && <WeekSection       tasks={tasksWithDisplay} budgets={budgets} userRole={userRole} userId={userId} adminUsers={adminUsers} onComplete={requestComplete} onNavigate={onNavigate||(()=>{})} onToggleFocus={toggleFocus} canEdit={canEdit} onEdit={openEditTaskModal} onDelete={deleteTask} onReopen={reopenTask} onSavePlanner={savePlanner} onReleaseLock={releasePlannerLock} onProposeWeek={proposeWeek} onApproveWeek={approveWeek} />}
       {section === "overview"  && <TasksList         tasks={tasksWithDisplay} onComplete={requestComplete} onNavigate={onNavigate||(()=>{})} onOpenNew={openNewTaskModal} onToggleFocus={toggleFocus} userRole={userRole} userId={userId} adminUsers={adminUsers} canEdit={canEdit} onEdit={openEditTaskModal} onDelete={deleteTask} onSavePlanner={savePlanner} onReleaseLock={releasePlannerLock} />}
       {section === "goals"     && <GoalsSection      goals={goals} />}
       {section === "completed" && <CompletedSection  tasks={tasksWithDisplay} canEdit={canEdit} onReopen={reopenTask} />}
