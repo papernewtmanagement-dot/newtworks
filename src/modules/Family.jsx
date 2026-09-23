@@ -15,6 +15,8 @@ import { DayDoneStyles, Confetti, Dancer, CritterIcon } from "../components/Crit
 //   family_extras_available() extra chores anyone can pick on a day
 //   family_week_register()   where the money started and each event of a week
 //   family_close_week()      posts the week's chore pay and the 10% set-asides
+//   family_math_todo()       extras and bonuses whose tithe/investment math the kid still owes
+//   family_math_done()       marks that math done so the close-out skips it
 //   family_balances()        spending / tithe / investments per kid
 // This screen never works out a fine, a balance, a due date or a set-aside.
 // The close-out adds and subtracts the numbers it is given; that is the lesson.
@@ -108,6 +110,8 @@ export default function Family({ userRole }) {
   const [busy, setBusy] = useState(null);
   const [celebrate, setCelebrate] = useState(null);
   const [closing, setClosing] = useState(null);
+  const [mathKid, setMathKid] = useState(null);
+  const [mathCount, setMathCount] = useState(0);
 
   const today = todayCentral();
   const day = isDate(dateParam) && dateParam <= today ? dateParam : today;
@@ -154,6 +158,14 @@ export default function Family({ userRole }) {
   }, [kidId, viewWeek, day]);
   useEffect(() => { loadBoard(); }, [loadBoard]);
 
+  // Money that posts right away (extras, bonuses) is split by the kid right away.
+  const refreshTodo = useCallback(async () => {
+    if (!kidId) { setMathCount(0); return; }
+    const { data } = await supabase.rpc("family_math_todo", { p_kid_id: kidId });
+    setMathCount(Array.isArray(data?.events) ? data.events.length : 0);
+  }, [kidId]);
+  useEffect(() => { refreshTodo(); }, [refreshTodo]);
+
   const todayDone = (rows) => {
     const mine = (rows || []).filter(r => r.day === today && r.frequency !== "extra");
     return mine.length > 0 && mine.every(r => DONE_STATES.includes(r.status));
@@ -172,6 +184,8 @@ export default function Family({ userRole }) {
     const rows = Array.isArray(data) ? data : board;
     setBoard(rows);
     if (!wasDone && todayDone(rows) && kid) setCelebrate(kid);
+    if (row.frequency === "extra" && (status === "claimed" || status === "verified") && kid) setMathKid(kid);
+    refreshTodo();
     load();
     const x = await supabase.rpc("family_extras_available", { p_date: day });
     if (!x.error) setExtras(x.data || []);
@@ -201,7 +215,13 @@ export default function Family({ userRole }) {
         </div>
       )}
 
-      {activeTab !== "setup" && <KidPicker kids={kids} kid={kid} balances={balances} kidHref={kidHref} setKid={setKidParam} />}
+      {activeTab !== "setup" && activeTab !== "fines" && <KidPicker kids={kids} kid={kid} balances={balances} kidHref={kidHref} setKid={setKidParam} />}
+      {(activeTab === "week" || activeTab === "money") && kid && mathCount > 0 && (
+        <div style={{ ...card, background: T.goldLt, borderColor: T.gold, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{kid.name} has new money to split.</div>
+          <button style={btn("primary")} onClick={() => setMathKid(kid)}>Do the math</button>
+        </div>
+      )}
 
       {activeTab === "week" && kid && (
         <WeekGrid kid={kid} board={board} checklists={checklists} extras={extras} isParent={isParent}
@@ -210,7 +230,7 @@ export default function Family({ userRole }) {
       )}
       {activeTab === "money" && kid && (
         <MoneyView kid={kid} balance={bal} isParent={isParent} ledger={ledger.filter(l => l.kid_id === kid.id)}
-          onSaved={load} setErr={setErr} onClose={(ws) => setClosing({ kid, ws })} />
+          onSaved={() => { load(); refreshTodo(); }} setErr={setErr} onClose={(ws) => setClosing({ kid, ws })} />
       )}
       {activeTab === "fines" && isParent && (
         <FinesView kids={kids} fineTypes={fineTypes} fines={ledger.filter(l => l.kind === "fine")} today={today} onSaved={load} setErr={setErr} />
@@ -222,6 +242,10 @@ export default function Family({ userRole }) {
       {closing && (
         <CloseOut kid={closing.kid} weekStart={closing.ws} isParent={isParent} setErr={setErr}
           onDone={() => { setClosing(null); load(); loadBoard(); }} onCancel={() => setClosing(null)} />
+      )}
+      {mathKid && !celebrate && (
+        <IncomeMath kid={mathKid} isParent={isParent} setErr={setErr}
+          onDone={() => { setMathKid(null); refreshTodo(); load(); }} onCancel={() => { setMathKid(null); refreshTodo(); }} />
       )}
       {celebrate && <Celebration kid={celebrate} onClose={() => setCelebrate(null)} />}
     </div>
@@ -565,6 +589,12 @@ function buildSteps(reg) {
   const steps = [];
   for (const e of (reg?.events || [])) {
     const amt = cents(e.amount);
+    if (e.is_income && e.math_done) {
+      // Already split when the money came in; carry it through without asking again.
+      const t = cents(e.tithe), iv = cents(e.invest);
+      bal.tithe += t; bal.invest += iv; bal.spend += amt - t - iv;
+      continue;
+    }
     if (e.is_income) {
       const t = cents(e.tithe), iv = cents(e.invest);
       steps.push({ kind: "pct", head: e.label, text: `What is ${pctT}% of ${money(fromCents(amt))}?`, base: amt, answer: t, after: { ...bal } });
@@ -588,34 +618,15 @@ function buildSteps(reg) {
   return { steps, start, end: { ...bal } };
 }
 
-function CloseOut({ kid, weekStart, isParent, setErr, onDone, onCancel }) {
-  const [reg, setReg] = useState(null);
+// The step-by-step money math. Used by the week close-out and by new money
+// (extras, bonuses) the moment it comes in.
+function MoneyMath({ kid, title, reg, isParent, finishText, doneText, emptyText, saving, onFinish, onCancel }) {
   const [idx, setIdx] = useState(0);
   const [solved, setSolved] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    let live = true;
-    supabase.rpc("family_week_register", { p_kid_id: kid.id, p_week_start: weekStart }).then(({ data, error }) => {
-      if (!live) return;
-      if (error) { setErr(error.message); onCancel(); return; }
-      setReg(data);
-    });
-    return () => { live = false; };
-  }, [kid.id, weekStart]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const plan = useMemo(() => buildSteps(reg), [reg]);
   const finished = reg && idx >= plan.steps.length;
   const shown = !reg ? null : idx === 0 ? plan.start : plan.steps[Math.min(idx, plan.steps.length) - 1]?.after || plan.start;
   const step = reg && !finished ? plan.steps[idx] : null;
-
-  const finish = async () => {
-    setSaving(true);
-    const { error } = await supabase.rpc("family_close_week", { p_kid_id: kid.id, p_week_start: weekStart, p_solved_by_parent: solved });
-    setSaving(false);
-    if (error) { setErr(error.message); return; }
-    onDone();
-  };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 55, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: 12, boxSizing: "border-box" }}>
@@ -623,7 +634,7 @@ function CloseOut({ kid, weekStart, isParent, setErr, onDone, onCancel }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <CritterIcon which={kid.animal} size={30} />
-            <div style={{ fontSize: 17, fontWeight: 700, color: T.slate900 }}>{kid.name} · Week of {shortDate(weekStart)}</div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: T.slate900 }}>{kid.name} · {title}</div>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
             {isParent && !finished && reg && <button style={btn()} onClick={() => { setSolved(true); setIdx(plan.steps.length); }}>Solve for Me</button>}
@@ -650,10 +661,8 @@ function CloseOut({ kid, weekStart, isParent, setErr, onDone, onCancel }) {
             )}
             {finished && (
               <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ fontSize: 16, fontWeight: 700, color: T.green }}>
-                  {plan.steps.length ? "All done. Your money is up to date." : "No money moved this week."}
-                </div>
-                <button style={btn("primary")} disabled={saving} onClick={finish}>{saving ? "Saving…" : "Finish Week"}</button>
+                <div style={{ fontSize: 16, fontWeight: 700, color: T.green }}>{plan.steps.length ? doneText : emptyText}</div>
+                <button style={btn("primary")} disabled={saving} onClick={() => onFinish(solved)}>{saving ? "Saving…" : finishText}</button>
               </div>
             )}
           </>
@@ -661,6 +670,64 @@ function CloseOut({ kid, weekStart, isParent, setErr, onDone, onCancel }) {
       </div>
     </div>
   );
+}
+
+function CloseOut({ kid, weekStart, isParent, setErr, onDone, onCancel }) {
+  const [reg, setReg] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    supabase.rpc("family_week_register", { p_kid_id: kid.id, p_week_start: weekStart }).then(({ data, error }) => {
+      if (!live) return;
+      if (error) { setErr(error.message); onCancel(); return; }
+      setReg(data);
+    });
+    return () => { live = false; };
+  }, [kid.id, weekStart]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const finish = async (solved) => {
+    setSaving(true);
+    const { error } = await supabase.rpc("family_close_week", { p_kid_id: kid.id, p_week_start: weekStart, p_solved_by_parent: solved });
+    setSaving(false);
+    if (error) { setErr(error.message); return; }
+    onDone();
+  };
+
+  return <MoneyMath kid={kid} title={`Week of ${shortDate(weekStart)}`} reg={reg} isParent={isParent} saving={saving}
+    finishText="Finish Week" doneText="All done. Your money is up to date." emptyText="No money moved this week."
+    onFinish={finish} onCancel={onCancel} />;
+}
+
+// New money (an extra chore or a bonus) gets split into tithe, investments and
+// spending money the moment it comes in.
+function IncomeMath({ kid, isParent, setErr, onDone, onCancel }) {
+  const [reg, setReg] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    supabase.rpc("family_math_todo", { p_kid_id: kid.id }).then(({ data, error }) => {
+      if (!live) return;
+      if (error) { setErr(error.message); onCancel(); return; }
+      if (!Array.isArray(data?.events) || data.events.length === 0) { onCancel(); return; }
+      setReg(data);
+    });
+    return () => { live = false; };
+  }, [kid.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const finish = async () => {
+    setSaving(true);
+    const ids = (reg?.events || []).map(e => e.ref_id).filter(Boolean);
+    const { error } = await supabase.rpc("family_math_done", { p_ref_ids: ids });
+    setSaving(false);
+    if (error) { setErr(error.message); return; }
+    onDone();
+  };
+
+  return <MoneyMath kid={kid} title="New money" reg={reg} isParent={isParent} saving={saving}
+    finishText="Done" doneText="All split. Your money is up to date." emptyText="Nothing to split."
+    onFinish={finish} onCancel={onCancel} />;
 }
 
 function MoneyBox({ label, c }) {
