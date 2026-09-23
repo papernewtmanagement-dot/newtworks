@@ -59,7 +59,9 @@ const todayCentral = () => new Date().toLocaleDateString("en-CA", { timeZone: "A
 const parseDate = (s) => { const [y, m, d] = String(s).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)); };
 const fmtDate = (dt) => dt.toISOString().slice(0, 10);
 const addDays = (s, n) => { const d = parseDate(s); d.setUTCDate(d.getUTCDate() + n); return fmtDate(d); };
-const weekStartOf = (s) => addDays(s, -parseDate(s).getUTCDay());
+// The family chore week runs Saturday through Friday (matches family_week_start in the database).
+const weekStartOf = (s) => addDays(s, -((parseDate(s).getUTCDay() + 1) % 7));
+const WEEK_ORDER = [6, 0, 1, 2, 3, 4, 5];
 const isDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 const shortDate = (s) => parseDate(s).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
@@ -965,7 +967,7 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
                         {c.frequency === "daily" ? (PARTS.find(p => p[0] === (c.part_of_day || "anytime"))?.[1] || "Daily") : (
                           <select value={d.due_dow ?? (c.due_dow ?? "")} onChange={e => setDraft(x => ({ ...x, [c.id]: { ...(x[c.id] || {}), due_dow: e.target.value } }))} style={{ ...input, padding: "5px 6px" }}>
                             <option value="">Any day</option>
-                            {DAY_FULL.map((n, i) => <option key={n} value={i}>{n}</option>)}
+                            {WEEK_ORDER.map(i => <option key={i} value={i}>{DAY_FULL[i]}</option>)}
                           </select>
                         )}
                         {c.group_label && <span style={{ marginLeft: 6, fontSize: 11 }}>{c.group_label}</span>}
@@ -993,7 +995,7 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
               {adding.frequency === "weekly" && (
                 <select value={adding.due_dow ?? ""} onChange={e => setAdding({ ...adding, due_dow: e.target.value })} style={input}>
                   <option value="">Any day</option>
-                  {DAY_FULL.map((n, i) => <option key={n} value={i}>{n}</option>)}
+                  {WEEK_ORDER.map(i => <option key={i} value={i}>{DAY_FULL[i]}</option>)}
                 </select>
               )}
               <input value={adding.pay} onChange={e => setAdding({ ...adding, pay: e.target.value })} inputMode="decimal" placeholder="Pay" style={input} />
