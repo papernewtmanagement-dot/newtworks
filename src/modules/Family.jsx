@@ -75,10 +75,12 @@ const btn = (kind = "soft", small = false) => ({
   cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", boxSizing: "border-box",
 });
 // Done and Missed are round tap targets: a check or an x in a circle.
-const circle = (kind) => ({
-  width: 30, height: 30, borderRadius: "50%", padding: 0, boxSizing: "border-box", cursor: "pointer",
+// Done and Missed are big square tap targets, each half the width of the day's box.
+const tapSquare = (kind) => ({
+  flex: "1 1 calc(50% - 2px)", maxWidth: "calc(50% - 2px)", height: 38, borderRadius: 8, padding: 0,
+  boxSizing: "border-box", cursor: "pointer",
   border: `2px solid ${kind === "done" ? T.green : T.red}`, background: T.white,
-  color: kind === "done" ? T.green : T.red, fontSize: 15, fontWeight: 800, lineHeight: "26px", fontFamily: "inherit",
+  color: kind === "done" ? T.green : T.red, fontSize: 20, fontWeight: 800, fontFamily: "inherit",
 });
 // One grid row per chore; an extra chore done several times a day gets a row per time (slot).
 const rowKey = (r) => (r.frequency === "extra" ? `${r.chore_id}:${r.slot ?? 1}` : r.chore_id);
@@ -226,6 +228,7 @@ export default function Family({ userRole }) {
 
       {activeTab === "week" && kid && (
         <WeekGrid kid={kid} board={board} checklists={checklists} extras={extras} isParent={isParent}
+          icons={new Map(chores.map(c => [c.id, c.icon]))}
           expenseTypes={expenseTypes} expenses={ledger.filter(l => l.kid_id === kid.id && l.kind === "expense" && l.entry_date >= viewWeek && l.entry_date <= addDays(viewWeek, 6))}
           onLedgerChanged={load}
           day={day} today={today} weekStart={viewWeek} dateHref={dateHref} setDate={setDateParam}
@@ -277,7 +280,7 @@ function KidPicker({ kids, kid, balances, kidHref, setKid }) {
 }
 
 // ─── Week grid ────────────────────────────────────────────────────────────
-function WeekGrid({ kid, board, checklists, extras, isParent, expenseTypes, expenses, onLedgerChanged, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
+function WeekGrid({ kid, board, checklists, extras, isParent, icons, expenseTypes, expenses, onLedgerChanged, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
   const _vp = useViewport();
   const [openInfo, setOpenInfo] = useState(null);
   const [pickId, setPickId] = useState("");
@@ -307,7 +310,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, expenseTypes, expe
     return { groups: g, cells: cellMap };
   }, [board, day, today, weekStart]);
 
-  const activeW = isParent ? 150 : 76;
+  const activeW = isParent ? 150 : 100;
   const pick = async () => {
     if (!pickId) return;
     await setStatus({ chore_id: pickId, day, occurrence_date: day }, "picked");
@@ -378,7 +381,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, expenseTypes, expe
           </thead>
           <tbody>
             {groups.map(g => (
-              <GroupRows key={g.key} g={g} days={days} day={day} cells={cells} cellView={cellView} checklists={checklists}
+              <GroupRows key={g.key} g={g} days={days} day={day} cells={cells} icons={icons} cellView={cellView} checklists={checklists}
                 openInfo={openInfo} setOpenInfo={setOpenInfo} isPhone={_vp.isPhone} />
             ))}
           </tbody>
@@ -403,7 +406,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, expenseTypes, expe
   );
 }
 
-function GroupRows({ g, days, day, cells, cellView, checklists, openInfo, setOpenInfo, isPhone }) {
+function GroupRows({ g, days, day, cells, icons, cellView, checklists, openInfo, setOpenInfo, isPhone }) {
   if (!g.rows.length) return null;
   return (
     <>
@@ -427,6 +430,7 @@ function GroupRows({ g, days, day, cells, cellView, checklists, openInfo, setOpe
               <td style={{ position: "sticky", left: 0, background: T.white, zIndex: 1, padding: "8px 10px", verticalAlign: "middle" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{ color: T.slate900, fontWeight: 500, fontSize: isPhone ? 12 : 13 }}>
+                    {icons?.get(r.chore_id) && <span aria-hidden="true" style={{ fontSize: isPhone ? 15 : 17, marginRight: 6 }}>{icons.get(r.chore_id)}</span>}
                     {r.group_label && <span style={{ fontSize: 10, color: T.slate500, marginRight: 4 }}>{r.group_label}</span>}
                     {r.title}
                   </span>
@@ -458,16 +462,16 @@ function FragmentRow({ children }) { return <>{children}</>; }
 function CellActions({ row, isParent, today, busy, setStatus }) {
   const act = (s) => setStatus(row, s);
   const st = row.status ? STATUS[row.status] : null;
-  const wrap = (children) => <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap" }}>{children}</div>;
+  const wrap = (children) => <div style={{ display: "flex", gap: 4, justifyContent: "center", alignItems: "center", flexWrap: "wrap", width: "100%" }}>{children}</div>;
 
   if (!row.status || row.status === "picked") {
     return (
       <div>
         {wrap(<>
-          {!row.locked_by && <button disabled={busy} style={circle("done")} onClick={() => act("claimed")} title="Done" aria-label="Done">✓</button>}
+          {!row.locked_by && <button disabled={busy} style={tapSquare("done")} onClick={() => act("claimed")} title="Done" aria-label="Done">✓</button>}
           {isParent && row.is_burpees && !row.locked_by && <button disabled={busy} style={btn("soft", true)} onClick={() => act("carried")}>Carry</button>}
           {isParent && row.frequency !== "extra" && <button disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>}
-          {row.frequency !== "extra" && !row.status && <button disabled={busy} style={circle("missed")} onClick={() => act("missed")} title="Missed" aria-label="Missed">✗</button>}
+          {row.frequency !== "extra" && !row.status && <button disabled={busy} style={tapSquare("missed")} onClick={() => act("missed")} title="Missed" aria-label="Missed">✗</button>}
           {row.status === "picked" && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Put it back">✕</button>}
         </>)}
       </div>
@@ -485,14 +489,14 @@ function CellActions({ row, isParent, today, busy, setStatus }) {
       // Extra chores are never fined. ✗ unchecks it: the pay comes back off and the job goes back on the list.
       return wrap(<>
         <span title={`${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>
-        {row.status !== "verified" && <button disabled={busy} style={circle("done")} onClick={() => act("verified")} title="Checked, it's done" aria-label="Done">✓</button>}
-        <button disabled={busy} style={circle("missed")} onClick={() => act(null)} title="Uncheck it" aria-label="Uncheck">✗</button>
+        {row.status !== "verified" && <button disabled={busy} style={tapSquare("done")} onClick={() => act("verified")} title="Checked, it's done" aria-label="Done">✓</button>}
+        <button disabled={busy} style={tapSquare("missed")} onClick={() => act(null)} title="Uncheck it" aria-label="Uncheck">✗</button>
       </>);
     }
     return wrap(<>
       <span title={`${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>
-      {row.status !== "verified" && <button disabled={busy} style={circle("done")} onClick={() => act("verified")} title={row.status === "claimed" ? "Checked, it's done" : "Change to done"} aria-label="Done">✓</button>}
-      {row.status !== "missed" && row.status !== "false_claim" && <button disabled={busy} style={circle("missed")} onClick={() => act(saidDone ? "false_claim" : "missed")} title={saidDone ? "Said done, wasn't" : "Change to missed"} aria-label="Missed">✗</button>}
+      {row.status !== "verified" && <button disabled={busy} style={tapSquare("done")} onClick={() => act("verified")} title={row.status === "claimed" ? "Checked, it's done" : "Change to done"} aria-label="Done">✓</button>}
+      {row.status !== "missed" && row.status !== "false_claim" && <button disabled={busy} style={tapSquare("missed")} onClick={() => act(saidDone ? "false_claim" : "missed")} title={saidDone ? "Said done, wasn't" : "Change to missed"} aria-label="Missed">✗</button>}
       {!extra && row.status !== "excused" && <button disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>}
       {canUndo && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Clear it">Undo</button>}
     </>);
