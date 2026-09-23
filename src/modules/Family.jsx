@@ -34,6 +34,12 @@ const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const PARTS = [["morning", "Morning"], ["afternoon", "Afternoon"], ["evening", "Evening"], ["anytime", "Any Time"]];
 const DONE_STATES = ["claimed", "verified", "excused", "carried"];
+// A kid's day is done when every chore that day, extras aside, is done, checked,
+// excused or carried. The one rule: the day-done dance and the day headers both use it.
+const dayDone = (rows, d) => {
+  const mine = (rows || []).filter(r => r.day === d && r.frequency !== "extra");
+  return mine.length > 0 && mine.every(r => DONE_STATES.includes(r.status));
+};
 const LEDGER_KINDS = [
   { kind: "payout",      bucket: "spend",  label: "Paid out cash",    sign: -1 },
   { kind: "tithe_given", bucket: "tithe",  label: "Gave tithe",       sign: -1 },
@@ -178,10 +184,7 @@ export default function Family({ userRole }) {
   }, [kidId]);
   useEffect(() => { refreshTodo(); }, [refreshTodo]);
 
-  const todayDone = (rows) => {
-    const mine = (rows || []).filter(r => r.day === today && r.frequency !== "extra");
-    return mine.length > 0 && mine.every(r => DONE_STATES.includes(r.status));
-  };
+  const todayDone = (rows) => dayDone(rows, today);
 
   // After anything that changes a chore (a tap, or a burpee run that checks off its set):
   // reload the grid, and dance if that finished the day.
@@ -348,7 +351,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
       let view;
       if (!st && c.locked_by && d === day) view = <span title={`Finish ${c.locked_by} first`} style={{ fontSize: 12 }}>🔒</span>;
       else if (!st) view = <span style={{ color: T.slate300 }}>{d < today && d >= kid.tracking_start ? "" : "·"}</span>;
-      else view = <StatusMark row={c} />;
+      else view = <StatusMark row={c} today={today} />;
       // A parent taps any past cell to open that day and change it.
       if (isParent && c.can_act && d !== day) {
         const target = d === today ? null : d;
@@ -404,9 +407,13 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
               {days.map(d => {
                 const isActive = d === day;
                 const clickable = isParent && d <= today;
-                const label = <>{DAY_NAMES[parseDate(d).getUTCDay()]}<br /><span style={{ fontWeight: 500 }}>{Number(d.slice(8))}</span></>;
+                // A whole day done gets a dancing character on top of its header (Peter 2026-09-23).
+                const label = <>
+                  {dayDone(board, d) && <><DoneDancer seed={`day|${kid.id}|${d}`} title="Whole day done" size={24} /><br /></>}
+                  {DAY_NAMES[parseDate(d).getUTCDay()]}<br /><span style={{ fontWeight: 500 }}>{Number(d.slice(8))}</span>
+                </>;
                 return (
-                  <th key={d} style={{ padding: "6px 4px", fontSize: 11, textAlign: "center", color: isActive ? T.blue : T.slate500,
+                  <th key={d} style={{ padding: "6px 4px", fontSize: 11, textAlign: "center", verticalAlign: "bottom", color: isActive ? T.blue : T.slate500,
                     background: isActive ? T.blueLt : "transparent", minWidth: isActive ? activeW : 34, boxSizing: "border-box" }}>
                     {clickable
                       ? <TabLink href={dateHref(d === today ? null : d)} onSelect={() => setDate(d === today ? null : d)} style={{ color: "inherit", textDecoration: "none", fontWeight: 700 }}>{label}</TabLink>
@@ -499,7 +506,7 @@ function FragmentRow({ children }) { return <>{children}</>; }
 // The open day's box.
 // Parents (Peter 2026-09-23): a fixed pair on top, done on the left and not done
 // on the right. Each spot shows the chore's state when it is in that state (the
-// dancing character, or a plain ✗), otherwise the button that puts it there.
+// done mark, or a plain ✗), otherwise the button that puts it there.
 // Carry, Excuse and Undo sit underneath. Undo clears the entry, for a standard
 // chore only today, because a past chore left open is fined again by the
 // end-of-day sweep; on a past day the parent picks the right outcome instead.
@@ -518,14 +525,14 @@ function CellActions({ row, isParent, today, busy, setStatus }) {
     const spot = (child, title) => (
       <div title={title} style={{ ...tapSpot, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>{child}</div>
     );
-    const left = saidDone ? spot(<StatusMark row={row} size={30} />)
+    const left = saidDone ? spot(<StatusMark row={row} size={30} today={today} />)
       : open && row.locked_by ? spot(<span style={{ fontSize: 16 }}>🔒</span>, `Finish ${row.locked_by} first`)
       : <button disabled={busy} style={tapSquare("done")} onClick={() => act(open ? "claimed" : "verified")} title={open ? "Done" : "Change to done"} aria-label="Done">✓</button>;
-    const right = notDone ? spot(<StatusMark row={row} />)
+    const right = notDone ? spot(<StatusMark row={row} today={today} />)
       : extra ? (saidDone ? <button disabled={busy} style={tapSquare("missed")} onClick={() => act(null)} title="Uncheck it" aria-label="Uncheck">✗</button> : null)
       : <button disabled={busy} style={tapSquare("missed")} onClick={() => act(saidDone ? "false_claim" : "missed")} title={saidDone ? "Said done, wasn't" : open ? "Missed" : "Change to missed"} aria-label="Missed">✗</button>;
     const under = [
-      (s === "excused" || s === "carried") && <StatusMark key="mark" row={row} />,
+      (s === "excused" || s === "carried") && <StatusMark key="mark" row={row} today={today} />,
       !extra && open && row.is_burpees && !row.locked_by && <button key="carry" disabled={busy} style={btn("soft", true)} onClick={() => act("carried")}>Carry</button>,
       !extra && s !== "excused" && <button key="excuse" disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>,
       !extra && s && row.occurrence_date >= today && <button key="undo" disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Clear it">Undo</button>,
@@ -547,19 +554,30 @@ function CellActions({ row, isParent, today, busy, setStatus }) {
       {s === "picked" && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Put it back">✕</button>}
     </>);
   }
-  return wrap(<StatusMark row={row} />);
+  return wrap(<StatusMark row={row} today={today} />);
 }
 
 // How a recorded chore outcome shows in the grid, wherever it shows. Done and
-// Checked show a dancing character instead of a check (Peter 2026-09-23).
-function StatusMark({ row, size }) {
+// Checked show the done mark: dancing today, a check on a past day.
+function StatusMark({ row, size, today }) {
   const st = row?.status ? STATUS[row.status] : null;
   if (!st) return null;
   const title = `${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`;
   if (row.status === "claimed" || row.status === "verified") {
-    return <DoneDancer seed={`${rowKey(row)}|${row.day || row.occurrence_date}`} title={title} size={size} />;
+    const d = row.day || row.occurrence_date;
+    return <DoneMark seed={`${rowKey(row)}|${d}`} title={title} size={size} date={d} today={today} />;
   }
   return <span title={title} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>;
+}
+
+// The done mark (Peter 2026-09-23): today's done chores, lessons and steps each
+// get a dancing character; a past day's are a plain check, Done and Checked alike.
+function DoneMark({ seed, title, size, date, today }) {
+  if (date && today && date < today) {
+    return <span title={title} role="img" aria-label={title}
+      style={{ color: T.green, fontWeight: 800, lineHeight: 1, fontSize: size ? Math.round(size * 0.7) : undefined }}>✓</span>;
+  }
+  return <DoneDancer seed={seed} title={title} size={size} />;
 }
 
 // ─── Timers ───────────────────────────────────────────────────────────────
@@ -721,7 +739,7 @@ function SchoolCard({ kid, day, today, isParent }) {
             <div key={r.id} style={{ padding: "10px 12px", borderTop: i ? `1px solid ${T.slate200}` : "none", display: "grid", gap: 6 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: done ? T.slate500 : T.slate900 }}>{r.title}</div>
-                {done && <DoneDancer seed={r.id} title="Lesson done" />}
+                {done && <DoneMark seed={r.id} title="Lesson done" date={day} today={today} />}
                 {isParent && n > 0 && <button style={btn("soft", true)} disabled={busy === r.id} onClick={() => step(r, false)} title="Step back one">Undo</button>}
                 {steps.length > 0 && <InfoDot open={openId === r.id} onClick={() => setOpenId(openId === r.id ? null : r.id)} title="All the steps" />}
               </div>
@@ -740,7 +758,7 @@ function SchoolCard({ kid, day, today, isParent }) {
                   {steps.map((s, j) => (
                     <li key={j} style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       <span style={{ flex: "0 0 22px", display: "flex", justifyContent: "center", fontWeight: 800, color: T.slate400 }}>
-                        {j < n ? <DoneDancer seed={`${r.id}|${j}`} title="Step done" size={18} /> : `${j + 1}.`}
+                        {j < n ? <DoneMark seed={`${r.id}|${j}`} title="Step done" size={18} date={day} today={today} /> : `${j + 1}.`}
                       </span>
                       <span style={{ color: j < n ? T.slate500 : T.slate700, fontWeight: !done && j === n ? 700 : 400 }}>{s}</span>
                     </li>
