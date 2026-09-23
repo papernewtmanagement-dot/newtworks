@@ -18,7 +18,10 @@ import { DayDoneStyles, Confetti, Dancer, CritterIcon, GUESTS } from "../compone
 //   family_math_todo()       bonuses whose tithe/investment math the kid still owes (extras wait for the close-out)
 //   family_math_done()       marks that math done so the close-out skips it
 //   family_balances()        spending / tithe / investments per kid
-// This screen never works out a fine, a balance, a due date or a set-aside.
+//   family_timer_list/start/stop/cancel()  the timers row (shower fine, burpee run)
+//   family_burpee_week()     burpee points, best time, and last week's champion title
+//   family_school_day/step() a day's lessons and checking them off one step at a time
+// This screen never works out a fine, a balance, a due date, a set-aside or a point.
 // The close-out adds and subtracts the numbers it is given; that is the lesson.
 // Family login (role "family"): Done, Missed and extra chores only. Week, Money.
 // Parents only: Carry, Excuse, any past day, the Chores and Fines tabs.
@@ -74,7 +77,6 @@ const btn = (kind = "soft", small = false) => ({
   borderRadius: 8, padding: small ? "4px 7px" : "6px 10px", fontSize: small ? 11 : 12, fontWeight: 600,
   cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", boxSizing: "border-box",
 });
-// Done and Missed are round tap targets: a check or an x in a circle.
 // Done and Missed are big square tap targets, each half the width of the day's box.
 const tapSquare = (kind) => ({
   flex: "1 1 calc(50% - 2px)", maxWidth: "calc(50% - 2px)", height: 38, borderRadius: 8, padding: 0,
@@ -109,6 +111,7 @@ export default function Family({ userRole }) {
   const [board, setBoard] = useState([]);
   const [extras, setExtras] = useState([]);
   const [fact, setFact] = useState(null);
+  const [burpees, setBurpees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);
@@ -129,7 +132,7 @@ export default function Family({ userRole }) {
     setErr(null);
     try {
       await supabase.rpc("family_sweep_missed");
-      const [k, c, cl, b, lg, s, ft, et] = await Promise.all([
+      const [k, c, cl, b, lg, s, ft, et, bw] = await Promise.all([
         supabase.from("family_kids").select("*").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("family_chores").select("*").eq("agency_id", AGENCY_ID).order("sort_order"),
         supabase.from("family_checklists").select("*").eq("agency_id", AGENCY_ID),
@@ -138,11 +141,13 @@ export default function Family({ userRole }) {
         supabase.from("family_settings").select("*").eq("agency_id", AGENCY_ID).maybeSingle(),
         supabase.from("family_fine_types").select("*").eq("agency_id", AGENCY_ID).order("sort_order").order("created_at"),
         supabase.from("family_expense_types").select("*").eq("agency_id", AGENCY_ID).order("sort_order").order("created_at"),
+        supabase.rpc("family_burpee_week", { p_week_start: viewWeek }),
       ]);
-      const firstErr = [k, c, cl, b, lg, s, ft, et].find(r => r?.error)?.error;
+      const firstErr = [k, c, cl, b, lg, s, ft, et, bw].find(r => r?.error)?.error;
       if (firstErr) throw firstErr;
       setKids(k.data || []); setChores(c.data || []); setChecklists(cl.data || []);
       setBalances(b.data || []); setLedger(lg.data || []); setSettings(s.data || null); setFineTypes(ft.data || []); setExpenseTypes(et.data || []);
+      setBurpees(Array.isArray(bw.data) ? bw.data : []);
     } catch (e) {
       setErr(e?.message || String(e));
     } finally {
@@ -231,7 +236,9 @@ export default function Family({ userRole }) {
 
       {activeTab === "week" && kid && (
         <WeekGrid kid={kid} board={board} checklists={checklists} extras={extras} isParent={isParent}
-          icons={new Map(chores.map(c => [c.id, c.icon]))} fact={fact} showerRate={Number(settings?.shower_fine_per_minute ?? 1)}
+          icons={new Map(chores.map(c => [c.id, c.icon]))} fact={fact}
+          burpee={burpees.find(b => b.kid_id === kid.id)}
+          hasBurpees={chores.some(c => c.kid_id === kid.id && c.is_burpees && (!c.active_to || c.active_to >= today))}
           expenseTypes={expenseTypes} expenses={ledger.filter(l => l.kid_id === kid.id && l.kind === "expense" && l.entry_date >= viewWeek && l.entry_date <= addDays(viewWeek, 6))}
           onLedgerChanged={load}
           day={day} today={today} weekStart={viewWeek} dateHref={dateHref} setDate={setDateParam}
@@ -259,7 +266,7 @@ export default function Family({ userRole }) {
         <IncomeMath kid={mathKid} isParent={isParent} setErr={setErr}
           onDone={() => { setMathKid(null); refreshTodo(); load(); }} onCancel={() => { setMathKid(null); refreshTodo(); }} />
       )}
-      {celebrate && <Celebration kid={celebrate} onClose={() => setCelebrate(null)} />}
+      {celebrate && <Celebration kid={celebrate} title={burpees.find(b => b.kid_id === celebrate.id)?.champion_title} onClose={() => setCelebrate(null)} />}
     </div>
   );
 }
@@ -286,7 +293,7 @@ function KidPicker({ kids, kid, balances, kidHref, setKid }) {
 }
 
 // ─── Week grid ────────────────────────────────────────────────────────────
-function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, showerRate, expenseTypes, expenses, onLedgerChanged, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
+function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpee, hasBurpees, expenseTypes, expenses, onLedgerChanged, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
   const _vp = useViewport();
   const [openInfo, setOpenInfo] = useState(null);
   const [pickId, setPickId] = useState("");
@@ -348,28 +355,29 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, showe
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
-      <div style={{ ...card, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
-        <Stat label="Earned this week" value={money(balance?.week_earned)} tone={Number(balance?.week_earned) !== 0 ? "green" : null} />
-        <Stat label="Fines this week" value={money(balance?.week_fines)} tone={Number(balance?.week_fines) < 0 ? "red" : null} />
-        <Stat label="Spent this week" value={money(balance?.week_spent)} tone={Number(balance?.week_spent) < 0 ? "red" : null} />
-        <Stat label="Could earn" value={money(balance?.week_possible)} />
+      {/* The week's banner: which week on the left, the week's money and burpee points to the right. */}
+      <div style={{ ...card, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
+          <TabLink href={dateHref(addDays(weekStart, -7))} onSelect={() => setDate(addDays(weekStart, -7))} style={{ ...btn(), textDecoration: "none" }} ariaLabel="Previous week">‹</TabLink>
+          <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900, whiteSpace: "nowrap" }}>{shortDate(weekStart)} – {shortDate(addDays(weekStart, 6))}</div>
+          {addDays(weekStart, 7) <= today && (
+            <TabLink href={dateHref(addDays(weekStart, 7) > weekStartOf(today) ? null : addDays(weekStart, 7))}
+              onSelect={() => setDate(addDays(weekStart, 7) > weekStartOf(today) ? null : addDays(weekStart, 7))}
+              style={{ ...btn(), textDecoration: "none" }} ariaLabel="Next week">›</TabLink>
+          )}
+        </div>
+        <div style={{ flex: "1 1 320px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+          <Stat label="Earned this week" value={money(balance?.week_earned)} tone={Number(balance?.week_earned) !== 0 ? "green" : null} />
+          <Stat label="Fines this week" value={money(balance?.week_fines)} tone={Number(balance?.week_fines) < 0 ? "red" : null} />
+          <Stat label="Spent this week" value={money(balance?.week_spent)} tone={Number(balance?.week_spent) < 0 ? "red" : null} />
+          <Stat label="Could earn" value={money(balance?.week_possible)} />
+          {(hasBurpees || Number(burpee?.points) > 0) && <Stat label="Burpee points" value={Number(burpee?.points) || 0} />}
+        </div>
       </div>
 
-      {day === today && kid.shower_minutes && (
-        <ShowerTimer kid={kid} isParent={isParent} today={today} rate={showerRate} onChanged={onLedgerChanged} />
-      )}
+      {day === today && <TimersRow key={kid.id} kid={kid} isParent={isParent} onStopped={onLedgerChanged} />}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <TabLink href={dateHref(addDays(weekStart, -7))} onSelect={() => setDate(addDays(weekStart, -7))} style={{ ...btn(), textDecoration: "none" }} ariaLabel="Previous week">‹</TabLink>
-        <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{shortDate(weekStart)} – {shortDate(addDays(weekStart, 6))}</div>
-        {addDays(weekStart, 7) <= today && (
-          <TabLink href={dateHref(addDays(weekStart, 7) > weekStartOf(today) ? null : addDays(weekStart, 7))}
-            onSelect={() => setDate(addDays(weekStart, 7) > weekStartOf(today) ? null : addDays(weekStart, 7))}
-            style={{ ...btn(), textDecoration: "none" }} ariaLabel="Next week">›</TabLink>
-        )}
-      </div>
-
-      <SchoolCard kid={kid} day={day} today={today} isParent={isParent} checklists={checklists} />
+      <SchoolCard kid={kid} day={day} today={today} isParent={isParent} />
 
       {fact && (
         <div style={{ ...card, background: T.tealLt, borderColor: T.teal, display: "flex", gap: 10, alignItems: "flex-start" }}>
@@ -530,191 +538,270 @@ function CellActions({ row, isParent, today, busy, setStatus }) {
   </>);
 }
 
-// Shower timer. The server keeps the start time, so a refresh or another
-// screen shows the same clock. Stopping it works out any fine on the server:
-// every second over the limit costs the per-minute fine divided by 60.
+// ─── Timers ───────────────────────────────────────────────────────────────
+// One row of timers for the kid, each in its own equal column: burpees all day,
+// the shower from 5 pm Central. Every timer works the same way. The server keeps
+// the start time, so a refresh or another screen shows the same clock, and
+// stopping one is where the server works out a shower fine or a burpee run's
+// points (family_timer_stop). The screen only shows what comes back.
 const mmss = (secs) => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
-function ShowerTimer({ kid, isParent, today, rate, onChanged }) {
-  const [run, setRun] = useState(null);
-  const [last, setLast] = useState(null);
+// The wall clock in Central as "HH:MM:SS", to compare with a timer's shows_from.
+const centralClock = () => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago", hourCycle: "h23", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  }).formatToParts(new Date()).map(x => [x.type, x.value]));
+  return `${String(Number(p.hour) % 24).padStart(2, "0")}:${p.minute}:${p.second}`;
+};
+// What a stopped timer says for a few seconds, read off what the server sent back.
+const timerResult = (kind, r) => {
+  const secs = Number(r?.seconds) || 0;
+  if (kind === "shower") {
+    const fine = Number(r?.fine) || 0;
+    return fine > 0
+      ? { text: `${mmss(Number(r?.over_seconds) || 0)} over · ${money(-fine)}`, tone: "red" }
+      : { text: `${mmss(secs)} · on time!`, tone: "green" };
+  }
+  if (Number(r?.limit_seconds) > 0 && secs > Number(r.limit_seconds)) return { text: `${mmss(secs)} · no point`, tone: "red" };
+  if (r?.counted === false) return { text: "Too fast to count", tone: "red" };
+  const pts = Number(r?.points) || 0;
+  if (pts >= 5) return { text: `${mmss(secs)} · new best! +5`, tone: "green" };
+  return { text: `${mmss(secs)} · +${pts}`, tone: pts > 0 ? "green" : "red" };
+};
+const TIMER_H = 64;
+function TimersRow({ kid, isParent, onStopped }) {
+  const _vp = useViewport();
+  const [timers, setTimers] = useState([]);
   const [now, setNow] = useState(Date.now());
-  const [busy, setBusy] = useState(false);
+  const [clock, setClock] = useState(centralClock);
+  const [busy, setBusy] = useState(null);
+  const [results, setResults] = useState({});
   const [err, setErr] = useState(null);
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from("family_showers").select("*").eq("kid_id", kid.id).order("started_at", { ascending: false }).limit(1);
-    const r = Array.isArray(data) ? data[0] : null;
-    const rDay = r ? new Date(r.started_at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }) : null;
-    setRun(r && !r.ended_at ? r : null);
-    setLast(r && r.ended_at && rDay === today ? r : null);
-  }, [kid.id, today]);
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => {
-    if (!run) return undefined;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [run]);
-
-  const call = async (fn) => {
-    setBusy(true); setErr(null);
-    const { error } = await supabase.rpc(fn, { p_kid_id: kid.id });
-    setBusy(false);
+    const { data, error } = await supabase.rpc("family_timer_list", { p_kid_id: kid.id });
     if (error) { setErr(error.message); return; }
+    setTimers(Array.isArray(data) ? data : []);
+  }, [kid.id]);
+  useEffect(() => { load(); }, [load]);
+
+  // Every second while a timer runs; otherwise twice a minute, so the shower shows up at 5 pm.
+  const running = timers.some(t => t.running_id);
+  useEffect(() => {
+    const t = setInterval(() => { setNow(Date.now()); setClock(centralClock()); }, running ? 1000 : 30000);
+    return () => clearInterval(t);
+  }, [running]);
+
+  const act = async (t, fn) => {
+    setBusy(t.kind); setErr(null);
+    const { data, error } = await supabase.rpc(fn, { p_kid_id: kid.id, p_kind: t.kind });
+    setBusy(null);
+    if (error) { setErr(error.message); load(); return; }
     setNow(Date.now());
-    await load();
-    if (fn === "family_shower_stop") onChanged();
+    if (fn === "family_timer_stop") {
+      setResults(x => ({ ...x, [t.kind]: timerResult(t.kind, data) }));
+      setTimeout(() => setResults(x => { const y = { ...x }; delete y[t.kind]; return y; }), 6000);
+      if (onStopped) onStopped();
+    }
+    load();
   };
 
-  const limit = run ? run.limit_seconds : kid.shower_minutes * 60;
-  const elapsed = run ? Math.max(0, Math.floor((now - Date.parse(run.started_at)) / 1000)) : 0;
-  const over = Math.max(0, elapsed - limit);
-  const left = Math.max(0, limit - elapsed);
+  const shown = timers.filter(t => t.running_id || !t.shows_from || clock >= String(t.shows_from).slice(0, 8));
+  if (!shown.length) return err ? <div style={{ fontSize: 12, color: T.red }}>{err}</div> : null;
 
+  const face = { height: TIMER_H, boxSizing: "border-box", borderRadius: 12, cursor: "pointer", fontFamily: "inherit",
+    display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "0 6px", minWidth: 0, overflow: "hidden" };
   return (
-    <div style={{ ...card, display: "grid", gap: 8, borderColor: over > 0 ? T.red : T.slate200, background: over > 0 ? T.redLt : T.white }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span aria-hidden="true" style={{ fontSize: 24 }}>🚿</span>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>Shower · {kid.shower_minutes} min</div>
-            <div style={{ fontSize: 11, color: T.slate500 }}>{money(rate)} a minute over, counted to the second</div>
-          </div>
-        </div>
-        {run ? (
-          <div style={{ display: "flex", gap: 6 }}>
-            <button disabled={busy} style={{ ...btn("primary"), fontSize: 15, padding: "10px 18px" }} onClick={() => call("family_shower_stop")}>Stop</button>
-            {isParent && <button disabled={busy} style={btn()} onClick={() => call("family_shower_cancel")}>Cancel</button>}
-          </div>
-        ) : (
-          <button disabled={busy} style={{ ...btn("primary"), fontSize: 15, padding: "10px 18px" }} onClick={() => call("family_shower_start")}>Start</button>
-        )}
+    <div style={{ display: "grid", gap: 6 }}>
+      {/* Peter's design (2026-09-23): the timers always share one row in equal columns, even on a
+          phone, so this grid does not reflow to one column. A deliberate exception to the reflow rule. */}
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${shown.length}, minmax(0, 1fr))`, gap: 10 }}>
+        {shown.map(t => {
+          const res = results[t.kind];
+          const dis = busy === t.kind;
+          if (!t.running_id) {
+            const tone = res ? (res.tone === "red" ? T.red : T.green) : null;
+            return (
+              <button key={t.kind} disabled={dis || !!res} onClick={() => act(t, "family_timer_start")}
+                title={`Start the ${t.minutes}-minute ${t.kind} timer`}
+                style={{ ...face, border: `1px solid ${tone || T.slate200}`, background: res ? (res.tone === "red" ? T.redLt : T.greenLt) : T.white, color: T.slate900 }}>
+                {res
+                  ? <span style={{ fontSize: 13, fontWeight: 700, color: tone, textAlign: "center" }}>{res.text}</span>
+                  : <><span aria-hidden="true" style={{ fontSize: 26, lineHeight: 1 }}>{t.icon}</span><span style={{ fontSize: 16, fontWeight: 700 }}>{t.minutes} min</span></>}
+              </button>
+            );
+          }
+          const elapsed = Math.max(0, Math.floor((now - Date.parse(t.started_at)) / 1000));
+          const limit = Number(t.limit_seconds) || (Number(t.minutes) || 0) * 60;
+          const over = Math.max(0, elapsed - limit);
+          return (
+            <div key={t.kind} style={{ display: "flex", gap: 6, minWidth: 0 }}>
+              <button disabled={dis} onClick={() => act(t, "family_timer_stop")} title="Stop" aria-label={`Stop the ${t.kind} timer`}
+                style={{ ...face, flex: "1 1 0", border: `2px solid ${over > 0 ? T.red : T.blue}`, background: over > 0 ? T.redLt : T.blueLt, color: over > 0 ? T.red : T.slate900 }}>
+                <span aria-hidden="true" style={{ fontSize: 15, lineHeight: 1 }}>⏹</span>
+                <span style={{ fontSize: _vp.isPhone ? 16 : 20, fontWeight: 800, fontFamily: "ui-monospace, Menlo, monospace" }}>{over > 0 ? `+${mmss(over)}` : mmss(limit - elapsed)}</span>
+              </button>
+              {isParent && (
+                <button disabled={dis} onClick={() => act(t, "family_timer_cancel")}
+                  style={{ ...face, flex: "1 1 0", border: `1px solid ${T.slate200}`, background: T.white, color: T.slate700, fontSize: 14, fontWeight: 600 }}>Cancel</button>
+              )}
+            </div>
+          );
+        })}
       </div>
-      {run && (
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 44, fontWeight: 800, fontFamily: "ui-monospace, Menlo, monospace", color: over > 0 ? T.red : T.slate900, lineHeight: 1.1 }}>
-            {over > 0 ? `+${mmss(over)}` : mmss(left)}
-          </div>
-          <div style={{ fontSize: 13, color: over > 0 ? T.red : T.slate500, fontWeight: over > 0 ? 700 : 400 }}>
-            {over > 0 ? "Over time! Every second costs." : "left"}
-          </div>
-        </div>
-      )}
-      {!run && last && (
-        <div style={{ fontSize: 13, color: Number(last.fine) > 0 ? T.red : T.green, fontWeight: 600 }}>
-          Today: {mmss(last.seconds || 0)}{Number(last.fine) > 0 ? ` · ${mmss(last.over_seconds || 0)} over · fine ${money(-Number(last.fine))}` : " · on time!"}
-        </div>
-      )}
       {err && <div style={{ fontSize: 12, color: T.red }}>{err}</div>}
     </div>
   );
 }
 
 // ─── School ───────────────────────────────────────────────────────────────
-// A kid's lessons for the day on the Week page. The hub checks off today's;
-// a parent can check off or undo any day. Steps from the school sheet sit
-// behind each lesson's info dot.
-function SchoolCard({ kid, day, today, isParent, checklists }) {
+// A kid's lessons for the day on the Week page: the backpack in its own column,
+// one row per lesson. A lesson is never checked off in one tap. Each row shows
+// the step to do now; checking it brings up the next, and the last step
+// finishes the lesson. The hub checks today's steps; only a parent checks the
+// CHECK IN step, steps back, or works another day. The info dot lists every
+// step with the done ones checked. Steps and rules: family_school_day/step().
+function SchoolCard({ kid, day, today, isParent }) {
   const [rows, setRows] = useState([]);
   const [openId, setOpenId] = useState(null);
+  const [busy, setBusy] = useState(null);
   const [err, setErr] = useState(null);
-  const steps = (checklists || []).find(c => c.name === "School Lesson")?.items || [];
   const load = useCallback(async () => {
-    const { data } = await supabase.from("family_school_lessons").select("*").eq("kid_id", kid.id).eq("lesson_date", day).order("sort_order");
+    const { data, error } = await supabase.rpc("family_school_day", { p_kid_id: kid.id, p_date: day });
+    if (error) { setErr(error.message); return; }
     setRows(Array.isArray(data) ? data : []);
   }, [kid.id, day]);
   useEffect(() => { load(); }, [load]);
-  const mark = async (r, done) => {
-    setErr(null);
-    const { error } = await supabase.rpc("family_school_mark", { p_id: r.id, p_done: done });
-    if (error) { setErr(error.message); return; }
+  const step = async (r, forward) => {
+    setBusy(r.id); setErr(null);
+    const { error } = await supabase.rpc("family_school_step", { p_id: r.id, p_forward: forward });
+    setBusy(null);
+    if (error) setErr(error.message);
     load();
   };
   if (!rows.length) return null;
   const canCheck = isParent || day === today;
   return (
-    <div style={{ ...card, display: "grid", gap: 6 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span aria-hidden="true" style={{ fontSize: 22 }}>🎒</span>
-        <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>School</div>
-        <div style={{ fontSize: 11, color: T.slate500 }}>Work until the assessment for every lesson</div>
+    <div style={{ ...card, padding: 0, display: "flex", overflow: "hidden" }}>
+      <div aria-hidden="true" style={{ flex: "0 0 56px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, background: T.slate50, borderRight: `1px solid ${T.slate200}` }}>🎒</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {rows.map((r, i) => {
+          const steps = Array.isArray(r.steps) ? r.steps : [];
+          const n = Number(r.steps_done) || 0;
+          const done = !!r.done_at;
+          const locked = !isParent && !!r.parent_step;
+          return (
+            <div key={r.id} style={{ padding: "10px 12px", borderTop: i ? `1px solid ${T.slate200}` : "none", display: "grid", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: done ? T.slate500 : T.slate900 }}>{r.title}</div>
+                {done && <span title="Lesson done" style={{ color: T.green, fontWeight: 800, fontSize: 18 }}>✓</span>}
+                {isParent && n > 0 && <button style={btn("soft", true)} disabled={busy === r.id} onClick={() => step(r, false)} title="Step back one">Undo</button>}
+                {steps.length > 0 && <InfoDot open={openId === r.id} onClick={() => setOpenId(openId === r.id ? null : r.id)} title="All the steps" />}
+              </div>
+              {!done && r.current_step && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: T.slate700 }}>
+                    <span style={{ color: T.slate400, fontWeight: 600 }}>{n + 1}/{steps.length}</span> {r.current_step}
+                  </div>
+                  {canCheck && (locked
+                    ? <span title="A parent checks this step" aria-label="A parent checks this step" style={{ flex: "0 0 48px", textAlign: "center", fontSize: 18 }}>🔒</span>
+                    : <button style={{ ...tapSquare("done"), flex: "0 0 48px", maxWidth: 48 }} disabled={busy === r.id} onClick={() => step(r, true)} title="Step done" aria-label="Step done">✓</button>)}
+                </div>
+              )}
+              {openId === r.id && (
+                <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 3, fontSize: 13 }}>
+                  {steps.map((s, j) => (
+                    <li key={j} style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+                      <span style={{ flex: "0 0 18px", fontWeight: 800, color: j < n ? T.green : T.slate400 }}>{j < n ? "✓" : `${j + 1}.`}</span>
+                      <span style={{ color: j < n ? T.slate500 : T.slate700, fontWeight: !done && j === n ? 700 : 400 }}>{s}</span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          );
+        })}
+        {err && <div style={{ padding: "0 12px 10px", fontSize: 12, color: T.red }}>{err}</div>}
       </div>
-      {rows.map(r => (
-        <div key={r.id} style={{ borderTop: `1px solid ${T.slate100}`, paddingTop: 6 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ flex: 1, fontSize: 14, color: r.done_at ? T.slate500 : T.slate900, textDecoration: r.done_at ? "line-through" : "none" }}>{r.title}</div>
-            {steps.length > 0 && <InfoDot open={openId === r.id} onClick={() => setOpenId(openId === r.id ? null : r.id)} title="How to do a lesson" />}
-            {r.done_at
-              ? <>
-                  <span style={{ color: T.green, fontWeight: 800, fontSize: 18 }}>✓</span>
-                  {isParent && <button style={btn("soft", true)} onClick={() => mark(r, false)}>Undo</button>}
-                </>
-              : canCheck && <button style={{ ...tapSquare("done"), flex: "0 0 48px", maxWidth: 48 }} onClick={() => mark(r, true)} title="Done" aria-label="Done">✓</button>}
-          </div>
-          {openId === r.id && (
-            <ol style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13, color: T.slate700, lineHeight: 1.7 }}>
-              {steps.map((it, i) => <li key={i}>{it}</li>)}
-            </ol>
-          )}
-        </div>
-      ))}
-      {err && <div style={{ fontSize: 12, color: T.red }}>{err}</div>}
     </div>
   );
 }
 
-// Parents enter the week's lessons: one box per kid per school day, one lesson per line.
+// Parents enter the week's lessons: one row per lesson, per kid, per school day.
+// A saved row keeps its step progress through a rename; a removed row is deleted
+// (family_school_set_day). Enter in a row adds the next one.
 const SCHOOL_DAYS = [2, 3, 4, 5, 6]; // Mon–Fri as offsets from the Saturday week start
+let lessonRowSeq = 0;
+const newLessonRow = () => ({ key: `new${++lessonRowSeq}`, id: null, title: "" });
 function SchoolWeek({ kids, weekStart, today, dateHref, setDate, setErr }) {
   const [lessons, setLessons] = useState([]);
   const [draft, setDraft] = useState({});
+  const [focusKey, setFocusKey] = useState(null);
   const [saving, setSaving] = useState(null);
   const [saved, setSaved] = useState(null);
   const days = SCHOOL_DAYS.map(i => addDays(weekStart, i));
   const load = useCallback(async () => {
     const { data, error } = await supabase.from("family_school_lessons").select("*")
       .gte("lesson_date", weekStart).lte("lesson_date", addDays(weekStart, 6)).order("sort_order");
-    if (error) { setErr(error.message); return; }
-    setLessons(Array.isArray(data) ? data : []); setDraft({});
+    if (error) { setErr(error.message); return false; }
+    setLessons(Array.isArray(data) ? data : []);
+    return true;
   }, [weekStart]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
-  const textFor = (kidId, d) => {
-    const key = kidId + d;
-    if (draft[key] !== undefined) return draft[key];
-    return lessons.filter(l => l.kid_id === kidId && l.lesson_date === d).map(l => l.title).join("\n");
+  const baseRows = (kidId, d) => lessons.filter(l => l.kid_id === kidId && l.lesson_date === d).map(l => ({ key: l.id, id: l.id, title: l.title }));
+  const rowsFor = (kidId, d) => draft[kidId + d] ?? baseRows(kidId, d);
+  const edit = (kidId, d, fn) => setDraft(x => ({ ...x, [kidId + d]: fn(x[kidId + d] ?? baseRows(kidId, d)) }));
+  const addRow = (kidId, d, afterKey) => {
+    const row = newLessonRow();
+    edit(kidId, d, rows => {
+      const i = afterKey ? rows.findIndex(r => r.key === afterKey) + 1 : rows.length;
+      return [...rows.slice(0, i), row, ...rows.slice(i)];
+    });
+    setFocusKey(row.key);
   };
   const school = (kids || []).filter(k => !k.birthday || parseDate(today).getUTCFullYear() - parseDate(k.birthday).getUTCFullYear() >= 4);
   const save = async (k) => {
     setSaving(k.id); setSaved(null);
     for (const d of days) {
-      const key = k.id + d;
-      if (draft[key] === undefined) continue;
-      const { error } = await supabase.rpc("family_school_set_day", { p_kid_id: k.id, p_date: d, p_titles: draft[key].split("\n") });
+      const rows = draft[k.id + d];
+      if (rows === undefined) continue;
+      const { error } = await supabase.rpc("family_school_set_day", { p_kid_id: k.id, p_date: d, p_lessons: rows.map(r => ({ id: r.id, title: r.title })) });
       if (error) { setErr(error.message); setSaving(null); return; }
     }
-    setSaving(null); setSaved(k.id); load();
+    await load();
+    setDraft(x => { const y = { ...x }; for (const d of days) delete y[k.id + d]; return y; });
+    setSaving(null); setSaved(k.id);
   };
   return (
     <div style={{ display: "grid", gap: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <TabLink href={dateHref(addDays(weekStart, -7))} onSelect={() => setDate(addDays(weekStart, -7))} style={{ ...btn(), textDecoration: "none" }} ariaLabel="Previous week">‹</TabLink>
         <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>School week of {shortDate(days[0])} – {shortDate(days[4])}</div>
         <TabLink href={dateHref(addDays(weekStart, 7))} onSelect={() => setDate(addDays(weekStart, 7))} style={{ ...btn(), textDecoration: "none" }} ariaLabel="Next week">›</TabLink>
       </div>
-      <div style={{ fontSize: 12, color: T.slate500 }}>One lesson per line. Each kid sees their lessons on that day's Week page.</div>
+      <div style={{ fontSize: 12, color: T.slate500 }}>Each kid sees their lessons on that day's Week page.</div>
       {school.map(k => {
         const dirty = days.some(d => draft[k.id + d] !== undefined);
         return (
           <Section key={k.id} title={k.name}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, paddingTop: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, paddingTop: 10 }}>
               {days.map(d => (
-                <label key={d} style={{ fontSize: 12, color: T.slate700, display: "grid", gap: 4 }}>
-                  {DAY_NAMES[parseDate(d).getUTCDay()]} {Number(d.slice(8))}
-                  <textarea rows={3} value={textFor(k.id, d)} onChange={e => setDraft(x => ({ ...x, [k.id + d]: e.target.value }))}
-                    style={{ ...input, width: "100%", resize: "vertical", fontFamily: "inherit" }} />
-                </label>
+                <div key={d} style={{ display: "grid", gap: 4, alignContent: "start" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: T.slate700 }}>{DAY_NAMES[parseDate(d).getUTCDay()]} {Number(d.slice(8))}</div>
+                  {rowsFor(k.id, d).map((r, i) => (
+                    <div key={r.key} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <input value={r.title} placeholder={`Lesson ${i + 1}`} autoFocus={focusKey === r.key}
+                        onChange={e => { const v = e.target.value; edit(k.id, d, rows => rows.map(x => (x.key === r.key ? { ...x, title: v } : x))); }}
+                        onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addRow(k.id, d, r.key); } }}
+                        style={{ ...input, flex: 1, minWidth: 0 }} />
+                      <button type="button" style={{ ...btn("soft", true), flexShrink: 0 }} title="Remove this lesson" aria-label="Remove this lesson"
+                        onClick={() => edit(k.id, d, rows => rows.filter(x => x.key !== r.key))}>✕</button>
+                    </div>
+                  ))}
+                  <button type="button" style={{ ...btn("soft", true), justifySelf: "start" }} onClick={() => addRow(k.id, d)}>+ Add lesson</button>
+                </div>
               ))}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 10 }}>
               <button style={btn("primary")} disabled={!dirty || saving === k.id} onClick={() => save(k)}>{saving === k.id ? "Saving…" : "Save"}</button>
               {saved === k.id && !dirty && <span style={{ fontSize: 12, color: T.green }}>Saved</span>}
             </div>
@@ -725,7 +812,9 @@ function SchoolWeek({ kids, weekStart, today, dateHref, setDate, setErr }) {
   );
 }
 
-function Celebration({ kid, onClose }) {
+// The day-done dance. Last week's burpee champion dances all this week under a
+// trophy, with their title (family_burpee_week's champion_title).
+function Celebration({ kid, title, onClose }) {
   const _vp = useViewport();
   const size = _vp.isPhone ? 76 : 120;
   // Now and then a guest drops into the dance: every guest dancer gets its
@@ -738,8 +827,18 @@ function Celebration({ kid, onClose }) {
       <DayDoneStyles />
       <Confetti />
       <div style={{ fontSize: _vp.isPhone ? 26 : 34, fontWeight: 800, color: T.slate900, textAlign: "center" }}>{kid.name}'s day is done!</div>
-      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "center" }}>
-        {troupe.map((w, i) => <Dancer key={w + i} which={w} size={size} delay={i * 120} />)}
+      {title && (
+        <div style={{ fontSize: _vp.isPhone ? 22 : 28, fontWeight: 800, color: T.gold, textAlign: "center", animation: "nwPop 700ms ease-out both" }}>🏆 {title}</div>
+      )}
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "center", alignItems: "flex-end" }}>
+        {troupe.map((w, i) => (i === 0 && title
+          ? (
+            <div key={w + i} style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <span className="nw-up" aria-hidden="true" style={{ display: "inline-block", fontSize: Math.round(size * 0.34), lineHeight: 1 }}>🏆</span>
+              <Dancer which={w} size={size} delay={0} />
+            </div>
+          )
+          : <Dancer key={w + i} which={w} size={size} delay={i * 120} />))}
       </div>
       <button style={btn("primary")} onClick={onClose}>Yay!</button>
     </div>
@@ -1289,6 +1388,9 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
               onBlur={e => Number(e.target.value) !== Number(k.invest_pct) && saveKid(k, { invest_pct: Number(e.target.value) || 0 })} /></label>
             <label>Shower minutes <input key={"s" + k.shower_minutes} defaultValue={k.shower_minutes ?? ""} placeholder="none" inputMode="numeric" style={{ ...input, width: 64 }}
               onBlur={e => { const v = e.target.value.trim() === "" ? null : Math.max(1, Math.round(Number(e.target.value)) || 1); if (v !== (k.shower_minutes ?? null)) saveKid(k, { shower_minutes: v }); }} /></label>
+            <label>Gender <select value={k.gender || ""} onChange={e => saveKid(k, { gender: e.target.value || null })} style={{ ...input, width: "auto" }}>
+              <option value="">Not set</option><option value="girl">Girl</option><option value="boy">Boy</option>
+            </select></label>
           </div>
           <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", marginTop: 8 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
