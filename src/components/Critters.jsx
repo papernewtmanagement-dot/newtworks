@@ -1054,14 +1054,13 @@ export const GUESTS = [
 ];
 export const ALL_DANCERS = [...DANCERS, ...GUESTS];
 
-// A steady random pick of one character: the same seed always gets the same
-// one, so a done chore keeps its character from one visit to the next.
-export function critterFor(seed) {
+// A steady random number for a seed: the same seed always gets the same number.
+const seedHash = (seed) => {
   const str = String(seed ?? "");
   let h = 2166136261;
   for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return ALL_DANCERS[(h >>> 0) % ALL_DANCERS.length].key;
-}
+  return h >>> 0;
+};
 
 // delay offsets the whole animal so a row of them is not in lockstep.
 export function Dancer({ which, size = 176, delay = 0 }) {
@@ -1069,7 +1068,7 @@ export function Dancer({ which, size = 176, delay = 0 }) {
   const Art = a.Art;
   return (
     <svg width={size} height={size} viewBox="0 0 200 200" role="img" aria-label={`A dancing ${a.label}`}
-         style={{ "--d": `${delay}ms` }}>
+         style={{ "--d": `${delay}ms`, overflow: "visible" }}>
       <g className="nw-dance">
         <ellipse cx="100" cy="186" rx="50" ry="7" fill="#000000" opacity="0.08" />
         <Art />
@@ -1087,5 +1086,40 @@ export function CritterIcon({ which, size = 22 }) {
     <svg width={size} height={size} viewBox="0 0 200 200" role="img" aria-label={a.label} style={{ flexShrink: 0, display: "block" }}>
       <Art />
     </svg>
+  );
+}
+
+// A done mark (Peter 2026-09-23): one of the characters instead of a check,
+// dancing in place. The pick is random but steady, so the same chore on the same
+// day always gets the same character, and each one starts on its own beat. Only
+// the whole body bops, so a page full of them stays light. Render
+// <DoneDancerStyles /> once on any page that shows them.
+export function DoneDancer({ seed, title, size = 26 }) {
+  const h = seedHash(seed);
+  const a = ALL_DANCERS[h % ALL_DANCERS.length];
+  const Art = a.Art;
+  return (
+    <span className="nw-bop" title={title} role="img" aria-label={title || a.label}
+      style={{ display: "inline-block", flexShrink: 0, verticalAlign: "middle", lineHeight: 0, animationDelay: `-${h % 900}ms` }}>
+      <svg width={size} height={size} viewBox="0 0 200 200" aria-hidden="true" style={{ display: "block", overflow: "visible" }}>
+        <g className="nw-still"><Art /></g>
+      </svg>
+    </span>
+  );
+}
+
+export function DoneDancerStyles() {
+  return (
+    <style>{`
+      @keyframes nwBop {
+        0%, 100% { transform: translateY(0) rotate(-8deg); }
+        25%      { transform: translateY(-3px) rotate(0deg); }
+        50%      { transform: translateY(0) rotate(8deg); }
+        75%      { transform: translateY(-3px) rotate(0deg); }
+      }
+      .nw-bop { animation: nwBop 900ms ease-in-out infinite; transform-origin: 50% 90%; }
+      .nw-still * { animation: none !important; }
+      @media (prefers-reduced-motion: reduce) { .nw-bop { animation: none !important; } }
+    `}</style>
   );
 }

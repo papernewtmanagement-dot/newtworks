@@ -4,7 +4,7 @@ import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink } from "../lib/routing.jsx";
 import InfoDot from "../components/InfoDot.jsx";
-import { DayDoneStyles, Confetti, Dancer, CritterIcon, GUESTS, critterFor } from "../components/Critters.jsx";
+import { DayDoneStyles, DoneDancerStyles, Confetti, Dancer, DoneDancer, CritterIcon, GUESTS } from "../components/Critters.jsx";
 
 // =========================================================================
 // Family.jsx — kids' chores, chore money, and the weekly close-out.
@@ -214,6 +214,7 @@ export default function Family({ userRole }) {
 
   return (
     <div style={{ padding: _pad, maxWidth: 1080, margin: "0 auto", boxSizing: "border-box" }}>
+      <DoneDancerStyles />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900 }}>Family</div>
         <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap" }}>
@@ -539,25 +540,14 @@ function CellActions({ row, isParent, today, busy, setStatus }) {
   return wrap(<StatusMark row={row} />);
 }
 
-// A done chore or school lesson shows one of the family's characters instead of
-// a check mark (Peter 2026-09-23). The pick is random but steady: the same chore
-// on the same day always gets the same character. The ring keeps the old check's
-// color, so Done (the kid said so) and Checked (a parent did) still differ.
-function DoneMark({ seed, title, tone = T.green, bg = T.greenLt, size = 22 }) {
-  return (
-    <span title={title} aria-label={title} role="img"
-      style={{ display: "inline-flex", flexShrink: 0, borderRadius: "50%", padding: 1, border: `2px solid ${tone}`, background: bg, verticalAlign: "middle" }}>
-      <CritterIcon which={critterFor(seed)} size={size} />
-    </span>
-  );
-}
-// How a recorded chore outcome shows in the grid, wherever it shows.
+// How a recorded chore outcome shows in the grid, wherever it shows. Done and
+// Checked show a dancing character instead of a check (Peter 2026-09-23).
 function StatusMark({ row }) {
   const st = row?.status ? STATUS[row.status] : null;
   if (!st) return null;
   const title = `${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`;
   if (row.status === "claimed" || row.status === "verified") {
-    return <DoneMark seed={`${rowKey(row)}|${row.day || row.occurrence_date}`} title={title} tone={st.fg} bg={row.status === "verified" ? T.greenLt : T.white} />;
+    return <DoneDancer seed={`${rowKey(row)}|${row.day || row.occurrence_date}`} title={title} />;
   }
   return <span title={title} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>;
 }
@@ -721,7 +711,7 @@ function SchoolCard({ kid, day, today, isParent }) {
             <div key={r.id} style={{ padding: "10px 12px", borderTop: i ? `1px solid ${T.slate200}` : "none", display: "grid", gap: 6 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: done ? T.slate500 : T.slate900 }}>{r.title}</div>
-                {done && <DoneMark seed={r.id} title="Lesson done" />}
+                {done && <DoneDancer seed={r.id} title="Lesson done" />}
                 {isParent && n > 0 && <button style={btn("soft", true)} disabled={busy === r.id} onClick={() => step(r, false)} title="Step back one">Undo</button>}
                 {steps.length > 0 && <InfoDot open={openId === r.id} onClick={() => setOpenId(openId === r.id ? null : r.id)} title="All the steps" />}
               </div>
@@ -740,7 +730,7 @@ function SchoolCard({ kid, day, today, isParent }) {
                   {steps.map((s, j) => (
                     <li key={j} style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       <span style={{ flex: "0 0 22px", display: "flex", justifyContent: "center", fontWeight: 800, color: T.slate400 }}>
-                        {j < n ? <DoneMark seed={`${r.id}|${j}`} title="Step done" size={14} /> : `${j + 1}.`}
+                        {j < n ? <DoneDancer seed={`${r.id}|${j}`} title="Step done" size={18} /> : `${j + 1}.`}
                       </span>
                       <span style={{ color: j < n ? T.slate500 : T.slate700, fontWeight: !done && j === n ? 700 : 400 }}>{s}</span>
                     </li>
