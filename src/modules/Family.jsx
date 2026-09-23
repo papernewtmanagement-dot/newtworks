@@ -387,7 +387,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, expenseTypes, expe
 
       {canPick && (
         <div style={{ ...card, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700 }}>Want to earn more on {DAY_FULL[parseDate(day).getUTCDay()]}?</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700 }}>Earn more!</div>
           <select value={pickId} onChange={e => setPickId(e.target.value)} style={{ ...input, flex: "1 1 200px" }}>
             <option value="">Pick an extra chore…</option>
             {(extras || []).map(x => <option key={x.chore_id} value={x.chore_id}>{x.title} · {money(x.pay)}</option>)}
