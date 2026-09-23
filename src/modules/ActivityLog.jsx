@@ -4554,7 +4554,7 @@ export default function ActivityLog({ userRole, userId }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [head, setHead] = useState(null);   // this week's scoreboard, shown beside the title on every tab (your own row; team when you have none)
   const [commitInfo, setCommitInfo] = useState(null);  // today's commit, shown with the week's points (Peter 2026-09-14)
-  const isAdmin = ["owner", "manager"].includes(userRole);
+  const isAdmin = ["owner", "admin"].includes(userRole);
   // Logging on someone else's behalf is the owner's alone. The server enforces
   // it too (rp_resolve_actor), so hiding the picker is not the only thing
   // stopping it. isAdmin still governs seeing the whole team's week.

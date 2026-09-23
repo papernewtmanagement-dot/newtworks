@@ -2973,7 +2973,7 @@ const GrowthTab = ({ applicants, declined, former, onUpdate, loading, error, onR
   // now, useful mid-session while actively tuning weights/norms and wanting
   // the board to reflect a change immediately rather than waiting on the
   // throttle window.
-  const isAdminForRefresh = userRole === "owner" || userRole === "manager";
+  const isAdminForRefresh = userRole === "owner" || userRole === "admin";
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [refreshAllResult, setRefreshAllResult] = useState(null); // { count } | { failed: true } | null
   const handleRefreshAll = async () => {

@@ -37,7 +37,7 @@ import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx
 import ReferenceCalls from "./ReferenceCalls.jsx";
 
 // ─── constants ─────────────────────────────────────
-const ADMIN_ROLES = ["owner", "manager"];
+const ADMIN_ROLES = ["owner", "admin"];
 
 // Week bands match the ramp table the agency has always run on: 1-2, 3-4,
 // 5-8, 9-13, 14+. The earlier labels here (Week 1 / Weeks 2-3 / Month 2 /

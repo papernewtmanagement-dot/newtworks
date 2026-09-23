@@ -148,7 +148,7 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (callerErr || !callerRow) return json({ error: "Caller has no users row" }, 403);
       if (!callerRow.agency_id) return json({ error: "Caller has no agency" }, 403);
-      if (callerRow.role !== "owner" && callerRow.role !== "manager") {
+      if (callerRow.role !== "owner" && callerRow.role !== "admin") {
         return json({ error: "Only agency owners and managers can invite teammates" }, 403);
       }
       if (!body.email || !body.full_name) return json({ error: "email and full_name required" }, 400);
@@ -158,7 +158,7 @@ Deno.serve(async (req) => {
       email = String(body.email).trim().toLowerCase();
       fullName = String(body.full_name).trim();
       role = String(body.role || "staff").trim();
-      if (!["owner", "manager", "staff", "readonly", "accountant"].includes(role)) {
+      if (!["owner", "admin", "staff", "readonly", "accountant"].includes(role)) {
         return json({ error: `Invalid role: ${role}` }, 400);
       }
     }

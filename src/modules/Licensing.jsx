@@ -14,7 +14,7 @@ import { T } from "../lib/theme.js";
 
 // ─── constants ───────────────────────────────────────────
 
-const ADMIN_ROLES = ["owner", "manager"];
+const ADMIN_ROLES = ["owner", "admin"];
 
 // Used when a non-admin has no linked login id. Filtering on an id that
 // cannot match is safer than skipping the filter and asking for everything.

@@ -373,7 +373,7 @@ function GlossaryList({ manualType, parentId }) {
 // that root (in the sorted root list) plus all their descendants is
 // filtered out. Root ordering matches buildTree's comparator so this
 // aligns with what the sidebar would render.
-const ADMIN_ROLES = ["owner", "manager"];
+const ADMIN_ROLES = ["owner", "admin"];
 
 function filterBelowDivider(rows, userRole) {
   if (!Array.isArray(rows) || rows.length === 0) return rows || [];

@@ -44,7 +44,7 @@ function fmtRange(satISO) {
 // ── Roles ──────────────────────────────────────────────────────────────────────
 // Admin tier sees every CPR (including the current week). Team tier sees prior
 // weeks only. Mirrors ADMIN_ROLES in NewtworksApp.jsx.
-const ADMIN_ROLES = new Set(["owner", "manager"]);
+const ADMIN_ROLES = new Set(["owner", "admin"]);
 
 // ── Formatters ─────────────────────────────────────────────────────────────────
 const fmtInt = (n) => {

@@ -266,7 +266,7 @@ function filterVisibleStaff(staff, user) {
   if (!user) return [];
   if (user.role === "owner") return all;
   const realStaff = all.filter((s) => !s.is_test_user);
-  if (user.role === "manager") return realStaff;
+  if (user.role === "admin") return realStaff;
   if (user.team_member_id) {
     return realStaff.filter((s) => s.team_member_id === user.team_member_id);
   }
@@ -278,7 +278,7 @@ function filterVisibleStaff(staff, user) {
 // =====================================================================
 export default function TimeClock() {
   const { user, loading: userLoading } = useCurrentUser();
-  const canSeeAdmin = !!user && ["owner", "manager"].includes(user.role);
+  const canSeeAdmin = !!user && ["owner", "admin"].includes(user.role);
   const [tab, setTab, subTabHref] = useTabParam("subtab", "kiosk", ["kiosk","admin"]);
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
@@ -380,7 +380,7 @@ function KioskView({ user }) {
     return <div style={{ textAlign: "center", color: T.slate500, padding: "48px 0", fontSize: 13 }}>Loading...</div>;
   }
   if (!staff.length) {
-    const isLinkedStaff = !!user && !["owner", "manager"].includes(user.role) && !!user.team_member_id;
+    const isLinkedStaff = !!user && !["owner", "admin"].includes(user.role) && !!user.team_member_id;
     return (
       <Card style={{ padding: "32px 24px", textAlign: "center", borderStyle: "dashed", background: T.slate50 }}>
         <div style={{ fontSize: 14, fontWeight: 600, color: T.slate700 }}>
@@ -452,7 +452,7 @@ function KioskView({ user }) {
         );
       })}
       </div>
-      {user && user.role !== "owner" && user.role !== "manager" && (
+      {user && user.role !== "owner" && user.role !== "admin" && (
         <div style={{ marginTop: 4 }}>
           <StaffRequestSection
             user={user}

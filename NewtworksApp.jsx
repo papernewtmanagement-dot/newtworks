@@ -86,7 +86,7 @@ const AGENCY_DEFAULTS = {
 
 // ─── Navigation Config ────────────────────────────────────────────────────────
 // ─── Access model ─────────────────────────────────────────────────────────────
-// admin tier = ["owner","manager"] — full access to every module.
+// admin tier = ["owner","admin"] — full access to every module.
 // team tier  = anyone else (staff/readonly/accountant) — sees ONLY the 5
 //              team-visible sections (dashboard, cpr, time, handbook, processes).
 // Standing rule (Peter 2026-06-22): webapp defaults to admin-only. Any NEW
@@ -95,10 +95,11 @@ const AGENCY_DEFAULTS = {
 // "Newtworks webapp default visibility — owner-only unless Peter authorizes team access".
 // 2026-07-15 carve-out: within CPR (team-visible), the current Sun–Sat weeks
 // row is hidden from non-admin viewers (see CPRList.jsx + CPRDetail.jsx gate).
-const ADMIN_ROLES = ["owner", "manager"];
-const TEAM_VISIBLE_ROLES = ["owner", "manager", "staff", "readonly", "accountant"];
-// Family login (role "family"): sees only the modules below the family divider.
-const FAMILY_ROLES = ["owner", "manager", "family"];
+const ADMIN_ROLES = ["owner", "admin"];
+const TEAM_VISIBLE_ROLES = ["owner", "admin", "staff", "readonly", "accountant"];
+// Family and Course (gate "family"): shown when the database function
+// can_see_family() says yes — site admins, the family login, and team members
+// in the Personal, PaperNewt LLC or Steward entity. Read once at sign-in.
 const NAV_ITEMS = [
   { id: "dashboard",   label: "Dashboard",   icon: "grid",          roles: TEAM_VISIBLE_ROLES },
   { id: "cpr",         label: "CPR",         icon: "trendingUp",    roles: TEAM_VISIBLE_ROLES },
@@ -120,8 +121,8 @@ const NAV_ITEMS = [
   { id: "editor",      label: "Editor",      icon: "pencil",        roles: ADMIN_ROLES },
   { id: "settings",    label: "Settings",    icon: "settings",      roles: ADMIN_ROLES },
   { type: "divider",   id: "_div_family" },
-  { id: "family",      label: "Family",      icon: "home",          roles: FAMILY_ROLES },
-  { id: "course",      label: "Course",      icon: "graduation",    roles: FAMILY_ROLES },
+  { id: "family",      label: "Family",      icon: "home",          gate: "family" },
+  { id: "course",      label: "Course",      icon: "graduation",    gate: "family" },
 ];
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
@@ -665,7 +666,7 @@ const ComingSoon = ({ module }) => (
 // ─── Module Router ────────────────────────────────────────────────────────────
 // All modules built. In production each is imported from src/modules/.
 // This shell routes to each module component.
-const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
+const ModuleRouter = ({ active, onNavigate, userRole, userId, canSeeFamily }) => {
   const modules = {
     dashboard:   <ErrorBoundary name="Dashboard"><ActivityLog userRole={userRole} userId={userId} /></ErrorBoundary>,
     cpr:         <ErrorBoundary name="CPR"><CPRList userRole={userRole} /></ErrorBoundary>,
@@ -693,7 +694,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
   // overrides were dropped (migration 032 / 2026-06-22) — role-only now.
   const navItem = NAV_ITEMS.find(n => n.id === active);
   if (navItem) {
-    const roleOk = !navItem.roles || navItem.roles.includes(userRole);
+    const roleOk = navItem.gate === "family" ? !!canSeeFamily : (!navItem.roles || navItem.roles.includes(userRole));
     if (!roleOk) {
       return <AccessDenied />;
     }
@@ -1024,6 +1025,8 @@ export default function NewtworksApp() {
       // Previously fell back to "owner" — meant any authed user without a users
       // row got full admin access. Standing rule: deny by default.
       const role = profile?.role || "staff";
+      // Family and Course visibility is decided by the database, not the role list.
+      const { data: famOk } = await supabase.rpc("can_see_family");
       const displayName = profile?.full_name || ag?.owner_name || AGENCY_DEFAULTS.user.name;
       setAgency({
         name: ag?.name || AGENCY_DEFAULTS.name,
@@ -1034,6 +1037,7 @@ export default function NewtworksApp() {
           name: displayName,
           initials: (displayName || "?").split(" ").map(n => n?.[0] || "").join("").toUpperCase().slice(0,2),
           role,
+          canSeeFamily: famOk === true,
           email: profile?.email || ag?.primary_email || sessionEmail || AGENCY_DEFAULTS.user.email,
         },
         alerts: AGENCY_DEFAULTS.alerts,
@@ -1089,6 +1093,7 @@ export default function NewtworksApp() {
   // First pass: filter by role, keeping divider sentinels.
   const filteredNav = NAV_ITEMS.filter(n => {
     if (n.type === "divider") return true;
+    if (n.gate === "family") return !!agency.user.canSeeFamily;
     return n.roles.includes(agency.user.role);
   });
   // Second pass: drop dividers that would render as visual artifacts
@@ -1286,7 +1291,7 @@ export default function NewtworksApp() {
               {cprWeekDate ? (
                 <ErrorBoundary name="CPR Detail"><CPRDetail weekDate={cprWeekDate} onClose={handleCloseCPR} onNavigateWeek={handleNavigateCPRWeek} userRole={agency?.user?.role} viewerTeamMemberId={agency?.user?.teamMemberId || null} /></ErrorBoundary>
               ) : (
-                <ModuleRouter active={effectiveModule} onNavigate={setActiveModule} userRole={agency.user.role} userId={agency.user.id} />
+                <ModuleRouter active={effectiveModule} onNavigate={setActiveModule} userRole={agency.user.role} userId={agency.user.id} canSeeFamily={agency.user.canSeeFamily} />
               )}
             </div>
 

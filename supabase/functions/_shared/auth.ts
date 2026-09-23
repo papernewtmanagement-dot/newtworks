@@ -44,7 +44,7 @@ export async function requireSharedSecret(
 // A shared secret would NOT do the job here. The call comes from a browser,
 // and anything the browser can send, anyone reading the page can read.
 
-const ADMIN_ROLES = ["owner", "manager"];
+const ADMIN_ROLES = ["owner", "admin"];
 
 export async function requireOwnerOrManager(
   req: Request,

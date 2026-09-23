@@ -318,7 +318,7 @@ const EDIT_ROLES = new Set(["owner"]);
 // sees prior weeks only. Mirrors ADMIN_ROLES in NewtworksApp.jsx.
 // Peter directive 2026-07-15: current-week CPR is admin-only. Companion
 // filter lives in CPRList.jsx (list view hides current-week row for team).
-const ADMIN_ROLES = new Set(["owner", "manager"]);
+const ADMIN_ROLES = new Set(["owner", "admin"]);
 
 // The current Sun–Sat week's ending Saturday comes from lib/weeks.js.
 function isCurrentOrFutureCPRWeek(weekEndingISO) {
@@ -3213,7 +3213,7 @@ function LogChangesSection({ weekDate, team, viewerTeamMemberId = null, userRole
   // The viewer's own group first, then fewest to most (Peter 2026-09-21).
   // Teammates see only their own entries (Peter 2026-09-21: the full list is
   // too much); the owner and managers see everyone.
-  const seesAll = ["owner", "manager"].includes(userRole);
+  const seesAll = ["owner", "admin"].includes(userRole);
   const visibleRows = (rows || []).filter(r => seesAll || r.owner_id === viewerTeamMemberId);
   const byKind = (k) => groupChangesByOwner(visibleRows.filter(r => (r.kind || "change") === k), ownerIds, viewerTeamMemberId);
   const issueGroups = byKind("issue");

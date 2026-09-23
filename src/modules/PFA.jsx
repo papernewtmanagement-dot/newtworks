@@ -1148,7 +1148,7 @@ function ClosesTab() {
 // Default export — role dispatch + tabs
 // =====================================================================
 export default function PFA({ userRole, embedded = false }) {
-  const isAdmin = userRole === "owner" || userRole === "manager";
+  const isAdmin = userRole === "owner" || userRole === "admin";
   // Param is "dep", not "tab": this now renders inside the Dashboard, whose own
   // tab bar owns ?tab=. Two tab groups may never share a param name.
   const [activeTab, setActiveTab, tabHref] = useTabParam("dep", "today", ["today","statements","closes","recon","ledger"]);

@@ -34,7 +34,7 @@ export default function TimeHub({ embedded = false, userRole = null }) {
     supabase.rpc("my_pay_type").then(r => { if (alive) setPayType(r?.data || ""); });
     return () => { alive = false; };
   }, []);
-  const isAdmin = ["owner", "manager"].includes(String(userRole || "").toLowerCase());
+  const isAdmin = ["owner", "admin"].includes(String(userRole || "").toLowerCase());
   const salaried = !isAdmin && String(payType || "").toUpperCase() === "SALARY";
   const visibleTabs = salaried ? TABS.filter(t => t.id !== "timeclock") : TABS;
   const shownTab = salaried && activeTab === "timeclock" ? "timeoff" : activeTab;

@@ -1544,7 +1544,7 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
         .from("users")
         .select("id, full_name, email, role")
         .eq("agency_id", AGENCY_ID)
-        .in("role", ["owner", "manager"])
+        .in("role", ["owner", "admin"])
         .eq("is_active", true)
         .order("role", { ascending: true });
       if (cancelled) return;
@@ -1736,7 +1736,7 @@ export default function TasksGoals({ onNavigate, userRole, userId }) {
 
   // ── Task edit/delete/reopen — access gate ──
   // Owner + manager see the affordances; manager writes are RLS-scoped to their own rows.
-  const canEdit = userRole === "owner" || userRole === "manager";
+  const canEdit = userRole === "owner" || userRole === "admin";
 
   const openNewTaskModal = () => {
     setModalInitialTask(null);

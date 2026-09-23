@@ -183,7 +183,7 @@ const s = {
 // component-level backstop matching the isAdmin pattern used everywhere
 // else in the app (Manual.jsx, etc.) — belt-and-suspenders, not the
 // authority. Never remove without removing the other two layers too.
-const EDITOR_ADMIN_ROLES = ["owner", "manager"];
+const EDITOR_ADMIN_ROLES = ["owner", "admin"];
 
 export default function ContentEditor({ userRole }) {
   const isAdmin = EDITOR_ADMIN_ROLES.includes(userRole);

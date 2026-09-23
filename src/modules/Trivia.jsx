@@ -354,7 +354,7 @@ function orderedOptions(options, attemptId, itemId) {
 
 export default function Trivia({ userRole, userId, embedded = false }) {
   const vp = useViewport();
-  const isAdmin = userRole === "owner" || userRole === "manager";
+  const isAdmin = userRole === "owner" || userRole === "admin";
   const [tabRaw, setTabRaw, tabHref] = useTabParam("tab", isAdmin ? "review" : "play", ["play", "review", "approved", "reports", "gates"]);
   // Shared Grid is no longer a tab of its own — it is a mode inside Play, like
   // every other game. Non-admins only ever see Play.

@@ -1899,9 +1899,9 @@ const StageStepper = ({ status, saving, onPick }) => {
 
 export default function CandidateDetail({ candidate, onBack, onUpdate, userRole }) {
   // App-wide admin convention (Manual.jsx, FitScorecards.jsx, Onboarding.jsx,
-  // Licensing.jsx, PFA.jsx all use the same ["owner","manager"] check). Gates
+  // Licensing.jsx, PFA.jsx all use the same ["owner","admin"] check). Gates
   // the admin-only assessment breakdown expanders (Peter directive 2026-08-14).
-  const isAdmin = ["owner", "manager"].includes(userRole);
+  const isAdmin = ["owner", "admin"].includes(userRole);
   const { isPhone } = useViewport();
   const verdictThresh = useVerdictThresholds();
   const [detail, setDetail] = useState(candidate || {});

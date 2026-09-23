@@ -24,7 +24,7 @@ import { DayDoneStyles, Confetti, Dancer, CritterIcon, GUESTS } from "../compone
 // Parents only: Carry, Excuse, any past day, the Chores and Fines tabs.
 // =========================================================================
 
-const PARENT_ROLES = ["owner", "manager"];
+const PARENT_ROLES = ["owner", "admin"];
 const TABS = ["week", "money", "school", "fines", "setup"];
 const TAB_LABELS = { week: "Week", money: "Money", school: "School", fines: "Fines & Expenses", setup: "Chores" };
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
