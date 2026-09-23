@@ -78,6 +78,11 @@ const circle = (kind) => ({
   border: `2px solid ${kind === "done" ? T.green : T.red}`, background: T.white,
   color: kind === "done" ? T.green : T.red, fontSize: 15, fontWeight: 800, lineHeight: "26px", fontFamily: "inherit",
 });
+// One grid row per chore; an extra chore done several times a day gets a row per time (slot).
+const rowKey = (r) => (r.frequency === "extra" ? `${r.chore_id}:${r.slot ?? 1}` : r.chore_id);
+// How often an extra chore comes back. 0 = any number of times a day, blank = one time.
+const REPEAT_OPTIONS = [["", "One time"], ["0", "Many times a day"], ["1", "Next day"], ["2", "In 2 days"], ["3", "In 3 days"], ["7", "In a week"], ["14", "In 2 weeks"], ["30", "In a month"]];
+const repeatValue = (v) => (v === "" || v == null ? null : Math.max(0, Math.round(Number(v)) || 0));
 const card = { background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 14, boxSizing: "border-box" };
 const input = { border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", background: T.white, color: T.slate900 };
 
@@ -156,9 +161,10 @@ export default function Family({ userRole }) {
 
   const setStatus = async (row, status) => {
     const wasDone = todayDone(board);
-    setBusy(row.chore_id + row.day);
+    setBusy(rowKey(row) + row.day);
     const { error } = await supabase.rpc("family_set_status", {
       p_chore_id: row.chore_id, p_occurrence_date: row.occurrence_date || row.day, p_status: status, p_kid_id: kidId,
+      p_slot: row.slot ?? null,
     });
     setBusy(null);
     if (error) { setErr(error.message); return; }
@@ -254,9 +260,10 @@ function WeekGrid({ kid, board, checklists, extras, isParent, day, today, weekSt
     const meta = new Map();
     const cellMap = new Map();
     for (const r of (board || [])) {
-      if (!meta.has(r.chore_id)) meta.set(r.chore_id, r);
-      if (!cellMap.has(r.chore_id)) cellMap.set(r.chore_id, new Map());
-      cellMap.get(r.chore_id).set(r.day, r);
+      const key = rowKey(r);
+      if (!meta.has(key)) meta.set(key, r);
+      if (!cellMap.has(key)) cellMap.set(key, new Map());
+      cellMap.get(key).set(r.day, r);
     }
     const list = [...meta.values()];
     const g = [];
@@ -282,7 +289,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, day, today, weekSt
   const canPick = (isParent ? day <= today : day === today) && day >= kid.tracking_start;
 
   const cellView = (r, d) => {
-    const c = cells.get(r.chore_id)?.get(d);
+    const c = cells.get(rowKey(r))?.get(d);
     if (!c) return <span style={{ color: T.slate200 }}>·</span>;
     const anyDay = r.frequency === "weekly" && r.due_dow == null && day >= weekStart && day <= addDays(weekStart, 6);
     const active = c.can_act && (d === day || anyDay);
@@ -300,7 +307,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, day, today, weekSt
       }
       return view;
     }
-    return <CellActions row={c} isParent={isParent} today={today} busy={busy === c.chore_id + c.day} setStatus={setStatus} />;
+    return <CellActions row={c} isParent={isParent} today={today} busy={busy === rowKey(c) + c.day} setStatus={setStatus} />;
   };
 
   return (
@@ -377,13 +384,14 @@ function GroupRows({ g, days, day, cells, cellView, checklists, openInfo, setOpe
       </tr>
       {g.rows.map(r => {
         const list = checklists.find(c => c.id === r.checklist_id);
-        const open = openInfo === r.chore_id;
-        const owed = r.is_burpees ? cells.get(r.chore_id)?.get(day)?.burpees_owed : null;
+        const rk = rowKey(r);
+        const open = openInfo === rk;
+        const owed = r.is_burpees ? cells.get(rk)?.get(day)?.burpees_owed : null;
         const sub = r.is_burpees ? (owed != null ? `${owed} to do` : "10 per year of age")
           : r.frequency === "weekly" ? (r.due_dow == null ? "Any day this week" : `Due ${DAY_FULL[r.due_dow]}`)
           : Number(r.pay) > 0 ? money(r.pay) : "Expected, no pay";
         return (
-          <FragmentRow key={r.chore_id}>
+          <FragmentRow key={rk}>
             <tr style={{ borderTop: `1px solid ${T.slate100}` }}>
               <td style={{ position: "sticky", left: 0, background: T.white, zIndex: 1, padding: "8px 10px", verticalAlign: "middle" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -391,7 +399,7 @@ function GroupRows({ g, days, day, cells, cellView, checklists, openInfo, setOpe
                     {r.group_label && <span style={{ fontSize: 10, color: T.slate500, marginRight: 4 }}>{r.group_label}</span>}
                     {r.title}
                   </span>
-                  {list && <InfoDot open={open} onClick={() => setOpenInfo(open ? null : r.chore_id)} title="How to do it" />}
+                  {list && <InfoDot open={open} onClick={() => setOpenInfo(open ? null : rk)} title="How to do it" />}
                 </div>
                 <div style={{ fontSize: 11, color: T.slate500 }}>{r.frequency === "weekly" && Number(r.pay) > 0 ? `${money(r.pay)} · ` : ""}{sub}</div>
               </td>
@@ -441,13 +449,21 @@ function CellActions({ row, isParent, today, busy, setStatus }) {
   if (isParent) {
     const extra = row.frequency === "extra";
     const saidDone = row.status === "claimed" || row.status === "verified";
-    const canUndo = extra || row.occurrence_date >= today;
+    const canUndo = !extra && row.occurrence_date >= today;
+    if (extra) {
+      // Extra chores are never fined. ✗ unchecks it: the pay comes back off and the job goes back on the list.
+      return wrap(<>
+        <span title={`${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>
+        {row.status !== "verified" && <button disabled={busy} style={circle("done")} onClick={() => act("verified")} title="Checked, it's done" aria-label="Done">✓</button>}
+        <button disabled={busy} style={circle("missed")} onClick={() => act(null)} title="Uncheck it" aria-label="Uncheck">✗</button>
+      </>);
+    }
     return wrap(<>
       <span title={`${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>
       {row.status !== "verified" && <button disabled={busy} style={circle("done")} onClick={() => act("verified")} title={row.status === "claimed" ? "Checked, it's done" : "Change to done"} aria-label="Done">✓</button>}
       {row.status !== "missed" && row.status !== "false_claim" && <button disabled={busy} style={circle("missed")} onClick={() => act(saidDone ? "false_claim" : "missed")} title={saidDone ? "Said done, wasn't" : "Change to missed"} aria-label="Missed">✗</button>}
       {!extra && row.status !== "excused" && <button disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>}
-      {canUndo && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title={extra ? "Take it back off" : "Clear it"}>Undo</button>}
+      {canUndo && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Clear it">Undo</button>}
     </>);
   }
   return wrap(<>
@@ -845,7 +861,7 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
     if (d.pay !== undefined) patch.pay = Number(d.pay) || 0;
     if (d.fine !== undefined) patch.fine = d.fine === "" ? null : Number(d.fine);
     if (d.due_dow !== undefined) patch.due_dow = d.due_dow === "" ? null : Number(d.due_dow);
-    if (d.repeat_days !== undefined) patch.repeat_days = d.repeat_days === "" ? null : Math.max(1, Number(d.repeat_days) || 1);
+    if (d.repeat_days !== undefined) patch.repeat_days = repeatValue(d.repeat_days);
     const { error } = await supabase.from("family_chores").update(patch).eq("id", c.id);
     if (error) { setErr(error.message); return; }
     setDraft(x => { const n = { ...x }; delete n[c.id]; return n; });
@@ -875,7 +891,7 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
     const a = addingExtra; if (!a?.title) return;
     const { error } = await supabase.from("family_chores").insert({
       agency_id: AGENCY_ID, kid_id: null, title: a.title, frequency: "extra", pay: Number(a.pay) || 0,
-      repeat_days: a.repeat_days === "" || a.repeat_days == null ? null : Math.max(1, Number(a.repeat_days) || 1),
+      repeat_days: repeatValue(a.repeat_days),
       checklist_id: a.checklist_id || null, sort_order: 99, active_from: today,
     });
     if (error) { setErr(error.message); return; }
@@ -902,9 +918,9 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
     <div style={{ display: "grid", gap: 12 }}>
       <Section title="Fines">
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, paddingTop: 10, fontSize: 13, color: T.slate700 }}>
-          <label>Fine for a chore not done by the end of the day
-            <input key={"mf" + settings?.missed_fine} defaultValue={settings?.missed_fine ?? ""} inputMode="decimal" style={{ ...input, width: "100%", marginTop: 4 }}
-              onBlur={e => Number(e.target.value) !== Number(settings?.missed_fine) && saveSetting({ missed_fine: Number(e.target.value) || 0 })} />
+          <label>Fine for a skipped chore, per year of age
+            <input key={"fy" + settings?.fine_per_year} defaultValue={settings?.fine_per_year ?? ""} inputMode="decimal" style={{ ...input, width: "100%", marginTop: 4 }}
+              onBlur={e => Number(e.target.value) !== Number(settings?.fine_per_year) && saveSetting({ fine_per_year: Number(e.target.value) || 0 })} />
           </label>
           <label>Saying it's done when it isn't costs this many times the fine
             <input key={"fm" + settings?.false_claim_multiplier} defaultValue={settings?.false_claim_multiplier ?? ""} inputMode="decimal" style={{ ...input, width: "100%", marginTop: 4 }}
@@ -915,16 +931,22 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
       </Section>
 
       <Section title="Extra Chores">
-        <div style={{ fontSize: 12, color: T.slate500, paddingTop: 6 }}>Paid the moment they're done. "Comes back" is the number of days before it shows up again. Leave it blank for a one-time job.</div>
+        <div style={{ fontSize: 12, color: T.slate500, paddingTop: 6 }}>Paid the moment they're done. "Comes back" is when it shows up again after it's done.</div>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", marginTop: 8 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead><tr><th style={th}>Chore</th><th style={th}>Price</th><th style={th}>Comes back (days)</th><th /></tr></thead>
+            <thead><tr><th style={th}>Chore</th><th style={th}>Price</th><th style={th}>Comes back</th><th /></tr></thead>
             <tbody>
               {extras.map(c => (
                 <tr key={c.id} style={{ borderTop: `1px solid ${T.slate100}` }}>
                   <td style={{ ...td, minWidth: 180 }}>{cellIn(c, "title", c.title, "100%")}</td>
                   <td style={td}>{cellIn(c, "pay", c.pay)}</td>
-                  <td style={td}>{cellIn(c, "repeat_days", c.repeat_days, 70, "once")}</td>
+                  <td style={td}>
+                    <select value={draft[c.id]?.repeat_days ?? (c.repeat_days == null ? "" : String(c.repeat_days))} style={{ ...input, padding: "5px 6px" }}
+                      onChange={e => setDraft(x => ({ ...x, [c.id]: { ...(x[c.id] || {}), repeat_days: e.target.value } }))}>
+                      {REPEAT_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      {c.repeat_days != null && !REPEAT_OPTIONS.some(([v]) => v === String(c.repeat_days)) && <option value={String(c.repeat_days)}>In {c.repeat_days} days</option>}
+                    </select>
+                  </td>
                   <td style={{ ...td, whiteSpace: "nowrap", textAlign: "right" }}>
                     {draft[c.id] && <button style={btn("primary")} onClick={() => saveChore(c)}>Save</button>}{" "}
                     <button style={btn()} onClick={() => removeChore(c)} aria-label="Remove">✕</button>
@@ -938,7 +960,9 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, paddingTop: 10 }}>
             <input autoFocus value={addingExtra.title} onChange={e => setAddingExtra({ ...addingExtra, title: e.target.value })} placeholder="Extra chore" style={input} />
             <input value={addingExtra.pay} onChange={e => setAddingExtra({ ...addingExtra, pay: e.target.value })} inputMode="decimal" placeholder="Price" style={input} />
-            <input value={addingExtra.repeat_days} onChange={e => setAddingExtra({ ...addingExtra, repeat_days: e.target.value })} inputMode="numeric" placeholder="Comes back (days)" style={input} />
+            <select value={addingExtra.repeat_days} onChange={e => setAddingExtra({ ...addingExtra, repeat_days: e.target.value })} style={input}>
+              {REPEAT_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
             <select value={addingExtra.checklist_id || ""} onChange={e => setAddingExtra({ ...addingExtra, checklist_id: e.target.value || null })} style={input}>
               <option value="">No instructions</option>
               {checklists.map(cl => <option key={cl.id} value={cl.id}>{cl.name}</option>)}
