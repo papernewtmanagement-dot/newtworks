@@ -489,6 +489,43 @@ function WoodpeckerArt() {
   );
 }
 
+function NinjaArt() {
+  return (
+    <>
+      {/* A friendly little ninja who sneaks into the end-of-day dance now and then.
+          Dark suit, red headband with tails that flutter, big eyes. Peter 2026-09-22. */}
+      <rect x="76" y="150" width="20" height="30" rx="8" fill="#23262E" />
+      <rect x="104" y="150" width="20" height="30" rx="8" fill="#23262E" />
+      <rect x="72" y="174" width="26" height="9" rx="4.5" fill="#15171C" />
+      <rect x="102" y="174" width="26" height="9" rx="4.5" fill="#15171C" />
+      <rect x="68" y="100" width="64" height="60" rx="22" fill="#2E323C" />
+      <path d="M84 104 L100 126 L116 104" fill="none" stroke="#23262E" strokeWidth="4" strokeLinejoin="round" />
+      <rect x="68" y="134" width="64" height="9" fill="#D63B33" />
+      <path d="M100 138 l-8 16 l6 -2 z M100 138 l8 16 l-6 -2 z" fill="#D63B33" />
+      <g className="nw-up" style={{ transformOrigin: "50% 0%" }}>
+        <rect x="50" y="106" width="20" height="40" rx="10" fill="#2E323C" />
+        <circle cx="60" cy="148" r="9" fill="#23262E" />
+      </g>
+      <g className="nw-upB" style={{ transformOrigin: "50% 0%" }}>
+        <rect x="130" y="106" width="20" height="40" rx="10" fill="#2E323C" />
+        <circle cx="140" cy="148" r="9" fill="#23262E" />
+      </g>
+      <circle cx="100" cy="70" r="36" fill="#2E323C" />
+      <g className="nw-swayR" style={{ transformOrigin: "0% 50%" }}>
+        <path d="M132 52 q20 -6 30 6 q-14 -2 -24 8 z" fill="#D63B33" />
+        <path d="M132 58 q22 4 26 20 q-10 -10 -26 -12 z" fill="#B82F28" />
+      </g>
+      <path d="M66 50 q34 -16 68 0 v10 q-34 -14 -68 0 z" fill="#D63B33" />
+      <rect x="72" y="62" width="56" height="22" rx="11" fill="#F2C9A0" />
+      <circle cx="88" cy="73" r="6" fill="#15100F" />
+      <circle cx="112" cy="73" r="6" fill="#15100F" />
+      <circle cx="90" cy="71" r="2" fill="#FFFFFF" />
+      <circle cx="114" cy="71" r="2" fill="#FFFFFF" />
+      <path d="M80 63 l12 4 M120 63 l-12 4" fill="none" stroke="#15100F" strokeWidth="3" strokeLinecap="round" />
+    </>
+  );
+}
+
 export const DANCERS = [
   { key: "pug",        label: "pug",        Art: PugArt },
   { key: "axolotl",    label: "axolotl",    Art: AxolotlArt },
@@ -504,9 +541,16 @@ export const DANCERS = [
   { key: "woodpecker", label: "woodpecker", Art: WoodpeckerArt },
 ];
 
+// Guest dancers: not animals a kid picks, and not in the team's random draw.
+// Only called in by name (the Family day-done dance invites the ninja).
+const GUESTS = [
+  { key: "ninja", label: "ninja", Art: NinjaArt },
+];
+const ALL_DANCERS = [...DANCERS, ...GUESTS];
+
 // delay offsets the whole animal so a row of them is not in lockstep.
 export function Dancer({ which, size = 176, delay = 0 }) {
-  const a = DANCERS.find(d => d.key === which) || DANCERS[0];
+  const a = ALL_DANCERS.find(d => d.key === which) || DANCERS[0];
   const Art = a.Art;
   return (
     <svg width={size} height={size} viewBox="0 0 200 200" role="img" aria-label={`A dancing ${a.label}`}
@@ -521,7 +565,7 @@ export function Dancer({ which, size = 176, delay = 0 }) {
 
 // Same animal, standing still (no dance frame, no shadow). For name pills.
 export function CritterIcon({ which, size = 22 }) {
-  const a = DANCERS.find(d => d.key === which);
+  const a = ALL_DANCERS.find(d => d.key === which);
   if (!a) return null;
   const Art = a.Art;
   return (

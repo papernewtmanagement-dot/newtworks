@@ -108,6 +108,7 @@ export default function Family({ userRole }) {
   const [expenseTypes, setExpenseTypes] = useState([]);
   const [board, setBoard] = useState([]);
   const [extras, setExtras] = useState([]);
+  const [fact, setFact] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);
@@ -152,13 +153,15 @@ export default function Family({ userRole }) {
 
   const loadBoard = useCallback(async () => {
     if (!kidId) { setBoard([]); return; }
-    const [b, x] = await Promise.all([
+    const [b, x, f] = await Promise.all([
       supabase.rpc("family_week_board", { p_kid_id: kidId, p_week_start: viewWeek }),
       supabase.rpc("family_extras_available", { p_date: day }),
+      supabase.rpc("family_fact_of_day", { p_date: day }),
     ]);
     if (b.error || x.error) { setErr((b.error || x.error).message); return; }
     setBoard(Array.isArray(b.data) ? b.data : []);
     setExtras(Array.isArray(x.data) ? x.data : []);
+    setFact(typeof f.data === "string" ? f.data : null);
   }, [kidId, viewWeek, day]);
   useEffect(() => { loadBoard(); }, [loadBoard]);
 
@@ -228,7 +231,7 @@ export default function Family({ userRole }) {
 
       {activeTab === "week" && kid && (
         <WeekGrid kid={kid} board={board} checklists={checklists} extras={extras} isParent={isParent}
-          icons={new Map(chores.map(c => [c.id, c.icon]))}
+          icons={new Map(chores.map(c => [c.id, c.icon]))} fact={fact} showerRate={Number(settings?.shower_fine_per_minute ?? 1)}
           expenseTypes={expenseTypes} expenses={ledger.filter(l => l.kid_id === kid.id && l.kind === "expense" && l.entry_date >= viewWeek && l.entry_date <= addDays(viewWeek, 6))}
           onLedgerChanged={load}
           day={day} today={today} weekStart={viewWeek} dateHref={dateHref} setDate={setDateParam}
@@ -280,7 +283,7 @@ function KidPicker({ kids, kid, balances, kidHref, setKid }) {
 }
 
 // ─── Week grid ────────────────────────────────────────────────────────────
-function WeekGrid({ kid, board, checklists, extras, isParent, icons, expenseTypes, expenses, onLedgerChanged, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
+function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, showerRate, expenseTypes, expenses, onLedgerChanged, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
   const _vp = useViewport();
   const [openInfo, setOpenInfo] = useState(null);
   const [pickId, setPickId] = useState("");
@@ -349,6 +352,10 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, expenseType
         <Stat label="Could earn" value={money(balance?.week_possible)} />
       </div>
 
+      {day === today && kid.shower_minutes && (
+        <ShowerTimer kid={kid} isParent={isParent} today={today} rate={showerRate} onChanged={onLedgerChanged} />
+      )}
+
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <TabLink href={dateHref(addDays(weekStart, -7))} onSelect={() => setDate(addDays(weekStart, -7))} style={{ ...btn(), textDecoration: "none" }} ariaLabel="Previous week">‹</TabLink>
         <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{shortDate(weekStart)} – {shortDate(addDays(weekStart, 6))}</div>
@@ -358,6 +365,16 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, expenseType
             style={{ ...btn(), textDecoration: "none" }} ariaLabel="Next week">›</TabLink>
         )}
       </div>
+
+      {fact && (
+        <div style={{ ...card, background: T.tealLt, borderColor: T.teal, display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <span aria-hidden="true" style={{ fontSize: 22, lineHeight: 1 }}>💡</span>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: T.teal, textTransform: "uppercase", letterSpacing: "0.05em" }}>Did you know?</div>
+            <div style={{ fontSize: 14, color: T.slate900, marginTop: 2 }}>{fact}</div>
+          </div>
+        </div>
+      )}
 
       <div style={{ ...card, padding: 0, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
@@ -508,10 +525,91 @@ function CellActions({ row, isParent, today, busy, setStatus }) {
   </>);
 }
 
+// Shower timer. The server keeps the start time, so a refresh or another
+// screen shows the same clock. Stopping it works out any fine on the server:
+// every second over the limit costs the per-minute fine divided by 60.
+const mmss = (secs) => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+function ShowerTimer({ kid, isParent, today, rate, onChanged }) {
+  const [run, setRun] = useState(null);
+  const [last, setLast] = useState(null);
+  const [now, setNow] = useState(Date.now());
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from("family_showers").select("*").eq("kid_id", kid.id).order("started_at", { ascending: false }).limit(1);
+    const r = Array.isArray(data) ? data[0] : null;
+    const rDay = r ? new Date(r.started_at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }) : null;
+    setRun(r && !r.ended_at ? r : null);
+    setLast(r && r.ended_at && rDay === today ? r : null);
+  }, [kid.id, today]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!run) return undefined;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [run]);
+
+  const call = async (fn) => {
+    setBusy(true); setErr(null);
+    const { error } = await supabase.rpc(fn, { p_kid_id: kid.id });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setNow(Date.now());
+    await load();
+    if (fn === "family_shower_stop") onChanged();
+  };
+
+  const limit = run ? run.limit_seconds : kid.shower_minutes * 60;
+  const elapsed = run ? Math.max(0, Math.floor((now - Date.parse(run.started_at)) / 1000)) : 0;
+  const over = Math.max(0, elapsed - limit);
+  const left = Math.max(0, limit - elapsed);
+
+  return (
+    <div style={{ ...card, display: "grid", gap: 8, borderColor: over > 0 ? T.red : T.slate200, background: over > 0 ? T.redLt : T.white }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span aria-hidden="true" style={{ fontSize: 24 }}>🚿</span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>Shower · {kid.shower_minutes} min</div>
+            <div style={{ fontSize: 11, color: T.slate500 }}>{money(rate)} a minute over, counted to the second</div>
+          </div>
+        </div>
+        {run ? (
+          <div style={{ display: "flex", gap: 6 }}>
+            <button disabled={busy} style={{ ...btn("primary"), fontSize: 15, padding: "10px 18px" }} onClick={() => call("family_shower_stop")}>Done</button>
+            {isParent && <button disabled={busy} style={btn()} onClick={() => call("family_shower_cancel")}>Cancel</button>}
+          </div>
+        ) : (
+          <button disabled={busy} style={{ ...btn("primary"), fontSize: 15, padding: "10px 18px" }} onClick={() => call("family_shower_start")}>Start</button>
+        )}
+      </div>
+      {run && (
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 44, fontWeight: 800, fontFamily: "ui-monospace, Menlo, monospace", color: over > 0 ? T.red : T.slate900, lineHeight: 1.1 }}>
+            {over > 0 ? `+${mmss(over)}` : mmss(left)}
+          </div>
+          <div style={{ fontSize: 13, color: over > 0 ? T.red : T.slate500, fontWeight: over > 0 ? 700 : 400 }}>
+            {over > 0 ? "Over time! Every second costs." : "left"}
+          </div>
+        </div>
+      )}
+      {!run && last && (
+        <div style={{ fontSize: 13, color: Number(last.fine) > 0 ? T.red : T.green, fontWeight: 600 }}>
+          Today: {mmss(last.seconds || 0)}{Number(last.fine) > 0 ? ` · ${mmss(last.over_seconds || 0)} over · fine ${money(-Number(last.fine))}` : " · on time!"}
+        </div>
+      )}
+      {err && <div style={{ fontSize: 12, color: T.red }}>{err}</div>}
+    </div>
+  );
+}
+
 function Celebration({ kid, onClose }) {
   const _vp = useViewport();
   const size = _vp.isPhone ? 76 : 120;
-  const troupe = [kid.animal, kid.favorite_animal, "beagle", "pug"].filter(Boolean);
+  // Now and then a ninja sneaks into the dance (about one day in three).
+  const [ninja] = useState(() => Math.random() < 0.34);
+  const troupe = [kid.animal, kid.favorite_animal, "beagle", "pug", ninja ? "ninja" : null].filter(Boolean);
   useEffect(() => { const t = setTimeout(onClose, 12000); return () => clearTimeout(t); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.92)", zIndex: 60, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 20, boxSizing: "border-box" }}>
@@ -1004,6 +1102,10 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
             <input key={"fm" + settings?.false_claim_multiplier} defaultValue={settings?.false_claim_multiplier ?? ""} inputMode="decimal" style={{ ...input, width: "100%", marginTop: 4 }}
               onBlur={e => Number(e.target.value) !== Number(settings?.false_claim_multiplier) && saveSetting({ false_claim_multiplier: Math.max(1, Number(e.target.value) || 1) })} />
           </label>
+          <label>Shower fine for each minute over (charged to the second)
+            <input key={"sf" + settings?.shower_fine_per_minute} defaultValue={settings?.shower_fine_per_minute ?? ""} inputMode="decimal" style={{ ...input, width: "100%", marginTop: 4 }}
+              onBlur={e => Number(e.target.value) !== Number(settings?.shower_fine_per_minute) && saveSetting({ shower_fine_per_minute: Math.max(0, Number(e.target.value) || 0) })} />
+          </label>
         </div>
         <div style={{ fontSize: 12, color: T.slate500, paddingTop: 8 }}>A chore's own fine, if you set one below, wins over this.</div>
       </Section>
@@ -1063,6 +1165,8 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
               onBlur={e => Number(e.target.value) !== Number(k.tithe_pct) && saveKid(k, { tithe_pct: Number(e.target.value) || 0 })} /></label>
             <label>Invest % <input key={"i" + k.invest_pct} defaultValue={k.invest_pct} inputMode="decimal" style={{ ...input, width: 64 }}
               onBlur={e => Number(e.target.value) !== Number(k.invest_pct) && saveKid(k, { invest_pct: Number(e.target.value) || 0 })} /></label>
+            <label>Shower minutes <input key={"s" + k.shower_minutes} defaultValue={k.shower_minutes ?? ""} placeholder="none" inputMode="numeric" style={{ ...input, width: 64 }}
+              onBlur={e => { const v = e.target.value.trim() === "" ? null : Math.max(1, Math.round(Number(e.target.value)) || 1); if (v !== (k.shower_minutes ?? null)) saveKid(k, { shower_minutes: v }); }} /></label>
           </div>
           <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", marginTop: 8 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
