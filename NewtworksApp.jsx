@@ -27,6 +27,7 @@ import OfferAccept from "./src/modules/OfferAccept.jsx";
 import ActivityLog from "./src/modules/ActivityLog.jsx";
 import Family from "./src/modules/Family.jsx";
 import Inventory from "./src/modules/Inventory.jsx";
+import Roleplaying from "./src/modules/Roleplaying.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
@@ -123,6 +124,7 @@ const NAV_ITEMS = [
   { type: "divider",   id: "_div_family" },
   { id: "family",      label: "Family",      icon: "home",          roles: FAMILY_ROLES },
   { id: "inventory",   label: "Inventory",   icon: "package",       roles: FAMILY_ROLES },
+  { id: "roleplaying", label: "Roleplaying", icon: "dice",          roles: FAMILY_ROLES },
   { id: "course",      label: "Course",      icon: "graduation",    roles: FAMILY_ROLES },
 ];
 
@@ -163,6 +165,7 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     graduation: <svg style={s} viewBox="0 0 24 24" {...p}><path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/><path d="M22 10v6"/></svg>,
     home:       <svg style={s} viewBox="0 0 24 24" {...p}><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/></svg>,
     package:    <svg style={s} viewBox="0 0 24 24" {...p}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
+    dice:       <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.2" fill={color}/><circle cx="16" cy="8" r="1.2" fill={color}/><circle cx="12" cy="12" r="1.2" fill={color}/><circle cx="8" cy="16" r="1.2" fill={color}/><circle cx="16" cy="16" r="1.2" fill={color}/></svg>,
     briefcase:<svg style={s} viewBox="0 0 24 24" {...p}><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
   };
   return icons[name] || null;
@@ -689,6 +692,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     family:      <ErrorBoundary name="Family"><Family userRole={userRole} /></ErrorBoundary>,
     inventory:   <ErrorBoundary name="Inventory"><Inventory userRole={userRole} /></ErrorBoundary>,
+    roleplaying: <ErrorBoundary name="Roleplaying"><Roleplaying userRole={userRole} /></ErrorBoundary>,
     course:      <ErrorBoundary key="course" name="Course"><Manual manualType="financial_literacy" userRole={userRole} /></ErrorBoundary>,
   };
   // Access guard — enforce nav role at the module level so direct URL
