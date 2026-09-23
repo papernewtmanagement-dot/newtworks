@@ -25,8 +25,8 @@ import { DayDoneStyles, Confetti, Dancer, CritterIcon, GUESTS } from "../compone
 // =========================================================================
 
 const PARENT_ROLES = ["owner", "manager"];
-const TABS = ["week", "money", "fines", "setup"];
-const TAB_LABELS = { week: "Week", money: "Money", fines: "Fines & Expenses", setup: "Chores" };
+const TABS = ["week", "money", "school", "fines", "setup"];
+const TAB_LABELS = { week: "Week", money: "Money", school: "School", fines: "Fines & Expenses", setup: "Chores" };
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const PARTS = [["morning", "Morning"], ["afternoon", "Afternoon"], ["evening", "Evening"], ["anytime", "Any Time"]];
@@ -122,7 +122,7 @@ export default function Family({ userRole }) {
   const viewWeek = isDate(dateParam) ? weekStartOf(dateParam) : weekStartOf(today);
   const kid = kids.find(k => k.id === kidParam) || kids[0] || null;
   const kidId = kid?.id || null;
-  const visibleTabs = isParent ? TABS : TABS.filter(t => t !== "setup" && t !== "fines");
+  const visibleTabs = isParent ? TABS : TABS.filter(t => t !== "setup" && t !== "fines" && t !== "school");
   const activeTab = visibleTabs.includes(tab) ? tab : "week";
 
   const load = useCallback(async () => {
@@ -221,7 +221,7 @@ export default function Family({ userRole }) {
         </div>
       )}
 
-      {activeTab !== "setup" && activeTab !== "fines" && <KidPicker kids={kids} kid={kid} balances={balances} kidHref={kidHref} setKid={setKidParam} />}
+      {activeTab !== "setup" && activeTab !== "fines" && activeTab !== "school" && <KidPicker kids={kids} kid={kid} balances={balances} kidHref={kidHref} setKid={setKidParam} />}
       {(activeTab === "week" || activeTab === "money") && kid && mathCount > 0 && (
         <div style={{ ...card, background: T.goldLt, borderColor: T.gold, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{kid.name} has new money to split.</div>
@@ -240,6 +240,9 @@ export default function Family({ userRole }) {
       {activeTab === "money" && kid && (
         <MoneyView kid={kid} balance={bal} isParent={isParent} ledger={ledger.filter(l => l.kid_id === kid.id)}
           onSaved={() => { load(); refreshTodo(); }} setErr={setErr} onClose={(ws) => setClosing({ kid, ws })} />
+      )}
+      {activeTab === "school" && isParent && (
+        <SchoolWeek kids={kids} weekStart={viewWeek} today={today} dateHref={dateHref} setDate={setDateParam} setErr={setErr} />
       )}
       {activeTab === "fines" && isParent && (
         <FinesView kids={kids} fineTypes={fineTypes} expenseTypes={expenseTypes} fines={ledger.filter(l => l.kind === "fine")} today={today} onSaved={load} setErr={setErr} />
@@ -365,6 +368,8 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, showe
             style={{ ...btn(), textDecoration: "none" }} ariaLabel="Next week">›</TabLink>
         )}
       </div>
+
+      <SchoolCard kid={kid} day={day} today={today} isParent={isParent} checklists={checklists} />
 
       {fact && (
         <div style={{ ...card, background: T.tealLt, borderColor: T.teal, display: "flex", gap: 10, alignItems: "flex-start" }}>
@@ -600,6 +605,122 @@ function ShowerTimer({ kid, isParent, today, rate, onChanged }) {
         </div>
       )}
       {err && <div style={{ fontSize: 12, color: T.red }}>{err}</div>}
+    </div>
+  );
+}
+
+// ─── School ───────────────────────────────────────────────────────────────
+// A kid's lessons for the day on the Week page. The hub checks off today's;
+// a parent can check off or undo any day. Steps from the school sheet sit
+// behind each lesson's info dot.
+function SchoolCard({ kid, day, today, isParent, checklists }) {
+  const [rows, setRows] = useState([]);
+  const [openId, setOpenId] = useState(null);
+  const [err, setErr] = useState(null);
+  const steps = (checklists || []).find(c => c.name === "School Lesson")?.items || [];
+  const load = useCallback(async () => {
+    const { data } = await supabase.from("family_school_lessons").select("*").eq("kid_id", kid.id).eq("lesson_date", day).order("sort_order");
+    setRows(Array.isArray(data) ? data : []);
+  }, [kid.id, day]);
+  useEffect(() => { load(); }, [load]);
+  const mark = async (r, done) => {
+    setErr(null);
+    const { error } = await supabase.rpc("family_school_mark", { p_id: r.id, p_done: done });
+    if (error) { setErr(error.message); return; }
+    load();
+  };
+  if (!rows.length) return null;
+  const canCheck = isParent || day === today;
+  return (
+    <div style={{ ...card, display: "grid", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span aria-hidden="true" style={{ fontSize: 22 }}>🎒</span>
+        <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>School</div>
+        <div style={{ fontSize: 11, color: T.slate500 }}>Work until the assessment for every lesson</div>
+      </div>
+      {rows.map(r => (
+        <div key={r.id} style={{ borderTop: `1px solid ${T.slate100}`, paddingTop: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ flex: 1, fontSize: 14, color: r.done_at ? T.slate500 : T.slate900, textDecoration: r.done_at ? "line-through" : "none" }}>{r.title}</div>
+            {steps.length > 0 && <InfoDot open={openId === r.id} onClick={() => setOpenId(openId === r.id ? null : r.id)} title="How to do a lesson" />}
+            {r.done_at
+              ? <>
+                  <span style={{ color: T.green, fontWeight: 800, fontSize: 18 }}>✓</span>
+                  {isParent && <button style={btn("soft", true)} onClick={() => mark(r, false)}>Undo</button>}
+                </>
+              : canCheck && <button style={{ ...tapSquare("done"), flex: "0 0 48px", maxWidth: 48 }} onClick={() => mark(r, true)} title="Done" aria-label="Done">✓</button>}
+          </div>
+          {openId === r.id && (
+            <ol style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13, color: T.slate700, lineHeight: 1.7 }}>
+              {steps.map((it, i) => <li key={i}>{it}</li>)}
+            </ol>
+          )}
+        </div>
+      ))}
+      {err && <div style={{ fontSize: 12, color: T.red }}>{err}</div>}
+    </div>
+  );
+}
+
+// Parents enter the week's lessons: one box per kid per school day, one lesson per line.
+const SCHOOL_DAYS = [2, 3, 4, 5, 6]; // Mon–Fri as offsets from the Saturday week start
+function SchoolWeek({ kids, weekStart, today, dateHref, setDate, setErr }) {
+  const [lessons, setLessons] = useState([]);
+  const [draft, setDraft] = useState({});
+  const [saving, setSaving] = useState(null);
+  const [saved, setSaved] = useState(null);
+  const days = SCHOOL_DAYS.map(i => addDays(weekStart, i));
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.from("family_school_lessons").select("*")
+      .gte("lesson_date", weekStart).lte("lesson_date", addDays(weekStart, 6)).order("sort_order");
+    if (error) { setErr(error.message); return; }
+    setLessons(Array.isArray(data) ? data : []); setDraft({});
+  }, [weekStart]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [load]);
+  const textFor = (kidId, d) => {
+    const key = kidId + d;
+    if (draft[key] !== undefined) return draft[key];
+    return lessons.filter(l => l.kid_id === kidId && l.lesson_date === d).map(l => l.title).join("\n");
+  };
+  const school = (kids || []).filter(k => !k.birthday || parseDate(today).getUTCFullYear() - parseDate(k.birthday).getUTCFullYear() >= 4);
+  const save = async (k) => {
+    setSaving(k.id); setSaved(null);
+    for (const d of days) {
+      const key = k.id + d;
+      if (draft[key] === undefined) continue;
+      const { error } = await supabase.rpc("family_school_set_day", { p_kid_id: k.id, p_date: d, p_titles: draft[key].split("\n") });
+      if (error) { setErr(error.message); setSaving(null); return; }
+    }
+    setSaving(null); setSaved(k.id); load();
+  };
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <TabLink href={dateHref(addDays(weekStart, -7))} onSelect={() => setDate(addDays(weekStart, -7))} style={{ ...btn(), textDecoration: "none" }} ariaLabel="Previous week">‹</TabLink>
+        <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>School week of {shortDate(days[0])} – {shortDate(days[4])}</div>
+        <TabLink href={dateHref(addDays(weekStart, 7))} onSelect={() => setDate(addDays(weekStart, 7))} style={{ ...btn(), textDecoration: "none" }} ariaLabel="Next week">›</TabLink>
+      </div>
+      <div style={{ fontSize: 12, color: T.slate500 }}>One lesson per line. Each kid sees their lessons on that day's Week page.</div>
+      {school.map(k => {
+        const dirty = days.some(d => draft[k.id + d] !== undefined);
+        return (
+          <Section key={k.id} title={k.name}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, paddingTop: 10 }}>
+              {days.map(d => (
+                <label key={d} style={{ fontSize: 12, color: T.slate700, display: "grid", gap: 4 }}>
+                  {DAY_NAMES[parseDate(d).getUTCDay()]} {Number(d.slice(8))}
+                  <textarea rows={3} value={textFor(k.id, d)} onChange={e => setDraft(x => ({ ...x, [k.id + d]: e.target.value }))}
+                    style={{ ...input, width: "100%", resize: "vertical", fontFamily: "inherit" }} />
+                </label>
+              ))}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 8 }}>
+              <button style={btn("primary")} disabled={!dirty || saving === k.id} onClick={() => save(k)}>{saving === k.id ? "Saving…" : "Save"}</button>
+              {saved === k.id && !dirty && <span style={{ fontSize: 12, color: T.green }}>Saved</span>}
+            </div>
+          </Section>
+        );
+      })}
     </div>
   );
 }
