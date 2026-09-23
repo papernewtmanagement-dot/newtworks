@@ -630,7 +630,7 @@ function MoneyMath({ kid, title, reg, isParent, finishText, doneText, emptyText,
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 55, display: "flex", alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: 12, boxSizing: "border-box" }}>
-      <div style={{ ...card, width: "100%", maxWidth: 640, marginTop: 20, display: "grid", gap: 14 }}>
+      <div style={{ ...card, width: "100%", maxWidth: 640, margin: "auto", display: "grid", gap: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <CritterIcon which={kid.animal} size={30} />
