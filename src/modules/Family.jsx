@@ -15,7 +15,7 @@ import { DayDoneStyles, Confetti, Dancer, CritterIcon } from "../components/Crit
 //   family_extras_available() extra chores anyone can pick on a day
 //   family_week_register()   where the money started and each event of a week
 //   family_close_week()      posts the week's chore pay and the 10% set-asides
-//   family_math_todo()       extras and bonuses whose tithe/investment math the kid still owes
+//   family_math_todo()       bonuses whose tithe/investment math the kid still owes (extras wait for the close-out)
 //   family_math_done()       marks that math done so the close-out skips it
 //   family_balances()        spending / tithe / investments per kid
 // This screen never works out a fine, a balance, a due date or a set-aside.
@@ -184,7 +184,6 @@ export default function Family({ userRole }) {
     const rows = Array.isArray(data) ? data : board;
     setBoard(rows);
     if (!wasDone && todayDone(rows) && kid) setCelebrate(kid);
-    if (row.frequency === "extra" && (status === "claimed" || status === "verified") && kid) setMathKid(kid);
     refreshTodo();
     load();
     const x = await supabase.rpc("family_extras_available", { p_date: day });
@@ -699,7 +698,7 @@ function CloseOut({ kid, weekStart, isParent, setErr, onDone, onCancel }) {
     onFinish={finish} onCancel={onCancel} />;
 }
 
-// New money (an extra chore or a bonus) gets split into tithe, investments and
+// New money (a bonus) gets split into tithe, investments and
 // spending money the moment it comes in.
 function IncomeMath({ kid, isParent, setErr, onDone, onCancel }) {
   const [reg, setReg] = useState(null);
@@ -998,7 +997,7 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
       </Section>
 
       <Section title="Extra Chores">
-        <div style={{ fontSize: 12, color: T.slate500, paddingTop: 6 }}>Paid the moment they're done. "Comes back" is when it shows up again after it's done.</div>
+        <div style={{ fontSize: 12, color: T.slate500, paddingTop: 6 }}>Added up with the week's chores and paid at the close-out. "Comes back" is when it shows up again after it's done.</div>
         <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", marginTop: 8 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead><tr><th style={th}>Chore</th><th style={th}>Price</th><th style={th}>Comes back</th><th /></tr></thead>
