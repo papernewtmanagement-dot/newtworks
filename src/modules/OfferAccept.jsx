@@ -42,6 +42,9 @@ const PROBLEMS = {
   bad_email: "That email address does not look right. Please check it.",
   bad_phone: "Please enter a mobile number with all ten digits.",
   missing_date_of_birth: "Please enter your date of birth.",
+  missing_languages: "Please add at least one language you speak, with your level.",
+  language_needs_name: "Please pick a language on every language row, or remove the row.",
+  language_needs_level: "Please pick how well you speak each language.",
   missing_address: "Please fill in your street, city, state and ZIP.",
   bad_ssn: "A Social Security number is nine digits. Please check what you entered.",
   missing_references: "Please fill in all three references.",
@@ -69,6 +72,35 @@ function prettyDate(iso) {
 
 const EMPTY_REF = { contact_name: "", relationship: "", company: "", phone: "", email: "" };
 
+// Languages most spoken around San Antonio first, then other common ones.
+// "Other" lets them type anything not listed.
+const LANGUAGE_CHOICES = [
+  "English", "Spanish", "Vietnamese", "Chinese (Mandarin)", "Chinese (Cantonese)",
+  "Tagalog", "Korean", "Arabic", "Hindi", "Urdu", "French", "German",
+  "Portuguese", "Russian", "Japanese", "American Sign Language",
+];
+
+// Levels match the database's normalize_languages(). Each is worded as a thing
+// you can actually do, because people rate themselves far more accurately that
+// way than against labels like "intermediate" (Ross 1998).
+const LANGUAGE_LEVELS = [
+  { key: "basic", label: "Basic: simple words and phrases" },
+  { key: "conversational", label: "Conversational: everyday conversation" },
+  { key: "professional", label: "Professional: could explain a policy to a customer" },
+  { key: "native", label: "Native or fully fluent" },
+];
+
+const EMPTY_LANG = { language: "", other: "", proficiency: "" };
+
+function langRowFromSaved(l) {
+  const name = (l?.language || "").trim();
+  if (!name) return { ...EMPTY_LANG };
+  const known = LANGUAGE_CHOICES.find((c) => c.toLowerCase() === name.toLowerCase());
+  return known
+    ? { language: known, other: "", proficiency: l?.proficiency || "" }
+    : { language: "Other", other: name, proficiency: l?.proficiency || "" };
+}
+
 export default function OfferAccept({ token }) {
   const [state, setState] = useState("loading"); // loading | form | done | expired | accepted | error
   const [offer, setOffer] = useState(null);
@@ -91,6 +123,7 @@ export default function OfferAccept({ token }) {
     ssn: "",
   });
   const [refs, setRefs] = useState([{ ...EMPTY_REF }, { ...EMPTY_REF }, { ...EMPTY_REF }]);
+  const [langs, setLangs] = useState([{ ...EMPTY_LANG, language: "English" }]);
 
   const load = useCallback(async () => {
     const { data } = await callAccept("get_offer", { token });
@@ -110,6 +143,8 @@ export default function OfferAccept({ token }) {
       email_personal: data.prefill_email || "",
       phone_personal: data.prefill_phone || "",
     }));
+    const saved = Array.isArray(data.prefill_languages) ? data.prefill_languages : [];
+    if (saved.length) setLangs(saved.map(langRowFromSaved));
     const wanted = Math.max(1, data.references_wanted || 3);
     setRefs(Array.from({ length: wanted }, () => ({ ...EMPTY_REF })));
     setState("form");
@@ -120,13 +155,25 @@ export default function OfferAccept({ token }) {
   const setField = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const setRef = (i, k, v) =>
     setRefs((rs) => rs.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
+  const setLang = (i, k, v) =>
+    setLangs((ls) => ls.map((l, idx) => (idx === i ? { ...l, [k]: v } : l)));
+  const addLang = () => setLangs((ls) => [...ls, { ...EMPTY_LANG }]);
+  const removeLang = (i) => setLangs((ls) => (ls.length > 1 ? ls.filter((_, idx) => idx !== i) : ls));
 
   const submit = async () => {
     setSaving(true);
     setProblem("");
     const { data } = await callAccept("accept", {
       token,
-      payload: { ...form, ssn: (form.ssn || "").replace(/[^0-9]/g, ""), references: refs },
+      payload: {
+        ...form,
+        ssn: (form.ssn || "").replace(/[^0-9]/g, ""),
+        references: refs,
+        languages: langs.map((l) => ({
+          language: l.language === "Other" ? l.other : l.language,
+          proficiency: l.proficiency,
+        })),
+      },
     });
     setSaving(false);
     if (data?.ok) { setState("done"); return; }
@@ -252,10 +299,58 @@ export default function OfferAccept({ token }) {
                  onChange={(e) => setField("last_name", e.target.value)} />
         </div>
       </div>
-      {field("nickname", "What should we call you? (optional)", { placeholder: "Leave blank to use your first name" })}
+      {field("nickname", "Preferred nickname (optional)", { placeholder: "Leave blank to use your first name" })}
       {field("email_personal", "Personal email", { inputMode: "email", type: "email" })}
       {field("phone_personal", "Mobile number", { inputMode: "tel", type: "tel" })}
       {field("date_of_birth", "Date of birth", { type: "date" })}
+
+      <div style={h2}>Languages you speak</div>
+      <div style={{ fontSize: 13, color: T?.slate600 || "#475569", lineHeight: 1.6, marginBottom: 14 }}>
+        List every language you speak, including English, and how well.
+      </div>
+      {langs.map((l, i) => (
+        <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 12, alignItems: "flex-end" }}>
+          <div style={{ flex: "1 1 160px" }}>
+            <label style={label}>Language</label>
+            <select style={input} value={l.language}
+                    onChange={(e) => setLang(i, "language", e.target.value)}>
+              <option value="">Pick one</option>
+              {LANGUAGE_CHOICES.map((c) => <option key={c} value={c}>{c}</option>)}
+              <option value="Other">Other</option>
+            </select>
+            {l.language === "Other" && (
+              <input style={{ ...input, marginTop: 6 }} value={l.other} placeholder="Which language?"
+                     onChange={(e) => setLang(i, "other", e.target.value)} />
+            )}
+          </div>
+          <div style={{ flex: "2 1 220px" }}>
+            <label style={label}>How well</label>
+            <select style={input} value={l.proficiency}
+                    onChange={(e) => setLang(i, "proficiency", e.target.value)}>
+              <option value="">Pick one</option>
+              {LANGUAGE_LEVELS.map((lv) => <option key={lv.key} value={lv.key}>{lv.label}</option>)}
+            </select>
+          </div>
+          {langs.length > 1 && (
+            <button type="button" onClick={() => removeLang(i)} title="Remove this language"
+                    style={{
+                      padding: "10px 12px", fontSize: 13, background: "#fff", color: T?.slate600 || "#475569",
+                      border: `1px solid ${T?.slate200 || "#e2e8f0"}`, borderRadius: 8, cursor: "pointer",
+                      fontFamily: "inherit", boxSizing: "border-box",
+                    }}>
+              Remove
+            </button>
+          )}
+        </div>
+      ))}
+      <button type="button" onClick={addLang}
+              style={{
+                padding: "8px 12px", fontSize: 13, fontWeight: 600, background: "#fff",
+                color: T?.blue || "#737A59", border: `1px solid ${T?.slate200 || "#e2e8f0"}`,
+                borderRadius: 8, cursor: "pointer", fontFamily: "inherit", marginBottom: 4,
+              }}>
+        + Add another language
+      </button>
 
       <div style={h2}>Where you live</div>
       {field("address_line1", "Street address")}
