@@ -26,7 +26,7 @@ import { DayDoneStyles, Confetti, Dancer, CritterIcon } from "../components/Crit
 
 const PARENT_ROLES = ["owner", "manager"];
 const TABS = ["week", "money", "fines", "setup"];
-const TAB_LABELS = { week: "Week", money: "Money", fines: "Fines", setup: "Chores" };
+const TAB_LABELS = { week: "Week", money: "Money", fines: "Fines & Expenses", setup: "Chores" };
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const PARTS = [["morning", "Morning"], ["afternoon", "Afternoon"], ["evening", "Evening"], ["anytime", "Any Time"]];
@@ -103,6 +103,7 @@ export default function Family({ userRole }) {
   const [ledger, setLedger] = useState([]);
   const [settings, setSettings] = useState(null);
   const [fineTypes, setFineTypes] = useState([]);
+  const [expenseTypes, setExpenseTypes] = useState([]);
   const [board, setBoard] = useState([]);
   const [extras, setExtras] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -125,7 +126,7 @@ export default function Family({ userRole }) {
     setErr(null);
     try {
       await supabase.rpc("family_sweep_missed");
-      const [k, c, cl, b, lg, s, ft] = await Promise.all([
+      const [k, c, cl, b, lg, s, ft, et] = await Promise.all([
         supabase.from("family_kids").select("*").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("family_chores").select("*").eq("agency_id", AGENCY_ID).order("sort_order"),
         supabase.from("family_checklists").select("*").eq("agency_id", AGENCY_ID),
@@ -133,11 +134,12 @@ export default function Family({ userRole }) {
         supabase.from("family_ledger").select("*").eq("agency_id", AGENCY_ID).order("entry_date", { ascending: false }).order("created_at", { ascending: false }).limit(60),
         supabase.from("family_settings").select("*").eq("agency_id", AGENCY_ID).maybeSingle(),
         supabase.from("family_fine_types").select("*").eq("agency_id", AGENCY_ID).order("sort_order").order("created_at"),
+        supabase.from("family_expense_types").select("*").eq("agency_id", AGENCY_ID).order("sort_order").order("created_at"),
       ]);
-      const firstErr = [k, c, cl, b, lg, s, ft].find(r => r?.error)?.error;
+      const firstErr = [k, c, cl, b, lg, s, ft, et].find(r => r?.error)?.error;
       if (firstErr) throw firstErr;
       setKids(k.data || []); setChores(c.data || []); setChecklists(cl.data || []);
-      setBalances(b.data || []); setLedger(lg.data || []); setSettings(s.data || null); setFineTypes(ft.data || []);
+      setBalances(b.data || []); setLedger(lg.data || []); setSettings(s.data || null); setFineTypes(ft.data || []); setExpenseTypes(et.data || []);
     } catch (e) {
       setErr(e?.message || String(e));
     } finally {
@@ -224,6 +226,8 @@ export default function Family({ userRole }) {
 
       {activeTab === "week" && kid && (
         <WeekGrid kid={kid} board={board} checklists={checklists} extras={extras} isParent={isParent}
+          expenseTypes={expenseTypes} expenses={ledger.filter(l => l.kid_id === kid.id && l.kind === "expense" && l.entry_date >= viewWeek && l.entry_date <= addDays(viewWeek, 6))}
+          onLedgerChanged={load}
           day={day} today={today} weekStart={viewWeek} dateHref={dateHref} setDate={setDateParam}
           busy={busy} setStatus={setStatus} balance={bal} />
       )}
@@ -232,7 +236,7 @@ export default function Family({ userRole }) {
           onSaved={() => { load(); refreshTodo(); }} setErr={setErr} onClose={(ws) => setClosing({ kid, ws })} />
       )}
       {activeTab === "fines" && isParent && (
-        <FinesView kids={kids} fineTypes={fineTypes} fines={ledger.filter(l => l.kind === "fine")} today={today} onSaved={load} setErr={setErr} />
+        <FinesView kids={kids} fineTypes={fineTypes} expenseTypes={expenseTypes} fines={ledger.filter(l => l.kind === "fine")} today={today} onSaved={load} setErr={setErr} />
       )}
       {activeTab === "setup" && isParent && (
         <SetupView kids={kids} chores={chores} checklists={checklists} settings={settings} today={today} onSaved={load} setErr={setErr} />
@@ -273,7 +277,7 @@ function KidPicker({ kids, kid, balances, kidHref, setKid }) {
 }
 
 // ─── Week grid ────────────────────────────────────────────────────────────
-function WeekGrid({ kid, board, checklists, extras, isParent, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
+function WeekGrid({ kid, board, checklists, extras, isParent, expenseTypes, expenses, onLedgerChanged, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
   const _vp = useViewport();
   const [openInfo, setOpenInfo] = useState(null);
   const [pickId, setPickId] = useState("");
@@ -338,6 +342,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, day, today, weekSt
       <div style={{ ...card, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
         <Stat label="Earned this week" value={money(balance?.week_earned)} />
         <Stat label="Fines this week" value={money(balance?.week_fines)} tone={Number(balance?.week_fines) < 0 ? "red" : null} />
+        <Stat label="Spent this week" value={money(balance?.week_spent)} />
         <Stat label="Could earn" value={money(balance?.week_possible)} />
       </div>
 
@@ -389,6 +394,9 @@ function WeekGrid({ kid, board, checklists, extras, isParent, day, today, weekSt
           </select>
           <button style={btn("primary")} disabled={!pickId} onClick={pick}>Add</button>
         </div>
+      )}
+      {canPick && (
+        <ExpenseCard kid={kid} day={day} isParent={isParent} expenseTypes={expenseTypes} expenses={expenses} onChanged={onLedgerChanged} />
       )}
       {day < kid.tracking_start && <div style={{ fontSize: 12, color: T.slate500 }}>Tracking for {kid.name} starts {shortDate(kid.tracking_start)}.</div>}
     </div>
@@ -541,7 +549,7 @@ function MoneyView({ kid, balance, isParent, ledger, onSaved, setErr, onClose })
         <Stat label="Spending money" value={money(balance?.spend)} tone={Number(balance?.spend) < 0 ? "red" : null} big />
         <Stat label={`Tithe (${Number(kid.tithe_pct)}%)`} value={money(balance?.tithe)} big />
         <Stat label={`Investments (${Number(kid.invest_pct)}%)`} value={money(balance?.invest)} big />
-        {Number(balance?.pending_pay) > 0 && <Stat label="Paid at close-out" value={money(balance?.pending_pay)} big />}
+        {Number(balance?.pending_pay) !== 0 && <Stat label="Settles at close-out" value={money(balance?.pending_pay)} tone={Number(balance?.pending_pay) < 0 ? "red" : null} big />}
       </div>
 
       {balance?.next_close && (
@@ -1119,13 +1127,11 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
 // Parents keep a list of fines and apply one to any kid. An applied fine is a
 // family_ledger row (kind "fine"), so it lands in balances and the close-out
 // the same way every other money event does.
-function FinesView({ kids, fineTypes, fines, today, onSaved, setErr }) {
+function FinesView({ kids, fineTypes, expenseTypes, fines, today, onSaved, setErr }) {
   const active = (fineTypes || []).filter(f => f.is_active);
   const [kidId, setKidId] = useState("");
   const [typeId, setTypeId] = useState("");
   const [note, setNote] = useState("");
-  const [name, setName] = useState("");
-  const [amount, setAmount] = useState("");
   const [saving, setSaving] = useState(false);
   const kidName = (id) => (kids || []).find(k => k.id === id)?.name || "";
 
@@ -1140,22 +1146,6 @@ function FinesView({ kids, fineTypes, fines, today, onSaved, setErr }) {
     setSaving(false);
     if (error) { setErr(error.message); return; }
     setNote(""); setTypeId(""); onSaved();
-  };
-  const addType = async () => {
-    const n = Number(amount);
-    if (!name.trim() || !Number.isFinite(n) || n <= 0) return;
-    setSaving(true);
-    const { error } = await supabase.from("family_fine_types").insert({
-      agency_id: AGENCY_ID, name: name.trim(), amount: Math.abs(n), sort_order: (fineTypes || []).length + 1,
-    });
-    setSaving(false);
-    if (error) { setErr(error.message); return; }
-    setName(""); setAmount(""); onSaved();
-  };
-  const removeType = async (id) => {
-    const { error } = await supabase.from("family_fine_types").delete().eq("id", id);
-    if (error) { setErr(error.message); return; }
-    onSaved();
   };
   const removeFine = async (id) => {
     const { error } = await supabase.from("family_ledger").delete().eq("id", id).eq("kind", "fine");
@@ -1194,22 +1184,96 @@ function FinesView({ kids, fineTypes, fines, today, onSaved, setErr }) {
         </Section>
       )}
 
-      <Section title="Fine list">
-        {(fineTypes || []).map(f => (
-          <div key={f.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, borderTop: `1px solid ${T.slate100}`, padding: "8px 0", fontSize: 13 }}>
-            <div style={{ color: T.slate900 }}>{f.name}</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontWeight: 600, color: T.slate700 }}>{money(f.amount)}</span>
-              <button style={btn("soft", true)} onClick={() => removeType(f.id)} title="Delete this fine">✕</button>
-            </div>
+      <PriceList title="Fine list" table="family_fine_types" items={fineTypes} placeholder="New fine, e.g. Talking back" addLabel="Add fine" onSaved={onSaved} setErr={setErr} />
+      <PriceList title="Expense list" table="family_expense_types" items={expenseTypes} placeholder="New expense, e.g. Movie ticket" addLabel="Add expense" onSaved={onSaved} setErr={setErr} />
+    </div>
+  );
+}
+
+// A parent-kept list of named amounts (fines, expenses). One component for both.
+function PriceList({ title, table, items, placeholder, addLabel, onSaved, setErr }) {
+  const [name, setName] = useState("");
+  const [amount, setAmount] = useState("");
+  const [saving, setSaving] = useState(false);
+  const add = async () => {
+    const n = Number(amount);
+    if (!name.trim() || !Number.isFinite(n) || n <= 0) return;
+    setSaving(true);
+    const { error } = await supabase.from(table).insert({ agency_id: AGENCY_ID, name: name.trim(), amount: Math.abs(n), sort_order: (items || []).length + 1 });
+    setSaving(false);
+    if (error) { setErr(error.message); return; }
+    setName(""); setAmount(""); onSaved();
+  };
+  const remove = async (id) => {
+    const { error } = await supabase.from(table).delete().eq("id", id);
+    if (error) { setErr(error.message); return; }
+    onSaved();
+  };
+  return (
+    <Section title={title}>
+      {(items || []).map(f => (
+        <div key={f.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, borderTop: `1px solid ${T.slate100}`, padding: "8px 0", fontSize: 13 }}>
+          <div style={{ color: T.slate900 }}>{f.name}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontWeight: 600, color: T.slate700 }}>{money(f.amount)}</span>
+            <button style={btn("soft", true)} onClick={() => remove(f.id)} title="Delete">✕</button>
           </div>
-        ))}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, paddingTop: 10 }}>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="New fine, e.g. Talking back" style={input} />
-          <input value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" placeholder="Amount" style={input} />
-          <button disabled={saving || !name.trim() || !amount} onClick={addType} style={btn("primary")}>Add fine</button>
         </div>
-      </Section>
+      ))}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, paddingTop: 10 }}>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder={placeholder} style={input} />
+        <input value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" placeholder="Amount" style={input} />
+        <button disabled={saving || !name.trim() || !amount} onClick={add} style={btn("primary")}>{addLabel}</button>
+      </div>
+    </Section>
+  );
+}
+
+// A kid spent money. The hub or a parent picks it from the expense list; it comes
+// out of spending money at the week close-out. Parents can take one back.
+function ExpenseCard({ kid, day, isParent, expenseTypes, expenses, onChanged }) {
+  const [typeId, setTypeId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+  const active = (expenseTypes || []).filter(x => x.is_active);
+  const add = async () => {
+    const t = active.find(x => x.id === typeId);
+    if (!t) return;
+    setSaving(true); setErr(null);
+    const { error } = await supabase.from("family_ledger").insert({
+      agency_id: AGENCY_ID, kid_id: kid.id, bucket: "spend", kind: "expense", expense_type_id: t.id,
+      amount: -Math.abs(Number(t.amount)), note: t.name, entry_date: day,
+    });
+    setSaving(false);
+    if (error) { setErr(error.message); return; }
+    setTypeId(""); onChanged();
+  };
+  const remove = async (id) => {
+    const { error } = await supabase.from("family_ledger").delete().eq("id", id).eq("kind", "expense");
+    if (error) { setErr(error.message); return; }
+    onChanged();
+  };
+  if (!active.length && !(expenses || []).length) return null;
+  return (
+    <div style={{ ...card, display: "grid", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700 }}>Spent something?</div>
+        <select value={typeId} onChange={e => setTypeId(e.target.value)} style={{ ...input, flex: "1 1 200px" }}>
+          <option value="">Pick an expense…</option>
+          {active.map(x => <option key={x.id} value={x.id}>{x.name} · {money(x.amount)}</option>)}
+        </select>
+        <button style={btn("primary")} disabled={!typeId || saving} onClick={add}>Add</button>
+      </div>
+      {err && <div style={{ fontSize: 12, color: T.red }}>{err}</div>}
+      {(expenses || []).map(x => (
+        <div key={x.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, borderTop: `1px solid ${T.slate100}`, paddingTop: 6, fontSize: 13 }}>
+          <span style={{ color: T.slate700 }}>{shortDate(x.entry_date)} · {x.note}</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontWeight: 600, color: T.slate700 }}>{money(x.amount)}</span>
+            {isParent && <button style={btn("soft", true)} onClick={() => remove(x.id)} title="Take it back">Undo</button>}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
