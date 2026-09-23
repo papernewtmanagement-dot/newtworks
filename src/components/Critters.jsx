@@ -526,6 +526,50 @@ function NinjaArt() {
   );
 }
 
+function BossCatArt() {
+  return (
+    <>
+      {/* A big round cat in a business suit and sunglasses who drops in on the
+          end-of-day dance now and then. Peter 2026-09-22. */}
+      <g className="nw-wag" style={{ transformOrigin: "10% 90%" }}>
+        <path d="M150 150 c22 -4 30 -22 22 -38 c-5 -10 -16 -8 -14 2 c2 12 -6 22 -16 24"
+              fill="none" stroke="#E0913F" strokeWidth="11" strokeLinecap="round" />
+      </g>
+      <ellipse cx="82" cy="180" rx="16" ry="8" fill="#15171C" />
+      <ellipse cx="118" cy="180" rx="16" ry="8" fill="#15171C" />
+      <ellipse cx="100" cy="140" rx="54" ry="44" fill="#2B3440" />
+      <path d="M86 100 L100 150 L114 100 z" fill="#FFFFFF" />
+      <path d="M100 106 l-6 8 l6 34 l6 -34 z" fill="#C73A33" />
+      <path d="M86 100 L100 132 L78 124 z" fill="#1F2630" />
+      <path d="M114 100 L100 132 L122 124 z" fill="#1F2630" />
+      <circle cx="100" cy="160" r="2.5" fill="#E8C34A" />
+      <circle cx="100" cy="172" r="2.5" fill="#E8C34A" />
+      <g className="nw-up" style={{ transformOrigin: "50% 0%" }}>
+        <rect x="38" y="112" width="22" height="42" rx="11" fill="#2B3440" />
+        <circle cx="49" cy="156" r="10" fill="#F2B866" />
+      </g>
+      <g className="nw-upB" style={{ transformOrigin: "50% 0%" }}>
+        <rect x="140" y="112" width="22" height="42" rx="11" fill="#2B3440" />
+        <circle cx="151" cy="156" r="10" fill="#F2B866" />
+      </g>
+      <path d="M62 44 L70 12 L90 36 z" fill="#E0913F" />
+      <path d="M138 44 L130 12 L110 36 z" fill="#E0913F" />
+      <path d="M68 38 L72 22 L82 34 z" fill="#F7C9C0" />
+      <path d="M132 38 L128 22 L118 34 z" fill="#F7C9C0" />
+      <ellipse cx="100" cy="66" rx="46" ry="40" fill="#E0913F" />
+      <path d="M84 34 q4 8 0 16 M100 30 v18 M116 34 q-4 8 0 16" fill="none" stroke="#C4762B" strokeWidth="4" strokeLinecap="round" />
+      <ellipse cx="100" cy="84" rx="26" ry="18" fill="#FBE3C4" />
+      <rect x="62" y="54" width="34" height="18" rx="8" fill="#15100F" />
+      <rect x="104" y="54" width="34" height="18" rx="8" fill="#15100F" />
+      <path d="M96 60 h8" stroke="#15100F" strokeWidth="4" />
+      <path d="M68 58 l8 -2 M110 58 l8 -2" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" opacity="0.7" />
+      <path d="M95 78 h10 l-5 6 z" fill="#E87A8F" />
+      <path d="M90 90 q10 8 20 0" fill="none" stroke="#15100F" strokeWidth="3" strokeLinecap="round" />
+      <path d="M74 84 h-22 M74 90 l-20 5 M126 84 h22 M126 90 l20 5" fill="none" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" />
+    </>
+  );
+}
+
 export const DANCERS = [
   { key: "pug",        label: "pug",        Art: PugArt },
   { key: "axolotl",    label: "axolotl",    Art: AxolotlArt },
@@ -542,9 +586,10 @@ export const DANCERS = [
 ];
 
 // Guest dancers: not animals a kid picks, and not in the team's random draw.
-// Only called in by name (the Family day-done dance invites the ninja).
+// Only called in by name (the Family day-done dance invites them now and then).
 const GUESTS = [
   { key: "ninja", label: "ninja", Art: NinjaArt },
+  { key: "bosscat", label: "cat in a business suit", Art: BossCatArt },
 ];
 const ALL_DANCERS = [...DANCERS, ...GUESTS];
 

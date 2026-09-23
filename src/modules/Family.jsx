@@ -607,9 +607,10 @@ function ShowerTimer({ kid, isParent, today, rate, onChanged }) {
 function Celebration({ kid, onClose }) {
   const _vp = useViewport();
   const size = _vp.isPhone ? 76 : 120;
-  // Now and then a ninja sneaks into the dance (about one day in three).
-  const [ninja] = useState(() => Math.random() < 0.34);
-  const troupe = [kid.animal, kid.favorite_animal, "beagle", "pug", ninja ? "ninja" : null].filter(Boolean);
+  // Now and then a guest drops into the dance: the ninja and the boss cat,
+  // each about one day in three, rolled separately.
+  const [guests] = useState(() => [Math.random() < 0.34 ? "ninja" : null, Math.random() < 0.34 ? "bosscat" : null]);
+  const troupe = [kid.animal, kid.favorite_animal, "beagle", "pug", ...guests].filter(Boolean);
   useEffect(() => { const t = setTimeout(onClose, 12000); return () => clearTimeout(t); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.92)", zIndex: 60, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 20, boxSizing: "border-box" }}>
