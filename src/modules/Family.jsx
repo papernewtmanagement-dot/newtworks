@@ -300,7 +300,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, day, today, weekSt
       }
       return view;
     }
-    return <CellActions row={c} isParent={isParent} busy={busy === c.chore_id + c.day} setStatus={setStatus} />;
+    return <CellActions row={c} isParent={isParent} today={today} busy={busy === c.chore_id + c.day} setStatus={setStatus} />;
   };
 
   return (
@@ -416,7 +416,7 @@ function GroupRows({ g, days, day, cells, cellView, checklists, openInfo, setOpe
 }
 function FragmentRow({ children }) { return <>{children}</>; }
 
-function CellActions({ row, isParent, busy, setStatus }) {
+function CellActions({ row, isParent, today, busy, setStatus }) {
   const act = (s) => setStatus(row, s);
   const st = row.status ? STATUS[row.status] : null;
   const wrap = (children) => <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap" }}>{children}</div>;
@@ -434,18 +434,26 @@ function CellActions({ row, isParent, busy, setStatus }) {
       </div>
     );
   }
-  if (isParent && row.status === "claimed") {
+  // A parent can change any recorded outcome straight to another one.
+  // Undo clears the entry: always for an extra chore (it goes back on the list),
+  // and for a standard chore only today, because a past chore left open is fined
+  // again by the end-of-day sweep. On a past day the parent picks the right outcome.
+  if (isParent) {
+    const extra = row.frequency === "extra";
+    const saidDone = row.status === "claimed" || row.status === "verified";
+    const canUndo = extra || row.occurrence_date >= today;
     return wrap(<>
-      <span style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>
-      <button disabled={busy} style={circle("done")} onClick={() => act("verified")} title="Checked, it's done" aria-label="Done">✓</button>
-      <button disabled={busy} style={circle("missed")} onClick={() => act("false_claim")} title="Said done, wasn't" aria-label="Missed">✗</button>
+      <span title={`${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>
+      {row.status !== "verified" && <button disabled={busy} style={circle("done")} onClick={() => act("verified")} title={row.status === "claimed" ? "Checked, it's done" : "Change to done"} aria-label="Done">✓</button>}
+      {row.status !== "missed" && row.status !== "false_claim" && <button disabled={busy} style={circle("missed")} onClick={() => act(saidDone ? "false_claim" : "missed")} title={saidDone ? "Said done, wasn't" : "Change to missed"} aria-label="Missed">✗</button>}
+      {!extra && row.status !== "excused" && <button disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>}
+      {canUndo && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title={extra ? "Take it back off" : "Clear it"}>Undo</button>}
     </>);
   }
   return wrap(<>
     <span title={`${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>
       {st.icon}
     </span>
-    {isParent && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)}>Undo</button>}
   </>);
 }
 
