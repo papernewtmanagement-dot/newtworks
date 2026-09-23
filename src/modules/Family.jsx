@@ -78,9 +78,9 @@ const btn = (kind = "soft", small = false) => ({
   cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", boxSizing: "border-box",
 });
 // Done and Missed are big square tap targets, each half the width of the day's box.
+const tapSpot = { flex: "1 1 calc(50% - 2px)", maxWidth: "calc(50% - 2px)", height: 38, boxSizing: "border-box" };
 const tapSquare = (kind) => ({
-  flex: "1 1 calc(50% - 2px)", maxWidth: "calc(50% - 2px)", height: 38, borderRadius: 8, padding: 0,
-  boxSizing: "border-box", cursor: "pointer",
+  ...tapSpot, borderRadius: 8, padding: 0, cursor: "pointer",
   border: `2px solid ${kind === "done" ? T.green : T.red}`, background: T.white,
   color: kind === "done" ? T.green : T.red, fontSize: 20, fontWeight: 800, fontFamily: "inherit",
 });
@@ -496,45 +496,55 @@ function GroupRows({ g, days, day, cells, icons, cellView, checklists, openInfo,
 }
 function FragmentRow({ children }) { return <>{children}</>; }
 
+// The open day's box.
+// Parents (Peter 2026-09-23): a fixed pair on top, done on the left and not done
+// on the right. Each spot shows the chore's state when it is in that state (the
+// dancing character, or a plain ✗), otherwise the button that puts it there.
+// Carry, Excuse and Undo sit underneath. Undo clears the entry, for a standard
+// chore only today, because a past chore left open is fined again by the
+// end-of-day sweep; on a past day the parent picks the right outcome instead.
+// An extra chore is never fined: its ✗ unchecks it, so the pay comes back off
+// and the job goes back on the list.
+// Kids: Done and Missed, then how it went.
 function CellActions({ row, isParent, today, busy, setStatus }) {
-  const act = (s) => setStatus(row, s);
-  const wrap = (children) => <div style={{ display: "flex", gap: 4, justifyContent: "center", alignItems: "center", flexWrap: "wrap", width: "100%" }}>{children}</div>;
+  const act = (next) => setStatus(row, next);
+  const s = row.status;
+  const extra = row.frequency === "extra";
+  const open = !s || s === "picked";
 
-  if (!row.status || row.status === "picked") {
+  if (isParent) {
+    const saidDone = s === "claimed" || s === "verified";
+    const notDone = s === "missed" || s === "false_claim";
+    const spot = (child, title) => (
+      <div title={title} style={{ ...tapSpot, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>{child}</div>
+    );
+    const left = saidDone ? spot(<StatusMark row={row} size={30} />)
+      : open && row.locked_by ? spot(<span style={{ fontSize: 16 }}>🔒</span>, `Finish ${row.locked_by} first`)
+      : <button disabled={busy} style={tapSquare("done")} onClick={() => act(open ? "claimed" : "verified")} title={open ? "Done" : "Change to done"} aria-label="Done">✓</button>;
+    const right = notDone ? spot(<StatusMark row={row} />)
+      : extra ? (saidDone ? <button disabled={busy} style={tapSquare("missed")} onClick={() => act(null)} title="Uncheck it" aria-label="Uncheck">✗</button> : null)
+      : <button disabled={busy} style={tapSquare("missed")} onClick={() => act(saidDone ? "false_claim" : "missed")} title={saidDone ? "Said done, wasn't" : open ? "Missed" : "Change to missed"} aria-label="Missed">✗</button>;
+    const under = [
+      (s === "excused" || s === "carried") && <StatusMark key="mark" row={row} />,
+      !extra && open && row.is_burpees && !row.locked_by && <button key="carry" disabled={busy} style={btn("soft", true)} onClick={() => act("carried")}>Carry</button>,
+      !extra && s !== "excused" && <button key="excuse" disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>,
+      !extra && s && row.occurrence_date >= today && <button key="undo" disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Clear it">Undo</button>,
+      s === "picked" && <button key="back" disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Put it back">✕</button>,
+    ].filter(Boolean);
     return (
-      <div>
-        {wrap(<>
-          {!row.locked_by && <button disabled={busy} style={tapSquare("done")} onClick={() => act("claimed")} title="Done" aria-label="Done">✓</button>}
-          {isParent && row.is_burpees && !row.locked_by && <button disabled={busy} style={btn("soft", true)} onClick={() => act("carried")}>Carry</button>}
-          {isParent && row.frequency !== "extra" && <button disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>}
-          {row.frequency !== "extra" && !row.status && <button disabled={busy} style={tapSquare("missed")} onClick={() => act("missed")} title="Missed" aria-label="Missed">✗</button>}
-          {row.status === "picked" && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Put it back">✕</button>}
-        </>)}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%" }}>
+        <div style={{ display: "flex", gap: 4, justifyContent: "center", width: "100%" }}>{left}{right}</div>
+        {under.length > 0 && <div style={{ display: "flex", gap: 4, justifyContent: "center", alignItems: "center", flexWrap: "wrap" }}>{under}</div>}
       </div>
     );
   }
-  // A parent can change any recorded outcome straight to another one.
-  // Undo clears the entry: always for an extra chore (it goes back on the list),
-  // and for a standard chore only today, because a past chore left open is fined
-  // again by the end-of-day sweep. On a past day the parent picks the right outcome.
-  if (isParent) {
-    const extra = row.frequency === "extra";
-    const saidDone = row.status === "claimed" || row.status === "verified";
-    const canUndo = !extra && row.occurrence_date >= today;
-    if (extra) {
-      // Extra chores are never fined. ✗ unchecks it: the pay comes back off and the job goes back on the list.
-      return wrap(<>
-        <StatusMark row={row} />
-        {row.status !== "verified" && <button disabled={busy} style={tapSquare("done")} onClick={() => act("verified")} title="Checked, it's done" aria-label="Done">✓</button>}
-        <button disabled={busy} style={tapSquare("missed")} onClick={() => act(null)} title="Uncheck it" aria-label="Uncheck">✗</button>
-      </>);
-    }
+
+  const wrap = (children) => <div style={{ display: "flex", gap: 4, justifyContent: "center", alignItems: "center", flexWrap: "wrap", width: "100%" }}>{children}</div>;
+  if (open) {
     return wrap(<>
-      <StatusMark row={row} />
-      {row.status !== "verified" && <button disabled={busy} style={tapSquare("done")} onClick={() => act("verified")} title={row.status === "claimed" ? "Checked, it's done" : "Change to done"} aria-label="Done">✓</button>}
-      {row.status !== "missed" && row.status !== "false_claim" && <button disabled={busy} style={tapSquare("missed")} onClick={() => act(saidDone ? "false_claim" : "missed")} title={saidDone ? "Said done, wasn't" : "Change to missed"} aria-label="Missed">✗</button>}
-      {!extra && row.status !== "excused" && <button disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>}
-      {canUndo && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Clear it">Undo</button>}
+      {!row.locked_by && <button disabled={busy} style={tapSquare("done")} onClick={() => act("claimed")} title="Done" aria-label="Done">✓</button>}
+      {!extra && !s && <button disabled={busy} style={tapSquare("missed")} onClick={() => act("missed")} title="Missed" aria-label="Missed">✗</button>}
+      {s === "picked" && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Put it back">✕</button>}
     </>);
   }
   return wrap(<StatusMark row={row} />);
@@ -542,12 +552,12 @@ function CellActions({ row, isParent, today, busy, setStatus }) {
 
 // How a recorded chore outcome shows in the grid, wherever it shows. Done and
 // Checked show a dancing character instead of a check (Peter 2026-09-23).
-function StatusMark({ row }) {
+function StatusMark({ row, size }) {
   const st = row?.status ? STATUS[row.status] : null;
   if (!st) return null;
   const title = `${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`;
   if (row.status === "claimed" || row.status === "verified") {
-    return <DoneDancer seed={`${rowKey(row)}|${row.day || row.occurrence_date}`} title={title} />;
+    return <DoneDancer seed={`${rowKey(row)}|${row.day || row.occurrence_date}`} title={title} size={size} />;
   }
   return <span title={title} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>;
 }
