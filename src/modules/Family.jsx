@@ -340,7 +340,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, expenseTypes, expe
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ ...card, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
-        <Stat label="Earned this week" value={money(balance?.week_earned)} />
+        <Stat label="Earned this week" value={money(balance?.week_earned)} tone={Number(balance?.week_earned) !== 0 ? "green" : null} />
         <Stat label="Fines this week" value={money(balance?.week_fines)} tone={Number(balance?.week_fines) < 0 ? "red" : null} />
         <Stat label="Spent this week" value={money(balance?.week_spent)} tone={Number(balance?.week_spent) < 0 ? "red" : null} />
         <Stat label="Could earn" value={money(balance?.week_possible)} />
@@ -1291,7 +1291,7 @@ function Stat({ label, value, tone, big }) {
   return (
     <div>
       <div style={{ fontSize: 11, color: T.slate500 }}>{label}</div>
-      <div style={{ fontSize: big ? 22 : 17, fontWeight: 700, color: tone === "red" ? T.red : T.slate900 }}>{value}</div>
+      <div style={{ fontSize: big ? 22 : 17, fontWeight: 700, color: tone === "red" ? T.red : tone === "green" ? T.green : T.slate900 }}>{value}</div>
     </div>
   );
 }
