@@ -6,6 +6,7 @@ import HiringEmailTemplates from "../components/HiringEmailTemplates.jsx";
 import MemberAvatar from "../lib/MemberAvatar.jsx";
 import { fmtMoney } from "../lib/format.jsx";
 import { ROLE_LEVELS, ROLES, roleCategoryFor } from "../lib/roleLevels.js";
+import LanguagesEditor, { languagesToRows, rowsToLanguages, languagesText } from "../components/LanguagesEditor.jsx";
 
 
 // Returns true if a staff member holds any one of the three license types.
@@ -73,7 +74,7 @@ function useProducerROI() {
 
         const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes, lapseRes] = await Promise.all([
           supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
-          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, annual_benefits_value, weekly_life_benefit_agency_paid, weekly_health_benefit_agency_paid, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname, is_admin_backoffice, photo_storage_path, signature_title, nmls_number, credentials_line, address_line1, address_line2, city, state, zip_code").eq("agency_id", AGENCY_ID),
+          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, annual_benefits_value, weekly_life_benefit_agency_paid, weekly_health_benefit_agency_paid, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname, is_admin_backoffice, photo_storage_path, signature_title, nmls_number, credentials_line, address_line1, address_line2, city, state, zip_code, license_number, languages").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("team_member_id, gross_pay, payroll_run_id").eq("business_entity_id", BUSINESS_ENTITY_ID),
           supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("business_entity_id", BUSINESS_ENTITY_ID).order("pay_date",{ascending:false}).limit(24),
@@ -1605,6 +1606,8 @@ const StaffDirectory = ({ staff }) => {
       license_lh: member.license_lh === true,
       license_ips: member.license_ips === true,
       license_states: Array.isArray(member.license_states) ? member.license_states.join(", ") : "",
+      license_number: member.license_number || "",
+      languages: languagesToRows(member.languages),
       start_date: member.start_date || "",
       compliance_flag: member.compliance_flag || "",
       notes: member.notes || "",
@@ -1647,11 +1650,18 @@ const StaffDirectory = ({ staff }) => {
       license_states: form.license_states.trim()
         ? form.license_states.split(",").map(s => s.trim()).filter(Boolean)
         : [],
+      license_number: (form.license_number || "").trim() || null,
+      languages: rowsToLanguages(form.languages),
       start_date: form.start_date || null,
       compliance_flag: form.compliance_flag.trim() || null,
       notes: form.notes.trim() || null,
       updated_at: new Date().toISOString(),
     };
+    if (payload.languages.some((l) => !l.language || !l.proficiency)) {
+      setSaveError("Each language needs both a language and how well they speak it.");
+      setSaving(false);
+      return;
+    }
     if (!payload.first_name || !payload.last_name) {
       setSaveError("First and last name are required.");
       setSaving(false);
@@ -2173,6 +2183,8 @@ const StaffDirectory = ({ staff }) => {
                           </>
                         : "—" },
                     { label:"Licensed States", value:(member.license_states || []).length>0?(member.license_states || []).join(", "):"None" },
+                    { label:"License #",      value:member.license_number||"—" },
+                    { label:"Speaks",         value:languagesText(member.languages)||"—" },
                     { label:"Start Date",     value:member.start_date||"—" },
                   ].map((d,i) => (
                     <div key={i} style={{ background:T.slate50, borderRadius:8, padding:"7px 10px" }}>
@@ -2651,6 +2663,7 @@ const StaffDirectory = ({ staff }) => {
                   <div><label style={labelStyle}>Weekly health benefit ($/wk, agency-paid)</label><input style={inputStyle} type="number" step="0.01" min="0" value={form.weekly_health_benefit_agency_paid} onChange={e=>setForm({...form, weekly_health_benefit_agency_paid:e.target.value})} placeholder="0.00" /></div>
                   <div><label style={labelStyle}>Start date</label><input style={inputStyle} type="date" value={form.start_date || ""} onChange={e=>setForm({...form, start_date:e.target.value})} /></div>
                   <div><label style={labelStyle}>Licensed states (comma-separated)</label><input style={inputStyle} value={form.license_states} onChange={e=>setForm({...form, license_states:e.target.value})} placeholder="TX, NM" /></div>
+                  <div><label style={labelStyle}>Insurance license number</label><input style={inputStyle} value={form.license_number || ""} onChange={e=>setForm({...form, license_number:e.target.value})} /></div>
                   <div style={{ display:"flex", flexDirection:"column", gap:6, paddingTop:18 }}>
                     <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                       <input id={`lpc-${member.id}`} type="checkbox" checked={form.license_pc===true} onChange={e=>setForm({...form, license_pc:e.target.checked})} style={{ width:16, height:16 }} />
@@ -2665,6 +2678,10 @@ const StaffDirectory = ({ staff }) => {
                       <label htmlFor={`lips-${member.id}`} style={{ fontSize:12, color:T.slate700, cursor:"pointer" }}>IPS license</label>
                     </div>
                   </div>
+                </div>
+                <div style={{ marginBottom:12 }}>
+                  <div style={{ ...labelStyle, fontWeight:700, marginBottom:6 }}>Languages spoken</div>
+                  <LanguagesEditor rows={form.languages} onChange={(rows)=>setForm(f=>({...f, languages:rows}))} inputStyle={inputStyle} labelStyle={labelStyle} />
                 </div>
                 <div style={{ marginBottom:10 }}>
                   <label style={labelStyle}>Compliance flag (leave blank if none)</label>
