@@ -214,14 +214,16 @@ function Checklist({ rows, busy, onToggle, isParent, onAdd }) {
 
 // ─── Admin: parents ───────────────────────────────────────────────────────
 function AdminView({ rows, today, onChanged, setErr, onEdit }) {
-  const [skip, setSkip] = useState({});
+  // Tapped items start checked; predictions start unchecked, so nothing is marked ordered by accident.
+  const [on, setOn] = useState({});
+  const isOn = (r) => on[r.item_id] ?? r.is_low;
   const [qty, setQty] = useState({});
   const [asking, setAsking] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const low = rows.filter(r => r.is_low);
   const likely = rows.filter(r => !r.is_low && r.likely_out).sort((a, b) => Number(a.days_left) - Number(b.days_left));
-  const picked = [...low, ...likely].filter(r => !skip[r.item_id]);
+  const picked = [...low, ...likely].filter(isOn);
   const qtyOf = (r) => qty[r.item_id] ?? num(r.suggested_qty);
   const unscheduled = rows.filter(r => r.every_days == null).length;
 
@@ -235,7 +237,7 @@ function AdminView({ rows, today, onChanged, setErr, onEdit }) {
     });
     setSaving(false);
     if (error) { setErr(error.message); return; }
-    setSkip({}); setQty({});
+    setOn({}); setQty({});
     onChanged();
   };
 
@@ -247,16 +249,16 @@ function AdminView({ rows, today, onChanged, setErr, onEdit }) {
   };
 
   const orderRow = (r) => {
-    const on = !skip[r.item_id];
+    const checked = isOn(r);
     const more = Number(r.suggested_qty) > Number(r.amount);
     return (
       <div key={r.item_id} style={{ padding: "10px 0", borderTop: `1px solid ${T.slate100}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <label style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 200px", minWidth: 0, cursor: "pointer" }}>
-            <input type="checkbox" checked={on} onChange={() => setSkip(s => ({ ...s, [r.item_id]: on }))}
+            <input type="checkbox" checked={checked} onChange={() => setOn(s => ({ ...s, [r.item_id]: !checked }))}
               style={{ width: 20, height: 20, accentColor: T.blue, flexShrink: 0, margin: 0 }} />
             {r.is_low && <CritterIcon which={r.dancer} size={26} />}
-            <span style={{ fontSize: 14, fontWeight: 600, color: on ? T.slate900 : T.slate400, overflowWrap: "anywhere" }}>{r.name}</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: checked ? T.slate900 : T.slate400, overflowWrap: "anywhere" }}>{r.name}</span>
             {!r.is_low && (
               <span style={{ fontSize: 11, fontWeight: 600, color: T.slate700, background: Number(r.days_left) <= 1 ? T.amberLt : T.slate100,
                 borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap" }}>{outText(r, today)}</span>
@@ -264,9 +266,9 @@ function AdminView({ rows, today, onChanged, setErr, onEdit }) {
           </label>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: 12, color: T.slate500 }}>Buy</span>
-            <input value={qtyOf(r)} inputMode="decimal" disabled={!on} aria-label={`How much ${r.name} to buy`}
+            <input value={qtyOf(r)} inputMode="decimal" disabled={!checked} aria-label={`How much ${r.name} to buy`}
               onChange={e => setQty(x => ({ ...x, [r.item_id]: e.target.value }))}
-              style={{ ...input, width: 60, textAlign: "right", opacity: on ? 1 : 0.5 }} />
+              style={{ ...input, width: 60, textAlign: "right", opacity: checked ? 1 : 0.5 }} />
             {r.unit && <span style={{ fontSize: 12, color: T.slate700 }}>{r.unit}</span>}
             {more && <span style={{ fontSize: 11, color: T.slate500 }}>usually {num(r.amount)}</span>}
           </div>
@@ -294,7 +296,7 @@ function AdminView({ rows, today, onChanged, setErr, onEdit }) {
           <>
             {low.length > 0 && <Group title="Running low" note="Someone tapped these.">{low.map(orderRow)}</Group>}
             {likely.length > 0 && (
-              <Group title="Likely out" note="Nobody tapped these, but at the usual pace they run out before next week's order.">
+              <Group title="Likely out" note="Nobody tapped these, but at the usual pace they run out before next week's order. Check the ones you're buying.">
                 {likely.map(orderRow)}
               </Group>
             )}
