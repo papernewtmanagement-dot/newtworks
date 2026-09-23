@@ -577,7 +577,7 @@ function ShowerTimer({ kid, isParent, today, rate, onChanged }) {
         </div>
         {run ? (
           <div style={{ display: "flex", gap: 6 }}>
-            <button disabled={busy} style={{ ...btn("primary"), fontSize: 15, padding: "10px 18px" }} onClick={() => call("family_shower_stop")}>Done</button>
+            <button disabled={busy} style={{ ...btn("primary"), fontSize: 15, padding: "10px 18px" }} onClick={() => call("family_shower_stop")}>Stop</button>
             {isParent && <button disabled={busy} style={btn()} onClick={() => call("family_shower_cancel")}>Cancel</button>}
           </div>
         ) : (
