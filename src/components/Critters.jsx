@@ -608,6 +608,44 @@ function BoxerDolphinArt() {
   );
 }
 
+function LemoosterArt() {
+  return (
+    <>
+      {/* Half lemur, half rooster: lemur face, ears and ringed tail; rooster
+          comb, beak, wattles, wings, tail feathers and feet. Peter 2026-09-22. */}
+      <rect x="86" y="164" width="7" height="18" rx="3" fill="#E8B13A" />
+      <rect x="107" y="164" width="7" height="18" rx="3" fill="#E8B13A" />
+      <path d="M78 182 h18 M82 177 h14" fill="none" stroke="#C98A26" strokeWidth="4" strokeLinecap="round" />
+      <path d="M104 182 h18 M104 177 h14" fill="none" stroke="#C98A26" strokeWidth="4" strokeLinecap="round" />
+      <g className="nw-wag" style={{ transformOrigin: "10% 95%" }}>
+        <path d="M130 150 q40 -12 36 -66" fill="none" stroke="#EFEAE0" strokeWidth="13" strokeLinecap="round" />
+        <path d="M130 150 q40 -12 36 -66" fill="none" stroke="#2A2422" strokeWidth="13" strokeDasharray="10 10" />
+        <path d="M128 140 q30 -24 24 -62" fill="none" stroke="#3E7A63" strokeWidth="6" strokeLinecap="round" />
+        <path d="M126 134 q16 -30 4 -54" fill="none" stroke="#1C332E" strokeWidth="6" strokeLinecap="round" />
+      </g>
+      <ellipse cx="100" cy="138" rx="36" ry="34" fill="#9B9384" />
+      <ellipse cx="100" cy="148" rx="23" ry="21" fill="#EFEAE0" />
+      <g className="nw-swayL" style={{ transformOrigin: "80% 20%" }}><ellipse cx="68" cy="138" rx="15" ry="20" fill="#B5502F" /></g>
+      <g className="nw-swayR" style={{ transformOrigin: "20% 20%" }}><ellipse cx="132" cy="138" rx="15" ry="20" fill="#B5502F" /></g>
+      <circle cx="70" cy="56" r="12" fill="#9B9384" />
+      <circle cx="130" cy="56" r="12" fill="#9B9384" />
+      <circle cx="88" cy="48" r="8" fill="#D63B33" />
+      <circle cx="100" cy="43" r="10" fill="#D63B33" />
+      <circle cx="112" cy="48" r="8" fill="#D63B33" />
+      <circle cx="100" cy="80" r="34" fill="#EFEAE0" />
+      <ellipse cx="85" cy="74" rx="12" ry="13.5" fill="#2A2422" />
+      <ellipse cx="115" cy="74" rx="12" ry="13.5" fill="#2A2422" />
+      <circle cx="85" cy="74" r="6.5" fill="#E0A53C" />
+      <circle cx="85" cy="74" r="3" fill="#15100F" />
+      <circle cx="115" cy="74" r="6.5" fill="#E0A53C" />
+      <circle cx="115" cy="74" r="3" fill="#15100F" />
+      <path d="M100 86 l11 9 l-22 0 z" fill="#E8B13A" />
+      <ellipse cx="95" cy="104" rx="4.5" ry="9" fill="#D63B33" />
+      <ellipse cx="105" cy="104" rx="4.5" ry="9" fill="#D63B33" />
+    </>
+  );
+}
+
 export const DANCERS = [
   { key: "pug",        label: "pug",        Art: PugArt },
   { key: "axolotl",    label: "axolotl",    Art: AxolotlArt },
@@ -629,6 +667,7 @@ export const GUESTS = [
   { key: "ninja", label: "ninja", Art: NinjaArt },
   { key: "bosscat", label: "cat in a business suit", Art: BossCatArt },
   { key: "boxerdolphin", label: "dolphin in boxing gloves", Art: BoxerDolphinArt },
+  { key: "lemooster", label: "lemur-rooster", Art: LemoosterArt },
 ];
 export const ALL_DANCERS = [...DANCERS, ...GUESTS];
 
