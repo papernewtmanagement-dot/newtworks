@@ -4,7 +4,7 @@ import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink } from "../lib/routing.jsx";
 import InfoDot from "../components/InfoDot.jsx";
-import { DayDoneStyles, Confetti, Dancer, CritterIcon, GUESTS } from "../components/Critters.jsx";
+import { DayDoneStyles, Confetti, Dancer, CritterIcon, GUESTS, critterFor } from "../components/Critters.jsx";
 
 // =========================================================================
 // Family.jsx — kids' chores, chore money, and the weekly close-out.
@@ -183,6 +183,19 @@ export default function Family({ userRole }) {
     return mine.length > 0 && mine.every(r => DONE_STATES.includes(r.status));
   };
 
+  // After anything that changes a chore (a tap, or a burpee run that checks off its set):
+  // reload the grid, and dance if that finished the day.
+  const afterChoreChange = async (wasDone) => {
+    const { data } = await supabase.rpc("family_week_board", { p_kid_id: kidId, p_week_start: viewWeek });
+    const rows = Array.isArray(data) ? data : board;
+    setBoard(rows);
+    if (!wasDone && todayDone(rows) && kid) setCelebrate(kid);
+    refreshTodo();
+    load();
+    const x = await supabase.rpc("family_extras_available", { p_date: day });
+    if (!x.error) setExtras(x.data || []);
+  };
+
   const setStatus = async (row, status) => {
     const wasDone = todayDone(board);
     setBusy(rowKey(row) + row.day);
@@ -192,14 +205,7 @@ export default function Family({ userRole }) {
     });
     setBusy(null);
     if (error) { setErr(error.message); return; }
-    const { data } = await supabase.rpc("family_week_board", { p_kid_id: kidId, p_week_start: viewWeek });
-    const rows = Array.isArray(data) ? data : board;
-    setBoard(rows);
-    if (!wasDone && todayDone(rows) && kid) setCelebrate(kid);
-    refreshTodo();
-    load();
-    const x = await supabase.rpc("family_extras_available", { p_date: day });
-    if (!x.error) setExtras(x.data || []);
+    await afterChoreChange(wasDone);
   };
 
   if (loading) return <div style={{ padding: _pad, color: T.slate500, fontSize: 13 }}>Loading…</div>;
@@ -240,7 +246,7 @@ export default function Family({ userRole }) {
           burpee={burpees.find(b => b.kid_id === kid.id)}
           hasBurpees={chores.some(c => c.kid_id === kid.id && c.is_burpees && (!c.active_to || c.active_to >= today))}
           expenseTypes={expenseTypes} expenses={ledger.filter(l => l.kid_id === kid.id && l.kind === "expense" && l.entry_date >= viewWeek && l.entry_date <= addDays(viewWeek, 6))}
-          onLedgerChanged={load}
+          onLedgerChanged={load} onTimerStopped={() => afterChoreChange(todayDone(board))}
           day={day} today={today} weekStart={viewWeek} dateHref={dateHref} setDate={setDateParam}
           busy={busy} setStatus={setStatus} balance={bal} />
       )}
@@ -293,7 +299,7 @@ function KidPicker({ kids, kid, balances, kidHref, setKid }) {
 }
 
 // ─── Week grid ────────────────────────────────────────────────────────────
-function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpee, hasBurpees, expenseTypes, expenses, onLedgerChanged, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
+function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpee, hasBurpees, expenseTypes, expenses, onLedgerChanged, onTimerStopped, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
   const _vp = useViewport();
   const [openInfo, setOpenInfo] = useState(null);
   const [pickId, setPickId] = useState("");
@@ -341,7 +347,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
       let view;
       if (!st && c.locked_by && d === day) view = <span title={`Finish ${c.locked_by} first`} style={{ fontSize: 12 }}>🔒</span>;
       else if (!st) view = <span style={{ color: T.slate300 }}>{d < today && d >= kid.tracking_start ? "" : "·"}</span>;
-      else view = <span title={`${st.label}${Number(c.amount) ? " " + money(c.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>;
+      else view = <StatusMark row={c} />;
       // A parent taps any past cell to open that day and change it.
       if (isParent && c.can_act && d !== day) {
         const target = d === today ? null : d;
@@ -375,7 +381,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
         </div>
       </div>
 
-      {day === today && <TimersRow key={kid.id} kid={kid} isParent={isParent} onStopped={onLedgerChanged} />}
+      {day === today && <TimersRow key={kid.id} kid={kid} onStopped={onTimerStopped} />}
 
       <SchoolCard kid={kid} day={day} today={today} isParent={isParent} />
 
@@ -491,7 +497,6 @@ function FragmentRow({ children }) { return <>{children}</>; }
 
 function CellActions({ row, isParent, today, busy, setStatus }) {
   const act = (s) => setStatus(row, s);
-  const st = row.status ? STATUS[row.status] : null;
   const wrap = (children) => <div style={{ display: "flex", gap: 4, justifyContent: "center", alignItems: "center", flexWrap: "wrap", width: "100%" }}>{children}</div>;
 
   if (!row.status || row.status === "picked") {
@@ -518,24 +523,43 @@ function CellActions({ row, isParent, today, busy, setStatus }) {
     if (extra) {
       // Extra chores are never fined. ✗ unchecks it: the pay comes back off and the job goes back on the list.
       return wrap(<>
-        <span title={`${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>
+        <StatusMark row={row} />
         {row.status !== "verified" && <button disabled={busy} style={tapSquare("done")} onClick={() => act("verified")} title="Checked, it's done" aria-label="Done">✓</button>}
         <button disabled={busy} style={tapSquare("missed")} onClick={() => act(null)} title="Uncheck it" aria-label="Uncheck">✗</button>
       </>);
     }
     return wrap(<>
-      <span title={`${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>
+      <StatusMark row={row} />
       {row.status !== "verified" && <button disabled={busy} style={tapSquare("done")} onClick={() => act("verified")} title={row.status === "claimed" ? "Checked, it's done" : "Change to done"} aria-label="Done">✓</button>}
       {row.status !== "missed" && row.status !== "false_claim" && <button disabled={busy} style={tapSquare("missed")} onClick={() => act(saidDone ? "false_claim" : "missed")} title={saidDone ? "Said done, wasn't" : "Change to missed"} aria-label="Missed">✗</button>}
       {!extra && row.status !== "excused" && <button disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>}
       {canUndo && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Clear it">Undo</button>}
     </>);
   }
-  return wrap(<>
-    <span title={`${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>
-      {st.icon}
+  return wrap(<StatusMark row={row} />);
+}
+
+// A done chore or school lesson shows one of the family's characters instead of
+// a check mark (Peter 2026-09-23). The pick is random but steady: the same chore
+// on the same day always gets the same character. The ring keeps the old check's
+// color, so Done (the kid said so) and Checked (a parent did) still differ.
+function DoneMark({ seed, title, tone = T.green, bg = T.greenLt, size = 22 }) {
+  return (
+    <span title={title} aria-label={title} role="img"
+      style={{ display: "inline-flex", flexShrink: 0, borderRadius: "50%", padding: 1, border: `2px solid ${tone}`, background: bg, verticalAlign: "middle" }}>
+      <CritterIcon which={critterFor(seed)} size={size} />
     </span>
-  </>);
+  );
+}
+// How a recorded chore outcome shows in the grid, wherever it shows.
+function StatusMark({ row }) {
+  const st = row?.status ? STATUS[row.status] : null;
+  if (!st) return null;
+  const title = `${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`;
+  if (row.status === "claimed" || row.status === "verified") {
+    return <DoneMark seed={`${rowKey(row)}|${row.day || row.occurrence_date}`} title={title} tone={st.fg} bg={row.status === "verified" ? T.greenLt : T.white} />;
+  }
+  return <span title={title} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>;
 }
 
 // ─── Timers ───────────────────────────────────────────────────────────────
@@ -543,7 +567,9 @@ function CellActions({ row, isParent, today, busy, setStatus }) {
 // the shower from 5 pm Central. Every timer works the same way. The server keeps
 // the start time, so a refresh or another screen shows the same clock, and
 // stopping one is where the server works out a shower fine or a burpee run's
-// points (family_timer_stop). The screen only shows what comes back.
+// points and checks off its Burpees set (family_timer_stop). The screen only
+// shows what comes back. Anyone can cancel, so a timer started by accident can
+// be taken back. The burpee timer leaves once both sets are done.
 const mmss = (secs) => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
 // The wall clock in Central as "HH:MM:SS", to compare with a timer's shows_from.
 const centralClock = () => {
@@ -568,7 +594,7 @@ const timerResult = (kind, r) => {
   return { text: `${mmss(secs)} · +${pts}`, tone: pts > 0 ? "green" : "red" };
 };
 const TIMER_H = 64;
-function TimersRow({ kid, isParent, onStopped }) {
+function TimersRow({ kid, onStopped }) {
   const _vp = useViewport();
   const [timers, setTimers] = useState([]);
   const [now, setNow] = useState(Date.now());
@@ -598,14 +624,17 @@ function TimersRow({ kid, isParent, onStopped }) {
     if (error) { setErr(error.message); load(); return; }
     setNow(Date.now());
     if (fn === "family_timer_stop") {
-      setResults(x => ({ ...x, [t.kind]: timerResult(t.kind, data) }));
+      setResults(x => ({ ...x, [t.kind]: { ...timerResult(t.kind, data), timer: t } }));
+      if (data?.check_error) setErr(`Burpees not checked off: ${data.check_error}`);
       setTimeout(() => setResults(x => { const y = { ...x }; delete y[t.kind]; return y; }), 6000);
       if (onStopped) onStopped();
     }
     load();
   };
 
-  const shown = timers.filter(t => t.running_id || !t.shows_from || clock >= String(t.shows_from).slice(0, 8));
+  const listed = timers.filter(t => t.running_id || !t.shows_from || clock >= String(t.shows_from).slice(0, 8));
+  // A timer that just finished its last set keeps its spot until its result has shown.
+  const shown = [...listed, ...Object.values(results).filter(r => !listed.some(t => t.kind === r.timer.kind)).map(r => ({ ...r.timer, running_id: null }))];
   if (!shown.length) return err ? <div style={{ fontSize: 12, color: T.red }}>{err}</div> : null;
 
   const face = { height: TIMER_H, boxSizing: "border-box", borderRadius: 12, cursor: "pointer", fontFamily: "inherit",
@@ -640,10 +669,8 @@ function TimersRow({ kid, isParent, onStopped }) {
                 <span aria-hidden="true" style={{ fontSize: 15, lineHeight: 1 }}>⏹</span>
                 <span style={{ fontSize: _vp.isPhone ? 16 : 20, fontWeight: 800, fontFamily: "ui-monospace, Menlo, monospace" }}>{over > 0 ? `+${mmss(over)}` : mmss(limit - elapsed)}</span>
               </button>
-              {isParent && (
-                <button disabled={dis} onClick={() => act(t, "family_timer_cancel")}
-                  style={{ ...face, flex: "1 1 0", border: `1px solid ${T.slate200}`, background: T.white, color: T.slate700, fontSize: 14, fontWeight: 600 }}>Cancel</button>
-              )}
+              <button disabled={dis} onClick={() => act(t, "family_timer_cancel")}
+                style={{ ...face, flex: "1 1 0", border: `1px solid ${T.slate200}`, background: T.white, color: T.slate700, fontSize: 14, fontWeight: 600 }}>Cancel</button>
             </div>
           );
         })}
@@ -659,7 +686,7 @@ function TimersRow({ kid, isParent, onStopped }) {
 // the step to do now; checking it brings up the next, and the last step
 // finishes the lesson. The hub checks today's steps; only a parent checks the
 // CHECK IN step, steps back, or works another day. The info dot lists every
-// step with the done ones checked. Steps and rules: family_school_day/step().
+// step, with a character on each done one. Steps and rules: family_school_day/step().
 function SchoolCard({ kid, day, today, isParent }) {
   const [rows, setRows] = useState([]);
   const [openId, setOpenId] = useState(null);
@@ -693,7 +720,7 @@ function SchoolCard({ kid, day, today, isParent }) {
             <div key={r.id} style={{ padding: "10px 12px", borderTop: i ? `1px solid ${T.slate200}` : "none", display: "grid", gap: 6 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: done ? T.slate500 : T.slate900 }}>{r.title}</div>
-                {done && <span title="Lesson done" style={{ color: T.green, fontWeight: 800, fontSize: 18 }}>✓</span>}
+                {done && <DoneMark seed={r.id} title="Lesson done" />}
                 {isParent && n > 0 && <button style={btn("soft", true)} disabled={busy === r.id} onClick={() => step(r, false)} title="Step back one">Undo</button>}
                 {steps.length > 0 && <InfoDot open={openId === r.id} onClick={() => setOpenId(openId === r.id ? null : r.id)} title="All the steps" />}
               </div>
@@ -710,8 +737,10 @@ function SchoolCard({ kid, day, today, isParent }) {
               {openId === r.id && (
                 <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 3, fontSize: 13 }}>
                   {steps.map((s, j) => (
-                    <li key={j} style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
-                      <span style={{ flex: "0 0 18px", fontWeight: 800, color: j < n ? T.green : T.slate400 }}>{j < n ? "✓" : `${j + 1}.`}</span>
+                    <li key={j} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <span style={{ flex: "0 0 22px", display: "flex", justifyContent: "center", fontWeight: 800, color: T.slate400 }}>
+                        {j < n ? <DoneMark seed={`${r.id}|${j}`} title="Step done" size={14} /> : `${j + 1}.`}
+                      </span>
                       <span style={{ color: j < n ? T.slate500 : T.slate700, fontWeight: !done && j === n ? 700 : 400 }}>{s}</span>
                     </li>
                   ))}
