@@ -591,6 +591,7 @@ const timerResult = (kind, r) => {
   if (r?.counted === false) return { text: "Too fast to count", tone: "red" };
   const pts = Number(r?.points) || 0;
   if (pts >= 5) return { text: `${mmss(secs)} · new best! +5`, tone: "green" };
+  if (pts === 3) return { text: `${mmss(secs)} · close to your best! +3`, tone: "green" };
   return { text: `${mmss(secs)} · +${pts}`, tone: pts > 0 ? "green" : "red" };
 };
 const TIMER_H = 64;
