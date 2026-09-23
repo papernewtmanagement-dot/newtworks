@@ -70,6 +70,12 @@ const btn = (kind = "soft", small = false) => ({
   borderRadius: 8, padding: small ? "4px 7px" : "6px 10px", fontSize: small ? 11 : 12, fontWeight: 600,
   cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", boxSizing: "border-box",
 });
+// Done and Missed are round tap targets: a check or an x in a circle.
+const circle = (kind) => ({
+  width: 30, height: 30, borderRadius: "50%", padding: 0, boxSizing: "border-box", cursor: "pointer",
+  border: `2px solid ${kind === "done" ? T.green : T.red}`, background: T.white,
+  color: kind === "done" ? T.green : T.red, fontSize: 15, fontWeight: 800, lineHeight: "26px", fontFamily: "inherit",
+});
 const card = { background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 14, boxSizing: "border-box" };
 const input = { border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", background: T.white, color: T.slate900 };
 
@@ -417,10 +423,10 @@ function CellActions({ row, isParent, busy, setStatus }) {
     return (
       <div>
         {wrap(<>
-          {!row.locked_by && <button disabled={busy} style={btn("primary", true)} onClick={() => act("claimed")}>Done</button>}
+          {!row.locked_by && <button disabled={busy} style={circle("done")} onClick={() => act("claimed")} title="Done" aria-label="Done">✓</button>}
           {isParent && row.is_burpees && !row.locked_by && <button disabled={busy} style={btn("soft", true)} onClick={() => act("carried")}>Carry</button>}
           {isParent && row.frequency !== "extra" && <button disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>}
-          {row.frequency !== "extra" && !row.status && <button disabled={busy} style={btn("danger", true)} onClick={() => act("missed")}>Missed</button>}
+          {row.frequency !== "extra" && !row.status && <button disabled={busy} style={circle("missed")} onClick={() => act("missed")} title="Missed" aria-label="Missed">✗</button>}
           {row.status === "picked" && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Put it back">✕</button>}
         </>)}
       </div>
@@ -429,8 +435,8 @@ function CellActions({ row, isParent, busy, setStatus }) {
   if (isParent && row.status === "claimed") {
     return wrap(<>
       <span style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>
-      <button disabled={busy} style={btn("primary", true)} onClick={() => act("verified")}>Done</button>
-      <button disabled={busy} style={btn("danger", true)} onClick={() => act("false_claim")}>Missed</button>
+      <button disabled={busy} style={circle("done")} onClick={() => act("verified")} title="Checked, it's done" aria-label="Done">✓</button>
+      <button disabled={busy} style={circle("missed")} onClick={() => act("false_claim")} title="Said done, wasn't" aria-label="Missed">✗</button>
     </>);
   }
   return wrap(<>
