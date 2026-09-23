@@ -32,6 +32,7 @@ import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
   subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo,
+  splitIndent,
 } from "../lib/onboardingUi.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
 import ReferenceCalls from "./ReferenceCalls.jsx";
@@ -563,11 +564,13 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                     const sd = subsDone.includes(label);
                                     // A line that links to a site form ticks itself.
                                     const byForm = !!formIdOf(label);
-                                    const instr = instructions[label];
-                                    const icon = icons[label] || null;
+                                    // leading spaces nest the line under the one above
+                                    const { level, text: shown } = splitIndent(label);
+                                    const instr = instructions[shown];
+                                    const icon = icons[shown] || null;
                                     return (
                                       <ItemInfo key={ix} lines={itemInfo[label] || []} pathColor={T.teal} linkColor={T.blue}>
-                                      <div style={{ display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0 }}>
+                                      <div style={{ display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0, paddingLeft: level * 18 }}>
                                       <button
                                         onClick={byForm ? undefined : () => onToggleSubstep(step, label)}
                                         title={byForm ? "Ticks itself when the form is done" : undefined}
@@ -590,7 +593,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                           fontSize: 12, lineHeight: 1.4,
                                           color: sd ? T.slate400 : T.slate700,
                                           textDecoration: sd ? "line-through" : "none",
-                                        }}><LabelText text={label} icon={icon} pathColor={sd ? T.slate400 : T.teal} linkColor={T.blue} /></span>
+                                        }}><LabelText text={shown} icon={icon} pathColor={sd ? T.slate400 : T.teal} linkColor={T.blue} /></span>
                                       </button>
                                       {instr && (
                                         <InfoDot title="Instructions" onClick={() => setOpenInstr(instr)} />

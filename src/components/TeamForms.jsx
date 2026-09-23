@@ -24,7 +24,7 @@ import { useTabParam } from "../lib/routing.jsx";
 // Exported so the onboarding template can link each form without keeping a
 // second list of them.
 export const FORMS = [
-  { id: "combined_onboarding", label: "Onboarding form",
+  { id: "combined_onboarding", label: "Onboarding",
     blurb: "Your details, your story, and payroll setup." },
   { id: "w4", label: "W-4",
     blurb: "Federal tax withholding for your paycheck." },
@@ -34,8 +34,6 @@ export const FORMS = [
     blurb: "Work authorization. Your documents are checked in person." },
   { id: "handbook_ack", label: "Handbook",
     blurb: "Read the current handbook and confirm." },
-  { id: "annual_certification", label: "Annual certification",
-    blurb: "Confirm you completed it in ABS." },
 ];
 
 const STATE_STYLE = {
@@ -143,10 +141,16 @@ function Check({ checked, onChange, children }) {
 // Bio, the why statement, and the payroll half. Peter explains the why idea
 // at orientation and this is filled in afterwards.
 
-const RANKABLE = ["Words of Affirmation", "Paid Time Off", "Awards", "Bonuses"];
+// key = what is saved (kept so earlier answers still line up); label = what is shown
+const RANKABLE = [
+  { key: "Words of Affirmation", label: "Encouragement" },
+  { key: "Paid Time Off", label: "Paid Time Off" },
+  { key: "Awards", label: "Awards" },
+  { key: "Bonuses", label: "Bonuses" },
+];
 const EMPTY_BANK = { bank_name: "", routing_number: "", account_number: "", account_type: "checking", percent: "" };
 
-function CombinedForm({ data, setData, secure, setSecure, ssnOnFile }) {
+function CombinedForm({ data, setData, secure, setSecure }) {
   const set = (k) => (v) => setData({ ...data, [k]: v });
   const banks = secure.banks && secure.banks.length ? secure.banks : [{ ...EMPTY_BANK }];
   const setBank = (i, k, v) => {
@@ -183,8 +187,8 @@ function CombinedForm({ data, setData, secure, setSecure, ssnOnFile }) {
 
       <Section title="What motivates you" note="Rank these from 1 down to 4.">
         <Grid min={200}>
-          {RANKABLE.map(r => (
-            <Field key={r} label={r}>
+          {RANKABLE.map(({ key: r, label }) => (
+            <Field key={r} label={label}>
               <select value={(data.ranking || {})[r] || ""}
                 onChange={e => setData({ ...data, ranking: { ...(data.ranking || {}), [r]: e.target.value } })}
                 style={inputBase}>
@@ -198,7 +202,7 @@ function CombinedForm({ data, setData, secure, setSecure, ssnOnFile }) {
 
       <Section title="The small things" note="So we get the details right.">
         <Grid min={200}>
-          <Field label="If we sent you a gift card, where to?">
+          <Field label="Favorite gift card">
             <Text value={data.gift_card} onChange={set("gift_card")} />
           </Field>
           <Field label="What do you do for fun or to relax?">
@@ -231,18 +235,6 @@ function CombinedForm({ data, setData, secure, setSecure, ssnOnFile }) {
 
       <Section title="Payroll"
         note="This goes straight into SurePayroll and is then destroyed. It is never shown back to you, and nobody but Peter and a manager can read it.">
-        <Grid min={240}>
-          {ssnOnFile ? (
-            <Field label="Social Security number" hint="You gave us this when you accepted your offer.">
-              <div style={{ fontSize: 14, color: T.slate600, padding: "9px 0" }}>On file</div>
-            </Field>
-          ) : (
-            <Field label="Social Security number" hint="Numbers only.">
-              <Text value={secure.ssn} onChange={v => setSecure({ ...secure, ssn: v })} placeholder="000000000" />
-            </Field>
-          )}
-        </Grid>
-
         {banks.map((b, i) => (
           <div key={i} style={{
             marginTop: 16, padding: 14, border: `1px solid ${T.slate200}`,
@@ -328,36 +320,6 @@ function HandbookForm({ doc, data, setData }) {
       <div style={{ marginTop: 16 }}>
         <Check checked={data.agreed} onChange={v => setData({ ...data, agreed: v })}>
           I have read the current handbook and I understand what it asks of me.
-        </Check>
-      </div>
-    </div>
-  );
-}
-
-// ─── annual certification ───────────────────────────────────────────────
-// Done in ABS. All we record here is that it was done, and when.
-
-function CertificationForm({ data, setData }) {
-  return (
-    <div>
-      <div style={{
-        marginTop: 18, padding: "16px 18px", border: `1px solid ${T.slate200}`,
-        borderRadius: 10, background: T.slate50, fontSize: 13.5, color: T.slate700,
-        lineHeight: 1.6, boxSizing: "border-box",
-      }}>
-        The annual certification is completed in ABS, not here. It covers the
-        felony-conviction certification required under the Federal Crime Bill and
-        Section 19 of the Federal Deposit Insurance Act. Complete it in ABS first,
-        then record it below. Nothing about your answers is stored in Newtworks.
-      </div>
-      <Grid min={220}>
-        <Field label="Date you completed it in ABS">
-          <Text type="date" value={data.completed_on} onChange={v => setData({ ...data, completed_on: v })} />
-        </Field>
-      </Grid>
-      <div style={{ marginTop: 16 }}>
-        <Check checked={data.agreed} onChange={v => setData({ ...data, agreed: v })}>
-          I completed the State Farm annual certification in ABS on the date above.
         </Check>
       </div>
     </div>
@@ -521,75 +483,23 @@ function I9EmployerSection({ data, setData, canEdit, locked }) {
 // ─── the form shell ─────────────────────────────────────────────────────
 
 // ─── W-4 (2026) ─────────────────────────────────────────────────────────
-// The IRS Employee's Withholding Certificate, Steps 1 to 5. The worksheets
-// on the IRS form's later pages are linked, not rebuilt: whoever needs one
-// works it there and types the result here. The Social Security number is
-// not asked twice; it comes from the Onboarding form or the offer.
+// Not the W-4 itself: the answers Peter needs to fill in the official W-4 in
+// SurePayroll. Name, address and Social Security number are already on file,
+// so only the choices on the IRS form are asked. The worksheets on the IRS
+// form's later pages are linked, not rebuilt.
 
-const W4_FILING = [
-  { v: "single", label: "Single or Married filing separately" },
-  { v: "joint", label: "Married filing jointly or Qualifying surviving spouse" },
-  { v: "head", label: "Head of household (only if you're unmarried and pay more than half the costs of keeping up a home for yourself and a qualifying individual)" },
-];
-const W4_PER_CHILD = 2200;
-const W4_PER_OTHER = 500;
-const W4_IRS_PDF = "https://www.irs.gov/pub/irs-pdf/fw4.pdf";
-
-function w4Money(v) {
-  const n = Number(String(v || "").replace(/[^0-9.]/g, ""));
-  return Number.isFinite(n) ? n : 0;
-}
-function w4Count(v) {
-  const n = parseInt(String(v || "").replace(/[^0-9]/g, ""), 10);
-  return Number.isFinite(n) && n > 0 ? n : 0;
-}
-export function w4Step3Total(data) {
-  return w4Count(data.children) * W4_PER_CHILD
-       + w4Count(data.other_dependents) * W4_PER_OTHER
-       + w4Money(data.other_credits);
-}
-
-function W4Form({ data, setData, ssnOnFile, teamId }) {
+function W4Form({ data, setData }) {
   const set = (k) => (v) => setData({ ...data, [k]: v });
   const total = w4Step3Total(data);
 
-  // Name and address start from the team record so the hire only checks them.
-  useEffect(() => {
-    if (!supabase || !teamId || data.first_name || data.last_name) return;
-    let cancelled = false;
-    supabase.from("team")
-      .select("first_name, last_name, address_line1, address_line2, city, state, zip_code")
-      .eq("id", teamId).maybeSingle()
-      .then(({ data: t }) => {
-        if (cancelled || !t) return;
-        const street = [t.address_line1, t.address_line2].filter(Boolean).join(", ");
-        const place = [t.city, [t.state, t.zip_code].filter(Boolean).join(" ")].filter(Boolean).join(", ");
-        setData(d => ({
-          ...d,
-          first_name: d.first_name || t.first_name || "",
-          last_name: d.last_name || t.last_name || "",
-          address: d.address || street,
-          city_state_zip: d.city_state_zip || place,
-        }));
-      });
-    return () => { cancelled = true; };
-  }, [teamId]); // eslint-disable-line react-hooks/exhaustive-deps
-
   return (
     <div>
-      <Section title="Step 1: Enter personal information">
-        <Grid min={200}>
-          <Field label="First name and middle initial"><Text value={data.first_name} onChange={set("first_name")} /></Field>
-          <Field label="Last name"><Text value={data.last_name} onChange={set("last_name")} /></Field>
-          <Field wide label="Address"><Text value={data.address} onChange={set("address")} /></Field>
-          <Field wide label="City or town, state, and ZIP code"><Text value={data.city_state_zip} onChange={set("city_state_zip")} /></Field>
-          <Field label="Social Security number">
-            <div style={{ fontSize: 14, color: T.slate600, padding: "9px 0" }}>
-              {ssnOnFile ? "On file" : "Goes on your Onboarding form"}
-            </div>
-          </Field>
-        </Grid>
-        <div style={{ display: "grid", gap: 8, marginTop: 14 }}>
+      <div style={{ fontSize: 13, color: T.slate600, lineHeight: 1.55, marginTop: 4 }}>
+        Your answers here are used to fill out your W-4 in SurePayroll.
+      </div>
+
+      <Section title="Step 1: Filing status">
+        <div style={{ display: "grid", gap: 8 }}>
           {W4_FILING.map(f => (
             <label key={f.v} style={{
               display: "flex", gap: 10, alignItems: "center", cursor: "pointer",
@@ -657,52 +567,29 @@ function W4Form({ data, setData, ssnOnFile, teamId }) {
         </div>
       </Section>
 
-      <Section title="Step 5: Sign here">
-        <div style={{ fontSize: 13, color: T.slate700, lineHeight: 1.55, marginBottom: 10 }}>
-          Under penalties of perjury, I declare that this certificate, to the best of my knowledge and belief,
-          is true, correct, and complete.
-        </div>
-        <Grid min={200}>
-          <Field label="Type your full name to sign"><Text value={data.signature} onChange={set("signature")} /></Field>
-        </Grid>
-      </Section>
     </div>
   );
 }
 
-function readyToSubmit(formType, data, secure, ssnOnFile) {
+function readyToSubmit(formType, data, secure) {
   if (formType === "non_compete" || formType === "handbook_ack") return !!data.agreed;
-  if (formType === "annual_certification") return !!data.agreed && !!data.completed_on;
   if (formType === "i9") return !!data.attested && !!data.signature && !!data.status;
-  if (formType === "w4") {
-    return !!data.first_name && !!data.last_name && !!data.address && !!data.city_state_zip
-      && !!data.filing_status && !!data.signature;
-  }
+  if (formType === "w4") return !!data.filing_status;
   if (formType === "combined_onboarding") {
-    return !!data.why_statement && (!!secure.ssn || !!ssnOnFile) &&
+    return !!data.why_statement &&
       (secure.banks || []).some(b => b.bank_name && b.account_number && b.routing_number);
   }
   return false;
 }
 
-function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBack, backLabel = "Back to forms" }) {
+function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBack, backLabel = "Back to forms", preview = false }) {
   const [data, setData] = useState(submission?.data || {});
   const [employer, setEmployer] = useState(submission?.employer_section || {});
   const [secure, setSecure] = useState({ ssn: "", banks: [{ ...EMPTY_BANK }] });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
-  // A Social Security number given at offer acceptance is reused, not asked twice.
-  const [ssnOnFile, setSsnOnFile] = useState(false);
-
-  useEffect(() => {
-    if (!supabase || (form.id !== "combined_onboarding" && form.id !== "w4") || !teamId) return;
-    let cancelled = false;
-    supabase.rpc("onboarding_ssn_on_file", { p_team_id: teamId })
-      .then(({ data: onFile }) => { if (!cancelled) setSsnOnFile(onFile === true); });
-    return () => { cancelled = true; };
-  }, [form.id, teamId]);
-
-  const locked = !!submission?.locked_at;
+  // The template page shows a blank preview: nothing loaded, nothing saved.
+  const locked = !preview && !!submission?.locked_at;
   const doc = form.id === "non_compete" ? docs.non_compete
             : form.id === "handbook_ack" ? docs.handbook : null;
 
@@ -711,8 +598,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
     setBusy(true); setErr(null);
     try {
       const cycleKey =
-        form.id === "annual_certification" ? String(new Date().getFullYear())
-        : (form.id === "non_compete" || form.id === "handbook_ack") && doc ? `v${doc.version}`
+        (form.id === "non_compete" || form.id === "handbook_ack") && doc ? `v${doc.version}`
         : "";
 
       const row = {
@@ -771,7 +657,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
 
   const canSubmit = form.id === "i9" && isAdmin && submission?.employee_submitted_at
     ? !!employer.attested
-    : readyToSubmit(form.id, data, secure, ssnOnFile);
+    : readyToSubmit(form.id, data, secure);
 
   return (
     <div>
@@ -799,13 +685,21 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
         </div>
       )}
 
+      {preview && (
+        <div style={{
+          marginTop: 12, padding: "10px 14px", background: T.blueLt, color: T.slate700,
+          borderRadius: 8, fontSize: 13, boxSizing: "border-box",
+        }}>
+          Preview of what the new hire fills in. Nothing here is saved.
+        </div>
+      )}
+
       <div style={locked && form.id !== "i9" ? { pointerEvents: "none", opacity: 0.65 } : null}>
         {form.id === "combined_onboarding" &&
-          <CombinedForm data={data} setData={setData} secure={secure} setSecure={setSecure} ssnOnFile={ssnOnFile} />}
-        {form.id === "w4" && <W4Form data={data} setData={setData} ssnOnFile={ssnOnFile} teamId={teamId} />}
+          <CombinedForm data={data} setData={setData} secure={secure} setSecure={setSecure} />}
+        {form.id === "w4" && <W4Form data={data} setData={setData} />}
         {form.id === "non_compete" && <NonCompeteForm doc={doc} data={data} setData={setData} />}
         {form.id === "handbook_ack" && <HandbookForm doc={doc} data={data} setData={setData} />}
-        {form.id === "annual_certification" && <CertificationForm data={data} setData={setData} />}
         {form.id === "i9" && (
           <>
             <I9EmployeeSection data={data} setData={setData} locked={!!submission?.employee_submitted_at} />
@@ -822,7 +716,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
         }}>{err}</div>
       )}
 
-      {!locked && (
+      {!locked && !preview && (
         <div style={{ marginTop: 24, display: "flex", gap: 10, flexWrap: "wrap" }}>
           <Button onClick={() => save(true)} disabled={busy || !canSubmit}>
             {busy ? "Saving..." : "Submit"}
@@ -843,7 +737,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
 
 // ─── the list, and the destroy button ───────────────────────────────────
 
-export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, embedded = false, onlyForm = null, onClose = null }) {
+export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, embedded = false, onlyForm = null, onClose = null, preview = false }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
 
@@ -952,7 +846,8 @@ export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, em
           teamId={teamId}
           meId={meId}
           isAdmin={isAdmin}
-          submission={subFor(openForm.id)}
+          submission={preview ? null : subFor(openForm.id)}
+          preview={preview}
           docs={docs}
           onBack={() => setOpen(null)}
           onDone={() => { setOpen(null); load(); }}

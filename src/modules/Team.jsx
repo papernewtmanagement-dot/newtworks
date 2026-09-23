@@ -2432,7 +2432,7 @@ const StaffDirectory = ({ staff }) => {
                   )}
                   <button
                     onClick={(e) => { e.stopPropagation(); setFormsId(formsId === member.id ? null : member.id); }}
-                    title="Onboarding form, non-compete, I-9, handbook and annual certification. Also where the payroll details are destroyed."
+                    title="Onboarding, W-4, non-compete, I-9 and handbook. Also where the payroll details are destroyed."
                     style={{ padding:"6px 14px", fontSize:11, fontWeight:600, color:T.slate700, background:T.white, border:`1px solid ${T.slate200}`, borderRadius:7, cursor:"pointer" }}>
                     📄 Forms
                   </button>

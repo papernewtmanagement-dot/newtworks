@@ -23,6 +23,7 @@ import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, CATEGORY_KEYS, STAGE_LABELS,
   subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText, GroupHead, ItemInfo,
+  splitIndent,
 } from "../lib/onboardingUi.jsx";
 
 const COLS = "id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by, is_active, unlock_rule, widget, assign_role_category, updated_at";
@@ -124,6 +125,7 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
   // Pop-up instructions for the step itself live in onboarding_instructions,
   // matched to the step by its title, the same way sub-items match theirs.
   const [instr, setInstr] = useState({ id: null, text: "" });
+  const [instrOrig, setInstrOrig] = useState("");
   const [instrOpen, setInstrOpen] = useState(false);
   useEffect(() => {
     if (isNew || !row.title) return undefined;
@@ -133,7 +135,9 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
       .eq("agency_id", AGENCY_ID)
       .eq("substep_label", row.title)
       .maybeSingle()
-      .then(({ data }) => { if (!cancelled && data) setInstr({ id: data.id, text: data.body_md || "" }); });
+      .then(({ data }) => {
+        if (!cancelled && data) { setInstr({ id: data.id, text: data.body_md || "" }); setInstrOrig(data.body_md || ""); }
+      });
     return () => { cancelled = true; };
   }, [isNew, row.title]);
 
@@ -235,6 +239,21 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
       updated_at: new Date().toISOString(),
       ...ownerPatch(form.owner),
     };
+
+    // Say so when the save would change nothing, instead of closing as if it
+    // had: blank lines and spaces at the end of a line are not kept.
+    if (!isNew) {
+      const canon = (v) => JSON.stringify(v ?? null, (k, val) => (
+        val && typeof val === "object" && !Array.isArray(val)
+          ? Object.fromEntries(Object.entries(val).sort(([a], [b]) => a.localeCompare(b)))
+          : val));
+      const changed = Object.keys(patch).some(k => k !== "updated_at" && canon(patch[k]) !== canon(row[k]))
+        || instr.text.trim() !== instrOrig.trim();
+      if (!changed) {
+        setErr("Nothing changed, so there was nothing to save. Blank lines and spaces at the end of a line are not kept.");
+        return;
+      }
+    }
 
     setBusy(true);
     try {
@@ -374,6 +393,7 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
             />
             <div style={{ fontSize: 11, color: T.slate500, marginTop: 4 }}>
               One per line. A line ending in a colon becomes a heading for the lines under it.
+              Start a line with two spaces to nest it under the line above.
               A line starting with &gt; goes behind an (i): on the heading when it sits right under the heading, otherwise on the line above it.
             </div>
           </div>
@@ -805,13 +825,16 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
               {g.fill === "team_list" && teamNames.map(n => (
                 <li key={n} style={{ fontSize: 12, color: T.slate700, lineHeight: 1.4 }}>{n}</li>
               ))}
-              {g.items.map((label2, ix) => (
-                <li key={ix} style={{ fontSize: 12, color: T.slate700, lineHeight: 1.4 }}>
-                  <ItemInfo lines={g.itemInfo[label2] || []} pathColor={T.teal} linkColor={T.blue}>
-                    <LabelText text={label2} pathColor={T.teal} linkColor={T.blue} />
-                  </ItemInfo>
-                </li>
-              ))}
+              {g.items.map((label2, ix) => {
+                const { level, text: shown2 } = splitIndent(label2);
+                return (
+                  <li key={ix} style={{ fontSize: 12, color: T.slate700, lineHeight: 1.4, marginLeft: level * 16 }}>
+                    <ItemInfo lines={g.itemInfo[label2] || []} pathColor={T.teal} linkColor={T.blue}>
+                      <LabelText text={shown2} pathColor={T.teal} linkColor={T.blue} />
+                    </ItemInfo>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ))}

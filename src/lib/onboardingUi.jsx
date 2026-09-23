@@ -111,6 +111,13 @@ export const TEAM_LIST_TOKEN = "[Team list]";
 // A line that starts with this goes behind the (i) on the heading above it.
 export const INFO_PREFIX = "> ";
 
+// Leading spaces nest a sub-item under the line above it: two per level (a
+// tab counts as two). They stay part of the saved line.
+export function splitIndent(label) {
+  const indent = (/^[ \t]*/.exec(String(label || ""))[0] || "").replace(/\t/g, "  ");
+  return { indent, level: Math.floor(indent.length / 2), text: String(label || "").trim() };
+}
+
 // A sub-item that would read as markup (ends in a colon, starts with > or \,
 // or is --- or the team-list token) is written with a leading \ so it comes
 // back as the same plain line.
@@ -132,7 +139,8 @@ export function substepsToText(substeps) {
     g.info.forEach(it => lines.push(`${INFO_PREFIX}${it}`));
     if (g.fill === "team_list") lines.push(TEAM_LIST_TOKEN);
     g.items.forEach(it => {
-      lines.push(escapeSubItem(it));
+      const { indent, text } = splitIndent(it);
+      lines.push(indent + escapeSubItem(text));
       (g.itemInfo[it] || []).forEach(l => lines.push(`${INFO_PREFIX}${l}`));
     });
   });
@@ -141,7 +149,7 @@ export function substepsToText(substeps) {
 // Inverse of substepsToText. Keeps the flat shape when no headings were
 // used so a plain list never silently turns into a one-group object.
 export function textToSubsteps(text) {
-  const lines = String(text || "").split("\n").map(l => l.trim());
+  const lines = String(text || "").split("\n").map(l => l.replace(/\s+$/, ""));
   const groups = [];
   let cur = null;
   let sawHeading = false;
@@ -149,9 +157,11 @@ export function textToSubsteps(text) {
     if (!cur) { cur = { group: null, items: [] }; groups.push(cur); }
     cur.items.push(item);
   };
-  lines.forEach(line => {
+  lines.forEach(raw => {
+    const line = raw.trim();
     if (!line) return;
-    if (line.startsWith("\\")) { push(line.slice(1)); return; }
+    const { indent } = splitIndent(raw);
+    if (line.startsWith("\\")) { push(indent + line.slice(1)); return; }
     if (line.startsWith(">")) {
       // Right under a heading it goes behind the heading's (i); under a line,
       // behind that line's (i).
@@ -189,7 +199,7 @@ export function textToSubsteps(text) {
       cur.fill = "team_list";
       return;
     }
-    push(line);
+    push(indent + line);
   });
   const kept = groups.filter(g => g.items.length || g.fill || (g.info && g.info.length));
   if (!kept.length) return null;
@@ -450,7 +460,8 @@ export function FormPopupProvider({ teamId, onClosed, children }) {
                 The forms open once they are on the team.
               </div>
             ) : (
-              <TeamForms teamId={teamId || undefined} onlyForm={formId} onClose={close} embedded />
+              <TeamForms teamId={teamId || undefined} onlyForm={formId} onClose={close} embedded
+                preview={teamId === undefined} />
             )}
           </div>
         </div>
