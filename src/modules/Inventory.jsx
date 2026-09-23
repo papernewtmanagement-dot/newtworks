@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
@@ -19,6 +19,8 @@ import { DayDoneStyles, Dancer, CritterIcon, ALL_DANCERS } from "../components/C
 //   family_inventory_mark_ordered() parents: these were ordered, this much of each
 //   family_inventory_mark_left()    parents: not out yet, this much is left
 // Changing an item's amount or schedule restarts its learning (database trigger).
+// Items keep the master list's store sections and order. "How often" may be blank:
+// the site then learns it from use and predicts nothing until it has measured a cycle.
 // =========================================================================
 
 const PARENT_ROLES = ["owner", "admin"];
@@ -27,6 +29,7 @@ const TAB_LABELS = { checklist: "Checklist", admin: "Admin" };
 // "Still have some": how much is left, as a share of what you usually buy.
 const LEFT_CHOICES = [["A little", 0.25], ["About half", 0.5], ["Plenty", 1]];
 
+const sectionHead = { fontSize: 12, fontWeight: 700, color: T.slate500, letterSpacing: "0.05em", padding: "14px 8px 6px" };
 const card = { background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 14, boxSizing: "border-box" };
 const input = { border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", background: T.white, color: T.slate900 };
 const btn = (kind = "soft", small = false) => ({
@@ -145,7 +148,10 @@ export default function Inventory({ userRole }) {
       {activeTab === "admin" && isParent && (
         <AdminView rows={rows} today={todayCentral()} onChanged={load} setErr={setErr} onEdit={setEditing} />
       )}
-      {editing && <ItemEditor item={editing} onClose={() => setEditing(null)} onSaved={load} />}
+      {editing && (
+        <ItemEditor item={editing} sections={[...new Set(rows.map(r => r.section).filter(Boolean))]}
+          onClose={() => setEditing(null)} onSaved={load} />
+      )}
     </div>
   );
 }
@@ -174,9 +180,13 @@ function Checklist({ rows, busy, onToggle, isParent, onAdd }) {
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="Find an item" aria-label="Find an item"
           style={{ ...input, width: "100%", margin: "6px 0 8px", fontSize: 14 }} />
       )}
-      {shown.map((r, i) => (
-        <div key={r.item_id} style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 64, padding: "4px 8px",
-          borderTop: i ? `1px solid ${T.slate100}` : "none", borderRadius: 8, boxSizing: "border-box",
+      {shown.map((r, i) => {
+        const newSection = i === 0 || shown[i - 1].section !== r.section;
+        return (
+        <Fragment key={r.item_id}>
+        {newSection && <div style={sectionHead}>{r.section || "No section"}</div>}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 64, padding: "4px 8px",
+          borderTop: newSection ? "none" : `1px solid ${T.slate100}`, borderRadius: 8, boxSizing: "border-box",
           background: r.is_low ? T.goldLt : "transparent" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: T.slate900, overflowWrap: "anywhere" }}>{r.name}</div>
@@ -192,7 +202,9 @@ function Checklist({ rows, busy, onToggle, isParent, onAdd }) {
             {r.is_low ? "Undo" : "Running low"}
           </button>
         </div>
-      ))}
+        </Fragment>
+        );
+      })}
       {needle && !shown.length && (
         <div style={{ fontSize: 13, color: T.slate500, padding: "10px 4px" }}>Nothing matches “{q.trim()}”.</div>
       )}
@@ -211,6 +223,7 @@ function AdminView({ rows, today, onChanged, setErr, onEdit }) {
   const likely = rows.filter(r => !r.is_low && r.likely_out).sort((a, b) => Number(a.days_left) - Number(b.days_left));
   const picked = [...low, ...likely].filter(r => !skip[r.item_id]);
   const qtyOf = (r) => qty[r.item_id] ?? num(r.suggested_qty);
+  const unscheduled = rows.filter(r => r.every_days == null).length;
 
   const markOrdered = async () => {
     if (!picked.length || saving) return;
@@ -300,18 +313,26 @@ function AdminView({ rows, today, onChanged, setErr, onEdit }) {
           <button style={btn("primary")} onClick={() => onEdit({})}>Add item</button>
         </div>
         {!rows.length && <div style={{ fontSize: 13, color: T.slate500, marginTop: 6 }}>Nothing on the list yet.</div>}
-        <div style={{ marginTop: 8 }}>
-          {rows.map(r => (
-            <div key={r.item_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderTop: `1px solid ${T.slate100}` }}>
+        {unscheduled > 0 && (
+          <div style={{ fontSize: 12, color: T.slate500, marginTop: 6 }}>
+            Set how often on the items you know. The rest are learned from Running low taps and orders.
+          </div>
+        )}
+        <div style={{ marginTop: 4 }}>
+          {rows.map((r, i) => (
+            <Fragment key={r.item_id}>
+            {(i === 0 || rows[i - 1].section !== r.section) && <div style={{ ...sectionHead, padding: "14px 0 4px" }}>{r.section || "No section"}</div>}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderTop: `1px solid ${T.slate100}` }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900, overflowWrap: "anywhere" }}>{r.name}</div>
                 <div style={{ fontSize: 12, color: T.slate500 }}>
-                  Buy {qtyText(r.amount, r.unit)} {everyText(r.every_days)}.
-                  {Number(r.measured) > 0 && ` Lately it lasts ${lastsText(r.lasts_days)}.`}
+                  Buy {[qtyText(r.amount, r.unit), everyText(r.every_days)].filter(Boolean).join(" ")}.
+                  {Number(r.measured) > 0 ? ` Lately it lasts ${lastsText(r.lasts_days)}.` : r.every_days == null ? " Learning from use." : ""}
                 </div>
               </div>
               <button style={btn("soft", true)} onClick={() => onEdit(r)}>Edit</button>
             </div>
+            </Fragment>
           ))}
         </div>
       </div>
@@ -330,22 +351,24 @@ function Group({ title, note, children }) {
 }
 
 // ─── Add or edit one item ─────────────────────────────────────────────────
-function ItemEditor({ item, onClose, onSaved }) {
+function ItemEditor({ item, sections, onClose, onSaved }) {
   const isNew = !item?.item_id;
   const days0 = Number(item?.every_days);
-  const inWeeks0 = isNew || (Number.isFinite(days0) && days0 >= 7 && days0 % 7 === 0);
+  const hasDays0 = item?.every_days != null && Number.isFinite(days0);
+  const inWeeks0 = !hasDays0 || (days0 >= 7 && days0 % 7 === 0);
   const [name, setName] = useState(item?.name || "");
   const [amount, setAmount] = useState(isNew ? "1" : num(item.amount));
   const [unit, setUnit] = useState(item?.unit || "");
-  const [every, setEvery] = useState(isNew ? "1" : num(inWeeks0 ? days0 / 7 : days0));
+  const [section, setSection] = useState(item?.section || "");
+  const [every, setEvery] = useState(isNew ? "" : hasDays0 ? num(inWeeks0 ? days0 / 7 : days0) : "");
   const [per, setPer] = useState(inWeeks0 ? "weeks" : "days");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
   const [added, setAdded] = useState(null);
   const nameRef = useRef(null);
 
-  const everyDays = per === "weeks" ? Number(every) * 7 : Number(every);
-  const presetChanged = !isNew && (Number(amount) !== Number(item.amount) || everyDays !== Number(item.every_days));
+  const everyDays = String(every).trim() === "" ? null : per === "weeks" ? Number(every) * 7 : Number(every);
+  const presetChanged = !isNew && (Number(amount) !== Number(item.amount) || everyDays !== (item.every_days == null ? null : Number(item.every_days)));
   const label = { fontSize: 13, color: T.slate700, display: "grid", gap: 4 };
 
   const save = async (e) => {
@@ -354,8 +377,8 @@ function ItemEditor({ item, onClose, onSaved }) {
     const a = Number(amount);
     if (!name.trim()) { setMsg("Give it a name."); return; }
     if (!(a > 0)) { setMsg("Enter how much you buy."); return; }
-    if (!(everyDays > 0)) { setMsg("Enter how often you buy it."); return; }
-    const row = { name: name.trim(), amount: a, unit: unit.trim() || null, every_days: everyDays };
+    if (everyDays !== null && !(everyDays > 0)) { setMsg("How often has to be a number, or leave it blank."); return; }
+    const row = { name: name.trim(), section: section.trim() || null, amount: a, unit: unit.trim() || null, every_days: everyDays };
     setSaving(true);
     const res = isNew
       ? await supabase.from("family_inventory_items").insert({ agency_id: AGENCY_ID, ...row })
@@ -364,7 +387,7 @@ function ItemEditor({ item, onClose, onSaved }) {
     if (res.error) { setMsg(res.error.code === "23505" ? "That item is already on the list." : res.error.message); return; }
     onSaved();
     if (!isNew) { onClose(); return; }
-    setAdded(row.name); setName(""); setAmount("1"); setUnit(""); setEvery("1"); setPer("weeks");
+    setAdded(row.name); setName(""); setAmount("1"); setUnit(""); setEvery(""); setPer("weeks");  // section stays for the next item
     nameRef.current?.focus();
   };
 
@@ -385,6 +408,11 @@ function ItemEditor({ item, onClose, onSaved }) {
           <input ref={nameRef} autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Milk"
             style={{ ...input, width: "100%", fontSize: 14 }} />
         </label>
+        <label style={label}>Section
+          <input value={section} onChange={e => setSection(e.target.value)} list="inventory-sections" placeholder="PRODUCE"
+            style={{ ...input, width: "100%", fontSize: 14 }} />
+          <datalist id="inventory-sections">{(sections || []).map(s => <option key={s} value={s} />)}</datalist>
+        </label>
         <div style={label}>How much you buy
           <div style={{ display: "flex", gap: 8 }}>
             <input value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" aria-label="How much you buy"
@@ -396,7 +424,7 @@ function ItemEditor({ item, onClose, onSaved }) {
         <div style={label}>How often
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <span style={{ fontSize: 14, color: T.slate700 }}>Every</span>
-            <input value={every} onChange={e => setEvery(e.target.value)} inputMode="decimal" aria-label="How often"
+            <input value={every} onChange={e => setEvery(e.target.value)} inputMode="decimal" aria-label="How often" placeholder="?"
               style={{ ...input, width: 70, fontSize: 14 }} />
             <select value={per} onChange={e => setPer(e.target.value)} aria-label="Days or weeks" style={{ ...input, fontSize: 14 }}>
               <option value="days">days</option>
@@ -404,6 +432,7 @@ function ItemEditor({ item, onClose, onSaved }) {
             </select>
           </div>
         </div>
+        <div style={{ fontSize: 12, color: T.slate500 }}>Not sure how often? Leave it blank and the site learns it from use.</div>
         {presetChanged && <div style={{ fontSize: 12, color: T.slate500 }}>A new amount or schedule starts the learning over from it.</div>}
         {msg && <div style={{ fontSize: 13, color: T.red }}>{msg}</div>}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
