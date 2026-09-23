@@ -123,7 +123,7 @@ function CharacterList({ isParent, kids, onOpen, hrefFor, onError }) {
   const create = async () => {
     if (!name.trim() || busy) return;
     setBusy(true);
-    const { data, error } = await supabase.rpc("rpg_new_character", { p_name: name.trim(), p_kid_id: kidId || null, p_is_npc: kidId === "npc" });
+    const { data, error } = await supabase.rpc("rpg_new_character", { p_name: name.trim(), p_kid_id: kidId && kidId !== "npc" ? kidId : null, p_is_npc: kidId === "npc" });
     setBusy(false);
     if (error) { onError(error.message); return; }
     setName(""); setKidId(""); setAdding(false);
@@ -177,7 +177,8 @@ function CharacterList({ isParent, kids, onOpen, hrefFor, onError }) {
 function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, onError }) {
   const [sheet, setSheet] = useState(null);
   const [rolls, setRolls] = useState([]);
-  const [difficulty, setDifficulty] = useState(null);   // null until the sheet's default arrives
+  const [difficulty, setDifficulty] = useState(null);   // null until the sheet's default arrives; "" while the box is being retyped
+  const [missing, setMissing] = useState(false);
   const [chain, setChain] = useState([]);                // the roll on screen plus its extra rolls
   const [rolling, setRolling] = useState(null);          // stat key being rolled
   const [editing, setEditing] = useState(false);
@@ -194,7 +195,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
       supabase.rpc("rpg_sheet", { p_character_id: id, p_difficulty: diff ?? null }),
       supabase.rpc("rpg_recent_rolls", { p_character_id: id, p_limit: 20 }),
     ]);
-    if (s.error) { onError(s.error.message); return; }
+    if (s.error) { onError(s.error.message); setMissing(true); return; }
     if (r.error) onError(r.error.message);
     setSheet(s.data || null);
     setRolls(Array.isArray(r.data) ? r.data : []);
@@ -204,7 +205,9 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
   useEffect(() => { load(null); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Changing the difficulty re-reads the sheet so Needed and Critical update on every stat (one call, not 60).
+  const effDiff = (difficulty === "" || difficulty == null) ? null : Math.max(0, Number(difficulty) || 0);
   const changeDifficulty = (v) => {
+    if (v === "") { setDifficulty(""); return; }   // box being retyped: keep the last sheet until a number lands
     const d = Math.max(0, Number(v) || 0);
     setDifficulty(d);
     if (debounce.current) clearTimeout(debounce.current);
@@ -214,11 +217,11 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
   const roll = async (stat) => {
     if (rolling) return;
     setRolling(stat.key);
-    const { data, error } = await supabase.rpc("rpg_roll", { p_character_id: id, p_stat_key: stat.key, p_difficulty: difficulty, p_label: stat.name });
+    const { data, error } = await supabase.rpc("rpg_roll", { p_character_id: id, p_stat_key: stat.key, p_difficulty: effDiff, p_label: stat.name });
     setRolling(null);
     if (error) { onError(error.message); return; }
     setChain([data]);
-    load(difficulty);
+    load(effDiff);
   };
   const rollExtra = async () => {
     const last = chain[chain.length - 1];
@@ -228,7 +231,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     setRolling(null);
     if (error) { onError(error.message); return; }
     setChain(c => [...c, data]);
-    load(difficulty);
+    load(effDiff);
   };
 
   const adjustVitality = async (sign) => {
@@ -238,7 +241,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     const { error } = await supabase.rpc("rpg_adjust_vitality", { p_character_id: id, p_delta: sign * amt });
     setBusy(false);
     if (error) onError(error.message);
-    load(difficulty);
+    load(effDiff);
   };
 
   const saveCoins = async () => {
@@ -248,7 +251,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     const { error } = await supabase.from("rpg_characters").update(patch).eq("id", id);
     setBusy(false);
     if (error) onError(error.message);
-    load(difficulty);
+    load(effDiff);
   };
 
   const startEdit = () => {
@@ -265,7 +268,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     setBusy(false);
     if (error) onError(error.message);
     setEditing(false);
-    load(difficulty);
+    load(effDiff);
   };
 
   const addItem = async () => {
@@ -279,24 +282,24 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     setBusy(false);
     if (error) onError(error.message);
     setItem({ name: "", stat_key: "", bonus: "1", uses_left: "" });
-    load(difficulty);
+    load(effDiff);
   };
   const toggleItem = async (it) => {
     const { error } = await supabase.from("rpg_items").update({ equipped: !it.equipped }).eq("id", it.id);
     if (error) onError(error.message);
-    load(difficulty);
+    load(effDiff);
   };
   const useItem = async (it) => {
     if (it.uses_left == null || it.uses_left <= 0) return;
     const { error } = await supabase.from("rpg_items").update({ uses_left: it.uses_left - 1 }).eq("id", it.id);
     if (error) onError(error.message);
-    load(difficulty);
+    load(effDiff);
   };
   const deleteItem = async (it) => {
     if (!window.confirm(`Delete ${it.name}?`)) return;
     const { error } = await supabase.from("rpg_items").delete().eq("id", it.id);
     if (error) onError(error.message);
-    load(difficulty);
+    load(effDiff);
   };
 
   const setInput = async (stat) => {
@@ -304,14 +307,14 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     if (v == null || v === "") return;
     const { error } = await supabase.rpc("rpg_set_input", { p_character_id: id, p_key: stat.key, p_value: Math.round(Number(v) || 0) });
     if (error) onError(error.message);
-    load(difficulty);
+    load(effDiff);
   };
   const reroll = async () => {
     if (!window.confirm("Roll a fresh set of strengths for this character?")) return;
     const { error } = await supabase.rpc("rpg_reroll_character", { p_character_id: id });
     if (error) onError(error.message);
     setChain([]);
-    load(difficulty);
+    load(effDiff);
   };
   const remove = async () => {
     if (!window.confirm(`Delete ${sheet?.name} for good? Items and rolls go with it.`)) return;
@@ -320,6 +323,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     onBack();
   };
 
+  if (missing) return <div style={{ ...card, fontSize: 13, color: T.slate700 }}>That character is gone. <a href={backHref} onClick={(e) => { if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); onBack(); }} style={{ color: T.blue }}>Back to characters</a></div>;
   if (!sheet) return <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div>;
 
   const stats = Array.isArray(sheet.stats) ? sheet.stats : [];
@@ -387,9 +391,9 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
         <div style={card}>
           <div style={label}>Difficulty for the next roll</div>
           <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
-            <button type="button" style={btn("soft", true)} onClick={() => changeDifficulty((difficulty ?? 5) - 1)}>−</button>
+            <button type="button" style={btn("soft", true)} onClick={() => changeDifficulty((effDiff ?? 5) - 1)}>−</button>
             <input style={{ ...input, width: 70, textAlign: "center", fontSize: 18, fontWeight: 700 }} inputMode="numeric" value={difficulty ?? ""} onChange={e => changeDifficulty(e.target.value)} />
-            <button type="button" style={btn("soft", true)} onClick={() => changeDifficulty((difficulty ?? 5) + 1)}>+</button>
+            <button type="button" style={btn("soft", true)} onClick={() => changeDifficulty((effDiff ?? 5) + 1)}>+</button>
           </div>
           <div style={{ fontSize: 12, color: T.slate500, marginTop: 8 }}>Needed = difficulty ÷ (difficulty + skill) × 100. The top 10% of the success range is a critical.</div>
         </div>
