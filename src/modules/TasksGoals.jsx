@@ -1104,6 +1104,21 @@ const WeekSection = ({ tasks, budgets, onComplete, onNavigate, onToggleFocus, ca
 };
 
 // ─── Section: Tasks List ──────────────────────────────────────
+// Person order for the task list: assignee name A to Z, unassigned last.
+const personName = (t) => t.assigned_to_name || "";
+const byPerson = (a, b) => {
+  const pa = personName(a), pb = personName(b);
+  if (pa === pb) return 0;
+  if (!pa) return 1;
+  if (!pb) return -1;
+  return pa.localeCompare(pb);
+};
+const TYPE_RANK = { epic:0, story:1, task:2 };
+const byPersonThenTitle = (a, b) => byPerson(a, b) || (a.title || "").localeCompare(b.title || "");
+const byPersonTypeTitle = (a, b) => byPerson(a, b)
+  || (TYPE_RANK[a.task_type || "task"] ?? 2) - (TYPE_RANK[b.task_type || "task"] ?? 2)
+  || (a.title || "").localeCompare(b.title || "");
+
 const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, userRole, userId, adminUsers = [], canEdit, onEdit, onDelete, onSavePlanner, onReleaseLock }) => {
   const isOwner = userRole === "owner";
   // Owner picks All / Mine / each other admin. Managers see only own via RLS; chips hidden.
@@ -1185,10 +1200,12 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
     if (viewMode !== "nested") return null;
     const pass = (t) => statusPriorityCatPass(t);
     const passType = (t) => typeFilter === "all" || (t.task_type || "task") === typeFilter;
-    const rows = [];
+    // Each top-level item (an epic with its open children, or a loose story/task)
+    // is one unit; units are sorted by person so the list reads person by person.
+    const units = [];
     const seen = new Set();
     // Epics first
-    const epics = tasks.filter(t => (t.task_type === "epic") && pass(t)).sort((a,b) => (a.title||"").localeCompare(b.title||""));
+    const epics = tasks.filter(t => (t.task_type === "epic") && pass(t)).sort(byPersonThenTitle);
     for (const e of epics) {
       // If filtering by a child type, only show epic when it has matching descendants
       if (typeFilter !== "all" && typeFilter !== "epic") {
@@ -1199,7 +1216,8 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
             });
         if (!hasMatch) continue;
       } else if (!passType(e)) continue;
-      rows.push({ task:e, depth:0 });
+      const unit = { lead:e, rows:[{ task:e, depth:0 }] };
+      units.push(unit);
       seen.add(e.id);
       // Epic not expanded → mark every descendant as seen so they don't fall to the orphan bucket.
       if (!expandedIds.has(e.id)) {
@@ -1214,10 +1232,10 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
       }
       // Epic expanded → render its direct stories + direct tasks. Stories drill down further only if they too are expanded.
       const stories = tasks.filter(t => t.parent_task_id === e.id && t.task_type === "story" && pass(t))
-        .sort((a,b) => (a.title||"").localeCompare(b.title||""));
+        .sort(byPersonThenTitle);
       for (const s of stories) {
         if (typeFilter === "all" || typeFilter === "story" || typeFilter === "task") {
-          rows.push({ task:s, depth:1 });
+          unit.rows.push({ task:s, depth:1 });
           seen.add(s.id);
         }
         if (!expandedIds.has(s.id)) {
@@ -1228,33 +1246,38 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
           continue;
         }
         const grand = tasks.filter(t => t.parent_task_id === s.id && pass(t))
-          .sort((a,b) => (a.title||"").localeCompare(b.title||""));
+          .sort(byPersonThenTitle);
         for (const g of grand) {
           if (typeFilter === "all" || typeFilter === (g.task_type || "task")) {
-            rows.push({ task:g, depth:2 });
+            unit.rows.push({ task:g, depth:2 });
             seen.add(g.id);
           }
         }
       }
       const directTasks = tasks.filter(t => t.parent_task_id === e.id && t.task_type !== "story" && pass(t))
-        .sort((a,b) => (a.title||"").localeCompare(b.title||""));
+        .sort(byPersonThenTitle);
       for (const dt of directTasks) {
         if (typeFilter === "all" || typeFilter === (dt.task_type || "task")) {
-          rows.push({ task:dt, depth:1 });
+          unit.rows.push({ task:dt, depth:1 });
           seen.add(dt.id);
         }
       }
     }
     // Orphans — anything not already rendered and not under an in-view epic
-    const orphans = tasks.filter(t => !seen.has(t.id) && pass(t) && passType(t))
-      .sort((a,b) => {
-        // Stories first, then tasks
-        const ar = a.task_type === "story" ? 0 : 1;
-        const br = b.task_type === "story" ? 0 : 1;
-        if (ar !== br) return ar - br;
-        return (a.title||"").localeCompare(b.title||"");
-      });
-    for (const o of orphans) rows.push({ task:o, depth:0 });
+    const orphans = tasks.filter(t => !seen.has(t.id) && pass(t) && passType(t));
+    for (const o of orphans) units.push({ lead:o, rows:[{ task:o, depth:0 }] });
+    // Person first, then epics before stories before tasks, then title.
+    units.sort((a, b) => byPersonTypeTitle(a.lead, b.lead));
+    // Name divider between people, only when more than one person is showing.
+    const people = new Set(units.map(u => personName(u.lead)));
+    const rows = [];
+    let lastWho = null;
+    for (const u of units) {
+      const who = personName(u.lead);
+      if (people.size > 1 && who !== lastWho) rows.push({ header: who || "Unassigned" });
+      lastWho = who;
+      rows.push(...u.rows);
+    }
     return rows;
   }, [tasks, filter, priority, taskCat, typeFilter, viewMode, expandedIds, assigneeFilter, isOwner, userId]);
 
@@ -1363,7 +1386,11 @@ const TasksList = ({ tasks, onComplete, onNavigate, onOpenNew, onToggleFocus, us
             No tasks match your current filters.
           </div>
         ) : viewMode === "nested" ? (
-          (nestedRows || []).map(({ task, depth }) => (
+          (nestedRows || []).map(({ task, depth, header }) => header ? (
+            <div key={`who:${header}`} style={{ fontSize:11, fontWeight:700, color:T.slate500, letterSpacing:0.3, padding:"10px 2px 2px" }}>
+              {header}
+            </div>
+          ) : (
             <TaskCard key={task.id} task={task} allTasks={tasks} depth={depth}
               onComplete={onComplete} onNavigate={onNavigate} onToggleFocus={onToggleFocus}
               isExpanded={expandedIds.has(task.id)}
