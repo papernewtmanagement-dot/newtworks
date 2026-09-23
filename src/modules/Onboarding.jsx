@@ -32,7 +32,7 @@ import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
   subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo,
-  splitIndent, columnStyle,
+  splitIndent, columnStyle, bannerStyle,
 } from "../lib/onboardingUi.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
 import ReferenceCalls from "./ReferenceCalls.jsx";
@@ -92,7 +92,7 @@ function useOnboardingData(userId, isAdmin) {
           .select("id, first_name, last_name, nickname, role, role_category, role_level, category, is_active, is_admin_backoffice, is_test_user, archived_at, user_id, start_date")
           .eq("agency_id", AGENCY_ID),
         supabase.from("onboarding_phases")
-          .select("phase, name, blurb, stage")
+          .select("phase, name, blurb, stage, weeks_long, week_titles")
           .eq("agency_id", AGENCY_ID)
           .eq("is_active", true)
           .order("phase", { ascending: true }),
@@ -121,7 +121,7 @@ function useOnboardingData(userId, isAdmin) {
       if (plans.length) {
         const planIds = plans.map(p => p.id);
         const stepsRes = await supabase.from("team_onboarding_steps")
-          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, owner_kind, assigned_to, task_id, track, track_order, blocked_by, auto_source, auto_summary, unlock_rule, unlocks_on, widget, assign_role_category")
+          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, owner_kind, assigned_to, task_id, track, track_order, blocked_by, auto_source, auto_summary, unlock_rule, unlocks_on, widget, assign_role_category, week_no, full_width")
           .in("plan_id", planIds)
           .order("phase", { ascending: true })
           .order("sort_order", { ascending: true });
@@ -231,14 +231,15 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
   const [savingId, setSavingId] = useState(null);
   const p = progress(steps);
 
-  // Group by phase, then category
+  // One major card per phase, and one per week for a phase that spans weeks.
   const byPhase = useMemo(() => {
     const map = new Map();
     steps.forEach(s => {
-      if (!map.has(s.phase)) map.set(s.phase, []);
-      map.get(s.phase).push(s);
+      const key = `${s.phase}|${s.week_no ?? ""}`;
+      if (!map.has(key)) map.set(key, { key, phase: s.phase, week: s.week_no ?? null, steps: [] });
+      map.get(key).steps.push(s);
     });
-    return [...map.entries()].sort((a, b) => a[0] - b[0]);
+    return [...map.values()].sort((a, b) => a.phase - b.phase || (a.week ?? 0) - (b.week ?? 0));
   }, [steps]);
 
   // template_key -> title, for every step in this plan that is not done yet.
@@ -248,6 +249,20 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
     steps.forEach(s => { if (!s.completed_at && s.template_key) m.set(s.template_key, s.title); });
     return m;
   }, [steps]);
+
+  // Whether a step is waiting: on a step before it, or on the day it opens.
+  const stepLock = useCallback((step) => {
+    const done = !!step.completed_at;
+    const waitingOn = (step.blocked_by || [])
+      .filter(k => blockersOpen.has(k))
+      .map(k => blockersOpen.get(k));
+    const notYet = !done && !!step.unlocks_on && step.unlocks_on > todayCT;
+    return { done, waitingOn, notYet, locked: !done && (waitingOn.length > 0 || notYet) };
+  }, [blockersOpen, todayCT]);
+
+  // Major cards start folded and open by themselves once a subcard in them
+  // opens; a click on the header overrides either way.
+  const [cardOpen, setCardOpen] = useState({});
 
   const handleToggle = async (step) => {
     setSavingId(step.id);
@@ -339,26 +354,42 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
       <InstructionsModal item={openInstr} onClose={() => setOpenInstr(null)} />
 
       {/* Phases */}
-      {byPhase.map(([phase, phaseSteps]) => {
+      {byPhase.map(({ key: cardKey, phase, week, steps: phaseSteps }) => {
         const meta = phaseMeta(phase);
         const phaseP = progress(phaseSteps);
+        const cardName = meta.weeksLong > 1 && week
+          ? `Week ${week}${meta.weekTitles[String(week)] ? `: ${meta.weekTitles[String(week)]}` : ""}`
+          : meta.name;
+        const anyOpen = phaseSteps.some(s => { const l = stepLock(s); return !l.done && !l.locked; });
+        const isOpen = cardOpen[cardKey] ?? anyOpen;
+        const nextOpens = phaseSteps
+          .filter(s => !s.completed_at && s.unlocks_on && s.unlocks_on > todayCT)
+          .map(s => s.unlocks_on).sort()[0];
 
         return (
-          <Card key={phase} style={{ marginBottom: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+          <Card key={cardKey} style={{ marginBottom: 12 }}>
+            <div
+              role="button" tabIndex={0}
+              onClick={() => setCardOpen(o => ({ ...o, [cardKey]: !isOpen }))}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setCardOpen(o => ({ ...o, [cardKey]: !isOpen })); } }}
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: isOpen ? 12 : 0, flexWrap: "wrap", cursor: "pointer" }}
+            >
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{meta.name}</div>
+                <span style={{ fontSize: 11, color: T.slate400, width: 10 }}>{isOpen ? "▾" : "▸"}</span>
+                <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{cardName}</div>
                 {meta.stage && STAGE_LABELS[meta.stage] && (
                   <Pill fg={STAGE_LABELS[meta.stage].fg} bg={STAGE_LABELS[meta.stage].bg}>
                     {STAGE_LABELS[meta.stage].label}
                   </Pill>
                 )}
-                <div style={{ fontSize: 11, color: T.slate500, flexBasis: "100%" }}>{meta.blurb}</div>
+                {isOpen && meta.blurb && <div style={{ fontSize: 11, color: T.slate500, flexBasis: "100%" }}>{meta.blurb}</div>}
               </div>
-              <div style={{ fontSize: 11, color: T.slate500 }}>{phaseP.done}/{phaseP.total}</div>
+              <div style={{ fontSize: 11, color: T.slate500 }}>
+                {!isOpen && !anyOpen && nextOpens ? `Opens ${fmtDate(nextOpens)} · ` : ""}{phaseP.done}/{phaseP.total}
+              </div>
             </div>
 
-            {(() => {
+            {isOpen && (() => {
             const renderStep = (step) => {
                 const cc = CATEGORY_COLORS[step.category] || { fg: T.slate600, bg: T.slate100, label: step.category || "Step" };
                 const isExpanded = expandedStep === step.id;
@@ -369,14 +400,10 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                 const groups = subGroups(step.substeps);
                 const subsDone = Array.isArray(step.substeps_done) ? step.substeps_done : [];
                 const sp = subProgress(step.substeps, subsDone);
-                const done = !!step.completed_at;
-                const waitingOn = (step.blocked_by || [])
-                  .filter(k => blockersOpen.has(k))
-                  .map(k => blockersOpen.get(k));
-                // Some steps open on a date (the Friday before start), not just
-                // when the steps before them are done.
-                const notYet = !done && step.unlocks_on && step.unlocks_on > todayCT;
-                const locked = !done && (waitingOn.length > 0 || notYet);
+                // Some steps open on a date (the Friday before start, the
+                // Monday their week starts), not just when the steps before
+                // them are done.
+                const { done, waitingOn, notYet, locked } = stepLock(step);
                 // A line with an archived alternative. Show the alternative
                 // when chosen, or when any of it is already ticked.
                 const altGroups = groups.filter(g => g.altFor);
@@ -677,14 +704,21 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                 );
             };
 
-            const cols = trackColumns(phaseSteps);
+            // Goals and the like sit across the top of the card.
+            const banners = phaseSteps.filter(s => s.full_width);
+            const rest = phaseSteps.filter(s => !s.full_width);
+            const bannerRow = banners.length > 0 && (
+              <div style={bannerStyle}>{banners.map(renderStep)}</div>
+            );
+            const cols = trackColumns(rest);
             const gridStyle = {
               display: "grid",
               gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
               gap: cols ? 12 : 10, alignItems: cols ? "stretch" : "start",
             };
-            if (!cols) return <div style={gridStyle}>{phaseSteps.map(renderStep)}</div>;
+            if (!cols) return <>{bannerRow}<div style={gridStyle}>{rest.map(renderStep)}</div></>;
             return (
+              <>{bannerRow}
               <div style={gridStyle}>
                 {cols.map((c, ci) => (
                   <div key={c.name || "_"} style={columnStyle(ci)}>
@@ -693,6 +727,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                   </div>
                 ))}
               </div>
+              </>
             );
             })()}
           </Card>
@@ -1060,7 +1095,10 @@ export default function Onboarding({ userRole, userId }) {
 
   const phaseMeta = useCallback((phase) => {
     const row = (phases || []).find(p => p.phase === phase);
-    if (row) return { name: row.name, blurb: row.blurb || "", stage: row.stage };
+    if (row) return {
+      name: row.name, blurb: row.blurb || "", stage: row.stage,
+      weeksLong: row.weeks_long || 0, weekTitles: row.week_titles || {},
+    };
     const fb = PHASE_LABELS[phase];
     return fb ? { ...fb, stage: null } : { name: `Phase ${phase}`, blurb: "", stage: null };
   }, [phases]);
@@ -1285,6 +1323,7 @@ export default function Onboarding({ userRole, userId }) {
             team={team}
             phases={phases}
             canEdit={isAdmin}
+            onPhasesChanged={reload}
           />
           </FormPopupProvider>
         ) : selectedPlan ? (

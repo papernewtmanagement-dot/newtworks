@@ -209,6 +209,21 @@ export function textToSubsteps(text) {
 
 // A phase with more than one track draws one column per track — the two
 // offer-stage columns both have to finish before the next milestone opens.
+// Goals and other full-width subcards: a highlighted band across the top of
+// a major card, above the columns.
+export const bannerStyle = {
+  display: "grid", gap: 10, marginBottom: 12, padding: 10, borderRadius: 10,
+  gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", alignItems: "start",
+  background: T.amberLt, borderLeft: `4px solid ${T.amber}`, boxSizing: "border-box",
+};
+
+// "Every week", "Week 5", "Weeks 5, 7" — which weeks of a combined card a
+// subcard is in (weeks = null means all of them).
+export function weeksLabel(weeks) {
+  if (!Array.isArray(weeks) || !weeks.length) return "";
+  return weeks.length === 1 ? `Week ${weeks[0]}` : `Weeks ${weeks.join(", ")}`;
+}
+
 // One column of a card. Columns alternate white and a faint gray, starting
 // white, so they read as separate lanes. Used by the plan and the template.
 export function columnStyle(index) {

@@ -23,10 +23,10 @@ import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, CATEGORY_KEYS, STAGE_LABELS,
   subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText, GroupHead, ItemInfo,
-  splitIndent, columnStyle,
+  splitIndent, columnStyle, bannerStyle, weeksLabel,
 } from "../lib/onboardingUi.jsx";
 
-const COLS = "id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by, is_active, unlock_rule, widget, assign_role_category, updated_at";
+const COLS = "id, template_key, title, description, phase, category, applies_to_roles, applies_to_role_categories, applies_to_role_levels, is_required, sort_order, notes, substeps, owner_kind, assigned_to, track, track_order, blocked_by, is_active, unlock_rule, widget, assign_role_category, weeks, full_width, updated_at";
 
 const NEW_ID = "new";
 
@@ -95,7 +95,7 @@ function Chips({ options, selected, onToggle }) {
 }
 
 // ─── the step editor ────────────────────────────────
-function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }) {
+function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved, weeksOf = () => [] }) {
   const vp = useViewport();
   const [form, setForm] = useState(() => ({
     template_key: row.template_key || "",
@@ -107,6 +107,8 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
     owner: ownerValue(row),
     assign_role_category: row.assign_role_category || "",
     is_required: row.is_required !== false,
+    weeks: Array.isArray(row.weeks) ? row.weeks : [],
+    full_width: !!row.full_width,
     track: row.track || "",
     track_order: row.track_order || 0,
     sort_order: row.sort_order || 100,
@@ -189,6 +191,43 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
     }
     set(patchCol);
   };
+  // The weeks of the chosen card, when it spans more than one.
+  const weekList = weeksOf(Number(form.phase));
+  const toggleWeek = (w) => {
+    const cur = form.weeks.length ? form.weeks : weekList;
+    const next = cur.includes(w) ? cur.filter(x => x !== w) : [...cur, w];
+    if (!next.length) return; // a subcard is in at least one week
+    set({ weeks: next.length >= weekList.length ? [] : next.sort((a, b) => a - b) });
+  };
+  // One copy of this subcard per week it is in, each limited to its week.
+  const splitByWeek = async () => {
+    const ws = (form.weeks.length ? form.weeks : weekList).slice().sort((a, b) => a - b);
+    if (ws.length < 2) return;
+    if (!window.confirm(`Make a separate copy of this subcard for each of its ${ws.length} weeks? Each copy starts as the saved version.`)) return;
+    setBusy(true); setErr("");
+    try {
+      const base = rows.find(r => r.id === row.id) || row;
+      const taken = new Set(rows.map(r => r.template_key));
+      const copies = ws.slice(1).map(w => {
+        const { id: _id, updated_at: _u, ...rest } = base;
+        let key = `${base.template_key}_w${w}`;
+        for (let n = 2; taken.has(key); n++) key = `${base.template_key}_w${w}_${n}`;
+        taken.add(key);
+        return { ...rest, agency_id: AGENCY_ID, template_key: key, weeks: [w] };
+      });
+      const { error: e1 } = await supabase.from("onboarding_step_templates").insert(copies);
+      if (e1) throw e1;
+      const { error: e2 } = await supabase.from("onboarding_step_templates")
+        .update({ weeks: [ws[0]], updated_at: new Date().toISOString() }).eq("id", row.id);
+      if (e2) throw e2;
+      await onSaved();
+      onClose();
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   const roleGroups = useMemo(
     () => [...new Set(people.map(p => p.role_category).filter(Boolean))].sort(),
     [people]
@@ -226,6 +265,13 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
       phase: Number(form.phase),
       category: form.category,
       is_required: !!form.is_required,
+      // every week (null) unless only some of the card's weeks are picked
+      weeks: (() => {
+        const all = weeksOf(Number(form.phase));
+        const picked = form.weeks.filter(w => all.includes(w)).sort((a, b) => a - b);
+        return picked.length && picked.length < all.length ? picked : null;
+      })(),
+      full_width: !!form.full_width,
       assign_role_category: form.assign_role_category || null,
       track: form.track.trim() || null,
       track_order: Number(form.track_order) || 0,
@@ -488,6 +534,33 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
             </div>
           </div>
 
+          {weekList.length > 1 && (
+            <div>
+              <label style={fieldLabel}>Weeks</label>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {weekList.map(w => {
+                  const on = form.weeks.length === 0 || form.weeks.includes(w);
+                  return (
+                    <button key={w} type="button" onClick={() => toggleWeek(w)} style={{
+                      padding: "5px 10px", borderRadius: 999, fontSize: 12, cursor: "pointer",
+                      border: `1px solid ${on ? T.teal : T.slate200}`,
+                      background: on ? T.tealLt : T.white, color: on ? T.teal : T.slate500,
+                    }}>Week {w}</button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 11, color: T.slate500, marginTop: 6, lineHeight: 1.5 }}>
+                All lit means every week. Each week on a plan gets its own copy.
+                {!isNew && (form.weeks.length === 0 || form.weeks.length > 1) && (
+                  <>{" "}<button type="button" onClick={splitByWeek} disabled={busy} style={{
+                    background: "none", border: "none", padding: 0, color: T.blue,
+                    fontSize: 11, fontWeight: 600, cursor: "pointer",
+                  }}>Split by week</button> to edit one week on its own.</>
+                )}
+              </div>
+            </div>
+          )}
+
           <button
             onClick={() => setMore(m => !m)}
             style={{
@@ -498,6 +571,11 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
 
           {more && (
             <div style={{ display: "grid", gap: 12, borderTop: `1px solid ${T.slate200}`, paddingTop: 12 }}>
+              <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: T.slate700 }}>
+                <input type="checkbox" checked={form.full_width}
+                  onChange={(e) => set({ full_width: e.target.checked })} />
+                Show across the top of the card, like Goals
+              </label>
               <div>
                 <label style={fieldLabel}>Order in the phase</label>
                 <input
@@ -608,9 +686,28 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved }
 }
 
 // ─── main tab ───────────────────────────────────────
-export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = [], phases = [], canEdit = false }) {
+export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = [], phases = [], canEdit = false, onPhasesChanged }) {
   const vp = useViewport();
   const [state, setState] = useState({ loading: true, error: null, rows: [] });
+  const [phOpen, setPhOpen] = useState({});
+  const [editingPhase, setEditingPhase] = useState(null);
+
+  // First week number of each major card (same database rule plans use).
+  const [firstWeeks, setFirstWeeks] = useState({});
+  useEffect(() => {
+    if (!supabase || !AGENCY_ID) return;
+    let alive = true;
+    supabase.rpc("onboarding_phase_first_weeks", { p_agency_id: AGENCY_ID }).then(({ data }) => {
+      if (alive && Array.isArray(data)) setFirstWeeks(Object.fromEntries(data.map(r => [r.phase, r.first_week])));
+    });
+    return () => { alive = false; };
+  }, [phases]);
+  const weeksOf = useCallback((ph) => {
+    const row = (phases || []).find(p => p.phase === ph);
+    const f = firstWeeks[ph];
+    if (!row || row.stage !== "ramp" || !(row.weeks_long > 1) || !f) return [];
+    return Array.from({ length: row.weeks_long }, (_, i) => f + i);
+  }, [phases, firstWeeks]);
   const [editingId, setEditingId, stepHref] = useTabParam("step", null);
   const [addPhase, setAddPhase] = useState(null);
   const [moveErr, setMoveErr] = useState("");
@@ -785,6 +882,12 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
             )}
           </div>
           <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end", alignItems: "center" }}>
+            {Array.isArray(r.weeks) && r.weeks.length > 0 && (
+              <Pill fg={T.teal} bg={T.tealLt}>{weeksLabel(r.weeks)}</Pill>
+            )}
+            {Array.isArray(r.applies_to_role_categories) && r.applies_to_role_categories.length > 0 && (
+              <Pill fg={T.slate600} bg={T.slate100}>{r.applies_to_role_categories.join(", ")}</Pill>
+            )}
             {r.owner_kind !== "new_hire" && (
               <Pill fg={T.purple} bg={T.purpleLt}>{ownerName(r)}</Pill>
             )}
@@ -899,7 +1002,11 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
       {phaseList.map(ph => {
         const phRows = visibleRows.filter(r => r.phase === ph);
         const label = phaseMeta(ph);
-        const cols = trackColumns(phRows);
+        const banners = phRows.filter(r => r.full_width);
+        const rest = phRows.filter(r => !r.full_width);
+        const cols = trackColumns(rest);
+        // Folded unless opened, or unless a subcard in it is being edited.
+        const open = phOpen[ph] ?? (!!editingRow && editingRow.phase === ph);
         const gridStyle = {
           display: "grid",
           gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
@@ -907,33 +1014,59 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
         };
         return (
           <Card key={ph} style={{ marginBottom: 12, padding: vp.isPhone ? "14px 12px" : "16px 18px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+            <div
+              role="button" tabIndex={0}
+              onClick={() => setPhOpen(o => ({ ...o, [ph]: !open }))}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setPhOpen(o => ({ ...o, [ph]: !open })); } }}
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: open ? 10 : 0, flexWrap: "wrap", cursor: "pointer" }}
+            >
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, color: T.slate400, width: 10 }}>{open ? "▾" : "▸"}</span>
                 <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{label.name}</div>
                 {label.stage && STAGE_LABELS[label.stage] && (
                   <Pill fg={STAGE_LABELS[label.stage].fg} bg={STAGE_LABELS[label.stage].bg}>
                     {STAGE_LABELS[label.stage].label}
                   </Pill>
                 )}
-                {label.blurb && <div style={{ fontSize: 11, color: T.slate500, flexBasis: "100%" }}>{label.blurb}</div>}
+                {open && label.blurb && <div style={{ fontSize: 11, color: T.slate500, flexBasis: "100%" }}>{label.blurb}</div>}
               </div>
-              <div style={{ fontSize: 11, color: T.slate500 }}>{phRows.length} steps</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ fontSize: 11, color: T.slate500 }}>
+                  {label.weeksLong > 1 ? `${label.weeksLong} weeks · ` : ""}{phRows.length} steps
+                </div>
+                {canEdit && (
+                  <Button variant="secondary" style={{ padding: "3px 10px", fontSize: 11 }}
+                    onClick={(e) => { e.stopPropagation(); setEditingPhase(ph); }}>Edit</Button>
+                )}
+              </div>
             </div>
 
-            {cols ? (
-              <div style={gridStyle}>
-                {cols.map((c, ci) => (
-                  <div key={c.name || "_"} style={columnStyle(ci)}>
-                    {c.name && <div style={trackHeadStyle}>{c.name}</div>}
-                    {c.steps.map(r => renderRow(r, c.steps))}
+            {open && (
+              <>
+                {label.weeksLong > 1 && (
+                  <div style={{ fontSize: 11, color: T.slate500, marginBottom: 10, lineHeight: 1.5 }}>
+                    On a plan this becomes one card per week, each with these subcards. A subcard marked with a
+                    week is only in that week; open a subcard and use Split by week to make one week different.
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div style={gridStyle}>{phRows.map(r => renderRow(r, phRows))}</div>
+                )}
+                {banners.length > 0 && (
+                  <div style={bannerStyle}>{banners.map(r => renderRow(r, banners))}</div>
+                )}
+                {cols ? (
+                  <div style={gridStyle}>
+                    {cols.map((c, ci) => (
+                      <div key={c.name || "_"} style={columnStyle(ci)}>
+                        {c.name && <div style={trackHeadStyle}>{c.name}</div>}
+                        {c.steps.map(r => renderRow(r, c.steps))}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={gridStyle}>{rest.map(r => renderRow(r, rest))}</div>
+                )}
+                {canEdit && <div style={{ marginTop: 10 }}>{addRow(ph)}</div>}
+              </>
             )}
-
-            {canEdit && <div style={{ marginTop: 10 }}>{addRow(ph)}</div>}
           </Card>
         );
       })}
@@ -947,8 +1080,115 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
           people={people}
           onClose={closeEditor}
           onSaved={load}
+          weeksOf={weeksOf}
         />
       )}
+
+      {canEdit && editingPhase != null && (
+        <PhaseEditor
+          phase={editingPhase}
+          row={(phases || []).find(p => p.phase === editingPhase)}
+          firstWeek={firstWeeks[editingPhase]}
+          onClose={() => setEditingPhase(null)}
+          onSaved={async () => { if (onPhasesChanged) await onPhasesChanged(); await load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── the major-card editor ──────────────────────────
+// Name, description, and for a weekly card how many weeks it spans and what
+// each week is called. Changing the weeks moves the dates of later cards.
+function PhaseEditor({ phase, row, firstWeek, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: row?.name || "",
+    blurb: row?.blurb || "",
+    weeks_long: row?.weeks_long ?? "",
+    titles: { ...(row?.week_titles || {}) },
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const isRamp = row?.stage === "ramp";
+  const n = Math.max(0, Math.round(Number(form.weeks_long) || 0));
+  const weekNums = isRamp && firstWeek && n > 1 ? Array.from({ length: n }, (_, i) => firstWeek + i) : [];
+
+  const save = async () => {
+    if (!form.name.trim()) { setErr("Give the card a name."); return; }
+    setBusy(true); setErr("");
+    try {
+      const titles = Object.fromEntries(
+        weekNums.map(w => [String(w), (form.titles[String(w)] || "").trim()]).filter(([, v]) => v));
+      const patch = {
+        name: form.name.trim(),
+        blurb: form.blurb.trim() || null,
+        week_titles: Object.keys(titles).length ? titles : null,
+        updated_at: new Date().toISOString(),
+      };
+      if (isRamp) patch.weeks_long = n;
+      const { error } = await supabase.from("onboarding_phases").update(patch)
+        .eq("agency_id", AGENCY_ID).eq("phase", phase);
+      if (error) throw error;
+      await onSaved();
+      onClose();
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.45)",
+      display: "flex", alignItems: "flex-start", justifyContent: "center",
+      padding: "6vh 12px", boxSizing: "border-box", overflowY: "auto",
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        width: "100%", maxWidth: 520, background: T.white, borderRadius: 12,
+        padding: 18, boxSizing: "border-box", boxShadow: "0 20px 50px rgba(15,23,42,0.25)",
+        display: "grid", gap: 12,
+      }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>Edit card</div>
+        <div>
+          <label style={fieldLabel}>Name</label>
+          <input style={inputBase} value={form.name} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} />
+        </div>
+        <div>
+          <label style={fieldLabel}>Description</label>
+          <textarea style={{ ...inputBase, minHeight: 60, resize: "vertical" }} value={form.blurb}
+            onChange={(e) => setForm(f => ({ ...f, blurb: e.target.value }))} />
+        </div>
+        {isRamp && (
+          <div>
+            <label style={fieldLabel}>How many weeks</label>
+            <input style={{ ...inputBase, maxWidth: 120 }} type="number" min={0} value={form.weeks_long}
+              onChange={(e) => setForm(f => ({ ...f, weeks_long: e.target.value }))} />
+            <div style={{ fontSize: 11, color: T.slate500, marginTop: 4 }}>
+              More than one week and each week gets its own card on a plan. Changing this moves the dates of the cards after it.
+            </div>
+          </div>
+        )}
+        {weekNums.length > 0 && (
+          <div>
+            <label style={fieldLabel}>Week names</label>
+            <div style={{ display: "grid", gap: 6 }}>
+              {weekNums.map(w => (
+                <div key={w} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ fontSize: 12, color: T.slate600, width: 64, flexShrink: 0 }}>Week {w}</span>
+                  <input style={inputBase} placeholder="Optional" value={form.titles[String(w)] || ""}
+                    onChange={(e) => setForm(f => ({ ...f, titles: { ...f.titles, [String(w)]: e.target.value } }))} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {err && <div style={{ fontSize: 12, color: T.red }}>{err}</div>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <Button variant="secondary" disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</Button>
+        </div>
+      </div>
     </div>
   );
 }
