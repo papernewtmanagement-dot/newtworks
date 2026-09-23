@@ -18,12 +18,13 @@ import { DayDoneStyles, Confetti, Dancer, CritterIcon } from "../components/Crit
 //   family_balances()        spending / tithe / investments per kid
 // This screen never works out a fine, a balance, a due date or a set-aside.
 // The close-out adds and subtracts the numbers it is given; that is the lesson.
-// Family login (role "family"): Done, Carry and extra chores only. Week, Money.
+// Family login (role "family"): Done, Missed and extra chores only. Week, Money.
+// Parents only: Carry, Excuse, any past day, the Chores and Fines tabs.
 // =========================================================================
 
 const PARENT_ROLES = ["owner", "manager"];
-const TABS = ["week", "money", "setup"];
-const TAB_LABELS = { week: "Week", money: "Money", setup: "Chores" };
+const TABS = ["week", "money", "fines", "setup"];
+const TAB_LABELS = { week: "Week", money: "Money", fines: "Fines", setup: "Chores" };
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const PARTS = [["morning", "Morning"], ["afternoon", "Afternoon"], ["evening", "Evening"], ["anytime", "Any Time"]];
@@ -35,7 +36,7 @@ const LEDGER_KINDS = [
   { kind: "bonus",       bucket: "spend",  label: "Bonus",            sign: 1 },
   { kind: "adjustment",  bucket: "spend",  label: "Adjustment (+/−)", sign: 0 },
 ];
-const KIND_LABELS = { opening_balance: "Starting balance" };
+const KIND_LABELS = { opening_balance: "Starting balance", fine: "Fine" };
 
 const STATUS = {
   claimed:     { icon: "✓", fg: T.blue,     label: "Done" },
@@ -86,6 +87,7 @@ export default function Family({ userRole }) {
   const [balances, setBalances] = useState([]);
   const [ledger, setLedger] = useState([]);
   const [settings, setSettings] = useState(null);
+  const [fineTypes, setFineTypes] = useState([]);
   const [board, setBoard] = useState([]);
   const [extras, setExtras] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -99,25 +101,26 @@ export default function Family({ userRole }) {
   const viewWeek = isDate(dateParam) ? weekStartOf(dateParam) : weekStartOf(today);
   const kid = kids.find(k => k.id === kidParam) || kids[0] || null;
   const kidId = kid?.id || null;
-  const visibleTabs = isParent ? TABS : TABS.filter(t => t !== "setup");
+  const visibleTabs = isParent ? TABS : TABS.filter(t => t !== "setup" && t !== "fines");
   const activeTab = visibleTabs.includes(tab) ? tab : "week";
 
   const load = useCallback(async () => {
     setErr(null);
     try {
       await supabase.rpc("family_sweep_missed");
-      const [k, c, cl, b, lg, s] = await Promise.all([
+      const [k, c, cl, b, lg, s, ft] = await Promise.all([
         supabase.from("family_kids").select("*").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("family_chores").select("*").eq("agency_id", AGENCY_ID).order("sort_order"),
         supabase.from("family_checklists").select("*").eq("agency_id", AGENCY_ID),
         supabase.rpc("family_balances", { p_week_start: viewWeek }),
         supabase.from("family_ledger").select("*").eq("agency_id", AGENCY_ID).order("entry_date", { ascending: false }).order("created_at", { ascending: false }).limit(60),
         supabase.from("family_settings").select("*").eq("agency_id", AGENCY_ID).maybeSingle(),
+        supabase.from("family_fine_types").select("*").eq("agency_id", AGENCY_ID).order("sort_order").order("created_at"),
       ]);
-      const firstErr = [k, c, cl, b, lg, s].find(r => r?.error)?.error;
+      const firstErr = [k, c, cl, b, lg, s, ft].find(r => r?.error)?.error;
       if (firstErr) throw firstErr;
       setKids(k.data || []); setChores(c.data || []); setChecklists(cl.data || []);
-      setBalances(b.data || []); setLedger(lg.data || []); setSettings(s.data || null);
+      setBalances(b.data || []); setLedger(lg.data || []); setSettings(s.data || null); setFineTypes(ft.data || []);
     } catch (e) {
       setErr(e?.message || String(e));
     } finally {
@@ -194,6 +197,9 @@ export default function Family({ userRole }) {
       {activeTab === "money" && kid && (
         <MoneyView kid={kid} balance={bal} isParent={isParent} ledger={ledger.filter(l => l.kid_id === kid.id)}
           onSaved={load} setErr={setErr} onClose={(ws) => setClosing({ kid, ws })} />
+      )}
+      {activeTab === "fines" && isParent && (
+        <FinesView kids={kids} fineTypes={fineTypes} fines={ledger.filter(l => l.kind === "fine")} today={today} onSaved={load} setErr={setErr} />
       )}
       {activeTab === "setup" && isParent && (
         <SetupView kids={kids} chores={chores} checklists={checklists} settings={settings} today={today} onSaved={load} setErr={setErr} />
@@ -274,9 +280,17 @@ function WeekGrid({ kid, board, checklists, extras, isParent, day, today, weekSt
     const active = c.can_act && (d === day || anyDay);
     const st = c.status ? STATUS[c.status] : null;
     if (!active) {
-      if (!st && c.locked_by && d === day) return <span title={`Finish ${c.locked_by} first`} style={{ fontSize: 12 }}>🔒</span>;
-      if (!st) return <span style={{ color: T.slate300 }}>{d < today && d >= kid.tracking_start ? "" : "·"}</span>;
-      return <span title={`${st.label}${Number(c.amount) ? " " + money(c.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>;
+      let view;
+      if (!st && c.locked_by && d === day) view = <span title={`Finish ${c.locked_by} first`} style={{ fontSize: 12 }}>🔒</span>;
+      else if (!st) view = <span style={{ color: T.slate300 }}>{d < today && d >= kid.tracking_start ? "" : "·"}</span>;
+      else view = <span title={`${st.label}${Number(c.amount) ? " " + money(c.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>{st.icon}</span>;
+      // A parent taps any past cell to open that day and change it.
+      if (isParent && c.can_act && d !== day) {
+        const target = d === today ? null : d;
+        return <TabLink href={dateHref(target)} onSelect={() => setDate(target)} title="Open this day"
+          style={{ display: "block", minHeight: 22, color: "inherit", textDecoration: "none" }}>{view}</TabLink>;
+      }
+      return view;
     }
     return <CellActions row={c} isParent={isParent} busy={busy === c.chore_id + c.day} setStatus={setStatus} />;
   };
@@ -321,7 +335,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, day, today, weekSt
           </thead>
           <tbody>
             {groups.map(g => (
-              <GroupRows key={g.key} g={g} days={days} day={day} cellView={cellView} checklists={checklists}
+              <GroupRows key={g.key} g={g} days={days} day={day} cells={cells} cellView={cellView} checklists={checklists}
                 openInfo={openInfo} setOpenInfo={setOpenInfo} isPhone={_vp.isPhone} />
             ))}
           </tbody>
@@ -343,7 +357,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, day, today, weekSt
   );
 }
 
-function GroupRows({ g, days, day, cellView, checklists, openInfo, setOpenInfo, isPhone }) {
+function GroupRows({ g, days, day, cells, cellView, checklists, openInfo, setOpenInfo, isPhone }) {
   if (!g.rows.length) return null;
   return (
     <>
@@ -356,7 +370,8 @@ function GroupRows({ g, days, day, cellView, checklists, openInfo, setOpenInfo, 
       {g.rows.map(r => {
         const list = checklists.find(c => c.id === r.checklist_id);
         const open = openInfo === r.chore_id;
-        const sub = r.is_burpees ? "Owed count in today's box"
+        const owed = r.is_burpees ? cells.get(r.chore_id)?.get(day)?.burpees_owed : null;
+        const sub = r.is_burpees ? (owed != null ? `${owed} to do` : "10 per year of age")
           : r.frequency === "weekly" ? (r.due_dow == null ? "Any day this week" : `Due ${DAY_FULL[r.due_dow]}`)
           : Number(r.pay) > 0 ? money(r.pay) : "Expected, no pay";
         return (
@@ -396,20 +411,16 @@ function FragmentRow({ children }) { return <>{children}</>; }
 function CellActions({ row, isParent, busy, setStatus }) {
   const act = (s) => setStatus(row, s);
   const st = row.status ? STATUS[row.status] : null;
-  const owed = row.is_burpees && row.burpees_owed != null ? (
-    <div style={{ fontSize: 12, fontWeight: 700, color: T.slate700, marginBottom: 3 }}>{row.burpees_owed}</div>
-  ) : null;
   const wrap = (children) => <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap" }}>{children}</div>;
 
   if (!row.status || row.status === "picked") {
     return (
       <div>
-        {owed}
         {wrap(<>
           {!row.locked_by && <button disabled={busy} style={btn("primary", true)} onClick={() => act("claimed")}>Done</button>}
-          {row.is_burpees && !row.locked_by && <button disabled={busy} style={btn("soft", true)} onClick={() => act("carried")}>Carry</button>}
+          {isParent && row.is_burpees && !row.locked_by && <button disabled={busy} style={btn("soft", true)} onClick={() => act("carried")}>Carry</button>}
           {isParent && row.frequency !== "extra" && <button disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>}
-          {isParent && row.frequency !== "extra" && <button disabled={busy} style={btn("danger", true)} onClick={() => act("missed")}>Missed</button>}
+          {row.frequency !== "extra" && !row.status && <button disabled={busy} style={btn("danger", true)} onClick={() => act("missed")}>Missed</button>}
           {row.status === "picked" && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Put it back">✕</button>}
         </>)}
       </div>
@@ -424,7 +435,7 @@ function CellActions({ row, isParent, busy, setStatus }) {
   }
   return wrap(<>
     <span title={`${st.label}${Number(row.amount) ? " " + money(row.amount) : ""}`} style={{ color: st.fg, fontWeight: 700 }}>
-      {st.icon}{row.is_burpees && row.status === "carried" ? ` ${row.burpees_owed}` : ""}
+      {st.icon}
     </span>
     {isParent && <button disabled={busy} style={btn("soft", true)} onClick={() => act(null)}>Undo</button>}
   </>);
@@ -994,6 +1005,105 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
           )}
         </Section>
       ))}
+    </div>
+  );
+}
+
+// ─── Fines ────────────────────────────────────────────────────────────────
+// Parents keep a list of fines and apply one to any kid. An applied fine is a
+// family_ledger row (kind "fine"), so it lands in balances and the close-out
+// the same way every other money event does.
+function FinesView({ kids, fineTypes, fines, today, onSaved, setErr }) {
+  const active = (fineTypes || []).filter(f => f.is_active);
+  const [kidId, setKidId] = useState("");
+  const [typeId, setTypeId] = useState("");
+  const [note, setNote] = useState("");
+  const [name, setName] = useState("");
+  const [amount, setAmount] = useState("");
+  const [saving, setSaving] = useState(false);
+  const kidName = (id) => (kids || []).find(k => k.id === id)?.name || "";
+
+  const apply = async () => {
+    const t = active.find(f => f.id === typeId);
+    if (!kidId || !t) return;
+    setSaving(true);
+    const { error } = await supabase.from("family_ledger").insert({
+      agency_id: AGENCY_ID, kid_id: kidId, bucket: "spend", kind: "fine", fine_type_id: t.id,
+      amount: -Math.abs(Number(t.amount)), note: note ? `${t.name} · ${note}` : t.name, entry_date: today,
+    });
+    setSaving(false);
+    if (error) { setErr(error.message); return; }
+    setNote(""); setTypeId(""); onSaved();
+  };
+  const addType = async () => {
+    const n = Number(amount);
+    if (!name.trim() || !Number.isFinite(n) || n <= 0) return;
+    setSaving(true);
+    const { error } = await supabase.from("family_fine_types").insert({
+      agency_id: AGENCY_ID, name: name.trim(), amount: Math.abs(n), sort_order: (fineTypes || []).length + 1,
+    });
+    setSaving(false);
+    if (error) { setErr(error.message); return; }
+    setName(""); setAmount(""); onSaved();
+  };
+  const removeType = async (id) => {
+    const { error } = await supabase.from("family_fine_types").delete().eq("id", id);
+    if (error) { setErr(error.message); return; }
+    onSaved();
+  };
+  const removeFine = async (id) => {
+    const { error } = await supabase.from("family_ledger").delete().eq("id", id).eq("kind", "fine");
+    if (error) { setErr(error.message); return; }
+    onSaved();
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <Section title="Give a fine">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, paddingTop: 10 }}>
+          <select value={kidId} onChange={e => setKidId(e.target.value)} style={input}>
+            <option value="">Who?</option>
+            {(kids || []).map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
+          </select>
+          <select value={typeId} onChange={e => setTypeId(e.target.value)} style={input}>
+            <option value="">What for?</option>
+            {active.map(f => <option key={f.id} value={f.id}>{f.name} · {money(f.amount)}</option>)}
+          </select>
+          <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note (optional)" style={input} />
+          <button disabled={saving || !kidId || !typeId} onClick={apply} style={btn("danger")}>Give fine</button>
+        </div>
+      </Section>
+
+      {fines.length > 0 && (
+        <Section title="Recent fines">
+          {fines.map(l => (
+            <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, borderTop: `1px solid ${T.slate100}`, padding: "8px 0", fontSize: 13 }}>
+              <div style={{ color: T.slate700 }}>{shortDate(l.entry_date)} · {kidName(l.kid_id)} · {l.note}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ color: T.red, fontWeight: 600 }}>{money(l.amount)}</span>
+                <button style={btn("soft", true)} onClick={() => removeFine(l.id)} title="Take this fine back">Undo</button>
+              </div>
+            </div>
+          ))}
+        </Section>
+      )}
+
+      <Section title="Fine list">
+        {(fineTypes || []).map(f => (
+          <div key={f.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, borderTop: `1px solid ${T.slate100}`, padding: "8px 0", fontSize: 13 }}>
+            <div style={{ color: T.slate900 }}>{f.name}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontWeight: 600, color: T.slate700 }}>{money(f.amount)}</span>
+              <button style={btn("soft", true)} onClick={() => removeType(f.id)} title="Delete this fine">✕</button>
+            </div>
+          </div>
+        ))}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, paddingTop: 10 }}>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="New fine, e.g. Talking back" style={input} />
+          <input value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" placeholder="Amount" style={input} />
+          <button disabled={saving || !name.trim() || !amount} onClick={addType} style={btn("primary")}>Add fine</button>
+        </div>
+      </Section>
     </div>
   );
 }
