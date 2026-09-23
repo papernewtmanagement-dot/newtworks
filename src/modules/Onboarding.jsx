@@ -1207,7 +1207,7 @@ export default function Onboarding({ userRole, userId }) {
     if (chosen) {
       return (
         <div style={{ padding: 20 }}>
-          <FormPopupProvider teamId={chosen.team_member_id || null} onClosed={load}>
+          <FormPopupProvider teamId={chosen.team_member_id || null} onClosed={reload}>
           <PlanDetail
             plan={chosen}
             steps={stepsByPlan.get(chosen.id) || []}
@@ -1285,7 +1285,7 @@ export default function Onboarding({ userRole, userId }) {
           />
           </FormPopupProvider>
         ) : selectedPlan ? (
-          <FormPopupProvider teamId={selectedPlan.team_member_id || null} onClosed={load}>
+          <FormPopupProvider teamId={selectedPlan.team_member_id || null} onClosed={reload}>
           <PlanDetail
             plan={selectedPlan}
             steps={stepsByPlan.get(selectedPlan.id) || []}
