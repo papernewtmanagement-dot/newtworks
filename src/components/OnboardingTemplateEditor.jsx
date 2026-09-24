@@ -734,12 +734,21 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
 
   // The current agency team, from the same database rule that fills the
   // team lists on each plan (there, minus the new hire).
-  const [teamNames, setTeamNames] = useState([]);
+  // One list per fill kind: the office list and the Jabber list (SF email names).
+  const [teamNames, setTeamNames] = useState({});
   useEffect(() => {
     if (!supabase || !AGENCY_ID) return;
     let alive = true;
-    supabase.rpc("onboarding_team_list_names", { p_agency_id: AGENCY_ID })
-      .then(({ data }) => { if (alive) setTeamNames(Array.isArray(data) ? data : []); });
+    Promise.all([
+      supabase.rpc("onboarding_team_list_names", { p_agency_id: AGENCY_ID, p_kind: "office" }),
+      supabase.rpc("onboarding_team_list_names", { p_agency_id: AGENCY_ID, p_kind: "sf_email" }),
+    ]).then(([office, sf]) => {
+      if (!alive) return;
+      setTeamNames({
+        team_list: Array.isArray(office.data) ? office.data : [],
+        team_list_sf: Array.isArray(sf.data) ? sf.data : [],
+      });
+    });
     return () => { alive = false; };
   }, [team]);
 
@@ -929,7 +938,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
               />
             )}
             <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 3 }}>
-              {g.fill === "team_list" && teamNames.map(n => (
+              {(teamNames[g.fill] || []).map(n => (
                 <li key={n} style={{ fontSize: 12, color: T.slate700, lineHeight: 1.4 }}>{n}</li>
               ))}
               {g.items.map((label2, ix) => {

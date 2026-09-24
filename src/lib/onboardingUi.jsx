@@ -99,9 +99,11 @@ export const ORIENTATION_KIND = "orientation";
 // Two extra keys a group can carry:
 //   alt_for  — the group is another way to do that one line (the archived
 //              login process, say). Shown in place of the line on request.
-//   fill     — "team_list": the database fills the items with the current
-//              team when it copies the step onto a plan. In the template the
-//              group is empty on purpose.
+//   fill     — the database puts the current team's names at the top of the
+//              group when it copies the step onto a plan; the group's own
+//              lines follow. "team_list" = the office list (nicknames, minus
+//              anyone marked off it); "team_list_sf" = full names from their
+//              State Farm emails, which is how Jabber finds people.
 //   info     — lines shown when the (i) on the heading is opened. How-to
 //              detail, not checkboxes; they never count toward finishing.
 export function subGroups(substeps, { keepEmpty = false } = {}) {
@@ -150,6 +152,13 @@ export function subAll(substeps) {
 // Typed on its own line under a heading, this makes the group fill itself
 // with the current team.
 export const TEAM_LIST_TOKEN = "[Team list]";
+// Same, but full names from their State Farm emails (for Jabber).
+export const TEAM_LIST_SF_TOKEN = "[Team list by SF email]";
+const FILL_TOKENS = { team_list: TEAM_LIST_TOKEN, team_list_sf: TEAM_LIST_SF_TOKEN };
+function fillFromToken(line) {
+  const l = String(line || "").toLowerCase();
+  return Object.keys(FILL_TOKENS).find(k => FILL_TOKENS[k].toLowerCase() === l) || null;
+}
 
 // A line that starts with this goes behind the (i) on the heading above it.
 export const INFO_PREFIX = "> ";
@@ -166,7 +175,7 @@ export function splitIndent(label) {
 // back as the same plain line.
 function escapeSubItem(it) {
   return (it.endsWith(":") || it.startsWith(">") || it.startsWith("\\") || it === "---"
-    || it.toLowerCase() === TEAM_LIST_TOKEN.toLowerCase()) ? `\\${it}` : it;
+    || fillFromToken(it)) ? `\\${it}` : it;
 }
 export function substepsToText(substeps) {
   const lines = [];
@@ -180,7 +189,7 @@ export function substepsToText(substeps) {
       lines.push("", "---");
     }
     g.info.forEach(it => lines.push(`${INFO_PREFIX}${it}`));
-    if (g.fill === "team_list") lines.push(TEAM_LIST_TOKEN);
+    if (FILL_TOKENS[g.fill]) lines.push(FILL_TOKENS[g.fill]);
     g.items.forEach(it => {
       const { indent, text } = splitIndent(it);
       lines.push(indent + escapeSubItem(text));
@@ -236,10 +245,10 @@ export function textToSubsteps(text) {
       groups.push(cur);
       return;
     }
-    if (line.toLowerCase() === TEAM_LIST_TOKEN.toLowerCase()) {
+    if (fillFromToken(line)) {
       sawHeading = true;
       if (!cur) { cur = { group: "Team", items: [] }; groups.push(cur); }
-      cur.fill = "team_list";
+      cur.fill = fillFromToken(line);
       return;
     }
     push(indent + line);
