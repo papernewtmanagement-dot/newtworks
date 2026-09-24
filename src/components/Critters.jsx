@@ -1022,6 +1022,70 @@ function CowboyArmadilloArt() {
   );
 }
 
+function MuscleTurtleArt() {
+  return (
+    <>
+      {/* A muscle turtle in a blue singlet, pressing a barbell over his head and
+          stomping to the beat. Orange dome shell on his BACK, drawn first so it
+          shows around him and peeks up behind his shoulders. Peter 2026-09-23. */}
+      <ellipse cx="100" cy="128" rx="62" ry="50" fill="#B8621F" />
+      <ellipse cx="100" cy="126" rx="54" ry="42" fill="#E08A3C" />
+      <path d="M75 113 L69 102.6 L57 102.6 L51 113 L57 123.4 L69 123.4 Z M75 133.8 L69 123.4 L57 123.4 L51 133.8 L57 144.2 L69 144.2 Z M125 113 L131 102.6 L143 102.6 L149 113 L143 123.4 L131 123.4 Z M125 133.8 L131 123.4 L143 123.4 L149 133.8 L143 144.2 L131 144.2 Z" fill="#EFA85C" stroke="#8A4516" strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M55.8 150.1 L49.2 156.7 M46.8 133.3 L38.9 136.7 M47.8 115.1 L40.1 115.1 M58.6 99 L52.5 95.9 M144.2 150.1 L150.8 156.7 M153.2 133.3 L161.1 136.7 M152.2 115.1 L159.9 115.1 M141.4 99 L147.5 95.9" fill="none" stroke="#8A4516" strokeWidth="3" strokeLinecap="round" />
+      {/* Arms and barbell move as one piece: the press. */}
+      <g className="nw-up" style={{ transformOrigin: "50% 100%" }}>
+        <rect x="20" y="35" width="160" height="6" rx="3" fill="#A7AFB9" />
+        <rect x="24" y="14" width="13" height="48" rx="4" fill="#2E323C" />
+        <rect x="38" y="20" width="10" height="36" rx="3" fill="#434957" />
+        <rect x="49" y="31" width="5" height="14" rx="1.5" fill="#7D8691" />
+        <rect x="163" y="14" width="13" height="48" rx="4" fill="#2E323C" />
+        <rect x="152" y="20" width="10" height="36" rx="3" fill="#434957" />
+        <rect x="146" y="31" width="5" height="14" rx="1.5" fill="#7D8691" />
+        <path d="M72 110 L48 82 L62 48 M128 110 L152 82 L138 48" fill="none" stroke="#4FA396" strokeWidth="17" strokeLinecap="round" strokeLinejoin="round" />
+        <ellipse cx="63.8" cy="92.8" rx="16" ry="11" fill="#4FA396" transform="rotate(49.4 63.8 92.8)" />
+        <ellipse cx="136.2" cy="92.8" rx="16" ry="11" fill="#4FA396" transform="rotate(-49.4 136.2 92.8)" />
+        <path d="M66 83.5 Q72 86 73.5 92 M134 83.5 Q128 86 126.5 92" fill="none" stroke="#7CC4B7" strokeWidth="3" strokeLinecap="round" />
+        <path d="M58.3 57.1 L60.5 51.5 M141.7 57.1 L139.5 51.5" fill="none" stroke="#F2C230" strokeWidth="19" />
+        <rect x="55" y="30" width="18" height="16" rx="7" fill="#4FA396" />
+        <rect x="127" y="30" width="18" height="16" rx="7" fill="#4FA396" />
+        <path d="M60 32 v6 M64.5 32 v6 M69 32 v6 M131 32 v6 M135.5 32 v6 M140 32 v6" fill="none" stroke="#3A8074" strokeWidth="2" strokeLinecap="round" />
+      </g>
+      <g className="nw-up" style={{ transformOrigin: "50% 0%" }}>
+        <rect x="76" y="150" width="22" height="30" rx="9" fill="#4FA396" />
+        <ellipse cx="85" cy="180" rx="14" ry="7" fill="#4FA396" />
+        <ellipse cx="77" cy="183" rx="3" ry="2.2" fill="#F4EFE6" />
+        <ellipse cx="85" cy="185" rx="3" ry="2.2" fill="#F4EFE6" />
+        <ellipse cx="93" cy="183" rx="3" ry="2.2" fill="#F4EFE6" />
+      </g>
+      <g className="nw-upB" style={{ transformOrigin: "50% 0%" }}>
+        <rect x="102" y="150" width="22" height="30" rx="9" fill="#4FA396" />
+        <ellipse cx="115" cy="180" rx="14" ry="7" fill="#4FA396" />
+        <ellipse cx="107" cy="183" rx="3" ry="2.2" fill="#F4EFE6" />
+        <ellipse cx="115" cy="185" rx="3" ry="2.2" fill="#F4EFE6" />
+        <ellipse cx="123" cy="183" rx="3" ry="2.2" fill="#F4EFE6" />
+      </g>
+      <rect x="86" y="86" width="28" height="24" rx="9" fill="#4FA396" />
+      <path d="M62 104 L138 104 L126 150 L74 150 Z" fill="#4FA396" />
+      <path d="M86 96 L114 96 L136 108 L64 108 Z" fill="#4FA396" />
+      <circle cx="70" cy="107" r="14" fill="#4FA396" />
+      <circle cx="130" cy="107" r="14" fill="#4FA396" />
+      <path d="M80 103 L90 103 Q100 114 110 103 L120 103 Q121 116 131 124 L122 150 L125 166 Q114 170 102 167 L100 161 L98 167 Q86 170 75 166 L78 150 L69 124 Q79 116 80 103 Z" fill="#2F6FD0" />
+      <path d="M84 122 Q92 128 100 122 Q108 128 116 122" fill="none" stroke="#2458A8" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M89 98 Q100 102 111 98" fill="none" stroke="#3A8074" strokeWidth="2" strokeLinecap="round" />
+      <ellipse cx="100" cy="70" rx="28" ry="25" fill="#4FA396" />
+      <path d="M80 56 Q87 51 95 55 M105 55 Q113 51 120 56" fill="none" stroke="#2F6B61" strokeWidth="3.5" strokeLinecap="round" />
+      <circle cx="89" cy="66" r="5.5" fill="#15100F" />
+      <circle cx="111" cy="66" r="5.5" fill="#15100F" />
+      <circle cx="90.8" cy="64.2" r="1.9" fill="#FFFFFF" />
+      <circle cx="112.8" cy="64.2" r="1.9" fill="#FFFFFF" />
+      <circle cx="96" cy="75" r="1.3" fill="#2F6B61" />
+      <circle cx="104" cy="75" r="1.3" fill="#2F6B61" />
+      <path d="M83 79 Q100 85 117 79 Q100 97 83 79 Z" fill="#15100F" />
+      <ellipse cx="100" cy="85.5" rx="6" ry="2.2" fill="#E0707A" />
+    </>
+  );
+}
+
 export const DANCERS = [
   { key: "pug",        label: "pug",        Art: PugArt },
   { key: "axolotl",    label: "axolotl",    Art: AxolotlArt },
@@ -1051,6 +1115,7 @@ export const GUESTS = [
   { key: "vikingpenguin", label: "viking penguin", Art: VikingPenguinArt },
   { key: "chefoctopus", label: "octopus chef", Art: ChefOctopusArt },
   { key: "cowboyarmadillo", label: "cowboy armadillo", Art: CowboyArmadilloArt },
+  { key: "muscleturtle", label: "muscle turtle", Art: MuscleTurtleArt },
 ];
 export const ALL_DANCERS = [...DANCERS, ...GUESTS];
 
