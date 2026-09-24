@@ -32,9 +32,10 @@ import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
   subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo,
-  splitIndent, columnStyle, bannerStyle,
+  splitIndent, columnStyle, bannerStyle, fmtDate, setStepDone, subItemsRequired, ORIENTATION_WIDGET,
 } from "../lib/onboardingUi.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
+import OrientationPopup from "../components/OrientationPopup.jsx";
 import ReferenceCalls from "./ReferenceCalls.jsx";
 
 // ─── constants ─────────────────────────────────────
@@ -158,13 +159,6 @@ function memberName(t) {
   return `${first} ${last}`.trim() || "Unknown";
 }
 
-function fmtDate(iso) {
-  if (!iso) return "—";
-  const d = new Date(iso + (iso.length === 10 ? "T00:00:00" : ""));
-  if (isNaN(d)) return iso;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
 function daysBetween(startISO, endISO = null) {
   if (!startISO) return null;
   const start = new Date(startISO + (startISO.length === 10 ? "T00:00:00" : ""));
@@ -221,8 +215,10 @@ function InstructionsModal({ item, onClose }) {
   );
 }
 
-function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleStep, onToggleSubstep, onUpdateStepNotes, onDeletePlan, onChangeStatus, isAdmin, phaseMeta, ownerName, instructions = {}, icons = {}, showBack = true }) {
+function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleStep, onToggleSubstep, onUpdateStepNotes, onDeletePlan, onChangeStatus, isAdmin, isOwner = false, userId = null, onReload = null, phaseMeta, ownerName, instructions = {}, icons = {}, showBack = true }) {
   const [expandedStep, setExpandedStep] = useState(null);
+  // The Orientation card whose pop-up is open (owner only).
+  const [orientationStep, setOrientationStep] = useState(null);
   // step id -> true when someone chose the archived way of doing a line.
   const [altOn, setAltOn] = useState({});
   const todayCT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
@@ -352,6 +348,14 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
       </Card>
 
       <InstructionsModal item={openInstr} onClose={() => setOpenInstr(null)} />
+      {orientationStep && (
+        <OrientationPopup
+          title={orientationStep.title}
+          substeps={orientationStep.substeps}
+          userId={userId}
+          onClose={() => { setOrientationStep(null); if (onReload) onReload(); }}
+        />
+      )}
 
       {/* Phases */}
       {byPhase.map(({ key: cardKey, phase, week, steps: phaseSteps }) => {
@@ -397,7 +401,11 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                 const collapsed = !!step.completed_at && !isExpanded;
                 const isEditingThis = editingNote?.stepId === step.id;
                 const isSaving = savingId === step.id;
-                const groups = subGroups(step.substeps);
+                // Orientation's sub-items are Peter's talking points. They live
+                // in its pop-up, not on the card, and only he can tick the card.
+                const isOrientation = step.widget === ORIENTATION_WIDGET;
+                const ownerOnly = isOrientation && !isOwner;
+                const groups = isOrientation ? [] : subGroups(step.substeps);
                 const subsDone = Array.isArray(step.substeps_done) ? step.substeps_done : [];
                 const sp = subProgress(step.substeps, subsDone);
                 // Some steps open on a date (the Friday before start, the
@@ -428,8 +436,8 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                 const isAuto = !!step.auto_source;
                 const autoSum = step.auto_summary && typeof step.auto_summary === "object" ? step.auto_summary : null;
                 // A step with sub-items cannot be ticked until they are all ticked.
-                const gated = !done && !isAuto && sp.total > 0 && !sp.complete;
-                const boxOff = locked || gated || isAuto;
+                const gated = !done && !isAuto && subItemsRequired(step) && sp.total > 0 && !sp.complete;
+                const boxOff = locked || gated || isAuto || ownerOnly;
 
                 return (
                   <div key={step.id} style={{
@@ -451,7 +459,8 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                           marginTop: 1,
                         }}
                         title={
-                          isAuto ? "This one fills itself in"
+                          ownerOnly ? "Peter checks this off at orientation"
+                          : isAuto ? "This one fills itself in"
                           : gated ? `Finish all ${sp.total} sub-items first`
                           : done ? "Mark incomplete" : "Mark complete"
                         }
@@ -478,6 +487,11 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                             {instructions[step.title] && (
                               <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>
                                 <InfoDot title="Instructions" onClick={() => setOpenInstr(instructions[step.title])} />
+                              </span>
+                            )}
+                            {isOrientation && isOwner && (
+                              <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>
+                                <InfoDot title="Open orientation" onClick={() => setOrientationStep(step)} />
                               </span>
                             )}
                           </div>
@@ -1070,6 +1084,8 @@ function OnboardingSidebar({ plans, activePlanId, onTemplate, onNew, subjectName
 // ─── main component ────────────────────────────────
 export default function Onboarding({ userRole, userId }) {
   const isAdmin = ADMIN_ROLES.includes(userRole);
+  // Only the owner opens the Orientation pop-up and checks Orientation off.
+  const isOwner = userRole === "owner";
   const { loading, error, plans, steps, team, phases, candidates, myTeamMemberId, planNames, instructions, icons, reload } = useOnboardingData(userId, isAdmin);
 
   // URL-persisted so refresh keeps the same plan open. Replaces the prior
@@ -1146,17 +1162,14 @@ export default function Onboarding({ userRole, userId }) {
       setActionError("That step fills itself in from the rest of Newtworks. It cannot be ticked by hand.");
       return;
     }
-    if (!step.completed_at) {
+    if (!step.completed_at && subItemsRequired(step)) {
       const sp = subProgress(step.substeps, step.substeps_done);
       if (sp.total && !sp.complete) {
         setActionError(`Finish all ${sp.total} sub-items first.`);
         return;
       }
     }
-    const newVal = step.completed_at ? null : new Date().toISOString();
-    const { error: err } = await supabase.from("team_onboarding_steps")
-      .update({ completed_at: newVal, completed_by: newVal ? userId : null })
-      .eq("id", step.id);
+    const { error: err } = await setStepDone(step.id, !step.completed_at, userId);
     if (err) { setActionError(err.message); return; }
     await reload();
   };
@@ -1265,6 +1278,9 @@ export default function Onboarding({ userRole, userId }) {
             onDeletePlan={handleDeletePlan}
             onChangeStatus={handleChangeStatus}
             isAdmin={false}
+            isOwner={isOwner}
+            userId={userId}
+            onReload={reload}
             showBack={list.length > 1}
           />
           </FormPopupProvider>
@@ -1324,6 +1340,9 @@ export default function Onboarding({ userRole, userId }) {
             phases={phases}
             canEdit={isAdmin}
             onPhasesChanged={reload}
+            isOwner={isOwner}
+            userId={userId}
+            onReload={reload}
           />
           </FormPopupProvider>
         ) : selectedPlan ? (
@@ -1344,6 +1363,9 @@ export default function Onboarding({ userRole, userId }) {
             onDeletePlan={handleDeletePlan}
             onChangeStatus={handleChangeStatus}
             isAdmin={true}
+            isOwner={isOwner}
+            userId={userId}
+            onReload={reload}
             showBack={false}
           />
           </FormPopupProvider>

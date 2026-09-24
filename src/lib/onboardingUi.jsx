@@ -12,6 +12,7 @@
 
 import { useState, createContext, useContext } from "react";
 import { T } from "./theme.js";
+import { supabase } from "./supabase.js";
 import InfoDot from "../components/InfoDot.jsx";
 import TeamForms from "../components/TeamForms.jsx";
 
@@ -49,6 +50,34 @@ export const STATUS_COLORS = {
   completed: { fg: T.slate600, bg: T.slate100, label: "Completed" },
   archived:  { fg: T.slate500, bg: T.slate100, label: "Archived" },
 };
+
+// "Oct 5, 2026". Takes a date or a timestamp.
+export function fmtDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso + (iso.length === 10 ? "T00:00:00" : ""));
+  if (isNaN(d)) return iso;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+// The one place a card is ticked or unticked by hand. Returns { error }.
+export async function setStepDone(stepId, done, userId) {
+  return supabase.from("team_onboarding_steps")
+    .update({ completed_at: done ? new Date().toISOString() : null, completed_by: done ? (userId || null) : null })
+    .eq("id", stepId);
+}
+
+// ─── orientation ────────────────────────────────────
+// widget "orientation" marks the Orientation card. Its sub-items are Peter's
+// talking points, shown in a pop-up only he opens (OrientationPopup). At the
+// bottom of it he checks off each new hire who was there. Nobody else can
+// check the card off; onboarding_step_complete_gate enforces that.
+export const ORIENTATION_WIDGET = "orientation";
+
+// Whether a card's sub-items must all be ticked before the card can be.
+// Mirrors onboarding_subitems_required() in the database.
+export function subItemsRequired(step) {
+  return (step?.widget || null) !== ORIENTATION_WIDGET;
+}
 
 // ─── sub-item helpers ───────────────────────────────
 // Sub-items arrive either as a flat list of strings or as groups the old
@@ -457,6 +486,30 @@ export function ItemInfo({ lines = [], children, pathColor, linkColor }) {
   );
 }
 
+// ─── pop-up frame ────────────────────────────────────
+// The frame the onboarding pop-ups share: the page dims, a white card sits
+// on top with an × in the corner, and a click outside closes it.
+export function PopupShell({ onClose, children, maxWidth = 820 }) {
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.45)",
+      display: "flex", alignItems: "flex-start", justifyContent: "center",
+      padding: "5vh 12px", boxSizing: "border-box", overflowY: "auto",
+    }}>
+      <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{
+        position: "relative", width: "100%", maxWidth, background: T.white,
+        borderRadius: 12, boxShadow: "0 20px 50px rgba(15,23,42,0.25)", minWidth: 0,
+      }}>
+        <button onClick={onClose} aria-label="Close" style={{
+          position: "absolute", top: 10, right: 12, border: "none", background: "none",
+          fontSize: 22, lineHeight: 1, cursor: "pointer", color: T.slate500, zIndex: 1,
+        }}>×</button>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 // ─── form pop-up ─────────────────────────────────────
 // teamId: whose forms. null = not on the team yet (a candidate's plan);
 // left out = the person signed in (the template page).
@@ -467,29 +520,16 @@ export function FormPopupProvider({ teamId, onClosed, children }) {
     <FormLinkContext.Provider value={setFormId}>
       {children}
       {formId && (
-        <div onClick={close} style={{
-          position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.45)",
-          display: "flex", alignItems: "flex-start", justifyContent: "center",
-          padding: "5vh 12px", boxSizing: "border-box", overflowY: "auto",
-        }}>
-          <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{
-            position: "relative", width: "100%", maxWidth: 820, background: T.white,
-            borderRadius: 12, boxShadow: "0 20px 50px rgba(15,23,42,0.25)", minWidth: 0,
-          }}>
-            <button onClick={close} aria-label="Close" style={{
-              position: "absolute", top: 10, right: 12, border: "none", background: "none",
-              fontSize: 22, lineHeight: 1, cursor: "pointer", color: T.slate500, zIndex: 1,
-            }}>×</button>
-            {teamId === null ? (
-              <div style={{ padding: 24, fontSize: 13, color: T.slate600 }}>
-                The forms open once they are on the team.
-              </div>
-            ) : (
-              <TeamForms teamId={teamId || undefined} onlyForm={formId} onClose={close} embedded
-                preview={teamId === undefined} />
-            )}
-          </div>
-        </div>
+        <PopupShell onClose={close}>
+          {teamId === null ? (
+            <div style={{ padding: 24, fontSize: 13, color: T.slate600 }}>
+              The forms open once they are on the team.
+            </div>
+          ) : (
+            <TeamForms teamId={teamId || undefined} onlyForm={formId} onClose={close} embedded
+              preview={teamId === undefined} />
+          )}
+        </PopupShell>
       )}
     </FormLinkContext.Provider>
   );

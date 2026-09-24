@@ -97,7 +97,7 @@ function Grid({ children, min = 240 }) {
   );
 }
 
-function Section({ title, note, children }) {
+export function Section({ title, note, children }) {
   return (
     <div style={{ marginTop: 26 }}>
       <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>{title}</div>
@@ -123,14 +123,17 @@ function Button({ children, onClick, tone = "primary", disabled, wide }) {
   );
 }
 
-function Check({ checked, onChange, children }) {
+// Section and Check are also used by the orientation pop-up, so the two look
+// the same.
+export function Check({ checked, onChange, children, disabled = false }) {
   return (
     <label style={{
-      display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer",
+      display: "flex", gap: 10, alignItems: "flex-start", cursor: disabled ? "not-allowed" : "pointer",
       padding: "12px 14px", border: `1px solid ${checked ? T.blue : T.slate200}`,
       background: checked ? T.blueLt : T.white, borderRadius: 8, boxSizing: "border-box",
+      opacity: disabled ? 0.6 : 1,
     }}>
-      <input type="checkbox" checked={!!checked} onChange={e => onChange(e.target.checked)}
+      <input type="checkbox" checked={!!checked} disabled={disabled} onChange={e => onChange(e.target.checked)}
         style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, accentColor: T.blue }} />
       <span style={{ fontSize: 13.5, color: T.slate800, lineHeight: 1.5 }}>{children}</span>
     </label>
@@ -487,6 +490,29 @@ function I9EmployerSection({ data, setData, canEdit, locked }) {
 // SurePayroll. Name, address and Social Security number are already on file,
 // so only the choices on the IRS form are asked. The worksheets on the IRS
 // form's later pages are linked, not rebuilt.
+
+const W4_FILING = [
+  { v: "single", label: "Single or Married filing separately" },
+  { v: "joint", label: "Married filing jointly or Qualifying surviving spouse" },
+  { v: "head", label: "Head of household (only if you're unmarried and pay more than half the costs of keeping up a home for yourself and a qualifying individual)" },
+];
+const W4_PER_CHILD = 2200;
+const W4_PER_OTHER = 500;
+const W4_IRS_PDF = "https://www.irs.gov/pub/irs-pdf/fw4.pdf";
+
+function w4Money(v) {
+  const n = Number(String(v || "").replace(/[^0-9.]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+function w4Count(v) {
+  const n = parseInt(String(v || "").replace(/[^0-9]/g, ""), 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+export function w4Step3Total(data) {
+  return w4Count(data.children) * W4_PER_CHILD
+       + w4Count(data.other_dependents) * W4_PER_OTHER
+       + w4Money(data.other_credits);
+}
 
 function W4Form({ data, setData }) {
   const set = (k) => (v) => setData({ ...data, [k]: v });
