@@ -66,18 +66,32 @@ export async function setStepDone(stepId, done, userId) {
     .eq("id", stepId);
 }
 
-// ─── orientation ────────────────────────────────────
-// widget "orientation" marks the Orientation card. Its sub-items are Peter's
-// talking points, shown in a pop-up only he opens (OrientationPopup). At the
-// bottom of it he checks off each new hire who was there. Nobody else can
-// check the card off; onboarding_step_complete_gate enforces that.
-export const ORIENTATION_WIDGET = "orientation";
-
-// Whether a card's sub-items must all be ticked before the card can be.
-// Mirrors onboarding_subitems_required() in the database.
-export function subItemsRequired(step) {
-  return (step?.widget || null) !== ORIENTATION_WIDGET;
+// The one place a sub-item is ticked or unticked by hand. Ticking the last
+// one completes the card; unticking any reopens it. Returns { error }.
+export async function setSubstepDone(step, label, done, userId) {
+  const cur = Array.isArray(step.substeps_done) ? step.substeps_done : [];
+  const next = done ? (cur.includes(label) ? cur : [...cur, label]) : cur.filter(l => l !== label);
+  const allDone = subProgress(step.substeps, next).complete;
+  const patch = { substeps_done: next };
+  if (allDone && !step.completed_at) {
+    patch.completed_at = new Date().toISOString();
+    patch.completed_by = userId || null;
+  } else if (!allDone && step.completed_at) {
+    patch.completed_at = null;
+    patch.completed_by = null;
+  }
+  return supabase.from("team_onboarding_steps").update(patch).eq("id", step.id);
 }
+
+// ─── orientation ────────────────────────────────────
+// An onboarding_instructions row with kind "orientation" is Peter's
+// orientation. Its (i) sits next to the sub-item with that label (the
+// Orientation line on Review With Peter) and only the owner sees it. It opens
+// OrientationPopup: his talking points, which he can edit there, and a
+// checkmark per new hire that ticks that line on their card. Only the owner
+// can tick that line; onboarding_step_complete_gate enforces it. For this
+// kind, body_md holds the talking points in the sub-item text format.
+export const ORIENTATION_KIND = "orientation";
 
 // ─── sub-item helpers ───────────────────────────────
 // Sub-items arrive either as a flat list of strings or as groups the old

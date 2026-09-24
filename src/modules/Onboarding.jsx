@@ -32,7 +32,7 @@ import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
   subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo,
-  splitIndent, columnStyle, bannerStyle, fmtDate, setStepDone, subItemsRequired, ORIENTATION_WIDGET,
+  splitIndent, columnStyle, bannerStyle, fmtDate, setStepDone, setSubstepDone, ORIENTATION_KIND,
 } from "../lib/onboardingUi.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
 import OrientationPopup from "../components/OrientationPopup.jsx";
@@ -102,7 +102,7 @@ function useOnboardingData(userId, isAdmin) {
           .eq("agency_id", AGENCY_ID)
           .in("status", ["reference_check", "offer"]),
         supabase.from("onboarding_instructions")
-          .select("substep_label, title, body_md")
+          .select("id, substep_label, title, body_md, kind")
           .eq("agency_id", AGENCY_ID),
         supabase.from("onboarding_substep_icons")
           .select("substep_label, icon_url")
@@ -217,8 +217,8 @@ function InstructionsModal({ item, onClose }) {
 
 function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleStep, onToggleSubstep, onUpdateStepNotes, onDeletePlan, onChangeStatus, isAdmin, isOwner = false, userId = null, onReload = null, phaseMeta, ownerName, instructions = {}, icons = {}, showBack = true }) {
   const [expandedStep, setExpandedStep] = useState(null);
-  // The Orientation card whose pop-up is open (owner only).
-  const [orientationStep, setOrientationStep] = useState(null);
+  // The orientation pop-up that is open (owner only): its instructions row.
+  const [orientation, setOrientation] = useState(null);
   // step id -> true when someone chose the archived way of doing a line.
   const [altOn, setAltOn] = useState({});
   const todayCT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
@@ -348,12 +348,11 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
       </Card>
 
       <InstructionsModal item={openInstr} onClose={() => setOpenInstr(null)} />
-      {orientationStep && (
+      {orientation && (
         <OrientationPopup
-          title={orientationStep.title}
-          substeps={orientationStep.substeps}
+          instruction={orientation}
           userId={userId}
-          onClose={() => { setOrientationStep(null); if (onReload) onReload(); }}
+          onClose={() => { setOrientation(null); if (onReload) onReload(); }}
         />
       )}
 
@@ -401,11 +400,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                 const collapsed = !!step.completed_at && !isExpanded;
                 const isEditingThis = editingNote?.stepId === step.id;
                 const isSaving = savingId === step.id;
-                // Orientation's sub-items are Peter's talking points. They live
-                // in its pop-up, not on the card, and only he can tick the card.
-                const isOrientation = step.widget === ORIENTATION_WIDGET;
-                const ownerOnly = isOrientation && !isOwner;
-                const groups = isOrientation ? [] : subGroups(step.substeps);
+                const groups = subGroups(step.substeps);
                 const subsDone = Array.isArray(step.substeps_done) ? step.substeps_done : [];
                 const sp = subProgress(step.substeps, subsDone);
                 // Some steps open on a date (the Friday before start, the
@@ -436,8 +431,8 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                 const isAuto = !!step.auto_source;
                 const autoSum = step.auto_summary && typeof step.auto_summary === "object" ? step.auto_summary : null;
                 // A step with sub-items cannot be ticked until they are all ticked.
-                const gated = !done && !isAuto && subItemsRequired(step) && sp.total > 0 && !sp.complete;
-                const boxOff = locked || gated || isAuto || ownerOnly;
+                const gated = !done && !isAuto && sp.total > 0 && !sp.complete;
+                const boxOff = locked || gated || isAuto;
 
                 return (
                   <div key={step.id} style={{
@@ -459,8 +454,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                           marginTop: 1,
                         }}
                         title={
-                          ownerOnly ? "Peter checks this off at orientation"
-                          : isAuto ? "This one fills itself in"
+                          isAuto ? "This one fills itself in"
                           : gated ? `Finish all ${sp.total} sub-items first`
                           : done ? "Mark incomplete" : "Mark complete"
                         }
@@ -484,14 +478,9 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                             {!step.is_required && (
                               <span style={{ marginLeft: 8, fontSize: 10, color: T.slate400, fontWeight: 500 }}>optional</span>
                             )}
-                            {instructions[step.title] && (
+                            {instructions[step.title] && instructions[step.title].kind !== ORIENTATION_KIND && (
                               <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>
                                 <InfoDot title="Instructions" onClick={() => setOpenInstr(instructions[step.title])} />
-                              </span>
-                            )}
-                            {isOrientation && isOwner && (
-                              <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>
-                                <InfoDot title="Open orientation" onClick={() => setOrientationStep(step)} />
                               </span>
                             )}
                           </div>
@@ -609,16 +598,20 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                     const { level, text: shown } = splitIndent(label);
                                     const instr = instructions[shown];
                                     const icon = icons[shown] || null;
+                                    // The Orientation line: only the owner ticks it, from its pop-up or here.
+                                    const isOrientationLine = instr?.kind === ORIENTATION_KIND;
+                                    const lineLocked = isOrientationLine && !isOwner;
                                     return (
                                       <ItemInfo key={ix} lines={itemInfo[label] || []} pathColor={T.teal} linkColor={T.blue}>
                                       <div style={{ display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0, paddingLeft: level * 18 }}>
                                       <button
-                                        onClick={byForm ? undefined : () => onToggleSubstep(step, label)}
-                                        title={byForm ? "Ticks itself when the form is done" : undefined}
+                                        onClick={byForm || lineLocked ? undefined : () => onToggleSubstep(step, label)}
+                                        title={byForm ? "Ticks itself when the form is done"
+                                          : lineLocked ? "Peter checks this off at orientation" : undefined}
                                         style={{
                                           display: "flex", gap: 7, alignItems: "flex-start",
                                           background: "none", border: "none", padding: 0,
-                                          cursor: byForm ? "default" : "pointer", textAlign: "left", flex: 1, minWidth: 0,
+                                          cursor: byForm || lineLocked ? "default" : "pointer", textAlign: "left", flex: 1, minWidth: 0,
                                         }}
                                       >
                                         <span style={{
@@ -636,8 +629,11 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                           textDecoration: sd ? "line-through" : "none",
                                         }}><LabelText text={shown} icon={icon} pathColor={sd ? T.slate400 : T.teal} linkColor={T.blue} /></span>
                                       </button>
-                                      {instr && (
+                                      {instr && !isOrientationLine && (
                                         <InfoDot title="Instructions" onClick={() => setOpenInstr(instr)} />
+                                      )}
+                                      {isOrientationLine && isOwner && (
+                                        <InfoDot title="Open orientation" onClick={() => setOrientation(instr)} />
                                       )}
                                       </div>
                                       </ItemInfo>
@@ -1162,7 +1158,7 @@ export default function Onboarding({ userRole, userId }) {
       setActionError("That step fills itself in from the rest of Newtworks. It cannot be ticked by hand.");
       return;
     }
-    if (!step.completed_at && subItemsRequired(step)) {
+    if (!step.completed_at) {
       const sp = subProgress(step.substeps, step.substeps_done);
       if (sp.total && !sp.complete) {
         setActionError(`Finish all ${sp.total} sub-items first.`);
@@ -1179,19 +1175,7 @@ export default function Onboarding({ userRole, userId }) {
     if (formIdOf(label)) return; // follows the form, not a click
     setActionError("");
     const cur = Array.isArray(step.substeps_done) ? step.substeps_done : [];
-    const next = cur.includes(label) ? cur.filter(l => l !== label) : [...cur, label];
-    const allDone = subProgress(step.substeps, next).complete;
-    const patch = { substeps_done: next };
-    if (allDone && !step.completed_at) {
-      patch.completed_at = new Date().toISOString();
-      patch.completed_by = userId;
-    } else if (!allDone && step.completed_at) {
-      patch.completed_at = null;
-      patch.completed_by = null;
-    }
-    const { error: err } = await supabase.from("team_onboarding_steps")
-      .update(patch)
-      .eq("id", step.id);
+    const { error: err } = await setSubstepDone(step, label, !cur.includes(label), userId);
     if (err) { setActionError(err.message); return; }
     await reload();
   };
@@ -1343,6 +1327,7 @@ export default function Onboarding({ userRole, userId }) {
             isOwner={isOwner}
             userId={userId}
             onReload={reload}
+            instructions={instructions}
           />
           </FormPopupProvider>
         ) : selectedPlan ? (

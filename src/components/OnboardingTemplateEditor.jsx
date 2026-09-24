@@ -23,7 +23,7 @@ import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, CATEGORY_KEYS, STAGE_LABELS,
   subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText, GroupHead, ItemInfo,
-  splitIndent, columnStyle, bannerStyle, weeksLabel, ORIENTATION_WIDGET,
+  splitIndent, columnStyle, bannerStyle, weeksLabel, ORIENTATION_KIND,
 } from "../lib/onboardingUi.jsx";
 import InfoDot from "./InfoDot.jsx";
 import OrientationPopup from "./OrientationPopup.jsx";
@@ -688,12 +688,12 @@ function StepEditor({ row, isNew, rows, phaseOptions, people, onClose, onSaved, 
 }
 
 // ─── main tab ───────────────────────────────────────
-export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = [], phases = [], canEdit = false, onPhasesChanged, isOwner = false, userId = null, onReload = null }) {
+export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = [], phases = [], canEdit = false, onPhasesChanged, isOwner = false, userId = null, onReload = null, instructions = {} }) {
   const vp = useViewport();
   const [state, setState] = useState({ loading: true, error: null, rows: [] });
   const [phOpen, setPhOpen] = useState({});
   const [editingPhase, setEditingPhase] = useState(null);
-  // The Orientation card whose pop-up is open (owner only).
+  // The orientation pop-up that is open (owner only): its instructions row.
   const [orientationRow, setOrientationRow] = useState(null);
 
   // First week number of each major card (same database rule plans use).
@@ -849,9 +849,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
 
   const renderRow = (r, sibs) => {
     const cat = CATEGORY_COLORS[r.category] || { fg: T.slate700, bg: T.slate100, label: r.category || "Step" };
-    // Orientation's talking points show in its pop-up, not on the card.
-    const isOrientation = r.widget === ORIENTATION_WIDGET;
-    const groups = isOrientation ? [] : subGroups(r.substeps, { keepEmpty: true });
+    const groups = subGroups(r.substeps, { keepEmpty: true });
     const after = (r.blocked_by || []).map(k => titleByKey.get(k) || k);
     const idx = sibs.findIndex(s => s.id === r.id);
     const arrow = {
@@ -885,11 +883,6 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
             )}
             {!r.is_active && (
               <span style={{ marginLeft: 8, fontSize: 10, color: T.red, fontWeight: 700 }}>retired — delete me</span>
-            )}
-            {isOrientation && isOwner && (
-              <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>
-                <InfoDot title="Open orientation" onClick={() => setOrientationRow(r)} />
-              </span>
             )}
           </div>
           <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end", alignItems: "center" }}>
@@ -941,10 +934,17 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
               ))}
               {g.items.map((label2, ix) => {
                 const { level, text: shown2 } = splitIndent(label2);
+                // The Orientation line: its (i) opens the orientation pop-up (owner only).
+                const orient = instructions[shown2]?.kind === ORIENTATION_KIND ? instructions[shown2] : null;
                 return (
                   <li key={ix} style={{ fontSize: 12, color: T.slate700, lineHeight: 1.4, marginLeft: level * 16 }}>
                     <ItemInfo lines={g.itemInfo[label2] || []} pathColor={T.teal} linkColor={T.blue}>
                       <LabelText text={shown2} pathColor={T.teal} linkColor={T.blue} />
+                      {orient && isOwner && (
+                        <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>
+                          <InfoDot title="Open orientation" onClick={() => setOrientationRow(orient)} />
+                        </span>
+                      )}
                     </ItemInfo>
                   </li>
                 );
@@ -1107,8 +1107,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
 
       {orientationRow && (
         <OrientationPopup
-          title={orientationRow.title}
-          substeps={orientationRow.substeps}
+          instruction={orientationRow}
           userId={userId}
           onClose={() => { setOrientationRow(null); if (onReload) onReload(); }}
         />
