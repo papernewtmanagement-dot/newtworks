@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { AGENCY_ID } from "../lib/supabase.js";
+import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useSupabaseTable } from "../lib/hooks.js";
 import { describeSchedule } from "../lib/cron.js";
 import EmptyState from "../components/EmptyState.jsx";

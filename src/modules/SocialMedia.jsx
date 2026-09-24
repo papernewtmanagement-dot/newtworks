@@ -131,7 +131,7 @@ const StatBar = ({ value, max, color }) => (
 );
 
 // ─── Section: Overview ────────────────────────────────────────
-const SocialOverview = ({ posts, analytics, accounts, loaded }) => {
+const SocialOverview = ({ posts, analytics, accounts, loaded, onSchedule, onApprove, onEdit }) => {
   // Dynamic today filter — formats current date as "Mon DD" to match post date format
   const todayLabel = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const todayPosts = (posts || []).filter(p => p.date === todayLabel);
@@ -201,7 +201,7 @@ const SocialOverview = ({ posts, analytics, accounts, loaded }) => {
         {/* Today's Posts */}
         
       <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
-        <button onClick={()=>setShowScheduler(s=>!s)} style={{padding:"8px 16px",fontSize:12,fontWeight:600,background:"#1E3A5F",color:"#fff",border:"none",borderRadius:8,cursor:"pointer"}}>➕ Schedule New Post</button>
+        <button onClick={onSchedule} style={{padding:"8px 16px",fontSize:12,fontWeight:600,background:"#1E3A5F",color:"#fff",border:"none",borderRadius:8,cursor:"pointer"}}>➕ Schedule New Post</button>
       </div>
 <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
@@ -220,11 +220,11 @@ const SocialOverview = ({ posts, analytics, accounts, loaded }) => {
               <div style={{ fontSize:11, color:T.slate700, lineHeight:1.5, marginBottom:6 }}>{post.caption}</div>
               <div style={{ display:"flex", gap:6 }}>
                 {post.status === "draft" && (
-                  <button onClick={()=>approvePost(post.id)} style={{padding:"3px 10px",fontSize:10,fontWeight:600,background:"#DCFCE7",color:"#16A34A",border:"none",borderRadius:5,cursor:"pointer"}}>
+                  <button onClick={()=>onApprove(post.id)} style={{padding:"3px 10px",fontSize:10,fontWeight:600,background:"#DCFCE7",color:"#16A34A",border:"none",borderRadius:5,cursor:"pointer"}}>
                     ✅ Approve
                   </button>
                 )}
-                <button onClick={()=>setEditingPost(post)} style={{padding:"3px 10px",fontSize:10,fontWeight:600,background:"#DBEAFE",color:"#2563EB",border:"none",borderRadius:5,cursor:"pointer"}}>
+                <button onClick={()=>onEdit(post)} style={{padding:"3px 10px",fontSize:10,fontWeight:600,background:"#DBEAFE",color:"#2563EB",border:"none",borderRadius:5,cursor:"pointer"}}>
                   ✏️ Edit
                 </button>
               </div>
@@ -857,7 +857,7 @@ export default function SocialMedia() {
       </div>
 
       {/* Section Content */}
-      {section === "overview"  && <SocialOverview  posts={posts} analytics={analytics} accounts={liveAccounts} loaded={loaded} />}
+      {section === "overview"  && <SocialOverview  posts={posts} analytics={analytics} accounts={liveAccounts} loaded={loaded} onSchedule={()=>setShowScheduler(s=>!s)} onApprove={approvePost} onEdit={setEditingPost} />}
       {section === "calendar"  && <ContentCalendar  posts={posts} loaded={loaded} />}
       {section === "analytics" && <Analytics        analytics={analytics} loaded={loaded} />}
       {section === "platforms" && <PlatformGuide />}
