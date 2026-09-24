@@ -4,7 +4,7 @@ import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink } from "../lib/routing.jsx";
 import InfoDot from "../components/InfoDot.jsx";
-import { DayDoneStyles, DoneDancerStyles, Confetti, Dancer, DoneDancer, CritterIcon, GUESTS } from "../components/Critters.jsx";
+import { DayDoneStyles, DoneDancerStyles, Confetti, Dancer, DoneDancer, CritterIcon, useDancers } from "../components/Critters.jsx";
 
 // =========================================================================
 // Family.jsx — kids' chores, chore money, and the weekly close-out.
@@ -866,9 +866,13 @@ function Celebration({ kid, title, onClose }) {
   const _vp = useViewport();
   const size = _vp.isPhone ? 76 : 120;
   // Now and then a guest drops into the dance: every guest dancer gets its
-  // own roll, about one day in three.
-  const [guests] = useState(() => GUESTS.map(g => (Math.random() < 0.34 ? g.key : null)));
-  const troupe = [kid.animal, kid.favorite_animal, "beagle", "pug", ...guests].filter(Boolean);
+  // own roll, about one day in three. The guests come from the dancers table,
+  // so the roll waits until the table has been read.
+  const { guests: guestList, ready: dancersReady } = useDancers();
+  const rollGuests = () => guestList.map(g => (Math.random() < 0.34 ? g.key : null));
+  const [guests, setGuests] = useState(() => (dancersReady ? rollGuests() : null));
+  useEffect(() => { if (dancersReady && guests === null) setGuests(rollGuests()); }, [dancersReady]); // eslint-disable-line react-hooks/exhaustive-deps
+  const troupe = [kid.animal, kid.favorite_animal, "beagle", "pug", ...(guests || [])].filter(Boolean);
   useEffect(() => { const t = setTimeout(onClose, 12000); return () => clearTimeout(t); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.92)", zIndex: 60, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 20, boxSizing: "border-box" }}>

@@ -3,12 +3,12 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink } from "../lib/routing.jsx";
-import { DayDoneStyles, Dancer, CritterIcon, ALL_DANCERS } from "../components/Critters.jsx";
+import { DayDoneStyles, Dancer, CritterIcon, useDancers } from "../components/Critters.jsx";
 
 // =========================================================================
 // Inventory.jsx — the master shopping list for stocking the house.
 // Anyone who can see Family taps "Running low" on an item, and a random
-// dancer from Critters.jsx joins it in line until it is ordered.
+// dancing character from the dancers table joins it in line until it is ordered.
 // Parents get the Admin tab: what to order this week (tapped items plus the
 // ones expected to run out before next week's order) and every item's preset.
 // Every number on this screen comes from the database, one function per job:
@@ -83,6 +83,7 @@ export default function Inventory({ userRole }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);
   const [editing, setEditing] = useState(null);
+  const { all: allDancers } = useDancers();
 
   const visibleTabs = isParent ? TABS : ["checklist"];
   const activeTab = visibleTabs.includes(tab) ? tab : "checklist";
@@ -95,7 +96,7 @@ export default function Inventory({ userRole }) {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  // The dancer is picked here so the list of dancers lives in one place (Critters.jsx).
+  // The dancer is picked here, from the dancers table (read through useDancers).
   // It prefers one that isn't already dancing on another item.
   const toggleLow = async (r) => {
     if (busy) return;
@@ -106,9 +107,9 @@ export default function Inventory({ userRole }) {
       res = await supabase.rpc("family_inventory_unmark_low", { p_item_id: r.item_id });
     } else {
       const inUse = new Set(rows.filter(x => x.is_low && x.dancer).map(x => x.dancer));
-      const free = ALL_DANCERS.filter(d => !inUse.has(d.key));
-      const pool = free.length ? free : ALL_DANCERS;
-      const dancer = pool[Math.floor(Math.random() * pool.length)].key;
+      const free = allDancers.filter(d => !inUse.has(d.key));
+      const pool = free.length ? free : allDancers;
+      const dancer = pool.length ? pool[Math.floor(Math.random() * pool.length)].key : null;
       setRows(xs => xs.map(x => (x.item_id === r.item_id ? { ...x, is_low: true, dancer } : x)));
       res = await supabase.rpc("family_inventory_mark_low", { p_item_id: r.item_id, p_dancer: dancer });
     }

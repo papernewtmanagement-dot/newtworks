@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { DayDoneStyles, Confetti, Dancer, DANCERS, ALL_DANCERS } from "../components/Critters.jsx";
+import { DayDoneStyles, Confetti, Dancer, useDancers } from "../components/Critters.jsx";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink, hrefWithParam } from "../lib/routing.jsx";
@@ -3365,7 +3365,11 @@ function DayDone({ stats, reduce, onBack, weekDone }) {
   // initialiser so it holds still for as long as the panel is showing and
   // re-rolls the next time it opens (Peter 2026-09-17).
   // Guest dancers (ninja, boss cat, boxing dolphin) are in the draw too (Peter 2026-09-22).
-  const [which] = useState(() => ALL_DANCERS[Math.floor(Math.random() * ALL_DANCERS.length)].key);
+  // The characters come from the dancers table, so the pick waits until it has been read.
+  const { all: allDancers, animals, ready: dancersReady } = useDancers();
+  const pickDancer = () => (allDancers.length ? allDancers[Math.floor(Math.random() * allDancers.length)].key : null);
+  const [which, setWhich] = useState(() => (dancersReady ? pickDancer() : null));
+  useEffect(() => { if (dancersReady && which === null) setWhich(pickDancer()); }, [dancersReady]); // eslint-disable-line react-hooks/exhaustive-deps
   const _vp = useViewport();
   const [line, setLine] = useState(0);
   const [confettiOn, setConfettiOn] = useState(!reduce);
@@ -3428,12 +3432,14 @@ function DayDone({ stats, reduce, onBack, weekDone }) {
       }}>
         {weekDone ? (
           <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", alignItems: "flex-end" }}>
-            {DANCERS.map((d, i) => (
+            {animals.map((d, i) => (
               <Dancer key={d.key} which={d.key} size={_vp.isPhone ? 78 : 104} delay={i * 110} />
             ))}
           </div>
-        ) : (
+        ) : which ? (
           <Dancer which={which} size={_vp.isPhone ? 144 : 176} />
+        ) : (
+          <svg width={_vp.isPhone ? 144 : 176} height={_vp.isPhone ? 144 : 176} aria-hidden="true" />
         )}
 
         <div key={line} style={{
