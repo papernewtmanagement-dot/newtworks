@@ -12,7 +12,10 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 // Step 2: Characters tab — roll a character, the interactive sheet, rolls, items and coins.
 // Step 3: Creatures tab — creature cards (Bramblemaw first). Parents see the whole card and
 // the d100 numbers the table uses; players see a creature's names, haunts and lore once a
-// parent taps Show to players. Play, Maps and Rules tabs land in later steps.
+// parent taps Show to players.
+// Step 4: Rules tab — the manual text verbatim (rpg_rules), every formula spelled out the
+// same way the sheet does it, a needed-roll calculator, and the level-cost table. Play and
+// Maps tabs land in later steps.
 // Every number comes from the database, one saved function per job:
 //   rpg_character_list()                     the character cards
 //   rpg_sheet(id, difficulty)                every stat, what a roll needs at that difficulty
@@ -25,13 +28,15 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //   rpg_recent_rolls(id)                     the roll log
 //   rpg_creature_list()                      the creature cards (players: shown ones only)
 //   rpg_creature_card(id)                    one card; players get names, haunts and lore only
+//   rpg_rules_page()                         the Rules tab in one read: rules, formulas, level costs
+//   rpg_needed(skill, difficulty)            what a roll needs; the calculator asks the same function a roll does
 // Items and coins are plain rows the household edits directly (rpg_items, rpg_characters).
 // Show to players is a plain update on rpg_creatures (parents only, by row rules).
 // =========================================================================
 
 const PARENT_ROLES = ["owner", "admin"];
-const TABS = ["characters", "creatures"];
-const TAB_LABELS = { characters: "Characters", creatures: "Creatures" };
+const TABS = ["characters", "creatures", "rules"];
+const TAB_LABELS = { characters: "Characters", creatures: "Creatures", rules: "Rules" };
 const GROUPS = [
   ["strength", "Strengths"],
   ["physical", "Physical Attributes"],
@@ -112,6 +117,7 @@ export default function Roleplaying({ userRole }) {
           ? <CreatureCard id={creatureId} onBack={() => setCreatureId(null)} backHref={creatureHref(null)} onError={setErr} />
           : <CreatureList isParent={isParent} onOpen={setCreatureId} hrefFor={creatureHref} onError={setErr} />
       )}
+      {activeTab === "rules" && <RulesTab onError={setErr} />}
     </div>
   );
 }
@@ -788,5 +794,220 @@ function CreatureGmCard({ c, accent }) {
         </div>
       )}
     </>
+  );
+}
+
+// ── Rules ────────────────────────────────────────────────────────────────────
+// Everything here comes from rpg_rules_page(): the manual text verbatim (rpg_rules), every
+// formula spelled out by rpg_formula_text() exactly as the sheet shows it, and the level-cost
+// table from rpg_level_cost(). The calculator asks rpg_needed(), the function a real roll uses.
+const SOURCE_LABELS = { manual: "From the manual", sheet: "From the character generator", engine: "How the game does it", peter: "Game master's ruling" };
+const howFigured = (s) => (s.kind === "rolled" ? "Rolled when the character is made"
+  : s.kind === "fixed" ? `Starts at ${num(s.default_value)}${s.trainable ? ", grows by training" : ""}`
+  : (s.formula_text || "—"));
+const th = { textAlign: "left", fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em", padding: "8px 12px", borderBottom: `1px solid ${T.slate100}`, whiteSpace: "nowrap" };
+const td = { padding: "7px 12px", borderBottom: `1px solid ${T.slate100}`, verticalAlign: "top" };
+
+// Rule bodies are markdown. A block with single line breaks (the roll check formulas) would be
+// run together by the shared renderer, so each block's lines are rendered one at a time and
+// joined with a line break. List blocks go through whole so they stay lists.
+const inlineOf = (line) => { const h = mdToHtml(line).trim(); const m = /^<p>([\s\S]*)<\/p>$/.exec(h); return m ? m[1] : h; };
+const ruleHtml = (text) => String(text || "").split(/\n[ \t]*\n/).map(block => {
+  const lines = block.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (!lines.length) return "";
+  if (/^([-*+]|\d+[.)])\s/.test(lines[0])) return mdToHtml(lines.join("\n"));
+  return `<p>${lines.map(inlineOf).join("<br/>")}</p>`;
+}).join("").replace(/<p>/g, '<p style="margin:0 0 8px 0">');
+function RuleText({ text }) {
+  if (!text) return null;
+  return <div className="newtworks-handbook-body" style={{ fontSize: 13, lineHeight: 1.6, color: T.slate700, marginTop: 6 }} dangerouslySetInnerHTML={{ __html: ruleHtml(text) }} />;
+}
+
+function RulesTab({ onError }) {
+  const [page, setPage] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data, error } = await supabase.rpc("rpg_rules_page");
+      if (!alive) return;
+      if (error) { onError(error.message); return; }
+      setPage(data || null);
+    })();
+    return () => { alive = false; };
+  }, [onError]);
+
+  if (!page) return <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div>;
+
+  const rules = Array.isArray(page.rules) ? page.rules : [];
+  const stats = Array.isArray(page.stats) ? page.stats : [];
+  const levels = Array.isArray(page.level_costs) ? page.level_costs : [];
+  const settings = Array.isArray(page.settings) ? page.settings : [];
+  const hasRule = (k) => rules.some(r => r.key === k);
+  const calculator = <RollCalculator defaultDifficulty={page.default_difficulty} onError={onError} />;
+  const levelTable = <LevelCostTable rows={levels} multiplier={page.level_cost_multiplier} />;
+
+  return (
+    <div>
+      <ManualBodyStyles />
+      {rules.length === 0 && <div style={{ ...card, color: T.slate500, fontSize: 13, marginBottom: 10 }}>No rules written yet.</div>}
+      {rules.map(r => (
+        <div key={r.key} style={{ ...card, marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>{r.title}</div>
+            <span style={tag("off")}>{SOURCE_LABELS[r.source] || r.source}</span>
+          </div>
+          <RuleText text={r.body} />
+          {r.key === "roll_check" && calculator}
+          {r.key === "skill_gain" && levelTable}
+        </div>
+      ))}
+      {!hasRule("roll_check") && <div style={{ ...card, marginBottom: 10 }}>{calculator}</div>}
+      {!hasRule("skill_gain") && <div style={{ ...card, marginBottom: 10 }}>{levelTable}</div>}
+
+      <FormulaTable stats={stats} />
+
+      {page.is_gm && settings.length > 0 && (
+        <div style={{ ...card, marginTop: 10 }}>
+          <div style={label}>The numbers the game runs on</div>
+          <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>Game master only.</div>
+          {settings.map(s => (
+            <div key={s.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 0", borderBottom: `1px solid ${T.slate100}`, fontSize: 13 }}>
+              <div style={{ color: T.slate700, minWidth: 0 }}>{s.label}</div>
+              <div style={{ fontWeight: 700, color: T.slate900, whiteSpace: "nowrap" }}>{Number.isFinite(Number(s.value)) ? Number(s.value).toLocaleString("en-US") : "—"}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Try a roll: pick a skill and a difficulty, see what a d100 needs. rpg_needed() answers, the
+// same function a real roll calls, so this can never disagree with the sheet.
+function RollCalculator({ defaultDifficulty, onError }) {
+  const [skill, setSkill] = useState("5");
+  const [difficulty, setDifficulty] = useState(String(Number.isFinite(Number(defaultDifficulty)) ? Number(defaultDifficulty) : 5));
+  const [calc, setCalc] = useState(null);
+  const seq = useRef(0);
+
+  useEffect(() => {
+    const s = Number(skill), d = Number(difficulty);
+    if (skill === "" || difficulty === "" || !Number.isFinite(s) || !Number.isFinite(d)) { setCalc(null); return undefined; }
+    const mine = ++seq.current;
+    const t = setTimeout(async () => {
+      const { data, error } = await supabase.rpc("rpg_needed", { p_skill: Math.max(0, s), p_difficulty: Math.max(0, d) });
+      if (mine !== seq.current) return;
+      if (error) { onError(error.message); return; }
+      setCalc(data || null);
+    }, 200);
+    return () => clearTimeout(t);
+  }, [skill, difficulty, onError]);
+
+  const needed = calc ? Math.ceil(Number(calc.needed) || 0) : null;
+  const crit = calc ? Math.ceil(Number(calc.critical) || 0) : null;
+  const chance = needed == null ? null : Math.max(0, Math.min(100, 101 - needed));
+
+  return (
+    <div style={{ marginTop: 10, background: T.blueLt, border: `1px solid ${T.blue}`, borderRadius: 10, padding: 12, boxSizing: "border-box" }}>
+      <div style={label}>Try a roll</div>
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 8 }}>
+        <NumberBox title="Skill" value={skill} onChange={setSkill} />
+        <NumberBox title="Difficulty" value={difficulty} onChange={setDifficulty} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, marginTop: 10 }}>
+        <TableNumber big={needed == null ? "—" : `${needed}+`} small="Succeeds" />
+        <TableNumber big={crit == null ? "—" : `${crit}+`} small="Critical" />
+        <TableNumber big={chance == null ? "—" : `${chance} in 100`} small="Chance to succeed" />
+      </div>
+      {needed != null && (
+        <div style={{ fontSize: 12, color: T.slate600, marginTop: 8 }}>
+          Roll a d100. {needed <= 1 ? "Any roll succeeds." : `${needed} or more succeeds.`} {crit} or more is a critical and prompts an extra roll.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NumberBox({ title, value, onChange }) {
+  const n = Math.max(0, Number(value) || 0);
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: T.slate500, fontWeight: 700 }}>{title}</div>
+      <div style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center" }}>
+        <button type="button" style={btn("soft", true)} onClick={() => onChange(String(Math.max(0, n - 1)))}>−</button>
+        <input style={{ ...input, width: 70, textAlign: "center", fontSize: 18, fontWeight: 700 }} inputMode="numeric" value={value} onChange={e => onChange(e.target.value)} />
+        <button type="button" style={btn("soft", true)} onClick={() => onChange(String(n + 1))}>+</button>
+      </div>
+    </div>
+  );
+}
+
+// Skill points to reach the next level, one cell per level, from rpg_level_cost().
+function LevelCostTable({ rows, multiplier }) {
+  if (!rows.length) return null;
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={label}>Skill points to reach the next level</div>
+      <div style={{ fontSize: 12, color: T.slate500, marginTop: 2, marginBottom: 8 }}>{num(multiplier)} × (old level + new level)</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(105px, 1fr))", gap: 6 }}>
+        {rows.map(r => (
+          <div key={r.level} style={{ background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "6px 8px", boxSizing: "border-box", textAlign: "center" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{r.level} → {r.next_level}</div>
+            <div style={{ fontSize: 11, color: T.slate500 }}>{Number(r.points).toLocaleString("en-US")} pts</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Every stat on the sheet and how it is figured, in the sheet's groups and order.
+function FormulaTable({ stats }) {
+  const [openGroups, setOpenGroups] = useState(() => Object.fromEntries(GROUPS.map(([g]) => [g, true])));
+  if (!stats.length) return null;
+  return (
+    <div>
+      <div style={{ ...label, margin: "14px 0 8px" }}>How every number on the sheet is figured</div>
+      {GROUPS.map(([g, title]) => {
+        const rowsOf = stats.filter(s => s.grp === g);
+        if (!rowsOf.length) return null;
+        const open = openGroups[g];
+        return (
+          <div key={g} style={{ ...card, marginBottom: 10, padding: 0 }}>
+            <button type="button" onClick={() => setOpenGroups(o => ({ ...o, [g]: !o[g] }))}
+              style={{ ...btn("soft"), border: "none", width: "100%", textAlign: "left", display: "flex", justifyContent: "space-between", padding: "12px 14px", background: "transparent" }}>
+              <span style={{ ...label, color: T.slate700 }}>{title}</span>
+              <span style={{ fontSize: 12, color: T.slate500 }}>{open ? "hide" : `${rowsOf.length} shown`}</span>
+            </button>
+            {open && (
+              <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", borderTop: `1px solid ${T.slate100}` }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      <th style={th}>Stat</th>
+                      <th style={th}>How it is figured</th>
+                      <th style={{ ...th, textAlign: "center" }}>Can train</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rowsOf.map(s => (
+                      <tr key={s.key}>
+                        <td style={{ ...td, whiteSpace: "nowrap" }}>
+                          <span style={{ fontWeight: 600, color: T.slate900 }}>{s.name}</span>
+                          {s.abbr && <span style={{ color: T.slate500, fontSize: 11 }}> {s.abbr}</span>}
+                        </td>
+                        <td style={{ ...td, color: T.slate700 }}>{howFigured(s)}</td>
+                        <td style={{ ...td, textAlign: "center", color: T.green, fontWeight: 700 }}>{s.trainable ? "✓" : ""}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
