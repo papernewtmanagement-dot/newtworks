@@ -1028,7 +1028,7 @@ function MuscleTurtleArt() {
       {/* A muscle turtle flexing both arms and stomping to the beat. Shell on
           his BACK, drawn first so its rim shows around him; his front is a pale
           plastron whose paired plates read as pecs and abs. Peter 2026-09-23:
-          no barbell, no singlet, smaller shell. */}
+          no barbell, no singlet, smaller shell, menacing face. */}
       <ellipse cx="100" cy="126" rx="48" ry="42" fill="#B8621F" />
       <ellipse cx="100" cy="124" rx="41" ry="35" fill="#E08A3C" />
       <path d="M64.5 141.5 L58.4 147 M59.2 127 L52.2 129.7 M61.5 112 L54.9 111.6 M135.5 141.5 L141.6 147 M140.8 127 L147.8 129.7 M138.5 112 L145.1 111.6" fill="none" stroke="#8A4516" strokeWidth="2.5" strokeLinecap="round" />
@@ -1072,15 +1072,20 @@ function MuscleTurtleArt() {
       <circle cx="130" cy="107" r="14" fill="#4FA396" />
       <path d="M89 98 Q100 102 111 98" fill="none" stroke="#3A8074" strokeWidth="2" strokeLinecap="round" />
       <ellipse cx="100" cy="70" rx="28" ry="25" fill="#4FA396" />
-      <path d="M80 56 Q87 51 95 55 M105 55 Q113 51 120 56" fill="none" stroke="#2F6B61" strokeWidth="3.5" strokeLinecap="round" />
-      <circle cx="89" cy="66" r="5.5" fill="#15100F" />
-      <circle cx="111" cy="66" r="5.5" fill="#15100F" />
-      <circle cx="90.8" cy="64.2" r="1.9" fill="#FFFFFF" />
-      <circle cx="112.8" cy="64.2" r="1.9" fill="#FFFFFF" />
+      {/* Menacing face: lids slant down toward the nose, heavy V brows, a
+          lopsided grin with teeth. */}
+      <circle cx="89" cy="67" r="5.5" fill="#15100F" />
+      <circle cx="111" cy="67" r="5.5" fill="#15100F" />
+      <path d="M81 57 L98 57 L98 66.5 L81 62 Z M119 57 L102 57 L102 66.5 L119 62 Z" fill="#4FA396" />
+      <circle cx="87" cy="69" r="1.5" fill="#FFFFFF" />
+      <circle cx="109" cy="69" r="1.5" fill="#FFFFFF" />
+      <path d="M79 57 L96 63 M121 57 L104 63" fill="none" stroke="#1F4F47" strokeWidth="4.5" strokeLinecap="round" />
       <circle cx="96" cy="75" r="1.3" fill="#2F6B61" />
       <circle cx="104" cy="75" r="1.3" fill="#2F6B61" />
-      <path d="M83 79 Q100 85 117 79 Q100 97 83 79 Z" fill="#15100F" />
-      <ellipse cx="100" cy="85.5" rx="6" ry="2.2" fill="#E0707A" />
+      <path d="M85 81 L117 77 Q105 92 91 88 Q86 86 85 81 Z" fill="#15100F" />
+      <path d="M86.5 81.3 L115.5 77.7 L114 80.8 Q101 83.4 88 84 Z" fill="#FBF6EE" />
+      <path d="M93 80.4 v3.2 M100 79.5 v3.4 M107 78.6 v3.2" fill="none" stroke="#C9C1B4" strokeWidth="1.2" />
+      <path d="M117 77 q4 -1 5 -4" fill="none" stroke="#2F6B61" strokeWidth="2" strokeLinecap="round" />
     </>
   );
 }
