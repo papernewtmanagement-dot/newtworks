@@ -18,7 +18,7 @@ import { DayDoneStyles, DoneDancerStyles, Confetti, Dancer, DoneDancer, CritterI
 //   family_math_todo()       bonuses whose tithe/investment math the kid still owes (extras wait for the close-out)
 //   family_math_done()       marks that math done so the close-out skips it
 //   family_balances()        spending / tithe / investments per kid
-//   family_timer_list/start/stop/cancel()  the timers row (shower fine, burpee run)
+//   family_timer_list/start/stop/cancel/continue()  the timers row (shower fine, burpee run)
 //   family_burpee_week()     burpee points, best time, and last week's champion title
 //   family_school_day/step() a day's lessons and checking them off one step at a time
 // This screen never works out a fine, a balance, a due date, a set-aside or a point.
@@ -385,7 +385,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
         </div>
       </div>
 
-      {day === today && <TimersRow key={kid.id} kid={kid} onStopped={onTimerStopped} />}
+      {day === today && <TimersRow key={kid.id} kid={kid} isParent={isParent} onStopped={onTimerStopped} />}
 
       <SchoolCard kid={kid} day={day} today={today} isParent={isParent} />
 
@@ -507,7 +507,8 @@ function FragmentRow({ children }) { return <>{children}</>; }
 // Parents (Peter 2026-09-23): a fixed pair on top, done on the left and not done
 // on the right. Each spot shows the chore's state when it is in that state (the
 // done mark, or a plain ✗), otherwise the button that puts it there.
-// Carry, Excuse and Undo sit underneath. Undo clears the entry, for a standard
+// Carry, Excuse and Undo sit underneath; Excuse leaves once the chore is done
+// (Peter 2026-09-24). Undo clears the entry, for a standard
 // chore only today, because a past chore left open is fined again by the
 // end-of-day sweep; on a past day the parent picks the right outcome instead.
 // An extra chore is never fined: its ✗ unchecks it, so the pay comes back off
@@ -534,7 +535,7 @@ function CellActions({ row, isParent, today, busy, setStatus }) {
     const under = [
       (s === "excused" || s === "carried") && <StatusMark key="mark" row={row} today={today} />,
       !extra && open && row.is_burpees && !row.locked_by && <button key="carry" disabled={busy} style={btn("soft", true)} onClick={() => act("carried")}>Carry</button>,
-      !extra && s !== "excused" && <button key="excuse" disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>,
+      !extra && s !== "excused" && !saidDone && <button key="excuse" disabled={busy} style={btn("soft", true)} onClick={() => act("excused")}>Excuse</button>,
       !extra && s && row.occurrence_date >= today && <button key="undo" disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Clear it">Undo</button>,
       s === "picked" && <button key="back" disabled={busy} style={btn("soft", true)} onClick={() => act(null)} title="Put it back">✕</button>,
     ].filter(Boolean);
@@ -587,7 +588,9 @@ function DoneMark({ seed, title, size, date, today }) {
 // stopping one is where the server works out a shower fine or a burpee run's
 // points and checks off its Burpees set (family_timer_stop). The screen only
 // shows what comes back. Anyone can cancel, so a timer started by accident can
-// be taken back. The burpee timer leaves once both sets are done.
+// be taken back. The burpee timer leaves once both sets are done. A parent can
+// Continue a run a kid stopped by accident while its time limit lasts
+// (family_timer_continue): the clock counts from the first start, as if it never stopped.
 const mmss = (secs) => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
 // The wall clock in Central as "HH:MM:SS", to compare with a timer's shows_from.
 const centralClock = () => {
@@ -613,7 +616,7 @@ const timerResult = (kind, r) => {
   return { text: `${mmss(secs)} · +${pts}`, tone: pts > 0 ? "green" : "red" };
 };
 const TIMER_H = 64;
-function TimersRow({ kid, onStopped }) {
+function TimersRow({ kid, isParent, onStopped }) {
   const _vp = useViewport();
   const [timers, setTimers] = useState([]);
   const [now, setNow] = useState(Date.now());
@@ -648,10 +651,17 @@ function TimersRow({ kid, onStopped }) {
       setTimeout(() => setResults(x => { const y = { ...x }; delete y[t.kind]; return y; }), 6000);
       if (onStopped) onStopped();
     }
+    if (fn === "family_timer_continue") {
+      setResults(x => { const y = { ...x }; delete y[t.kind]; return y; });
+      if (onStopped) onStopped();
+    }
     load();
   };
 
-  const listed = timers.filter(t => t.running_id || !t.shows_from || clock >= String(t.shows_from).slice(0, 8));
+  // A parent can pick back up a run a kid stopped by accident, until its time limit runs out.
+  const canContinue = (t) => isParent && !!t.continue_id && Date.parse(t.continue_until) > now;
+  const listed = timers.filter(t => (t.running_id || !t.shows_from || clock >= String(t.shows_from).slice(0, 8))
+    && (t.running_id || t.can_start !== false || canContinue(t)));
   // A timer that just finished its last set keeps its spot until its result has shown.
   const shown = [...listed, ...Object.values(results).filter(r => !listed.some(t => t.kind === r.timer.kind)).map(r => ({ ...r.timer, running_id: null }))];
   if (!shown.length) return err ? <div style={{ fontSize: 12, color: T.red }}>{err}</div> : null;
@@ -668,14 +678,22 @@ function TimersRow({ kid, onStopped }) {
           const dis = busy === t.kind;
           if (!t.running_id) {
             const tone = res ? (res.tone === "red" ? T.red : T.green) : null;
-            return (
+            const start = (
               <button key={t.kind} disabled={dis || !!res} onClick={() => act(t, "family_timer_start")}
                 title={`Start the ${t.minutes}-minute ${t.kind} timer`}
-                style={{ ...face, border: `1px solid ${tone || T.slate200}`, background: res ? (res.tone === "red" ? T.redLt : T.greenLt) : T.white, color: T.slate900 }}>
+                style={{ ...face, ...(canContinue(t) ? { flex: "1 1 0" } : {}), border: `1px solid ${tone || T.slate200}`, background: res ? (res.tone === "red" ? T.redLt : T.greenLt) : T.white, color: T.slate900 }}>
                 {res
                   ? <span style={{ fontSize: 13, fontWeight: 700, color: tone, textAlign: "center" }}>{res.text}</span>
                   : <><span aria-hidden="true" style={{ fontSize: 26, lineHeight: 1 }}>{t.icon}</span><span style={{ fontSize: 16, fontWeight: 700 }}>{t.minutes} min</span></>}
               </button>
+            );
+            if (!canContinue(t)) return start;
+            return (
+              <div key={t.kind} style={{ display: "flex", gap: 6, minWidth: 0 }}>
+                {(res || t.can_start !== false) && start}
+                <button disabled={dis} onClick={() => act(t, "family_timer_continue")} title="Pick the stopped timer back up" aria-label={`Continue the ${t.kind} timer`}
+                  style={{ ...face, flex: "1 1 0", border: `1px solid ${T.slate200}`, background: T.white, color: T.slate700, fontSize: 14, fontWeight: 600 }}>Continue</button>
+              </div>
             );
           }
           const elapsed = Math.max(0, Math.floor((now - Date.parse(t.started_at)) / 1000));
@@ -1302,6 +1320,13 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
   const [addingExtra, setAddingExtra] = useState(null);
   const current = (k) => chores.filter(c => c.kid_id === k.id && c.frequency !== "extra" && (!c.active_to || c.active_to >= today));
   const extras = chores.filter(c => c.frequency === "extra" && (!c.active_to || c.active_to >= today));
+  // Every other week (Peter 2026-09-24), read against this chore week: "starting this week"
+  // on a week it is due, "starting next week" on a week it is off.
+  const everyNow = (c) => {
+    if (!(Number(c.every_weeks) > 1) || !c.start_week) return "1";
+    const weeks = Math.round((parseDate(weekStartOf(today)) - parseDate(c.start_week)) / (7 * 86400000));
+    return weeks % Number(c.every_weeks) === 0 ? "this" : "next";
+  };
 
   const saveChore = async (c) => {
     const d = draft[c.id]; if (!d) return;
@@ -1311,6 +1336,10 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
     if (d.fine !== undefined) patch.fine = d.fine === "" ? null : Number(d.fine);
     if (d.due_dow !== undefined) patch.due_dow = d.due_dow === "" ? null : Number(d.due_dow);
     if (d.repeat_days !== undefined) patch.repeat_days = repeatValue(d.repeat_days);
+    if (d.every !== undefined) {
+      patch.every_weeks = d.every === "1" ? 1 : 2;
+      patch.start_week = d.every === "1" ? null : addDays(weekStartOf(today), d.every === "next" ? 7 : 0);
+    }
     const { error } = await supabase.from("family_chores").update(patch).eq("id", c.id);
     if (error) { setErr(error.message); return; }
     setDraft(x => { const n = { ...x }; delete n[c.id]; return n; });
@@ -1461,6 +1490,16 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
                           </select>
                         )}
                         {c.group_label && <span style={{ marginLeft: 6, fontSize: 11 }}>{c.group_label}</span>}
+                        {c.frequency === "weekly" && (
+                          <div>
+                            <select value={d.every ?? everyNow(c)} onChange={e => setDraft(x => ({ ...x, [c.id]: { ...(x[c.id] || {}), every: e.target.value } }))}
+                              aria-label="How often" style={{ ...input, padding: "3px 4px", marginTop: 4, fontSize: 12, color: T.slate500, border: "none", background: "transparent" }}>
+                              <option value="1">Every week</option>
+                              <option value="this">Every other week, starting this week</option>
+                              <option value="next">Every other week, starting next week</option>
+                            </select>
+                          </div>
+                        )}
                       </td>
                       <td style={td}>{cellIn(c, "pay", c.pay)}</td>
                       <td style={td}>{cellIn(c, "fine", c.fine, 70, "auto")}</td>
