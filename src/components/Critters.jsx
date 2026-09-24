@@ -1028,7 +1028,7 @@ function MuscleTurtleArt() {
       {/* A muscle turtle flexing both arms and stomping to the beat. Shell on
           his BACK, drawn first so its rim shows around him; his front is a pale
           plastron whose paired plates read as pecs and abs. Peter 2026-09-23:
-          no barbell, no singlet, smaller shell, growling face, one-sided grin. */}
+          no barbell, no singlet, smaller shell, one-sided sneer. */}
       <ellipse cx="100" cy="126" rx="48" ry="42" fill="#B8621F" />
       <ellipse cx="100" cy="124" rx="41" ry="35" fill="#E08A3C" />
       <path d="M64.5 141.5 L58.4 147 M59.2 127 L52.2 129.7 M61.5 112 L54.9 111.6 M135.5 141.5 L141.6 147 M140.8 127 L147.8 129.7 M138.5 112 L145.1 111.6" fill="none" stroke="#8A4516" strokeWidth="2.5" strokeLinecap="round" />
@@ -1072,24 +1072,23 @@ function MuscleTurtleArt() {
       <circle cx="130" cy="107" r="14" fill="#4FA396" />
       <path d="M89 98 Q100 102 111 98" fill="none" stroke="#3A8074" strokeWidth="2" strokeLinecap="round" />
       <ellipse cx="100" cy="70" rx="28" ry="25" fill="#4FA396" />
-      {/* Growling face (Peter: "grrrr"): squinting eyes under heavy V brows,
-          snarl lines by the nose, clenched teeth. */}
+      {/* Sneer, one-sided (Peter): left brow up and eye open, right brow down
+          over a squint, lip curled up on the right showing a wedge of teeth. */}
       <circle cx="89" cy="67" r="5.5" fill="#15100F" />
       <circle cx="111" cy="67" r="5.5" fill="#15100F" />
-      <path d="M81 56 L98 56 L98 67.5 L81 63.5 Z M119 56 L102 56 L102 67.5 L119 63.5 Z" fill="#4FA396" />
-      <path d="M82 71.5 Q89 69.5 97 71.5 L97 75 L82 75 Z M118 71.5 Q111 69.5 103 71.5 L103 75 L118 75 Z" fill="#4FA396" />
-      <circle cx="86.5" cy="68.6" r="1.3" fill="#FFFFFF" />
+      <path d="M119 56 L102 56 L102 67.5 L119 63.5 Z" fill="#4FA396" />
+      <path d="M118 71.5 Q111 69.5 103 71.5 L103 75 L118 75 Z" fill="#4FA396" />
+      <circle cx="90.8" cy="65.2" r="1.8" fill="#FFFFFF" />
       <circle cx="108.5" cy="68.6" r="1.3" fill="#FFFFFF" />
-      <path d="M78 55 L97 64 M122 55 L103 64" fill="none" stroke="#1F4F47" strokeWidth="5" strokeLinecap="round" />
+      <path d="M80 56 Q87 50.5 95 54.5" fill="none" stroke="#1F4F47" strokeWidth="4.5" strokeLinecap="round" />
+      <path d="M121 57 L104 63" fill="none" stroke="#1F4F47" strokeWidth="5" strokeLinecap="round" />
       <ellipse cx="96" cy="75.5" rx="1.7" ry="1.3" fill="#2F6B61" />
       <ellipse cx="104" cy="75.5" rx="1.7" ry="1.3" fill="#2F6B61" />
-      <path d="M88 74 q-3 2 -3.5 5.5 M112 74 q3 2 3.5 5.5" fill="none" stroke="#2F6B61" strokeWidth="2" strokeLinecap="round" />
-      {/* One-sided grin, Peter's call: teeth show only on his left, the right
-          corner stays a flat snarl line. */}
-      <path d="M82 79 Q94 76 104 78.5 Q101 83 91 84 Q84 83.5 82 79 Z" fill="#15100F" />
-      <path d="M83.8 80 Q93.5 77.6 101.8 79.6 Q99.4 82.6 91 83.3 Q85.3 82.9 83.8 80 Z" fill="#FBF6EE" />
-      <path d="M89 78.4 V82.6 M95.5 77.8 V83.2" fill="none" stroke="#C9C1B4" strokeWidth="1.1" />
-      <path d="M104 79 Q112 80.5 117 84" fill="none" stroke="#15100F" strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M112 74 q3 2 3.5 5.5" fill="none" stroke="#2F6B61" strokeWidth="2" strokeLinecap="round" />
+      <path d="M104 80.6 L117.5 76 L116.5 82.6 Q110 85.5 104.5 83.2 Z" fill="#15100F" />
+      <path d="M105.5 81 L116 77.4 L115.3 81.4 Q110.5 83.4 106 82.4 Z" fill="#FBF6EE" />
+      <path d="M110.5 79.3 V82.8" fill="none" stroke="#C9C1B4" strokeWidth="1.1" />
+      <path d="M84 82.5 Q94 85.5 104 82.2 L117.5 76" fill="none" stroke="#15100F" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
     </>
   );
 }
