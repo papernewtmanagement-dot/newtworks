@@ -2,13 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
-import { useTabParam, TabLink } from "../lib/routing.jsx";
+import { useTabParam, TabLink, handleModuleLinkClick } from "../lib/routing.jsx";
+import { mdToHtml } from "../lib/markdown.js";
+import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 
 // =========================================================================
 // Roleplaying.jsx — the family game module (below Inventory; hub login + admins).
 // Build plan: persistent_memory spec "Roleplaying module — build plan" (project roleplaying).
-// Step 2 (this file): Characters tab — roll a character, the interactive sheet, rolls,
-// items and coins. Play, Creatures, Maps and Rules tabs land in later steps.
+// Step 2: Characters tab — roll a character, the interactive sheet, rolls, items and coins.
+// Step 3: Creatures tab — creature cards (Bramblemaw first). Parents see the whole card and
+// the d100 numbers the table uses; players see a creature's names, haunts and lore once a
+// parent taps Show to players. Play, Maps and Rules tabs land in later steps.
 // Every number comes from the database, one saved function per job:
 //   rpg_character_list()                     the character cards
 //   rpg_sheet(id, difficulty)                every stat, what a roll needs at that difficulty
@@ -19,12 +23,15 @@ import { useTabParam, TabLink } from "../lib/routing.jsx";
 //   rpg_roll_extra(roll_id)                  the additional roll a critical prompts (can chain)
 //   rpg_adjust_vitality(id, delta)           damage taken (+) or healed (−)
 //   rpg_recent_rolls(id)                     the roll log
+//   rpg_creature_list()                      the creature cards (players: shown ones only)
+//   rpg_creature_card(id)                    one card; players get names, haunts and lore only
 // Items and coins are plain rows the household edits directly (rpg_items, rpg_characters).
+// Show to players is a plain update on rpg_creatures (parents only, by row rules).
 // =========================================================================
 
 const PARENT_ROLES = ["owner", "admin"];
-const TABS = ["characters"];
-const TAB_LABELS = { characters: "Characters" };
+const TABS = ["characters", "creatures"];
+const TAB_LABELS = { characters: "Characters", creatures: "Creatures" };
 const GROUPS = [
   ["strength", "Strengths"],
   ["physical", "Physical Attributes"],
@@ -57,6 +64,7 @@ export default function Roleplaying({ userRole }) {
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
   const [tab, setTab, tabHref] = useTabParam("tab", "characters", TABS);
   const [characterId, setCharacterId, characterHref] = useTabParam("character", null);
+  const [creatureId, setCreatureId, creatureHref] = useTabParam("creature", null);
   const [kids, setKids] = useState([]);
   const [defs, setDefs] = useState([]);
   const [err, setErr] = useState(null);
@@ -98,6 +106,11 @@ export default function Roleplaying({ userRole }) {
           ? <CharacterSheet id={characterId} isParent={isParent} kids={kids} defs={defs} isPhone={_vp.isPhone}
               onBack={() => setCharacterId(null)} backHref={characterHref(null)} onError={setErr} />
           : <CharacterList isParent={isParent} kids={kids} onOpen={setCharacterId} hrefFor={characterHref} onError={setErr} />
+      )}
+      {activeTab === "creatures" && (
+        creatureId
+          ? <CreatureCard id={creatureId} onBack={() => setCreatureId(null)} backHref={creatureHref(null)} onError={setErr} />
+          : <CreatureList isParent={isParent} onOpen={setCreatureId} hrefFor={creatureHref} onError={setErr} />
       )}
     </div>
   );
@@ -522,5 +535,258 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
       </div>
       {sheet.notes && <div style={{ ...card, marginTop: 10, fontSize: 13, color: T.slate700, whiteSpace: "pre-wrap" }}>{sheet.notes}</div>}
     </div>
+  );
+}
+
+// ── Creatures ────────────────────────────────────────────────────────────────
+// Card text is markdown kept verbatim from the manual card. The shared renderer runs a line
+// that ends in two spaces into the next one, so each such line goes through it on its own.
+const cardHtml = (text) => String(text || "").split(/ {2,}\n/)
+  .map(part => mdToHtml(part)).join("")
+  .replace(/<p>/g, '<p style="margin:0 0 6px 0">');
+function CardText({ text, style }) {
+  if (!text) return null;
+  return <div className="newtworks-handbook-body" style={{ fontSize: 13, lineHeight: 1.6, ...style }} dangerouslySetInnerHTML={{ __html: cardHtml(text) }} />;
+}
+const signed = (n) => { const v = Number(n) || 0; return v < 0 ? `−${Math.abs(v)}` : `+${v}`; };
+const tag = (tone) => ({
+  fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap", flexShrink: 0, boxSizing: "border-box",
+  background: tone === "on" ? T.greenLt : tone === "gold" ? T.goldLt : T.slate100,
+  color: tone === "off" ? T.slate500 : T.slate800,
+  border: `1px solid ${tone === "on" ? T.green : tone === "gold" ? T.gold : T.slate200}`,
+});
+
+function CreatureList({ isParent, onOpen, hrefFor, onError }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data, error } = await supabase.rpc("rpg_creature_list");
+      if (!alive) return;
+      if (error) onError(error.message);
+      setRows(Array.isArray(data) ? data : []);
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [onError]);
+
+  if (loading) return <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div>;
+
+  return (
+    <div>
+      <div style={{ ...label, marginBottom: 10 }}>Creatures</div>
+      {rows.length === 0 && (
+        <div style={{ ...card, color: T.slate500, fontSize: 13 }}>
+          {isParent ? "No creature cards yet." : "No creatures met yet. They show up here when the game master reveals them."}
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+        {rows.map(r => (
+          <TabLink key={r.id} href={hrefFor(r.id)} onSelect={() => onOpen(r.id)}
+            style={{ ...card, display: "block", textDecoration: "none", color: "inherit", cursor: "pointer", borderLeft: `4px solid ${r.color || T.slate400}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: T.slate900, minWidth: 0 }}>{r.name}</div>
+              {isParent && <span style={tag(r.shown_to_players ? "on" : "off")}>{r.shown_to_players ? "Shown" : "Hidden"}</span>}
+            </div>
+            {isParent && <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>Challenge {r.challenge ?? "—"} · Armor class {r.armor_class} · Hit points {r.hit_points}</div>}
+            {r.epigraph && <div style={{ fontSize: 12, color: T.slate600, fontStyle: "italic", marginTop: 6, lineHeight: 1.5 }}>{r.epigraph}</div>}
+          </TabLink>
+        ))}
+      </div>
+      {isParent && rows.length > 0 && <div style={{ fontSize: 12, color: T.slate500, marginTop: 10 }}>Players only see a creature after you open it and tap Show to players.</div>}
+    </div>
+  );
+}
+
+function CreatureCard({ id, onBack, backHref, onError }) {
+  const [c, setC] = useState(null);
+  const [missing, setMissing] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.rpc("rpg_creature_card", { p_creature_id: id });
+    if (error) { onError(error.message); setMissing(true); return; }
+    if (!data) { setMissing(true); return; }
+    setMissing(false);
+    setC(data);
+  }, [id, onError]);
+  useEffect(() => { load(); }, [load]);
+
+  const toggleShown = async () => {
+    if (!c || busy) return;
+    setBusy(true);
+    const { error } = await supabase.from("rpg_creatures").update({ shown_to_players: !c.shown_to_players }).eq("id", id);
+    setBusy(false);
+    if (error) { onError(error.message); return; }
+    load();
+  };
+
+  const backLink = (
+    <a href={backHref} onClick={(e) => handleModuleLinkClick(e, onBack)}
+      style={{ ...btn("soft", true), textDecoration: "none", display: "inline-block" }}>← Creatures</a>
+  );
+
+  if (missing) return <div style={{ ...card, fontSize: 13, color: T.slate700, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>That creature is not on the list. {backLink}</div>;
+  if (!c) return <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div>;
+
+  const gm = !!c.is_gm;
+  const names = Array.isArray(c.whispered_names) ? c.whispered_names : [];
+  const accent = c.color || T.slate700;
+
+  return (
+    <div>
+      <ManualBodyStyles />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+        {backLink}
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900 }}>{c.name}</div>
+          {c.scholarly_name && <div style={{ fontSize: 13, color: T.slate500, fontStyle: "italic" }}>{c.scholarly_name}</div>}
+        </div>
+        {gm && (
+          <button type="button" style={btn(c.shown_to_players ? "soft" : "primary", true)} disabled={busy} onClick={toggleShown}
+            title={c.shown_to_players ? "Players can see its names, haunts and lore" : "Players cannot see this creature yet"}>
+            {busy ? "Saving…" : c.shown_to_players ? "Hide from players" : "Show to players"}
+          </button>
+        )}
+      </div>
+
+      {/* What the world knows. The only part players see, once a parent shows it. */}
+      <div style={{ ...card, marginBottom: 12, borderTop: `4px solid ${accent}` }}>
+        {c.epigraph && <div style={{ fontSize: 15, fontStyle: "italic", color: T.slate800, borderLeft: `3px solid ${accent}`, paddingLeft: 12, marginBottom: 12, lineHeight: 1.5 }}>{c.epigraph}</div>}
+        <CardText text={c.lore} />
+        {names.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 12, color: T.slate500, marginBottom: 4 }}>{c.whispered_label || "Other names"}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {names.map(n => <span key={n} style={{ fontSize: 12, color: T.slate800, background: T.slate100, border: `1px solid ${T.slate200}`, borderRadius: 999, padding: "3px 10px", boxSizing: "border-box" }}>{n}</span>)}
+            </div>
+          </div>
+        )}
+        {c.haunts && <div style={{ fontSize: 13, color: T.slate700, marginTop: 10 }}><span style={{ color: T.slate500 }}>Known haunts:</span> {c.haunts}</div>}
+        {gm && <div style={{ fontSize: 11, color: T.slate500, marginTop: 10 }}>{c.shown_to_players ? "Players can see this part of the card." : "Players cannot see this creature yet."} Everything below is for the game master only.</div>}
+      </div>
+
+      {gm && <CreatureGmCard c={c} accent={accent} />}
+    </div>
+  );
+}
+
+function TableNumber({ big, small }) {
+  return (
+    <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10, padding: "8px 10px", boxSizing: "border-box" }}>
+      <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900, lineHeight: 1.2 }}>{big}</div>
+      <div style={{ fontSize: 12, color: T.slate500 }}>{small}</div>
+    </div>
+  );
+}
+
+// The game master's half of the card: d100 numbers, the stat block, every action, rumors, the tip.
+function CreatureGmCard({ c, accent }) {
+  const actions = Array.isArray(c.actions) ? c.actions : [];
+  const ofKind = (k) => actions.filter(a => a.kind === k);
+  const t = c.table || {};
+  const rumors = Array.isArray(c.rumors) ? c.rumors : [];
+
+  const statRow = (name, value) => (value ? (
+    <div style={{ fontSize: 13, color: T.slate700, padding: "3px 0" }}><span style={{ fontWeight: 700, color: T.slate900 }}>{name}</span> {value}</div>
+  ) : null);
+  const d100Line = (a) => {
+    const parts = [];
+    if (a.to_hit != null) parts.push(`Attack skill ${a.to_hit}`);
+    if (a.save_difficulty != null) parts.push(`${a.save_ability_name || "Save"} save at difficulty ${num(a.save_difficulty)}`);
+    return parts.length ? <div style={{ fontSize: 12, color: T.blue, fontWeight: 700 }}>{parts.join(" · ")}</div> : null;
+  };
+  const section = (title, list, intro) => (list.length === 0 ? null : (
+    <div style={{ ...card, marginBottom: 12 }}>
+      <div style={label}>{title}</div>
+      {intro && <CardText text={intro} style={{ marginTop: 6 }} />}
+      <div style={{ marginTop: 6 }}>
+        {list.map(a => (
+          <div key={a.id} style={{ padding: "8px 0", borderTop: `1px solid ${T.slate100}` }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>{a.heading || a.name}</div>
+            <CardText text={a.description} />
+            {d100Line(a)}
+          </div>
+        ))}
+      </div>
+    </div>
+  ));
+
+  return (
+    <>
+      {/* The d100 numbers the table uses, from Peter's ruling creature_conversion */}
+      <div style={{ ...card, marginBottom: 12, background: T.blueLt, borderColor: T.blue }}>
+        <div style={label}>At the table</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginTop: 8 }}>
+          <TableNumber big={num(t.difficulty_to_hit)} small="Difficulty to hit it" />
+          <TableNumber big={num(t.hit_points)} small="Hit points" />
+          <TableNumber big={t.attacks_roll_against || "—"} small="Its attacks roll against" />
+          {Number(c.legendary_per_round) > 0 && <TableNumber big={num(c.legendary_per_round)} small="Legendary actions a round" />}
+        </div>
+      </div>
+
+      {/* The stat block, as printed on the card */}
+      <div style={{ ...card, marginBottom: 12, borderTop: `4px solid ${accent}` }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{c.card_title || c.name}</div>
+        {c.type_line && <div style={{ fontSize: 13, fontStyle: "italic", color: T.slate600 }}>{c.type_line}</div>}
+        <div style={{ marginTop: 8 }}>
+          {statRow("Armor Class", c.armor_text)}
+          {statRow("Hit Points", c.hit_points_text)}
+          {statRow("Speed", c.speed_text)}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: 6, margin: "10px 0" }}>
+          {(Array.isArray(c.abilities) ? c.abilities : []).map(a => (
+            <div key={a.key} style={{ textAlign: "center", background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "6px 4px", boxSizing: "border-box" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: T.slate500 }}>{a.label}</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{a.score} <span style={{ fontSize: 12, fontWeight: 600, color: T.slate500 }}>({signed(a.mod)})</span></div>
+            </div>
+          ))}
+        </div>
+        {statRow("Saving Throws", c.saving_throws_text)}
+        {statRow("Skills", c.skills_text)}
+        {statRow("Damage Vulnerabilities", c.damage_vulnerabilities)}
+        {statRow("Damage Resistances", c.damage_resistances)}
+        {statRow("Damage Immunities", c.damage_immunities)}
+        {statRow("Condition Immunities", c.condition_immunities)}
+        {statRow("Senses", c.senses)}
+        {statRow("Languages", c.languages)}
+        {statRow("Challenge Rating", c.challenge_text)}
+      </div>
+
+      {section("Traits", ofKind("trait"))}
+      {section("Actions", ofKind("action"))}
+      {section("Bonus Actions", ofKind("bonus_action"))}
+      {section("Reactions", ofKind("reaction"))}
+      {section(`Legendary Actions (${num(c.legendary_per_round)}/round)`, ofKind("legendary"), c.legendary_intro)}
+      {section(c.lair_title ? `Lair Actions (${c.lair_title})` : "Lair Actions", ofKind("lair"), c.lair_intro)}
+
+      {rumors.length > 0 && (
+        <div style={{ ...card, marginBottom: 12 }}>
+          <div style={label}>Player rumor table</div>
+          {c.rumor_title && <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900, marginTop: 4 }}>{c.rumor_title}</div>}
+          {c.rumor_intro && <div style={{ fontSize: 13, fontStyle: "italic", color: T.slate600, marginTop: 2 }}>{c.rumor_intro}</div>}
+          <div style={{ marginTop: 8 }}>
+            {rumors.map(r => (
+              <div key={r.roll} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "7px 0", borderTop: `1px solid ${T.slate100}` }}>
+                <div style={{ width: 22, flexShrink: 0, textAlign: "center", fontWeight: 700, color: T.slate900 }}>{r.roll}</div>
+                <CardText text={r.text} style={{ flex: 1, minWidth: 0 }} />
+                {r.truth === "partial" && <span style={tag("gold")}>Partly true</span>}
+                {r.truth === "true" && <span style={tag("on")}>True</span>}
+              </div>
+            ))}
+          </div>
+          {c.rumor_note && <div style={{ fontSize: 12, fontStyle: "italic", color: T.slate500, marginTop: 6 }}>{c.rumor_note}</div>}
+        </div>
+      )}
+
+      {c.gm_tip && (
+        <div style={{ ...card, marginBottom: 12, background: T.goldLt, borderColor: T.gold }}>
+          <div style={label}>DM Flavor Tip</div>
+          <CardText text={c.gm_tip} style={{ marginTop: 6 }} />
+        </div>
+      )}
+    </>
   );
 }
