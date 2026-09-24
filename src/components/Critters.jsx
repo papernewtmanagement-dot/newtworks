@@ -1028,7 +1028,7 @@ function MuscleTurtleArt() {
       {/* A muscle turtle flexing both arms and stomping to the beat. Shell on
           his BACK, drawn first so its rim shows around him; his front is a pale
           plastron whose paired plates read as pecs and abs. Peter 2026-09-23:
-          no barbell, no singlet, smaller shell, menacing face. */}
+          no barbell, no singlet, smaller shell, growling face. */}
       <ellipse cx="100" cy="126" rx="48" ry="42" fill="#B8621F" />
       <ellipse cx="100" cy="124" rx="41" ry="35" fill="#E08A3C" />
       <path d="M64.5 141.5 L58.4 147 M59.2 127 L52.2 129.7 M61.5 112 L54.9 111.6 M135.5 141.5 L141.6 147 M140.8 127 L147.8 129.7 M138.5 112 L145.1 111.6" fill="none" stroke="#8A4516" strokeWidth="2.5" strokeLinecap="round" />
@@ -1072,20 +1072,22 @@ function MuscleTurtleArt() {
       <circle cx="130" cy="107" r="14" fill="#4FA396" />
       <path d="M89 98 Q100 102 111 98" fill="none" stroke="#3A8074" strokeWidth="2" strokeLinecap="round" />
       <ellipse cx="100" cy="70" rx="28" ry="25" fill="#4FA396" />
-      {/* Menacing face: lids slant down toward the nose, heavy V brows, a
-          lopsided grin with teeth. */}
+      {/* Growling face (Peter: "grrrr"): squinting eyes under heavy V brows,
+          snarl lines by the nose, clenched teeth. */}
       <circle cx="89" cy="67" r="5.5" fill="#15100F" />
       <circle cx="111" cy="67" r="5.5" fill="#15100F" />
-      <path d="M81 57 L98 57 L98 66.5 L81 62 Z M119 57 L102 57 L102 66.5 L119 62 Z" fill="#4FA396" />
-      <circle cx="87" cy="69" r="1.5" fill="#FFFFFF" />
-      <circle cx="109" cy="69" r="1.5" fill="#FFFFFF" />
-      <path d="M79 57 L96 63 M121 57 L104 63" fill="none" stroke="#1F4F47" strokeWidth="4.5" strokeLinecap="round" />
-      <circle cx="96" cy="75" r="1.3" fill="#2F6B61" />
-      <circle cx="104" cy="75" r="1.3" fill="#2F6B61" />
-      <path d="M85 81 L117 77 Q105 92 91 88 Q86 86 85 81 Z" fill="#15100F" />
-      <path d="M86.5 81.3 L115.5 77.7 L114 80.8 Q101 83.4 88 84 Z" fill="#FBF6EE" />
-      <path d="M93 80.4 v3.2 M100 79.5 v3.4 M107 78.6 v3.2" fill="none" stroke="#C9C1B4" strokeWidth="1.2" />
-      <path d="M117 77 q4 -1 5 -4" fill="none" stroke="#2F6B61" strokeWidth="2" strokeLinecap="round" />
+      <path d="M81 56 L98 56 L98 67.5 L81 63.5 Z M119 56 L102 56 L102 67.5 L119 63.5 Z" fill="#4FA396" />
+      <path d="M82 71.5 Q89 69.5 97 71.5 L97 75 L82 75 Z M118 71.5 Q111 69.5 103 71.5 L103 75 L118 75 Z" fill="#4FA396" />
+      <circle cx="86.5" cy="68.6" r="1.3" fill="#FFFFFF" />
+      <circle cx="108.5" cy="68.6" r="1.3" fill="#FFFFFF" />
+      <path d="M78 55 L97 64 M122 55 L103 64" fill="none" stroke="#1F4F47" strokeWidth="5" strokeLinecap="round" />
+      <ellipse cx="96" cy="75.5" rx="1.7" ry="1.3" fill="#2F6B61" />
+      <ellipse cx="104" cy="75.5" rx="1.7" ry="1.3" fill="#2F6B61" />
+      <path d="M88 74 q-3 2 -3.5 5.5 M112 74 q3 2 3.5 5.5" fill="none" stroke="#2F6B61" strokeWidth="2" strokeLinecap="round" />
+      <path d="M82 80 Q100 76 118 80 Q119 86 116 90 Q100 94 84 90 Q81 86 82 80 Z" fill="#15100F" />
+      <path d="M84.5 81.5 Q100 78.5 115.5 81.5 Q116.3 85.5 114.3 88.4 Q100 91.6 85.7 88.4 Q83.7 85.5 84.5 81.5 Z" fill="#FBF6EE" />
+      <path d="M92 80.6 V85.4 M100 79.9 V85.8 M108 80.6 V85.4 M88 86 V88.6 M96 86.4 V90.2 M104 86.4 V90.2 M112 86 V88.6" fill="none" stroke="#C9C1B4" strokeWidth="1.2" />
+      <path d="M85 85 Q100 87 115 85" fill="none" stroke="#15100F" strokeWidth="1.6" strokeLinecap="round" />
     </>
   );
 }
