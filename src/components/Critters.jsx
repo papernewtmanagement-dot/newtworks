@@ -1028,7 +1028,7 @@ function MuscleTurtleArt() {
       {/* A muscle turtle flexing both arms and stomping to the beat. Shell on
           his BACK, drawn first so its rim shows around him; his front is a pale
           plastron whose paired plates read as pecs and abs. Peter 2026-09-23:
-          no barbell, no singlet, smaller shell, growling face. */}
+          no barbell, no singlet, smaller shell, growling face, one-sided grin. */}
       <ellipse cx="100" cy="126" rx="48" ry="42" fill="#B8621F" />
       <ellipse cx="100" cy="124" rx="41" ry="35" fill="#E08A3C" />
       <path d="M64.5 141.5 L58.4 147 M59.2 127 L52.2 129.7 M61.5 112 L54.9 111.6 M135.5 141.5 L141.6 147 M140.8 127 L147.8 129.7 M138.5 112 L145.1 111.6" fill="none" stroke="#8A4516" strokeWidth="2.5" strokeLinecap="round" />
@@ -1084,10 +1084,12 @@ function MuscleTurtleArt() {
       <ellipse cx="96" cy="75.5" rx="1.7" ry="1.3" fill="#2F6B61" />
       <ellipse cx="104" cy="75.5" rx="1.7" ry="1.3" fill="#2F6B61" />
       <path d="M88 74 q-3 2 -3.5 5.5 M112 74 q3 2 3.5 5.5" fill="none" stroke="#2F6B61" strokeWidth="2" strokeLinecap="round" />
-      <path d="M82 80 Q100 76 118 80 Q119 86 116 90 Q100 94 84 90 Q81 86 82 80 Z" fill="#15100F" />
-      <path d="M84.5 81.5 Q100 78.5 115.5 81.5 Q116.3 85.5 114.3 88.4 Q100 91.6 85.7 88.4 Q83.7 85.5 84.5 81.5 Z" fill="#FBF6EE" />
-      <path d="M92 80.6 V85.4 M100 79.9 V85.8 M108 80.6 V85.4 M88 86 V88.6 M96 86.4 V90.2 M104 86.4 V90.2 M112 86 V88.6" fill="none" stroke="#C9C1B4" strokeWidth="1.2" />
-      <path d="M85 85 Q100 87 115 85" fill="none" stroke="#15100F" strokeWidth="1.6" strokeLinecap="round" />
+      {/* One-sided grin, Peter's call: teeth show only on his left, the right
+          corner stays a flat snarl line. */}
+      <path d="M82 79 Q94 76 104 78.5 Q101 83 91 84 Q84 83.5 82 79 Z" fill="#15100F" />
+      <path d="M83.8 80 Q93.5 77.6 101.8 79.6 Q99.4 82.6 91 83.3 Q85.3 82.9 83.8 80 Z" fill="#FBF6EE" />
+      <path d="M89 78.4 V82.6 M95.5 77.8 V83.2" fill="none" stroke="#C9C1B4" strokeWidth="1.1" />
+      <path d="M104 79 Q112 80.5 117 84" fill="none" stroke="#15100F" strokeWidth="2.2" strokeLinecap="round" />
     </>
   );
 }
