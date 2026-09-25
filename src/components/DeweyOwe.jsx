@@ -89,8 +89,10 @@ const TONE_COLOR = { start: T.blue, good: T.green, warn: T.amber, match: T.green
 
 // ---------- the worksheet in hand ----------
 const emptyCustomer = () => ({ first: "", initial: "", phone4: "" });
+// savedBody is the copy last saved to (or opened from) Newtworks. Null means
+// a draft from before that was tracked.
 function freshDraft() {
-  return { rows: [blankRow(1)], accounts: { 1: { lob: "", plan: "monthly" } }, customer: emptyCustomer(), loadedKey: "" };
+  return { rows: [blankRow(1)], accounts: { 1: { lob: "", plan: "monthly" } }, customer: emptyCustomer(), loadedKey: "", savedBody: "" };
 }
 function cleanRows(list) {
   return (Array.isArray(list) ? list : []).filter(r => r && typeof r.id === "string").map(r => {
@@ -124,6 +126,7 @@ function loadDraft() {
         accounts: cleanAccounts(d.accounts),
         customer: { first: String(c.first || ""), initial: String(c.initial || ""), phone4: String(c.phone4 || "") },
         loadedKey: typeof d.loadedKey === "string" ? d.loadedKey : "",
+        savedBody: typeof d.savedBody === "string" ? d.savedBody : null,
       };
     }
   } catch { /* private mode or a damaged draft: start clean */ }
@@ -142,6 +145,8 @@ function keyOf(c) {
 }
 const customerName = (c) => `${cap(String(c.first || "").trim())} ${String(c.initial || "").trim().toUpperCase()}.`;
 const savedLines = (rows) => rows.filter(r => !isBlankRow(r));
+// What gets saved for a worksheet, as text, to tell whether anything changed.
+const bodyOf = (rows, accounts) => JSON.stringify({ lines: savedLines(rows), accounts });
 function errText(e) {
   return String(e?.message || e || "Something went wrong.").replace(/^.*?ERROR:\s*/, "");
 }
@@ -801,7 +806,10 @@ export default function DeweyOwe() {
   const tableRef = useRef(null);
   const boxRef = useRef(null);
   const typeRefs = useRef(new Map());
-  const lastSaved = useRef("");
+  const lastSaved = useRef(undefined);
+  if (lastSaved.current === undefined) lastSaved.current = draft.savedBody ?? bodyOf(draft.rows, draft.accounts);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const width = useElementWidth(tableRef);
   const compact = width > 0 && width < COMPACT_BELOW;
   const { rows, accounts, customer, loadedKey } = draft;
@@ -845,10 +853,25 @@ export default function DeweyOwe() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, loadedKey]);
 
+  // A page reopened with no unsaved typing takes the saved copy, so an old
+  // draft on one device never writes over newer lines saved from another
+  // (Peter 2026-09-25, Kevin J). Unsaved typing on this device still wins.
+  useEffect(() => {
+    if (!loadedKey || !supabase || bodyOf(rows, accounts) !== lastSaved.current) return undefined;
+    let alive = true;
+    supabase.rpc("billing_worksheet_get", { p_first: customer.first, p_initial: customer.initial, p_phone4: customer.phone4 }).then(r => {
+      const d = draftRef.current;
+      if (!alive || r.error || !r.data || typeof r.data !== "object" || bodyOf(d.rows, d.accounts) !== lastSaved.current) return;
+      openWorksheet(r.data);
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Saves as they go, once the worksheet belongs to a customer.
   useEffect(() => {
     if (!key || key !== loadedKey || !hasLines || !supabase) return undefined;
-    const body = JSON.stringify({ lines: savedLines(rows), accounts });
+    const body = bodyOf(rows, accounts);
     if (body === lastSaved.current) return undefined;
     const t = setTimeout(async () => {
       setSave({ kind: "saving", at: null, msg: "" });
@@ -858,6 +881,7 @@ export default function DeweyOwe() {
       });
       if (r.error || !r.data?.ok) { setSave({ kind: "error", at: null, msg: errText(r.error || "Not saved.") }); return; }
       lastSaved.current = body;
+      setDraft(d => ({ ...d, savedBody: body }));
       setSave({ kind: "saved", at: new Date(), msg: "" });
     }, SAVE_AFTER_MS);
     return () => clearTimeout(t);
@@ -956,8 +980,9 @@ export default function DeweyOwe() {
     const lines = cleanRows(w.lines);
     const acc = cleanAccounts(w.accounts);
     const cust = { first: cap(String(w.first || "")), initial: String(w.initial || ""), phone4: String(w.phone4 || "") };
-    lastSaved.current = JSON.stringify({ lines, accounts: acc });
-    setDraft({ rows: lines.length ? lines : [blankRow(1)], accounts: acc, customer: cust, loadedKey: keyOf(cust) });
+    const body = bodyOf(lines, acc);
+    lastSaved.current = body;
+    setDraft({ rows: lines.length ? lines : [blankRow(1)], accounts: acc, customer: cust, loadedKey: keyOf(cust), savedBody: body });
     setFound(null);
     setOpen(false);
     setSave({ kind: "saved", at: w.updated_at ? new Date(w.updated_at) : null, msg: "" });
