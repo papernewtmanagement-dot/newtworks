@@ -39,9 +39,11 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //   rpg_session_next_turn(id)                starts the fight or passes the turn: effects clear by rule, turn counts go up
 //                                            (cooldowns are in turns), other creatures roll a die for a legendary action
 //   rpg_act(actor, targets, stat, action, against, difficulty, roll, effect)   one move through rpg_roll: an attack, a
-//                                            card action, or the check a rule demands; effects land by the card's rules
+//                                            card action, or the check a rule demands; every move costs beats of the
+//                                            turn (a quick Claw 1, a heavy Bite or a weapon 2); effects land by the card
 //   rpg_act_extra(roll, die)                 the extra die a hand-rolled critical asked for
-//   rpg_session_auto_turn(id)                the site plays a creature's turn: best ready move by rpg_action_score, then passes
+//   rpg_session_auto_turn(id)                the site plays a creature's turn: best ready moves by rpg_action_score
+//                                            while beats remain, then passes
 //   rpg_creatures.image_path                 a picture in the private rpg-images bucket (parents upload)
 //   rpg_session_set_status / rpg_session_adjust_vitality / rpg_session_remove / rpg_session_end   game master changes
 // Items and coins are plain rows the household edits directly (rpg_items, rpg_characters).
@@ -1353,7 +1355,7 @@ function FightView({ id, isParent, defs, onBack, backHref, onError }) {
               <CharacterActions key={p.id} actor={p} parts={parts} s={s} busy={busy} run={run} onEnd={endTurn} last={lastFor(p)} />
             )}
             {actor && actor.id === p.id && p.kind === "creature" && (
-              <CreatureActions key={p.id} actor={p} parts={parts} defs={defs} sessionId={id} busy={busy} run={run} onEnd={endTurn} last={lastFor(p)} />
+              <CreatureActions key={p.id} actor={p} parts={parts} defs={defs} s={s} sessionId={id} busy={busy} run={run} onEnd={endTurn} last={lastFor(p)} />
             )}
           </ParticipantRow>
         ))}
@@ -1456,8 +1458,9 @@ function CharacterActions({ actor, parts, s, busy, run, onEnd, last }) {
   const w = weapons.some(x => x.key === weapon) ? weapon : (weapons[0]?.key || "");
   const fallback = (targets.find(p => p.kind === "creature" && !isDown(p)) || targets[0])?.id || "";
   const t = targets.some(x => x.id === target) ? target : fallback;
-  const used = Number(s.turn_attacks) || 0;
-  const perTurn = Number(s.attacks_per_turn) || 1;
+  const per = Number(s.beats_per_turn) || 2;
+  const left = per - (Number(s.turn_beats) || 0);
+  const weaponBeats = Number(weapons.find(x => x.key === w)?.beats) || 2;
   const check = actor.pending_check || null;
   const pendingExtra = Array.isArray(last) ? last.find(r => r.extra_pending) : null;
   const dv = dieValue(die); const badDie = die !== "" && dv == null;
@@ -1484,12 +1487,12 @@ function CharacterActions({ actor, parts, s, busy, run, onEnd, last }) {
           <button type="button" style={btn("primary")} disabled={busy || badDie}
             onClick={() => act({ p_actor_id: actor.id, p_effect: check.name, p_roll: dv })}>Roll {check.stat_name}</button>
         </div>
-      ) : !cannot && used < perTurn ? (
+      ) : !cannot && left >= weaponBeats ? (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
           <div>
             <div style={small}>Weapon</div>
             <select style={{ ...input, marginTop: 4 }} value={w} onChange={e => setWeapon(e.target.value)}>
-              {weapons.map(x => <option key={x.key} value={x.key}>{x.name} {num(x.value)}</option>)}
+              {weapons.map(x => <option key={x.key} value={x.key}>{x.name} {num(x.value)}{Number(x.beats) === 1 ? " · quick" : ""}</option>)}
             </select>
           </div>
           <div>
@@ -1510,7 +1513,7 @@ function CharacterActions({ actor, parts, s, busy, run, onEnd, last }) {
 }
 
 // A creature's turn. The site plays it by default; the game master can roll it by hand instead.
-function CreatureActions({ actor, parts, defs, sessionId, busy, run, onEnd, last }) {
+function CreatureActions({ actor, parts, defs, s, sessionId, busy, run, onEnd, last }) {
   const [manual, setManual] = useState(false);
   const cannot = !actor.can_act_now;
   return (
@@ -1523,7 +1526,7 @@ function CreatureActions({ actor, parts, defs, sessionId, busy, run, onEnd, last
           <button type="button" style={btn("soft")} disabled={busy} onClick={() => setManual(true)}>Roll it myself</button>
         </div>
       ) : (
-        <ManualCreatureTurn actor={actor} parts={parts} defs={defs} busy={busy} run={run} />
+        <ManualCreatureTurn actor={actor} parts={parts} defs={defs} s={s} busy={busy} run={run} />
       )}
       {Array.isArray(last) && last.length > 0 && <ResultCard results={last} />}
       {(manual || cannot) && <div><button type="button" style={btn("soft", true)} disabled={busy} onClick={onEnd}>End turn</button></div>}
@@ -1532,8 +1535,10 @@ function CreatureActions({ actor, parts, defs, sessionId, busy, run, onEnd, last
 }
 
 // The creature's card as buttons: pick who it aims at, then one row per action with what it rolls.
-function ManualCreatureTurn({ actor, parts, defs, busy, run }) {
+function ManualCreatureTurn({ actor, parts, defs, s, busy, run }) {
   const kinds = ["action", "bonus_action", "reaction", "lair"];
+  const left = (Number(s.beats_per_turn) || 2) - (Number(s.turn_beats) || 0);
+  const beatsOf = (a) => (a.kind === "action" || a.kind === "bonus_action" ? Number(a.beats) || 0 : 0);
   const actions = (Array.isArray(actor.actions) ? actor.actions : []).filter(a => kinds.includes(a.kind) && a.usable !== false);
   const others = parts.filter(p => p.id !== actor.id);
   const sk = actor.skills || {};
@@ -1544,7 +1549,7 @@ function ManualCreatureTurn({ actor, parts, defs, busy, run }) {
   const toggle = (pid) => setPicked(targetIds.includes(pid) ? targetIds.filter(x => x !== pid) : [...targetIds, pid]);
   const againstOpts = (Array.isArray(defs) ? defs : []).filter(d => d.grp === "physical" || d.grp === "ability");
   const act = async (args) => { const r = await run("rpg_act", args, actor.id); if (r) setPicked([]); };
-  const describe = (a) => (a.skill == null ? "no roll" : `${num(a.skill)} against ${a.against_name || a.against}${a.deals_damage ? ", does damage" : ""}${a.effect ? ` → ${a.effect}` : ""}`);
+  const describe = (a) => `${beatsOf(a) ? `${beatsOf(a)} ${beatsOf(a) === 1 ? "beat" : "beats"} · ` : ""}${a.skill == null ? "no roll" : `${num(a.skill)} against ${a.against_name || a.against}${a.deals_damage ? ", does damage" : ""}${a.effect ? ` → ${a.effect}` : ""}`}`;
   return (
     <div style={{ display: "grid", gap: 10 }}>
       <div>
@@ -1560,7 +1565,7 @@ function ManualCreatureTurn({ actor, parts, defs, busy, run }) {
         if (list.length === 0) return null;
         return (
           <div key={kind}>
-            <div style={label}>{title}</div>
+            <div style={label}>{title}{kind === "action" ? ` · ${left} of ${Number(s.beats_per_turn) || 2} beats left` : ""}</div>
             {list.map(a => {
               const rolls = a.skill != null;
               return (
@@ -1571,6 +1576,8 @@ function ManualCreatureTurn({ actor, parts, defs, busy, run }) {
                   </div>
                   {a.ready === false ? (
                     <span style={{ fontSize: 12, fontWeight: 600, color: T.amber }}>Back in {a.back_in} {Number(a.back_in) === 1 ? "turn" : "turns"}</span>
+                  ) : beatsOf(a) > left ? (
+                    <span style={{ fontSize: 12, fontWeight: 600, color: T.slate500 }}>Not enough beats left</span>
                   ) : (
                     <button type="button" style={btn("primary", true)} disabled={busy || (rolls && targetIds.length === 0)}
                       onClick={() => act(rolls ? { p_actor_id: actor.id, p_target_ids: targetIds, p_action_id: a.id } : { p_actor_id: actor.id, p_action_id: a.id })}>
