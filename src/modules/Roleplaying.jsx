@@ -35,9 +35,14 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //   rpg_needed(skill, difficulty)            what a roll needs; the calculator asks the same function a roll does
 //   rpg_difficulty(skill, can_act)           the difficulty a defender presents: their skill × 2 when they can act (skill and will)
 //   rpg_session_list() / rpg_session_state(id)   the fights, and one fight in one read (players: creatures without numbers)
-//   rpg_session_new / rpg_session_add / rpg_session_set_order   set up a fight; Agility places each one in the turn order
-//   rpg_session_next_turn(id)                starts the fight or passes the turn (legendary actions back, recharge dice)
-//   rpg_act(actor, targets, stat, action, against, difficulty)   one move: attack, card action or check, through rpg_roll
+//   rpg_session_new / rpg_session_add      set up a fight; Agility places each one in the turn order (no manual moves)
+//   rpg_session_next_turn(id)                starts the fight or passes the turn: effects clear by rule, spent actions roll
+//                                            to come back, other creatures roll a die for a legendary action
+//   rpg_act(actor, targets, stat, action, against, difficulty, roll, effect)   one move through rpg_roll: an attack, a
+//                                            card action (Multiattack rolls all its attacks), a check a rule demands
+//   rpg_act_extra(roll, die)                 the extra die a hand-rolled critical asked for
+//   rpg_session_auto_turn(id)                the site plays a creature's turn from its card and passes the turn
+//   rpg_creatures.image_path                 a picture in the private rpg-images bucket (parents upload)
 //   rpg_session_set_status / rpg_session_adjust_vitality / rpg_session_remove / rpg_session_end   game master changes
 // Items and coins are plain rows the household edits directly (rpg_items, rpg_characters).
 // Show to players is a plain update on rpg_creatures (parents only, by row rules).
@@ -619,6 +624,92 @@ function CreatureList({ isParent, onOpen, hrefFor, onError }) {
   );
 }
 
+// A picture for the card. Pictures live in the private rpg-images bucket: everyone signed in can
+// see them, parents upload. No picture yet → a parent gets an upload control and a ready-made
+// prompt to paste into ChatGPT; players just see the empty frame.
+const plainText = (t) => String(t || "").replace(/[*_`#>]/g, "").replace(/\s+/g, " ").trim();
+const imagePrompt = (c) => [
+  `Illustrate ${c.name}${c.type_line ? ` (${c.type_line})` : ""} for a family fantasy tabletop game.`,
+  plainText(c.lore),
+  c.haunts ? `Setting: ${plainText(c.haunts)}.` : "",
+  "Painted storybook style, dramatic natural lighting, the creature centered and fully in frame, square image, no words or letters anywhere.",
+].filter(Boolean).join(" ");
+
+function CreaturePicture({ c, gm, onError, onSaved }) {
+  const [url, setUrl] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setUrl(null);
+    if (!c.image_path) return undefined;
+    (async () => {
+      const { data, error } = await supabase.storage.from("rpg-images").createSignedUrl(c.image_path, 3600);
+      if (!alive) return;
+      if (error) { onError(error.message); return; }
+      setUrl(data?.signedUrl || null);
+    })();
+    return () => { alive = false; };
+  }, [c.image_path, onError]);
+
+  const upload = async (file) => {
+    if (!file || busy) return;
+    setBusy(true);
+    const safe = file.name.replace(/[^A-Za-z0-9._-]/g, "_");
+    const path = `${c.key || c.id}/${Date.now()}_${safe}`;
+    const up = await supabase.storage.from("rpg-images").upload(path, file, { contentType: file.type, upsert: true });
+    if (up.error) { setBusy(false); onError(up.error.message); return; }
+    const { error } = await supabase.from("rpg_creatures").update({ image_path: path }).eq("id", c.id);
+    setBusy(false);
+    if (error) { onError(error.message); return; }
+    onSaved();
+  };
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(imagePrompt(c)); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (e) { onError("Copy failed. Select the text and copy it."); }
+  };
+  const picker = (
+    <label style={{ ...btn("soft", true), display: "inline-block", cursor: busy ? "wait" : "pointer" }}>
+      {busy ? "Uploading…" : url ? "Replace picture" : "Upload a picture"}
+      <input type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} disabled={busy} onChange={e => upload(e.target.files?.[0])} />
+    </label>
+  );
+
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      {url ? (
+        <img src={url} alt={c.name} style={{ width: "100%", borderRadius: 10, display: "block", border: `1px solid ${T.slate200}` }} />
+      ) : (
+        <div style={{ aspectRatio: "1 / 1", borderRadius: 10, border: `2px dashed ${T.slate200}`, background: T.slate50, display: "flex", alignItems: "center", justifyContent: "center", color: T.slate500, fontSize: 13, textAlign: "center", padding: 12, boxSizing: "border-box" }}>
+          No picture yet
+        </div>
+      )}
+      {gm && picker}
+      {gm && !url && (
+        <div>
+          <div style={{ fontSize: 12, color: T.slate600, marginBottom: 4 }}>Ask ChatGPT for one. Copy this, paste it there, then upload what it makes.</div>
+          <pre style={{ margin: 0, fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word", background: T.slate900, color: T.slate100, borderRadius: 8, padding: 10, boxSizing: "border-box" }}>{imagePrompt(c)}</pre>
+          <button type="button" style={{ ...btn("soft", true), marginTop: 6 }} onClick={copy}>{copied ? "Copied" : "Copy the prompt"}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A section of the card that folds shut. The busiest parts start closed.
+function Fold({ title, open: startOpen, children }) {
+  const [open, setOpen] = useState(!!startOpen);
+  return (
+    <div style={{ ...card, marginBottom: 12 }}>
+      <button type="button" onClick={() => setOpen(!open)}
+        style={{ display: "flex", width: "100%", alignItems: "center", justifyContent: "space-between", gap: 8, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
+        <span style={label}>{title}</span>
+        <span style={{ fontSize: 12, color: T.slate500 }}>{open ? "Hide" : "Show"}</span>
+      </button>
+      {open && <div style={{ marginTop: 6 }}>{children}</div>}
+    </div>
+  );
+}
+
 function CreatureCard({ id, onBack, backHref, onError }) {
   const [c, setC] = useState(null);
   const [missing, setMissing] = useState(false);
@@ -665,25 +756,32 @@ function CreatureCard({ id, onBack, backHref, onError }) {
         </div>
         {gm && (
           <button type="button" style={btn(c.shown_to_players ? "soft" : "primary", true)} disabled={busy} onClick={toggleShown}
-            title={c.shown_to_players ? "Players can see its names, haunts and lore" : "Players cannot see this creature yet"}>
+            title={c.shown_to_players ? "Players can see its picture, names, haunts and lore" : "Players cannot see this creature yet"}>
             {busy ? "Saving…" : c.shown_to_players ? "Hide from players" : "Show to players"}
           </button>
         )}
       </div>
 
-      {/* What the world knows. The only part players see, once a parent shows it. */}
+      {/* What the world knows: picture and lore. The only part players see, once a parent shows it. */}
       <div style={{ ...card, marginBottom: 12, borderTop: `4px solid ${accent}` }}>
-        {c.epigraph && <div style={{ fontSize: 15, fontStyle: "italic", color: T.slate800, borderLeft: `3px solid ${accent}`, paddingLeft: 12, marginBottom: 12, lineHeight: 1.5 }}>{c.epigraph}</div>}
-        <CardText text={c.lore} />
-        {names.length > 0 && (
-          <div style={{ marginTop: 10 }}>
-            <div style={{ fontSize: 12, color: T.slate500, marginBottom: 4 }}>{c.whispered_label || "Other names"}</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {names.map(n => <span key={n} style={{ fontSize: 12, color: T.slate800, background: T.slate100, border: `1px solid ${T.slate200}`, borderRadius: 999, padding: "3px 10px", boxSizing: "border-box" }}>{n}</span>)}
-            </div>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 200px", maxWidth: 320 }}>
+            <CreaturePicture c={c} gm={gm} onError={onError} onSaved={load} />
           </div>
-        )}
-        {c.haunts && <div style={{ fontSize: 13, color: T.slate700, marginTop: 10 }}><span style={{ color: T.slate500 }}>Known haunts:</span> {c.haunts}</div>}
+          <div style={{ flex: "2 1 260px", minWidth: 0 }}>
+            {c.epigraph && <div style={{ fontSize: 15, fontStyle: "italic", color: T.slate800, borderLeft: `3px solid ${accent}`, paddingLeft: 12, marginBottom: 12, lineHeight: 1.5 }}>{c.epigraph}</div>}
+            <CardText text={c.lore} />
+            {names.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 12, color: T.slate500, marginBottom: 4 }}>{c.whispered_label || "Other names"}</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {names.map(n => <span key={n} style={{ fontSize: 12, color: T.slate800, background: T.slate100, border: `1px solid ${T.slate200}`, borderRadius: 999, padding: "3px 10px", boxSizing: "border-box" }}>{n}</span>)}
+                </div>
+              </div>
+            )}
+            {c.haunts && <div style={{ fontSize: 13, color: T.slate700, marginTop: 10 }}><span style={{ color: T.slate500 }}>Known haunts:</span> {c.haunts}</div>}
+          </div>
+        </div>
         {gm && <div style={{ fontSize: 11, color: T.slate500, marginTop: 10 }}>{c.shown_to_players ? "Players can see this part of the card." : "Players cannot see this creature yet."} Everything below is for the game master only.</div>}
       </div>
 
@@ -701,8 +799,8 @@ function TableNumber({ big, small }) {
   );
 }
 
-// The game master's half of the card: the character-scale numbers the table uses, the d20 stat
-// block as printed (reading and flavor), every action, rumors, the tip.
+// The game master's half of the card, in folds: the numbers the table uses, the actions with what
+// each one rolls, then the printed d20 stat block, the rumor table and the tip. Reading parts start shut.
 function CreatureGmCard({ c, accent }) {
   const actions = Array.isArray(c.actions) ? c.actions : [];
   const ofKind = (k) => actions.filter(a => a.kind === k);
@@ -720,19 +818,17 @@ function CreatureGmCard({ c, accent }) {
       {a.table_note && <div style={{ fontSize: 12, color: T.slate600, lineHeight: 1.5 }}>{a.table_note}</div>}
     </div>
   ));
-  const section = (title, list, intro) => (list.length === 0 ? null : (
-    <div style={{ ...card, marginBottom: 12 }}>
-      <div style={label}>{title}</div>
+  const group = (title, list, intro) => (list.length === 0 ? null : (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900, borderBottom: `2px solid ${accent}`, paddingBottom: 4 }}>{title}</div>
       {intro && <CardText text={intro} style={{ marginTop: 6 }} />}
-      <div style={{ marginTop: 6 }}>
-        {list.map(a => (
-          <div key={a.id} style={{ padding: "8px 0", borderTop: `1px solid ${T.slate100}` }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>{a.heading || a.name}</div>
-            <CardText text={a.description} />
-            {tableLine(a)}
-          </div>
-        ))}
-      </div>
+      {list.map(a => (
+        <div key={a.id} style={{ padding: "8px 0", borderTop: `1px solid ${T.slate100}` }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>{a.heading || a.name}</div>
+          <CardText text={a.description} />
+          {tableLine(a)}
+        </div>
+      ))}
     </div>
   ));
 
@@ -754,8 +850,16 @@ function CreatureGmCard({ c, accent }) {
         </div>
       </div>
 
-      {/* The stat block, as printed on the card */}
-      <div style={{ ...card, marginBottom: 12, borderTop: `4px solid ${accent}` }}>
+      <Fold title="Actions and traits" open>
+        {group("Actions", ofKind("action"))}
+        {group("Bonus actions", ofKind("bonus_action"))}
+        {group("Reactions", ofKind("reaction"))}
+        {group(`Legendary actions (${num(c.legendary_per_round)} a round)`, ofKind("legendary"), c.legendary_intro)}
+        {group(c.lair_title ? `Lair actions (${c.lair_title})` : "Lair actions", ofKind("lair"), c.lair_intro)}
+        {group("Traits", ofKind("trait"))}
+      </Fold>
+
+      <Fold title="Printed stat block (the d20 numbers, for reading)">
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{c.card_title || c.name}</div>
         {c.type_line && <div style={{ fontSize: 13, fontStyle: "italic", color: T.slate600 }}>{c.type_line}</div>}
         <div style={{ marginTop: 8 }}>
@@ -780,18 +884,10 @@ function CreatureGmCard({ c, accent }) {
         {statRow("Senses", c.senses)}
         {statRow("Languages", c.languages)}
         {statRow("Challenge Rating", c.challenge_text)}
-      </div>
-
-      {section("Traits", ofKind("trait"))}
-      {section("Actions", ofKind("action"))}
-      {section("Bonus Actions", ofKind("bonus_action"))}
-      {section("Reactions", ofKind("reaction"))}
-      {section(`Legendary Actions (${num(c.legendary_per_round)}/round)`, ofKind("legendary"), c.legendary_intro)}
-      {section(c.lair_title ? `Lair Actions (${c.lair_title})` : "Lair Actions", ofKind("lair"), c.lair_intro)}
+      </Fold>
 
       {rumors.length > 0 && (
-        <div style={{ ...card, marginBottom: 12 }}>
-          <div style={label}>Player rumor table</div>
+        <Fold title="Player rumor table">
           {c.rumor_title && <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900, marginTop: 4 }}>{c.rumor_title}</div>}
           {c.rumor_intro && <div style={{ fontSize: 13, fontStyle: "italic", color: T.slate600, marginTop: 2 }}>{c.rumor_intro}</div>}
           <div style={{ marginTop: 8 }}>
@@ -805,7 +901,7 @@ function CreatureGmCard({ c, accent }) {
             ))}
           </div>
           {c.rumor_note && <div style={{ fontSize: 12, fontStyle: "italic", color: T.slate500, marginTop: 6 }}>{c.rumor_note}</div>}
-        </div>
+        </Fold>
       )}
 
       {c.gm_tip && (
@@ -818,11 +914,11 @@ function CreatureGmCard({ c, accent }) {
   );
 }
 
+
 // ── Rules ────────────────────────────────────────────────────────────────────
 // Everything here comes from rpg_rules_page(): the manual text verbatim (rpg_rules), every
 // formula spelled out by rpg_formula_text() exactly as the sheet shows it, and the level-cost
 // table from rpg_level_cost(). The calculator asks rpg_needed(), the function a real roll uses.
-const SOURCE_LABELS = { manual: "From the manual", sheet: "From the character generator", engine: "How the game does it", peter: "Game master's ruling" };
 const howFigured = (s) => (s.kind === "rolled" ? "Rolled when the character is made"
   : s.kind === "fixed" ? `Starts at ${num(s.default_value)}${s.trainable ? ", grows by training" : ""}`
   : (s.formula_text || "—"));
@@ -846,6 +942,7 @@ function RuleText({ text }) {
 
 function RulesTab({ onError }) {
   const [page, setPage] = useState(null);
+  const [sub, setSub] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -868,41 +965,51 @@ function RulesTab({ onError }) {
   const calculator = <RollCalculator defaultDifficulty={page.default_difficulty} onError={onError} />;
   const levelTable = <LevelCostTable rows={levels} multiplier={page.level_cost_multiplier} />;
 
+  // One subtab per section, in the order the cards come (rpg_rules.section, sort_order), plus Tables.
+  const sections = [];
+  rules.forEach(r => { const s = r.section || "Rules"; if (!sections.includes(s)) sections.push(s); });
+  const tabs = [...sections, "Tables"];
+  const cur = tabs.includes(sub) ? sub : tabs[0];
+  const shown = rules.filter(r => (r.section || "Rules") === cur);
+
   return (
     <div>
       <ManualBodyStyles />
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+        {tabs.map(t => <button key={t} type="button" style={btn(cur === t ? "primary" : "soft", true)} onClick={() => setSub(t)}>{t}</button>)}
+      </div>
       {rules.length === 0 && <div style={{ ...card, color: T.slate500, fontSize: 13, marginBottom: 10 }}>No rules written yet.</div>}
-      {rules.map(r => (
+      {cur !== "Tables" && shown.map(r => (
         <div key={r.key} style={{ ...card, marginBottom: 10 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>{r.title}</div>
-            <span style={tag("off")}>{SOURCE_LABELS[r.source] || r.source}</span>
-          </div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>{r.title}</div>
           <RuleText text={r.body} />
           {r.key === "roll_check" && calculator}
           {r.key === "skill_gain" && levelTable}
         </div>
       ))}
-      {!hasRule("roll_check") && <div style={{ ...card, marginBottom: 10 }}>{calculator}</div>}
-      {!hasRule("skill_gain") && <div style={{ ...card, marginBottom: 10 }}>{levelTable}</div>}
-
-      <FormulaTable stats={stats} />
-
-      {page.is_gm && settings.length > 0 && (
-        <div style={{ ...card, marginTop: 10 }}>
-          <div style={label}>The numbers the game runs on</div>
-          <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>Game master only.</div>
-          {settings.map(s => (
-            <div key={s.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 0", borderBottom: `1px solid ${T.slate100}`, fontSize: 13 }}>
-              <div style={{ color: T.slate700, minWidth: 0 }}>{s.label}</div>
-              <div style={{ fontWeight: 700, color: T.slate900, whiteSpace: "nowrap" }}>{Number.isFinite(Number(s.value)) ? Number(s.value).toLocaleString("en-US") : "—"}</div>
+      {cur === "Tables" && (
+        <>
+          {!hasRule("roll_check") && <div style={{ ...card, marginBottom: 10 }}>{calculator}</div>}
+          {!hasRule("skill_gain") && <div style={{ ...card, marginBottom: 10 }}>{levelTable}</div>}
+          <FormulaTable stats={stats} />
+          {page.is_gm && settings.length > 0 && (
+            <div style={{ ...card, marginTop: 10 }}>
+              <div style={label}>The numbers the game runs on</div>
+              <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>Game master only.</div>
+              {settings.map(s => (
+                <div key={s.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 0", borderBottom: `1px solid ${T.slate100}`, fontSize: 13 }}>
+                  <div style={{ color: T.slate700, minWidth: 0 }}>{s.label}</div>
+                  <div style={{ fontWeight: 700, color: T.slate900, whiteSpace: "nowrap" }}>{Number.isFinite(Number(s.value)) ? Number(s.value).toLocaleString("en-US") : "—"}</div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </div>
   );
 }
+
 
 // Try a roll: pick a skill and a difficulty, see what a d100 needs. rpg_needed() answers, the
 // same function a real roll calls, so this can never disagree with the sheet. Against an
@@ -1137,12 +1244,40 @@ function FightList({ isParent, onOpen, hrefFor, onError }) {
   );
 }
 
+// The outcome word the log leads with (rpg_outcome) and the color it wears.
+const OUTCOME_COLOR = { fail: T.red, miss: T.red, wild_miss: T.red, weak_hit: T.amber, hit: T.green, success: T.green, big_hit: T.green, critical: T.gold, info: T.slate900 };
+const outcomeColor = (k) => OUTCOME_COLOR[k] || T.slate900;
+const outcomeWeight = (k) => (k === "big_hit" || k === "critical" || k === "wild_miss" ? 800 : 700);
+// "Big hit for 28: Bramblemaw's Claw at Karen…" → the outcome up to the first colon, then the rest.
+const splitOutcome = (text) => { const s = String(text || ""); const i = s.indexOf(": "); return i > 0 && i < 40 ? [s.slice(0, i), s.slice(i + 1)] : ["", s]; };
+function OutcomeLine({ text, outcome, weight = 400, color = T.slate700 }) {
+  const key = outcome || "info";
+  const [head, rest] = key === "info" ? ["", text] : splitOutcome(text);
+  return (
+    <div style={{ fontSize: 13, color, fontWeight: weight }}>
+      {head && <span style={{ color: outcomeColor(key), fontWeight: outcomeWeight(key) }}>{head}:</span>}{rest}
+    </div>
+  );
+}
+
+// A die rolled by hand. Blank means the site rolls.
+const dieValue = (v) => { const n = Math.round(Number(v)); return v !== "" && n >= 1 && n <= 100 ? n : null; };
+function DieBox({ value, onChange }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: T.slate500, fontWeight: 700 }}>Your die</div>
+      <input style={{ ...input, width: 78, textAlign: "center", marginTop: 4 }} inputMode="numeric" placeholder="1 to 100" value={value}
+        onChange={e => onChange(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} />
+    </div>
+  );
+}
+const cannotActWhy = (p) => (isDown(p) ? "is down" : (p.effects || []).find(e => e.cannot_act) ? `is ${(p.effects || []).find(e => e.cannot_act).name}` : `cannot act${p.status_note ? `: ${p.status_note}` : ""}`);
+
 function FightView({ id, isParent, defs, onBack, backHref, onError }) {
   const [st, setSt] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [last, setLast] = useState(null);
-  const [actorId, setActorId] = useState(null);
   const [openRow, setOpenRow] = useState(null);
 
   const pull = useCallback(async () => {
@@ -1157,15 +1292,15 @@ function FightView({ id, isParent, defs, onBack, backHref, onError }) {
   const parts = Array.isArray(st?.participants) ? st.participants : [];
   const events = Array.isArray(st?.events) ? st.events : [];
   const current = parts.find(p => p.is_current) || null;
-  useEffect(() => { setActorId(null); setLast(null); }, [s.current_participant_id]);
 
-  const run = useCallback(async (fn, args, showResult = false) => {
+  // showFor: the participant whose card shows the results (a creature's automatic turn keeps showing after it passes)
+  const run = useCallback(async (fn, args, showFor = null) => {
     if (busy) return null;
     setBusy(true); setMsg(null);
     const { data, error } = await supabase.rpc(fn, args);
     setBusy(false);
     if (error) { setMsg(error.message); return null; }
-    if (showResult) setLast(Array.isArray(data?.results) ? data.results : null);
+    if (showFor) setLast({ actorId: showFor, results: Array.isArray(data?.results) ? data.results : [] });
     await pull();
     nudge();
     return data ?? true;
@@ -1175,21 +1310,20 @@ function FightView({ id, isParent, defs, onBack, backHref, onError }) {
 
   const ended = s.status === "ended";
   const active = s.status === "active";
-  const actor = isParent ? (parts.find(p => p.id === actorId) || current) : (current?.kind === "character" ? current : null);
+  // The one whose turn it is acts. Players act for a character on its turn; the game master acts for anyone on theirs.
+  const actor = current && (isParent || current.kind === "character") ? current : null;
   const endTurn = () => run("rpg_session_next_turn", { p_session_id: id });
-  const move = (i, dir) => {
-    const ids = parts.map(p => p.id);
-    const j = i + dir;
-    if (j < 0 || j >= ids.length) return;
-    [ids[i], ids[j]] = [ids[j], ids[i]];
-    run("rpg_session_set_order", { p_session_id: id, p_order: ids });
-  };
   const del = async () => {
     if (!window.confirm(`Delete ${s.name} and everything in its log?`)) return;
     const { error } = await supabase.from("rpg_sessions").delete().eq("id", id);
     if (error) { setMsg(error.message); return; }
     onBack();
   };
+  const legendaries = isParent && active && current?.kind === "character"
+    ? parts.filter(p => p.kind === "creature" && Number(p.legendary_left) > 0 && (p.actions || []).some(a => a.kind === "legendary") && p.can_act_now)
+    : [];
+  const shownLast = last && last.results.length > 0 ? last : null;
+  const lastInCard = shownLast && actor && shownLast.actorId === actor.id;
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -1227,39 +1361,36 @@ function FightView({ id, isParent, defs, onBack, backHref, onError }) {
         {parts.length === 0
           ? <div style={{ fontSize: 13, color: T.slate500, marginTop: 6 }}>No one is in this fight yet.</div>
           : parts.map((p, i) => (
-            <ParticipantRow key={p.id} p={p} i={i} n={parts.length} isParent={isParent} ended={ended} busy={busy}
-              open={openRow === p.id} onToggle={() => setOpenRow(openRow === p.id ? null : p.id)} onMove={move} run={run} />
+            <ParticipantRow key={p.id} p={p} i={i} isParent={isParent} ended={ended} busy={busy}
+              open={openRow === p.id} onToggle={() => setOpenRow(openRow === p.id ? null : p.id)} run={run} />
           ))}
         {s.status !== "ended" && parts.length > 1 && (
-          <div style={hint}>Highest Agility goes first. Agility 7 goes before Agility 1.</div>
+          <div style={hint}>Highest Agility goes first. Agility 7 goes before Agility 1. Anyone who joins later slots in by their Agility.</div>
         )}
       </div>
 
-      {isParent && active && parts.length > 1 && (
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 13, color: T.slate600 }}>Acting</span>
-          <select style={input} value={actor?.id || ""} onChange={e => setActorId(e.target.value || null)}>
-            {parts.map(p => <option key={p.id} value={p.id}>{p.name}{p.is_current ? " (their turn)" : ""}</option>)}
-          </select>
-        </div>
-      )}
-
       {active && actor && actor.kind === "character" && (
-        <CharacterActions key={actor.id} actor={actor} parts={parts} s={s} busy={busy} run={run} onEnd={endTurn} />
+        <CharacterActions key={actor.id} actor={actor} parts={parts} s={s} busy={busy} run={run} onEnd={endTurn} last={lastInCard ? shownLast.results : null} />
       )}
-      {active && actor && actor.kind === "creature" && isParent && (
-        <CreatureActions key={actor.id} actor={actor} parts={parts} defs={defs} busy={busy} run={run} onEnd={endTurn} />
+      {active && actor && actor.kind === "creature" && (
+        <CreatureActions key={actor.id} actor={actor} parts={parts} defs={defs} sessionId={id} busy={busy} run={run} onEnd={endTurn} last={lastInCard ? shownLast.results : null} />
       )}
       {active && !isParent && current && current.kind !== "character" && (
-        <div style={{ ...card, fontSize: 13, color: T.slate600 }}>{current.name} is taking its turn. The game master rolls for it.</div>
+        <div style={{ ...card, fontSize: 13, color: T.slate600 }}>{current.name} is taking its turn.</div>
       )}
+      {legendaries.map(cr => (
+        <div key={cr.id} style={{ ...card, display: "grid", gap: 10 }}>
+          <div style={{ fontWeight: 700, color: T.slate900 }}>{cr.name}'s legendary actions</div>
+          <ManualCreatureTurn actor={cr} parts={parts} defs={defs} busy={busy} run={run} kinds={["legendary"]} skills={false}
+            note="Used on other turns: the site rolls a six-sided die for it as each turn ends and spends one on 4 or more. You can spend one yourself here." />
+        </div>
+      ))}
 
-      {Array.isArray(last) && last.length > 0 && <ResultCard results={last} />}
+      {shownLast && !lastInCard && <ResultCard results={shownLast.results} title={`${parts.find(p => p.id === shownLast.actorId)?.name || "Last"} rolled`} />}
       <FightLog events={events} />
     </div>
   );
 }
-
 function AddToFight({ st, id, busy, run, startOpen }) {
   const [open, setOpen] = useState(startOpen);
   const [creature, setCreature] = useState("");
@@ -1295,7 +1426,7 @@ function AddToFight({ st, id, busy, run, startOpen }) {
   );
 }
 
-function ParticipantRow({ p, i, n, isParent, ended, busy, open, onToggle, onMove, run }) {
+function ParticipantRow({ p, i, isParent, ended, busy, open, onToggle, run }) {
   const [note, setNote] = useState(p.status_note || "");
   const [amount, setAmount] = useState("5");
   useEffect(() => { setNote(p.status_note || ""); }, [p.status_note]);
@@ -1303,6 +1434,7 @@ function ParticipantRow({ p, i, n, isParent, ended, busy, open, onToggle, onMove
   const hasNums = p.vitality_left != null && p.vitality_max != null;
   const share = hasNums ? (Number(p.vitality_max) > 0 ? Number(p.vitality_left) / Number(p.vitality_max) : 0) : (Number(p.vitality_share) || 0);
   const amt = Math.round(Number(amount) || 0);
+  const effects = Array.isArray(p.effects) ? p.effects : [];
   return (
     <div style={{ borderTop: i ? `1px solid ${T.slate100}` : "none", padding: "9px 0", marginTop: i ? 0 : 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -1310,6 +1442,7 @@ function ParticipantRow({ p, i, n, isParent, ended, busy, open, onToggle, onMove
         <span style={{ fontWeight: p.is_current ? 800 : 600, color: T.slate900 }}>{p.name}</span>
         {p.is_current && <span style={pill(T.blue, T.blueLt)}>Their turn</span>}
         {down && <span style={pill(T.red, T.redLt)}>Down</span>}
+        {effects.map(e => <span key={e.name} style={pill(T.amber, T.amberLt)} title={e.source ? `From ${e.source}` : undefined}>{e.name}</span>)}
         {!down && !p.can_act && <span style={pill(T.amber, T.amberLt)}>Cannot act</span>}
         {p.status_note && <span style={{ fontSize: 12, color: T.slate600 }}>{p.status_note}</span>}
         <span style={{ flex: 1 }} />
@@ -1323,26 +1456,23 @@ function ParticipantRow({ p, i, n, isParent, ended, busy, open, onToggle, onMove
       </div>
       {open && (
         <div style={{ display: "grid", gap: 8, marginTop: 8, padding: 10, background: T.slate50, borderRadius: 8, boxSizing: "border-box" }}>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <button type="button" style={btn("soft", true)} disabled={busy || i === 0} onClick={() => onMove(i, -1)}>Move up</button>
-            <button type="button" style={btn("soft", true)} disabled={busy || i === n - 1} onClick={() => onMove(i, 1)}>Move down</button>
-            <button type="button" style={btn("danger", true)} disabled={busy}
-              onClick={() => { if (window.confirm(`Take ${p.name} out of the fight?`)) run("rpg_session_remove", { p_participant_id: p.id }); }}>Take out</button>
-          </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            <input style={{ ...input, flex: "1 1 180px" }} placeholder="Note the table sees, like Held until the next round" value={note} onChange={e => setNote(e.target.value)} />
+            <input style={{ ...input, flex: "1 1 180px" }} placeholder="Note the table sees" value={note} onChange={e => setNote(e.target.value)} />
             <button type="button" style={btn(p.can_act ? "primary" : "soft", true)} disabled={busy}
               onClick={() => run("rpg_session_set_status", { p_participant_id: p.id, p_can_act: true, p_status_note: note })}>Can act</button>
             <button type="button" style={btn(!p.can_act ? "primary" : "soft", true)} disabled={busy}
               onClick={() => run("rpg_session_set_status", { p_participant_id: p.id, p_can_act: false, p_status_note: note })}>Cannot act</button>
           </div>
-          <div style={hint}>Someone who cannot act is easier to hit: Evade Enemy 5 is difficulty 5 instead of 10.</div>
+          <div style={hint}>Held, Knocked down and Entranced come from the creature cards and clear themselves. This switch is for anything else. Someone who cannot act is easier to hit: Evade Enemy 5 is difficulty 5 instead of 10.</div>
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
             <input style={{ ...input, width: 70, textAlign: "center" }} inputMode="numeric" value={amount} onChange={e => setAmount(e.target.value)} />
             <button type="button" style={btn("soft", true)} disabled={busy || amt <= 0}
               onClick={() => run("rpg_session_adjust_vitality", { p_participant_id: p.id, p_delta: amt })}>Damage</button>
             <button type="button" style={btn("soft", true)} disabled={busy || amt <= 0}
               onClick={() => run("rpg_session_adjust_vitality", { p_participant_id: p.id, p_delta: -amt })}>Heal</button>
+            <span style={{ flex: 1 }} />
+            <button type="button" style={btn("danger", true)} disabled={busy}
+              onClick={() => { if (window.confirm(`Take ${p.name} out of the fight?`)) run("rpg_session_remove", { p_participant_id: p.id }); }}>Take out</button>
           </div>
         </div>
       )}
@@ -1350,163 +1480,202 @@ function ParticipantRow({ p, i, n, isParent, ended, busy, open, onToggle, onMove
   );
 }
 
-function CharacterActions({ actor, parts, s, busy, run, onEnd }) {
+// A character's turn. Any check a rule put on them comes first (Frightened → Courage against 8), then one attack;
+// after the attack the form gives way to what happened. Every roll takes a die rolled by hand, or blank for the site's.
+function CharacterActions({ actor, parts, s, busy, run, onEnd, last }) {
   const weapons = Array.isArray(actor.weapons) ? actor.weapons : [];
-  const stats = Array.isArray(actor.stats) ? actor.stats : [];
   const targets = parts.filter(p => p.id !== actor.id);
   const [weapon, setWeapon] = useState("");
   const [target, setTarget] = useState("");
-  const [checkOpen, setCheckOpen] = useState(false);
-  const [checkKey, setCheckKey] = useState("CO");
-  const [difficulty, setDifficulty] = useState("5");
+  const [die, setDie] = useState("");
+  const [extraDie, setExtraDie] = useState("");
   const w = weapons.some(x => x.key === weapon) ? weapon : (weapons[0]?.key || "");
   const fallback = (targets.find(p => p.kind === "creature" && !isDown(p)) || targets[0])?.id || "";
   const t = targets.some(x => x.id === target) ? target : fallback;
-  const used = actor.is_current ? (Number(s.turn_attacks) || 0) : 0;
+  const used = Number(s.turn_attacks) || 0;
   const perTurn = Number(s.attacks_per_turn) || 1;
-  const blocked = !actor.can_act || isDown(actor);
+  const check = actor.pending_check || null;
+  const pendingExtra = Array.isArray(last) ? last.find(r => r.extra_pending) : null;
+  const dv = dieValue(die); const badDie = die !== "" && dv == null;
+  const xv = dieValue(extraDie); const badExtra = extraDie !== "" && xv == null;
+  const cannot = !actor.can_act_now;
+  const act = async (args) => { const r = await run("rpg_act", args, actor.id); if (r) setDie(""); };
+  const extra = async () => { const r = await run("rpg_act_extra", { p_roll_id: pendingExtra.roll_id, p_roll: xv }, actor.id); if (r) setExtraDie(""); };
+  const small = { fontSize: 11, color: T.slate500, fontWeight: 700 };
   return (
     <div style={{ ...card, borderColor: T.blue, display: "grid", gap: 10 }}>
-      <div style={{ fontWeight: 700, color: T.slate900 }}>{actor.is_current ? `${actor.name}, it's your turn` : actor.name}</div>
-      {blocked ? (
-        <div style={{ fontSize: 13, color: T.slate600 }}>{actor.name} {isDown(actor) ? "is down" : "cannot act"}{actor.status_note ? `: ${actor.status_note}` : ""}.</div>
-      ) : (
-        <>
-          <div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-              <select style={input} value={w} onChange={e => setWeapon(e.target.value)}>
+      <div style={{ fontWeight: 700, color: T.slate900 }}>{actor.name}, it's your turn</div>
+      {cannot && !check && <div style={{ fontSize: 13, color: T.slate600 }}>{actor.name} {cannotActWhy(actor)}.</div>}
+      {pendingExtra ? (
+        <div>
+          <div style={{ fontSize: 13, color: T.gold, fontWeight: 800 }}>Critical! Roll again and enter it.</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", marginTop: 6 }}>
+            <DieBox value={extraDie} onChange={setExtraDie} />
+            <button type="button" style={btn("primary")} disabled={busy || xv == null} onClick={extra}>Enter the extra roll</button>
+          </div>
+          <div style={hint}>{badExtra ? "A die is 1 to 100." : "On an attack the extra die is that much more damage."}</div>
+        </div>
+      ) : check ? (
+        <div>
+          <div style={{ fontSize: 13, color: T.slate800 }}>
+            Before you attack, shake off <b>{check.name}</b>: roll {check.stat_name} {num(check.skill)} against {num(check.difficulty)}. Needs {Math.ceil(Number(check.needed))} or more.
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", marginTop: 6 }}>
+            <DieBox value={die} onChange={setDie} />
+            <button type="button" style={btn("primary")} disabled={busy || badDie}
+              onClick={() => act({ p_actor_id: actor.id, p_effect: check.name, p_roll: dv })}>Roll {check.stat_name}</button>
+          </div>
+          <div style={hint}>{badDie ? "A die is 1 to 100." : "Leave the die blank and the site rolls for you. Pass and it is gone; fail and you cannot attack this turn."}</div>
+        </div>
+      ) : !cannot && used < perTurn ? (
+        <div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div>
+              <div style={small}>Weapon</div>
+              <select style={{ ...input, marginTop: 4 }} value={w} onChange={e => setWeapon(e.target.value)}>
                 {weapons.map(x => <option key={x.key} value={x.key}>{x.name} {num(x.value)}</option>)}
               </select>
-              <span style={{ fontSize: 13, color: T.slate600 }}>at</span>
-              <select style={input} value={t} onChange={e => setTarget(e.target.value)}>
+            </div>
+            <div>
+              <div style={small}>At</div>
+              <select style={{ ...input, marginTop: 4 }} value={t} onChange={e => setTarget(e.target.value)}>
                 {targets.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
               </select>
-              <button type="button" style={btn("primary")} disabled={busy || !w || !t || used >= perTurn}
-                onClick={() => run("rpg_act", { p_actor_id: actor.id, p_target_ids: [t], p_stat_key: w }, true)}>Attack</button>
             </div>
-            <div style={hint}>
-              {used >= perTurn ? `${actor.name} has made this turn's attack.`
-                : "Your weapon skill against their Evade Enemy × 2. Dagger 6 against Evade Enemy 8 is difficulty 16 and needs 73 or more."}
-            </div>
+            <DieBox value={die} onChange={setDie} />
+            <button type="button" style={btn("primary")} disabled={busy || !w || !t || badDie}
+              onClick={() => act({ p_actor_id: actor.id, p_target_ids: [t], p_stat_key: w, p_roll: dv })}>Attack</button>
           </div>
-          <div>
-            <button type="button" style={btn("soft", true)} onClick={() => setCheckOpen(!checkOpen)}>{checkOpen ? "Hide the check" : "Roll a check"}</button>
-            {checkOpen && (
-              <div style={{ marginTop: 8 }}>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-                  <div>
-                    <div style={{ fontSize: 11, color: T.slate500, fontWeight: 700 }}>Skill</div>
-                    <select style={{ ...input, marginTop: 4 }} value={checkKey} onChange={e => setCheckKey(e.target.value)}>
-                      {stats.map(x => <option key={x.key} value={x.key}>{x.name} {num(x.value)}</option>)}
-                    </select>
-                  </div>
-                  <NumberBox title="Difficulty" value={difficulty} onChange={setDifficulty} />
-                  <button type="button" style={btn("primary", true)} disabled={busy}
-                    onClick={() => run("rpg_act", { p_actor_id: actor.id, p_stat_key: checkKey, p_difficulty: Math.max(0, Number(difficulty) || 0) }, true)}>Roll</button>
-                </div>
-                <div style={hint}>A check is one of your skills against a set difficulty. Courage 7 against 8, to shake off fear, needs 54 or more.</div>
-              </div>
-            )}
-          </div>
-        </>
+          <div style={hint}>{badDie ? "A die is 1 to 100." : "Leave the die blank and the site rolls for you. Your weapon skill against their Evade Enemy × 2: Dagger 6 against Evade Enemy 8 is difficulty 16 and needs 73 or more."}</div>
+        </div>
+      ) : null}
+      {Array.isArray(last) && last.length > 0 && <ResultCard results={last} />}
+      {!cannot && !check && !pendingExtra && used >= perTurn && !(Array.isArray(last) && last.length > 0) && (
+        <div style={{ fontSize: 13, color: T.slate600 }}>{actor.name} has made this turn's attack.</div>
       )}
-      {actor.is_current && <div><button type="button" style={btn("soft")} disabled={busy} onClick={onEnd}>End turn</button></div>}
+      <div><button type="button" style={btn("soft")} disabled={busy} onClick={onEnd}>End turn</button></div>
     </div>
   );
 }
 
-function CreatureActions({ actor, parts, defs, busy, run, onEnd }) {
-  const actions = Array.isArray(actor.actions) ? actor.actions : [];
+// A creature's turn. The site plays it by default; the game master can roll it by hand instead.
+function CreatureActions({ actor, parts, defs, sessionId, busy, run, onEnd, last }) {
+  const [manual, setManual] = useState(false);
+  const cannot = !actor.can_act_now;
+  return (
+    <div style={{ ...card, borderColor: T.blue, display: "grid", gap: 12 }}>
+      <div style={{ fontWeight: 700, color: T.slate900 }}>{actor.name}'s turn</div>
+      {cannot ? (
+        <div style={{ fontSize: 13, color: T.slate600 }}>{actor.name} {cannotActWhy(actor)}.</div>
+      ) : !manual ? (
+        <div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" style={btn("primary")} disabled={busy} onClick={() => run("rpg_session_auto_turn", { p_session_id: sessionId }, actor.id)}>Play its turn</button>
+            <button type="button" style={btn("soft")} disabled={busy} onClick={() => setManual(true)}>Roll it myself</button>
+          </div>
+          <div style={hint}>The site picks from its card among what is ready, rolls, and passes the turn. Spent actions come back on a six-sided die at the start of its next turn.</div>
+        </div>
+      ) : (
+        <ManualCreatureTurn actor={actor} parts={parts} defs={defs} busy={busy} run={run} kinds={["action", "bonus_action", "reaction", "lair"]} skills />
+      )}
+      {Array.isArray(last) && last.length > 0 && <ResultCard results={last} />}
+      {(manual || cannot) && <div><button type="button" style={btn("soft")} disabled={busy} onClick={onEnd}>End turn</button></div>}
+    </div>
+  );
+}
+
+// The creature's card as buttons: pick who it aims at, then one row per action with what it rolls.
+function ManualCreatureTurn({ actor, parts, defs, busy, run, kinds, skills, note }) {
+  const actions = (Array.isArray(actor.actions) ? actor.actions : []).filter(a => kinds.includes(a.kind));
   const others = parts.filter(p => p.id !== actor.id);
-  const skills = actor.skills || {};
+  const sk = actor.skills || {};
   const [picked, setPicked] = useState([]);
   const [skill, setSkill] = useState("strength");
   const [against, setAgainst] = useState("ST");
   const targetIds = picked.filter(x => others.some(o => o.id === x));
   const toggle = (pid) => setPicked(targetIds.includes(pid) ? targetIds.filter(x => x !== pid) : [...targetIds, pid]);
   const againstOpts = (Array.isArray(defs) ? defs : []).filter(d => d.grp === "physical" || d.grp === "ability");
-  const act = async (args) => { const r = await run("rpg_act", args, true); if (r) setPicked([]); };
-  const blocked = !actor.can_act || isDown(actor);
+  const act = async (args) => { const r = await run("rpg_act", args, actor.id); if (r) setPicked([]); };
+  const describe = (a) => {
+    if (a.parts) return `${a.parts}${a.effect ? `, ${a.effect} on a hit` : ""}`;
+    if (a.skill == null) return "no roll";
+    return `${num(a.skill)} against ${a.against_name || a.against}${a.deals_damage ? ", does damage" : ""}${a.effect ? ` → ${a.effect}` : ""}`;
+  };
   return (
-    <div style={{ ...card, borderColor: T.blue, display: "grid", gap: 12 }}>
-      <div style={{ fontWeight: 700, color: T.slate900 }}>{actor.is_current ? `${actor.name}'s turn` : actor.name}</div>
-      {blocked ? (
-        <div style={{ fontSize: 13, color: T.slate600 }}>{actor.name} {isDown(actor) ? "is down" : "cannot act"}.</div>
-      ) : (
-        <>
-          <div>
-            <div style={{ fontSize: 11, color: T.slate500, fontWeight: 700 }}>Aim at</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
-              {others.map(o => (
-                <button key={o.id} type="button" style={btn(targetIds.includes(o.id) ? "primary" : "soft", true)} onClick={() => toggle(o.id)}>{o.name}</button>
-              ))}
-            </div>
-            <div style={hint}>Each one picked gets their own roll.</div>
+    <div style={{ display: "grid", gap: 10 }}>
+      {note && <div style={hint}>{note}</div>}
+      <div>
+        <div style={{ fontSize: 11, color: T.slate500, fontWeight: 700 }}>Aim at</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+          {others.map(o => (
+            <button key={o.id} type="button" style={btn(targetIds.includes(o.id) ? "primary" : "soft", true)} onClick={() => toggle(o.id)}>{o.name}{isDown(o) ? " (down)" : ""}</button>
+          ))}
+        </div>
+        <div style={hint}>Pick several and each gets a roll; a Multiattack spreads its attacks over them at random.</div>
+      </div>
+      {ACTION_GROUPS.filter(([k]) => kinds.includes(k)).map(([kind, title]) => {
+        const list = actions.filter(a => a.kind === kind);
+        if (list.length === 0) return null;
+        return (
+          <div key={kind}>
+            <div style={label}>{title}{kind === "legendary" && actor.legendary_per_round ? ` · ${actor.legendary_left} of ${actor.legendary_per_round} left` : ""}</div>
+            {list.map(a => {
+              const rolls = a.skill != null || !!a.parts;
+              const short = kind === "legendary" && Number(actor.legendary_left) < Number(a.legendary_cost);
+              return (
+                <div key={a.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "7px 0", borderTop: `1px solid ${T.slate100}` }}>
+                  <div style={{ flex: "1 1 160px", minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, color: T.slate900 }}>{a.name}{kind === "legendary" ? <span style={{ fontSize: 12, fontWeight: 400, color: T.slate500 }}> · costs {a.legendary_cost}</span> : null}</div>
+                    <div style={{ fontSize: 12, color: T.slate600 }}>{describe(a)}</div>
+                  </div>
+                  {a.spent ? (
+                    <span style={{ fontSize: 12, fontWeight: 600, color: T.amber }}>Not ready · back on a {a.recharge_min} or more</span>
+                  ) : (
+                    <button type="button" style={btn("primary", true)} disabled={busy || short || (rolls && targetIds.length === 0)}
+                      onClick={() => act(rolls ? { p_actor_id: actor.id, p_target_ids: targetIds, p_action_id: a.id } : { p_actor_id: actor.id, p_action_id: a.id })}>
+                      {rolls ? "Roll" : "Use"}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
-          {ACTION_GROUPS.map(([kind, title]) => {
-            const list = actions.filter(a => a.kind === kind);
-            if (list.length === 0) return null;
-            return (
-              <div key={kind}>
-                <div style={label}>{title}{kind === "legendary" && actor.legendary_per_round ? `, ${actor.legendary_left} of ${actor.legendary_per_round} left` : ""}</div>
-                {kind === "legendary" && <div style={hint}>Used on other turns. They come back when {actor.name}'s turn starts.</div>}
-                {list.map(a => {
-                  const rolls = a.skill != null && !a.several;
-                  const short = kind === "legendary" && Number(actor.legendary_left) < Number(a.legendary_cost);
-                  return (
-                    <div key={a.id} style={{ padding: "7px 0", borderTop: `1px solid ${T.slate100}` }}>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                        <span style={{ fontWeight: 600, color: T.slate900 }}>{a.name}</span>
-                        {rolls && <span style={{ fontSize: 12, color: T.slate600 }}>{a.skill} against {a.against_name || a.against}{a.deals_damage ? ", does damage" : ""}</span>}
-                        {kind === "legendary" && <span style={{ fontSize: 12, color: T.slate500 }}>costs {a.legendary_cost}</span>}
-                        <span style={{ flex: 1 }} />
-                        {a.several ? null : a.spent ? (
-                          <span style={{ fontSize: 12, fontWeight: 600, color: T.amber }}>Recharging: ready on a {a.recharge_min} or more</span>
-                        ) : (
-                          <button type="button" style={btn("primary", true)} disabled={busy || short || (rolls && targetIds.length === 0)}
-                            onClick={() => act(rolls ? { p_actor_id: actor.id, p_target_ids: targetIds, p_action_id: a.id } : { p_actor_id: actor.id, p_action_id: a.id })}>
-                            {rolls ? "Roll" : "Use"}
-                          </button>
-                        )}
-                      </div>
-                      {a.table_note && <div style={hint}>{a.table_note}</div>}
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })}
-          <div>
-            <div style={label}>Roll one of its skills</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 4 }}>
-              <select style={input} value={skill} onChange={e => setSkill(e.target.value)}>
-                {CREATURE_SKILLS.filter(([k]) => skills[k] != null).map(([k, n]) => <option key={k} value={k}>{n} {skills[k]}</option>)}
-              </select>
-              <span style={{ fontSize: 13, color: T.slate600 }}>against their</span>
-              <select style={input} value={against} onChange={e => setAgainst(e.target.value)}>
-                {againstOpts.map(d => <option key={d.key} value={d.key}>{d.name}</option>)}
-              </select>
-              <button type="button" style={btn("primary", true)} disabled={busy || targetIds.length === 0}
-                onClick={() => act({ p_actor_id: actor.id, p_target_ids: targetIds, p_stat_key: skill, p_against: against })}>Roll</button>
-            </div>
-            <div style={hint}>For a Claw that knocks someone down: Strength 10 against their Strength 5 is difficulty 10 and needs 50 or more.</div>
+        );
+      })}
+      {skills && (
+        <div>
+          <div style={label}>Roll one of its skills</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 4 }}>
+            <select style={input} value={skill} onChange={e => setSkill(e.target.value)}>
+              {CREATURE_SKILLS.filter(([k]) => sk[k] != null).map(([k, n]) => <option key={k} value={k}>{n} {sk[k]}</option>)}
+            </select>
+            <span style={{ fontSize: 13, color: T.slate600 }}>against their</span>
+            <select style={input} value={against} onChange={e => setAgainst(e.target.value)}>
+              {againstOpts.map(d => <option key={d.key} value={d.key}>{d.name}</option>)}
+            </select>
+            <button type="button" style={btn("primary", true)} disabled={busy || targetIds.length === 0}
+              onClick={() => act({ p_actor_id: actor.id, p_target_ids: targetIds, p_stat_key: skill, p_against: against })}>Roll</button>
           </div>
-        </>
+          <div style={hint}>For anything the card does not cover. Strength 10 against their Strength 5 is difficulty 10 and needs 50 or more.</div>
+        </div>
       )}
-      {actor.is_current && <div><button type="button" style={btn("soft")} disabled={busy} onClick={onEnd}>End turn</button></div>}
     </div>
   );
 }
 
-function ResultCard({ results }) {
+function ResultCard({ results, title }) {
   return (
-    <div style={{ ...card, display: "grid", gap: 10 }}>
-      {results.map((r, i) => (
-        <div key={i} style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <div style={{ fontSize: 34, fontWeight: 800, color: resultColor(r.result), minWidth: 56, textAlign: "center" }}>{r.roll}</div>
-          <div style={{ fontSize: 13, color: T.slate700 }}>{r.text}</div>
-        </div>
-      ))}
+    <div style={{ ...card, display: "grid", gap: 10, background: T.slate50 }}>
+      {title && <div style={label}>{title}</div>}
+      {results.map((r, i) => {
+        const key = r.outcome || (r.result === "C" ? "critical" : r.result ? "success" : "fail");
+        return (
+          <div key={i} style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <div style={{ fontSize: 34, fontWeight: 800, color: outcomeColor(key), minWidth: 56, textAlign: "center" }}>{r.roll}</div>
+            <OutcomeLine text={r.text} outcome={key} />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1514,7 +1683,7 @@ function ResultCard({ results }) {
 function FightLog({ events }) {
   const [all, setAll] = useState(false);
   if (events.length === 0) return null;
-  const shown = all ? events : events.slice(0, 12);
+  const shown = all ? events : events.slice(0, 14);
   return (
     <div style={card}>
       <div style={label}>What happened</div>
@@ -1522,11 +1691,13 @@ function FightLog({ events }) {
         {shown.map(e => {
           const marker = ["turn", "round", "start", "end"].includes(e.kind);
           return (
-            <div key={e.id} style={{ fontSize: 13, color: marker ? T.slate900 : T.slate700, fontWeight: marker ? 700 : 400, paddingTop: marker ? 4 : 0 }}>{e.text}</div>
+            <div key={e.id} style={{ paddingTop: marker ? 4 : 0 }}>
+              <OutcomeLine text={e.text} outcome={marker ? "info" : (e.outcome || "info")} weight={marker ? 700 : 400} color={marker ? T.slate900 : T.slate700} />
+            </div>
           );
         })}
       </div>
-      {events.length > 12 && (
+      {events.length > 14 && (
         <button type="button" style={{ ...btn("soft", true), marginTop: 8 }} onClick={() => setAll(!all)}>{all ? "Show less" : "Show all"}</button>
       )}
     </div>
