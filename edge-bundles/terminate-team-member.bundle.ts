@@ -230,7 +230,10 @@ async function closeWatcherTask(opts: {
 //   3. Updates team: archived_at, end_date, is_active=false, termination_reason,
 //      final_paycheck_date.
 //   4. Deactivates the linked users row if present.
-//   5. Sets both team_telegram_map.is_excluded_pjsagencybot=true AND is_excluded_paper_newt_bot=true (excluded_reason='terminated').
+//   5. Blocks them from both Telegram bots (team.is_excluded_pjsagencybot and
+//      team.is_excluded_paper_newt_bot) in the same update as step 3. Until
+//      2026-09-25 this wrote to team_telegram_map, a table that no longer
+//      exists, so it never took.
 //   6. Strips the person's block from the "Team List" processes page.
 //   7. Takes the person off every team meeting invite (Daily Kickoff, Coffee
 //      and Donuts, Daily Wrap-up) straight away by running the same calendar
@@ -240,8 +243,10 @@ async function closeWatcherTask(opts: {
 //      invite for days after his termination. Moved onto the shared sync
 //      2026-09-25 when the team got three meetings.
 //   8. Sends the email to Peter's State Farm address via Composio Gmail.
-//   9. Kicks the user from the team Telegram group (ban + unban → no permanent
-//      ban list).
+//   9. Telegram group: the database removes them the moment the step 3 update
+//      is saved (trigger team_telegram_offboard -> telegram_group_remove_member:
+//      ban + unban so a future invite still works, invite links pulled, one
+//      line to the admin group). This function reads back what it recorded.
 //  10. Logs everything to automation_run_log; failures land in tasks so Peter
 //      can see + retry.
 //
@@ -361,7 +366,7 @@ Deno.serve(async (req: Request) => {
   try {
     // 1) Load member
     const { data: member, error: memErr } = await sb.from("team")
-      .select("id, user_id, first_name, last_name, nickname, role, role_level, role_category, employment_type, hire_date, start_date, sf_alias, phone_extension, email_personal, email_sf, phone_personal, address_line1, address_line2, city, state, zip_code, archived_at")
+      .select("id, user_id, first_name, last_name, nickname, role, role_level, role_category, employment_type, hire_date, start_date, sf_alias, phone_extension, email_personal, email_sf, phone_personal, address_line1, address_line2, city, state, zip_code, archived_at, telegram_user_id")
       .eq("id", body.team_id)
       .eq("agency_id", AGENCY_ID)
       .maybeSingle();
@@ -449,8 +454,8 @@ ${checklistMdToHtml(checklistMd)}
 <li>Archived in Newtworks database (<code>team.archived_at</code>)</li>
 <li>Linked user login deactivated (if any)</li>
 <li>Stripped from the Team List page in Processes</li>\n<li>Taken off every team meeting invite (work + personal address)</li>
-<li>Excluded from both Telegram bots (<code>team_telegram_map.is_excluded_pjsagencybot=true, is_excluded_paper_newt_bot=true</code>)</li>
-<li>Kicked from the team Telegram group</li>
+<li>Blocked from both Telegram bots</li>
+<li>${member.telegram_user_id ? "Removed from the team Telegram group" : "No Telegram account on file; any group invite link pulled"}</li>
 </ul>
 
 <p style="color:#999;margin-top:32px;font-size:11px;border-top:1px solid #ddd;padding-top:14px;">
@@ -469,13 +474,16 @@ Sent by the Newtworks on ${new Date().toLocaleString("en-US", { timeZone: "Ameri
       is_active: false,
       termination_reason: body.termination_reason,
       final_paycheck_date: body.final_paycheck_date || null,
+      // Step 5: blocked from both Telegram bots.
+      is_excluded_pjsagencybot: true,
+      is_excluded_paper_newt_bot: true,
       updated_at: nowIso,
     }).eq("id", body.team_id).eq("agency_id", AGENCY_ID).select("id");
     if (teamErr) return json({ error: `team update: ${teamErr.message}`, audit_log: auditLog }, 500);
     if (!teamUpd || teamUpd.length === 0) {
       return json({ error: "team update affected 0 rows (RLS?)", audit_log: auditLog }, 500);
     }
-    auditLog.push("Updated team row");
+    auditLog.push("Updated team row; blocked from both Telegram bots");
 
     // 5) Deactivate linked user
     if (member.user_id) {
@@ -488,16 +496,31 @@ Sent by the Newtworks on ${new Date().toLocaleString("en-US", { timeZone: "Ameri
       else auditLog.push("Deactivated linked user");
     }
 
-    // 6) Telegram map: mark excluded
-    const { error: tgmErr, data: tgm } = await sb.from("team_telegram_map")
-      .update({ is_excluded_pjsagencybot: true, is_excluded_paper_newt_bot: true, excluded_reason: "terminated", updated_at: nowIso })
-      .eq("team_id", body.team_id)
-      .eq("agency_id", AGENCY_ID)
-      .select("telegram_user_id")
-      .maybeSingle();
-    if (tgmErr) warnings.push(`telegram map: ${tgmErr.message}`);
-    else if (tgm) auditLog.push("team_telegram_map.is_excluded_pjsagencybot=true, is_excluded_paper_newt_bot=true");
-    const telegramUserId: number | null = tgm?.telegram_user_id ?? null;
+    // 6) Telegram group. The removal already ran inside the database when the
+    //    step 4 update was saved (team_telegram_offboard -> telegram_group_remove_member).
+    //    Read back what it recorded for this departure.
+    let telegramKicked = false;
+    let telegramErrMsg: string | null = null;
+    const telegramUserId: number | null = member.telegram_user_id ?? null;
+    {
+      const { data: rem, error: remErr } = await sb.from("telegram_group_removals")
+        .select("telegram_user_id, removed_at, api_result")
+        .eq("agency_id", AGENCY_ID).eq("team_id", body.team_id).eq("route_key", "team")
+        .order("removed_at", { ascending: false }).limit(1).maybeSingle();
+      const fresh = rem && new Date(rem.removed_at).getTime() >= new Date(nowIso).getTime() - 10 * 60_000;
+      if (remErr) {
+        telegramErrMsg = `telegram removal lookup: ${remErr.message}`;
+      } else if (!fresh) {
+        telegramErrMsg = "no Telegram group removal was recorded for this termination";
+      } else if (!rem.telegram_user_id) {
+        auditLog.push("No Telegram account on file; any group invite link was pulled");
+      } else if (rem.api_result?.ban?.ok === true) {
+        telegramKicked = true;
+        auditLog.push(`Removed Telegram user ${rem.telegram_user_id} from the team group`);
+      } else {
+        telegramErrMsg = `Telegram group removal failed: ${JSON.stringify(rem.api_result ?? {}).slice(0, 300)}`;
+      }
+    }
 
     // 7) Strip from "Team List" processes page (best-effort)
     try {
@@ -607,59 +630,6 @@ Sent by the Newtworks on ${new Date().toLocaleString("en-US", { timeZone: "Ameri
         `${emailErrMsg}\n\nSubject: ${subject}\n\nThe team row + Telegram exclusion were applied. The email did NOT deliver — manual notification needed.`);
     }
 
-    // 9) Kick from Telegram group (best-effort)
-    let telegramKicked = false;
-    let telegramErrMsg: string | null = null;
-    if (telegramUserId) {
-      try {
-        const chatIdStr = await getSetting(AGENCY_ID, "telegram_team_group_chat_id");
-        const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-        const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-        if (!chatIdStr) {
-          telegramErrMsg = "telegram_team_group_chat_id not set in settings";
-        } else {
-          const chatId = parseInt(chatIdStr, 10);
-          const banRes = await fetch(`${supabaseUrl}/functions/v1/telegram`, {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${serviceKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              action: "banChatMember",
-              chat_id: chatId,
-              user_id: telegramUserId,
-            }),
-          });
-          const banJson = await banRes.json().catch(() => ({}));
-          if (!banRes.ok || banJson?.ok === false) {
-            telegramErrMsg = `ban failed: ${JSON.stringify(banJson).slice(0, 300)}`;
-          } else {
-            // Immediately unban → removes the permanent ban so they could rejoin
-            // later via fresh invite if needed. This is Telegram's "kick" idiom.
-            await fetch(`${supabaseUrl}/functions/v1/telegram`, {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${serviceKey}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                action: "unbanChatMember",
-                chat_id: chatId,
-                user_id: telegramUserId,
-                only_if_banned: true,
-              }),
-            });
-            telegramKicked = true;
-            auditLog.push(`Kicked tg user ${telegramUserId} from group ${chatId}`);
-          }
-        }
-      } catch (e) {
-        telegramErrMsg = `telegram kick exception: ${e instanceof Error ? e.message : String(e)}`;
-      }
-    } else {
-      auditLog.push("No telegram_user_id on file — Telegram kick skipped");
-    }
     if (telegramErrMsg) {
       warnings.push(telegramErrMsg);
       await logAlert("warning", `Telegram kick failed for ${fullName}`,
