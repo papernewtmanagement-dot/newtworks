@@ -43,8 +43,13 @@ import { fmtDate, fmtDateShort } from "./utils.js";
 //    change's effective date.
 //  * If the team typed SF's own Return Payment Fee line, it is linked to the
 //    return or decline instead of adding a second fee.
-//  * Order is by process date. Lines on the same day keep the order they were
-//    entered, lower on the page being earlier, the way SF lists them.
+//  * Paid, Declined, Return, Binder, New Business and Renewal lines have no
+//    process date, only an effective date (Peter 2026-09-25). Bills and changes
+//    carry both: the process date says when they hit the bill, the effective or
+//    due date drives the math. A cancel notice's past-due amount is as of its
+//    process date. The two fees carry just the process date.
+//  * Order is the table's order, newest at the top, the way SF lists the lines.
+//    Dates drive the math, not the order, since some lines have no process date.
 //  * A billing account payment pays the oldest amount due first, across all the
 //    accounts it pays for. That is the usual way a payment is applied to open
 //    balances. A payment it undoes comes back off the same accounts it went to.
@@ -62,21 +67,22 @@ const FEE_CLAIM_DAYS = 31;
 // A bill this close to the lines counts as a match: SF rounds splits its own way.
 const MATCH_CENTS = 50;
 
-// due: whether the effective/due date column is required, optional, or unused.
+// proc: whether the process date column applies. due: whether the effective/due
+// date column is required, optional, or unused. Every line has at least one date.
 export const DEWEY_TYPES = [
-  { key: "binder",              label: "Binder",                  col: "owed",   sign: 1,  role: "start",    due: "required" },
-  { key: "new_business",        label: "New Business",            col: "owed",   sign: 1,  role: "start",    due: "required" },
-  { key: "renewal",             label: "Renewal",                 col: "owed",   sign: 1,  role: "start",    due: "required" },
-  { key: "policy_change",       label: "Policy Change",           col: "owed",   sign: 0,  role: "change",   due: "required" },
-  { key: "billing_change",      label: "Billing Change",          col: "owed",   sign: 0,  role: "change",   due: "required" },
-  { key: "bill",                label: "Bill",                    col: "owed",   sign: 0,  role: "bill",     due: "required" },
-  { key: "autopay_revised_due", label: "AutoPay Revised Due",     col: "owed",   sign: 0,  role: "bill",     due: "required" },
-  { key: "notice_cancel",       label: "Notice of Cancel NonPay", col: "owed",   sign: 1,  role: "notice",   due: "optional" },
-  { key: "paid",                label: "Paid",                    col: "paid",  sign: 1,  role: "payment",  due: "none" },
-  { key: "declined",            label: "Declined",                col: "paid",  sign: -1, role: "declined", due: "none" },
-  { key: "return",              label: "Return",                  col: "paid",  sign: -1, role: "return",   due: "none" },
-  { key: "return_fee",          label: "Return Payment Fee",      col: "paid",  sign: -1, role: "fee",      due: "none", fixed: RETURN_FEE_CENTS },
-  { key: "late_fee",            label: "Late Payment Fee",        col: "paid",  sign: -1, role: "fee",      due: "none", fixed: LATE_FEE_CENTS },
+  { key: "binder",              label: "Binder",                  col: "owed",  sign: 1,  role: "start",    proc: "none",     due: "required" },
+  { key: "new_business",        label: "New Business",            col: "owed",  sign: 1,  role: "start",    proc: "none",     due: "required" },
+  { key: "renewal",             label: "Renewal",                 col: "owed",  sign: 1,  role: "start",    proc: "none",     due: "required" },
+  { key: "policy_change",       label: "Policy Change",           col: "owed",  sign: 0,  role: "change",   proc: "required", due: "required" },
+  { key: "billing_change",      label: "Billing Change",          col: "owed",  sign: 0,  role: "change",   proc: "required", due: "required" },
+  { key: "bill",                label: "Bill",                    col: "owed",  sign: 0,  role: "bill",     proc: "required", due: "required" },
+  { key: "autopay_revised_due", label: "AutoPay Revised Due",     col: "owed",  sign: 0,  role: "bill",     proc: "required", due: "required" },
+  { key: "notice_cancel",       label: "Notice of Cancel NonPay", col: "owed",  sign: 1,  role: "notice",   proc: "required", due: "optional" },
+  { key: "paid",                label: "Paid",                    col: "paid",  sign: 1,  role: "payment",  proc: "none",     due: "required" },
+  { key: "declined",            label: "Declined",                col: "paid",  sign: -1, role: "declined", proc: "none",     due: "required" },
+  { key: "return",              label: "Return",                  col: "paid",  sign: -1, role: "return",   proc: "none",     due: "required" },
+  { key: "return_fee",          label: "Return Payment Fee",      col: "paid",  sign: -1, role: "fee",      proc: "required", due: "none", fixed: RETURN_FEE_CENTS },
+  { key: "late_fee",            label: "Late Payment Fee",        col: "paid",  sign: -1, role: "fee",      proc: "required", due: "none", fixed: LATE_FEE_CENTS },
 ];
 const TYPE = Object.fromEntries(DEWEY_TYPES.map(t => [t.key, t]));
 export const deweyType = (k) => TYPE[k] || null;
@@ -137,6 +143,13 @@ export function rowCents(row) {
   return c;
 }
 
+// The date a line goes by: its process date, or its effective date for the
+// lines that have no process date.
+export function lineDate(r) {
+  if (!r) return "";
+  return (TYPE[r.type]?.proc === "none" ? r.dueDate : r.processDate) || r.processDate || r.dueDate || "";
+}
+
 // What the amount box should read once the line's type has had its say.
 export function tidyAmount(row) {
   const c = rowCents(row);
@@ -164,17 +177,9 @@ function split(total, n) {
   const rem = abs - base * n;
   return Array.from({ length: n }, (_, k) => sign * (base + (k === 0 ? rem : 0)));
 }
-// Earliest first. Same process date: lower on the page happened first.
+// Earliest first: the table read from the bottom up, the way SF lists the lines.
 function chronoSort(list) {
-  return list.map((r, i) => ({ r, i }))
-    .filter(x => !isBlankRow(x.r))
-    .sort((a, b) => {
-      const da = a.r.processDate || "";
-      const db = b.r.processDate || "";
-      if (da !== db) return da < db ? -1 : 1;
-      return b.i - a.i;
-    })
-    .map(x => x.r);
+  return list.filter(r => !isBlankRow(r)).reverse();
 }
 
 // One account's policy terms. A counted start line opens each term. Lines
@@ -215,7 +220,7 @@ export function buildLedger(rows) {
     if (!c) continue;
     const paid = {
       id: `${r.id}~paid`, auto: "paid", sourceId: r.id, type: "paid",
-      processDate: r.processDate, dueDate: "", account: r.account, amount: (-c / 100).toFixed(2),
+      processDate: "", dueDate: lineDate(r), account: r.account, amount: (-c / 100).toFixed(2),
     };
     display.push(paid);
     groups.push({ id: `g~${r.id}`, kind: "declined", sourceId: r.id, paymentId: paid.id, feeId: null, members: [r.id, paid.id] });
@@ -256,10 +261,11 @@ export function buildLedger(rows) {
     const src = byId.get(g.sourceId);
     const firstPay = info.get(src.account)?.firstNBPaymentId || null;
     if (g.paymentId && g.paymentId === firstPay) { g.firstPayment = true; continue; }
-    if (src.processDate) {
-      const hi = addDaysISO(src.processDate, FEE_CLAIM_DAYS);
+    const srcDate = lineDate(src);
+    if (srcDate) {
+      const hi = addDaysISO(srcDate, FEE_CLAIM_DAYS);
       const typed = chrono.find(q => !q.auto && q.type === "return_fee" && q.account === src.account && !feeTaken.has(q.id)
-        && (q.processDate || "") >= src.processDate && (q.processDate || "") <= hi);
+        && lineDate(q) >= srcDate && lineDate(q) <= hi);
       if (typed) {
         feeTaken.add(typed.id);
         g.feeId = typed.id;
@@ -269,7 +275,7 @@ export function buildLedger(rows) {
     }
     const fee = {
       id: `${src.id}~fee`, auto: "fee", sourceId: src.id, type: "return_fee",
-      processDate: src.processDate, dueDate: "", account: src.account, amount: "-25.00",
+      processDate: srcDate, dueDate: "", account: src.account, amount: "-25.00",
     };
     display.splice(display.indexOf(src), 0, fee);   // just above: it came after
     g.feeId = fee.id;
@@ -301,24 +307,40 @@ export function buildLedger(rows) {
   };
 }
 
-// Lines whose process date is newer than the line above them.
+// The date a line is ordered by. Start lines have none: their effective date can
+// sit well after the lines SF lists above them (a renewal is processed about a
+// month before it starts), so they stay where the team put them.
+function orderDate(r) {
+  if (isBlankRow(r) || TYPE[r.type]?.role === "start") return "";
+  return lineDate(r);
+}
+
+// Lines dated newer than the dated line above them.
 export function outOfOrderIds(rows) {
   const bad = [];
   let above = null;
   for (const r of rows || []) {
-    if (isBlankRow(r) || !r.processDate) continue;
-    if (above && r.processDate > above) bad.push(r.id);
-    above = r.processDate;
+    const d = orderDate(r);
+    if (!d) continue;
+    if (above && d > above) bad.push(r.id);
+    above = d;
   }
   return bad;
 }
 
-// Newest first by process date. Undated lines keep their place at the end.
+// Newest first. A line with no date to order by (a start line, an empty line)
+// travels with the dated line above it, so it keeps its place beside it.
 export function sortRowsByDate(rows) {
-  const dated = rows.map((r, i) => ({ r, i })).filter(x => x.r.processDate);
-  const undated = rows.filter(r => !r.processDate);
-  dated.sort((a, b) => (a.r.processDate === b.r.processDate ? a.i - b.i : a.r.processDate < b.r.processDate ? 1 : -1));
-  return [...dated.map(x => x.r), ...undated];
+  const chunks = [];
+  for (const r of rows) {
+    const d = orderDate(r);
+    if (d || !chunks.length) chunks.push({ d, rows: [r] });
+    else chunks[chunks.length - 1].rows.push(r);
+  }
+  const lead = chunks[0] && !chunks[0].d ? [chunks.shift()] : [];
+  const sorted = chunks.map((c, i) => ({ ...c, i }))
+    .sort((a, b) => (a.d === b.d ? a.i - b.i : a.d < b.d ? 1 : -1));
+  return [...lead, ...sorted].flatMap(c => c.rows);
 }
 
 // ============================================================================
@@ -338,10 +360,10 @@ export function explainBilling({ rows, accounts, today }) {
   for (const r of L.display) {
     if (r.auto || isBlankRow(r)) continue;
     const t = TYPE[r.type];
-    const on = r.processDate ? ` on ${when(r.processDate, today)}` : "";
+    const on = lineDate(r) ? ` on ${when(lineDate(r), today)}` : "";
     const miss = [];
     if (!t) miss.push("type");
-    if (!r.processDate) miss.push("process date");
+    if (t && t.proc === "required" && !r.processDate) miss.push("process date");
     if (t && !t.fixed && rowCents(r) === null) miss.push("amount");
     if (t && t.due === "required" && !r.dueDate) miss.push(t.role === "bill" ? "due date" : "effective date");
     if (miss.length) problems.push({ rowId: r.id, text: `${t ? t.label : "A line"}${on} needs its ${andList(miss)}.` });
@@ -377,7 +399,7 @@ export function explainBilling({ rows, accounts, today }) {
     if (g.kind !== "return" || g.paymentId) continue;
     const r = L.byId.get(g.sourceId);
     warnings.push({ rowId: r.id,
-      text: `No ${$(rowCents(r))} payment shows before the ${when(r.processDate, today)} Return. The payment it undoes may be further back.` });
+      text: `No ${$(rowCents(r))} payment shows below the ${when(lineDate(r), today)} Return. The payment it undoes may be further back.` });
   }
   if (problems.length) return { ok: false, problems, warnings, sections: [], ledger: L };
 
@@ -528,7 +550,7 @@ export function explainBilling({ rows, accounts, today }) {
               ? `One payment left, so it all goes on that one. It is now ${$(term.amts[left[0]])}.`
               : `Split over the ${left.length} payments left: about ${$(shares[shares.length - 1])} more on each. Payments are now about ${$(term.amts[left[left.length - 1]])}.`] });
           } else {
-            st.oneTime.push({ date: r.processDate, cents: c, kind: "extra" });
+            st.oneTime.push({ date: lineDate(r), cents: c, kind: "extra" });
             st.steps.push({ ...base, text: `${nm} added ${$(c)}.${why}`, sub: ["No payments left in this term, so it is due all at once."] });
           }
         } else if (c < 0) {
@@ -557,13 +579,13 @@ export function explainBilling({ rows, accounts, today }) {
         const g = L.groupOf.get(r.id);
         const m = g && g.paymentId ? L.byId.get(g.paymentId) : null;
         st.steps.push({ ...base, tone: "warn",
-          text: m ? `The ${$(c)} payment from ${when(m.processDate, today)} came back. It no longer counts as paid.`
+          text: m ? `The ${$(c)} payment from ${when(lineDate(m), today)} came back. It no longer counts as paid.`
                   : `A ${$(c)} payment came back. It no longer counts as paid.`,
           sub: feeLines(g) });
         break;
       }
       case "fee": {
-        st.oneTime.push({ date: r.processDate, cents: -c, kind: "fee" });
+        st.oneTime.push({ date: lineDate(r), cents: -c, kind: "fee" });
         if (!L.groupOf.get(r.id)) {
           st.steps.push({ ...base, tone: "warn", text: `${r.type === "late_fee" ? "Late payment fee" : "Return payment fee"}: ${$(c)}.` });
         }
@@ -621,7 +643,7 @@ export function explainBilling({ rows, accounts, today }) {
         applyShares(bs, shares, -1);
         bs.reversed -= c;
         bs.steps.push({ ...base, tone: "warn",
-          text: m ? `The ${$(c)} payment from ${when(m.processDate, today)} came back. It no longer counts as paid.`
+          text: m ? `The ${$(c)} payment from ${when(lineDate(m), today)} came back. It no longer counts as paid.`
                   : `A ${$(c)} payment came back. It no longer counts as paid.`,
           sub: [`Taken back: ${shareText(shares, "from")}`, ...feeLines(g)] });
         for (const [k, v] of shares) {
@@ -632,7 +654,7 @@ export function explainBilling({ rows, accounts, today }) {
         break;
       }
       case "fee": {
-        bs.fees.push({ date: r.processDate, cents: -c, kind: "fee" });
+        bs.fees.push({ date: lineDate(r), cents: -c, kind: "fee" });
         if (!g) bs.steps.push({ ...base, tone: "warn", text: `${r.type === "late_fee" ? "Late payment fee" : "Return payment fee"}: ${$(c)}.` });
         break;
       }
@@ -657,7 +679,7 @@ export function explainBilling({ rows, accounts, today }) {
     const t = TYPE[r.type];
     if (!t) continue;
     const c = rowCents(r);
-    const base = { rowId: r.id, date: r.processDate };
+    const base = { rowId: r.id, date: lineDate(r) };
     if (isBillingKey(r.account)) {
       const bs = Bs.get(r.account);
       if (bs) walkBilling(bs, r, t, c, base);

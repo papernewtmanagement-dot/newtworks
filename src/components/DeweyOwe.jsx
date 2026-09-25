@@ -7,7 +7,7 @@ import { fmtDateShort } from "../lib/utils.js";
 import { noPwManager } from "../lib/forms.js";
 import {
   DEWEY_TYPES, DEWEY_LOBS, DEWEY_PLANS, deweyType, blankRow, isBlankRow, rowCents, tidyAmount,
-  buildLedger, explainBilling, outOfOrderIds, sortRowsByDate, isBillingKey, accountLabel, normalizeAccountKey,
+  buildLedger, explainBilling, outOfOrderIds, sortRowsByDate, isBillingKey, accountLabel, normalizeAccountKey, lineDate,
 } from "../lib/deweyOwe.js";
 
 // =====================================================================
@@ -22,7 +22,10 @@ import {
 //    current worksheet in this browser, so a refresh loses nothing.
 //  * Each type forces its own column: Paid or Owed. Credit and debit never
 //    share a line.
-//  * A new line starts on the date of the line above it, and a due date box
+//  * Each type shows only the date boxes it has. Paid, Declined, Return,
+//    Binder, New Business and Renewal have just the effective date; bills and
+//    changes have both; the fees have just the process date (Peter 2026-09-25).
+//  * A new line starts on the date of the line above it, and a second date box
 //    starts on the last due date entered above, so the calendar opens where
 //    the team already is.
 //  * One Paid line that pays for several policies goes on a billing account
@@ -84,10 +87,18 @@ function freshDraft() {
   return { rows: [blankRow(1)], accounts: { 1: { lob: "", plan: "monthly" } }, customer: emptyCustomer(), loadedKey: "" };
 }
 function cleanRows(list) {
-  return (Array.isArray(list) ? list : []).filter(r => r && typeof r.id === "string").map(r => ({
-    id: r.id, type: deweyType(r.type) ? r.type : "", processDate: r.processDate || "", amount: r.amount ?? "",
-    dueDate: r.dueDate || "", account: normalizeAccountKey(r.account),
-  }));
+  return (Array.isArray(list) ? list : []).filter(r => r && typeof r.id === "string").map(r => {
+    const row = {
+      id: r.id, type: deweyType(r.type) ? r.type : "", processDate: r.processDate || "", amount: r.amount ?? "",
+      dueDate: r.dueDate || "", account: normalizeAccountKey(r.account),
+    };
+    // Lines saved before these types lost the process date box keep their one date.
+    if (deweyType(row.type)?.proc === "none") {
+      if (!row.dueDate) row.dueDate = row.processDate;
+      row.processDate = "";
+    }
+    return row;
+  });
 }
 function cleanAccounts(obj) {
   return obj && typeof obj === "object" && !Array.isArray(obj) ? obj : { 1: { lob: "", plan: "monthly" } };
@@ -341,8 +352,10 @@ function Row({
     </div>
   );
 
-  const dateCell = locked
-    ? <div style={lockedCell}>{usDate(r.processDate)}</div>
+  const hasProc = !t || t.proc !== "none";
+  const hasDue = !!t && t.due !== "none";
+  const dateCell = !hasProc ? <div style={{ height: INPUT_H }} />
+    : locked ? <div style={lockedCell}>{usDate(r.processDate)}</div>
     : <input type="date" value={r.processDate} aria-label="Process date"
         onChange={e => onRow(r.id, { processDate: e.target.value })} style={box} />;
 
@@ -357,8 +370,8 @@ function Row({
     );
   };
 
-  const dueCell = !t || t.due === "none"
-    ? <div style={{ height: INPUT_H }} />
+  const dueCell = !hasDue ? <div style={{ height: INPUT_H }} />
+    : locked ? <div style={lockedCell}>{usDate(r.dueDate)}</div>
     : <input type="date" value={r.dueDate} aria-label={dueLabel}
         onChange={e => onRow(r.id, { dueDate: e.target.value })} style={box} />;
 
@@ -402,9 +415,9 @@ function Row({
         {compact ? (
           <>
             {cell("Type", typeCell, { gridColumn: "1 / -1" })}
-            {cell("Process date", dateCell)}
+            {hasProc ? cell("Process date", dateCell) : null}
+            {hasDue ? cell(dueLabel, dueCell) : null}
             {t ? cell(colLabel(t.col), amountCell(t.col)) : null}
-            {t && t.due !== "none" ? cell(dueLabel, dueCell) : null}
             {cell("Account", acctCell)}
           </>
         ) : (
@@ -670,10 +683,22 @@ export default function DeweyOwe() {
     const next = { ...r, ...patch };
     if ("type" in patch) {
       const t = deweyType(next.type);
-      if (!t || t.due === "none") next.dueDate = "";
-      else if (!next.dueDate) {
-        // Start the due date box where the team already is: the last due date entered above.
-        for (let k = idx - 1; k >= 0; k--) { if (rs[k].dueDate) { next.dueDate = rs[k].dueDate; break; } }
+      const was = deweyType(r.type);
+      if (t) {
+        // The date the line already has moves to the box this type uses.
+        const have = lineDate(r) || next.processDate || next.dueDate;
+        if (t.proc === "none") {
+          next.dueDate = next.dueDate && was?.proc === "none" ? next.dueDate : have;
+          next.processDate = "";
+        } else {
+          next.processDate = next.processDate || have;
+          if (was?.proc === "none") next.dueDate = "";
+          if (t.due === "none") next.dueDate = "";
+          else if (!next.dueDate) {
+            // Start the second date box where the team already is: the last due date entered above.
+            for (let k = idx - 1; k >= 0; k--) { if (rs[k].dueDate) { next.dueDate = rs[k].dueDate; break; } }
+          }
+        }
       }
       if (t && t.fixed) next.amount = "";
       else if (t && String(next.amount).trim() !== "") next.amount = tidyAmount(next);
@@ -690,7 +715,7 @@ export default function DeweyOwe() {
   });
   const addRow = () => {
     const last = rows[rows.length - 1];
-    const lastDate = [...rows].reverse().find(r => r.processDate)?.processDate || "";
+    const lastDate = [...rows].reverse().map(lineDate).find(Boolean) || "";
     const nr = { ...blankRow(last ? last.account : 1), processDate: lastDate };
     setRows(rs => [...rs, nr]);
     setFocusId(nr.id);
