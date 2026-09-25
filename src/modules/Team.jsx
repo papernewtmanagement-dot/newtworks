@@ -3125,7 +3125,7 @@ export default function Team({ userRole }) {
   // table's own admin-only read rule, which the view does not enforce.
   // assessment_composite / protocol_validity_* now come off pass 1 directly
   // (hiring_candidates.cached_assessment_composite etc., see below) — pass 2
-  // below only fills res_composite, which was always cheap.
+  // below only fills res_composite, read straight off hiring_candidates.
   //
   // WHY THE CACHE EXISTS, root-caused 2026-08-13: a single query asking
   // v_hiring_candidates for assessment_composite across every candidate ran
@@ -3160,12 +3160,17 @@ export default function Team({ userRole }) {
 
     const PIPELINE_STATUSES = ["applied","assessment_sent","assessed","interview","meet_and_greet","offer","reference_check","hired","declined","former"];
 
-    // Pass 2 — res_composite only now. Cheap for everyone (plain resume
-    // scoring, no facet-norm lookups involved), unlike assessment_composite
-    // which pass 1 covers straight off the cache above.
+    // Pass 2 — res_composite only. Read off hiring_candidates itself, where
+    // res_composite is a computed column: Supabase function
+    // public.res_composite(hiring_candidates), which forwards to
+    // resume_weighted_composite. Do NOT read it from v_hiring_candidates: that
+    // view joins verdict_assessment + verdict_interview for every row and
+    // Postgres cannot skip those joins even when only res_composite is
+    // selected. On 2026-09-24 that ran the full scoring for 524 candidates,
+    // passed the 8s statement limit and blanked every R badge on the board.
     const loadScoreBadges = async () => {
       const { data, error } = await supabase
-        .from("v_hiring_candidates")
+        .from("hiring_candidates")
         .select("id, res_composite")
         .eq("agency_id", AGENCY_ID)
         .in("status", PIPELINE_STATUSES);
@@ -3220,7 +3225,7 @@ export default function Team({ userRole }) {
         first_name: a.first_name || (a.candidate_name ? a.candidate_name.split(" ")[0] : "Unknown"),
         last_name:  a.last_name  || (a.candidate_name ? a.candidate_name.split(" ").slice(1).join(" ") : ""),
         position:   a.position || "—",
-        // res_composite filled by pass 2 (cheap live query off v_hiring_candidates).
+        // res_composite filled by pass 2 (computed column on hiring_candidates).
         // assessment_composite / protocol_validity_* come straight off this row's
         // own cached_* columns above -- no scoring engine touched on board load.
         // Cache is kept current by the background refresh effect below plus the
