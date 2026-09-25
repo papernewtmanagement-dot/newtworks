@@ -22,9 +22,9 @@ import {
 //    current worksheet in this browser, so a refresh loses nothing.
 //  * Each type forces its own column: Paid or Owed. Credit and debit never
 //    share a line.
-//  * Each type shows only the date boxes it has. Paid, Declined, Return,
-//    Binder, New Business and Renewal have just the effective date; bills and
-//    changes have both; the fees have just the process date (Peter 2026-09-25).
+//  * Each type shows only the date boxes it has: Binder, New Business and
+//    Renewal just the effective date; Paid, Declined, Return, the fees and
+//    Waiver just the process date; bills and changes both (Peter 2026-09-25).
 //  * A new line starts on the date of the line above it, and a second date box
 //    starts on the last due date entered above, so the calendar opens where
 //    the team already is.
@@ -92,10 +92,14 @@ function cleanRows(list) {
       id: r.id, type: deweyType(r.type) ? r.type : "", processDate: r.processDate || "", amount: r.amount ?? "",
       dueDate: r.dueDate || "", account: normalizeAccountKey(r.account),
     };
-    // Lines saved before these types lost the process date box keep their one date.
-    if (deweyType(row.type)?.proc === "none") {
+    // A line saved while its type had a different date box keeps its one date.
+    const t = deweyType(row.type);
+    if (t?.proc === "none") {
       if (!row.dueDate) row.dueDate = row.processDate;
       row.processDate = "";
+    } else if (t?.due === "none") {
+      if (!row.processDate) row.processDate = row.dueDate;
+      row.dueDate = "";
     }
     return row;
   });

@@ -43,11 +43,15 @@ import { fmtDate, fmtDateShort } from "./utils.js";
 //    change's effective date.
 //  * If the team typed SF's own Return Payment Fee line, it is linked to the
 //    return or decline instead of adding a second fee.
-//  * Paid, Declined, Return, Binder, New Business and Renewal lines have no
-//    process date, only an effective date (Peter 2026-09-25). Bills and changes
-//    carry both: the process date says when they hit the bill, the effective or
-//    due date drives the math. A cancel notice's past-due amount is as of its
-//    process date. The two fees carry just the process date.
+//  * Each line carries only the dates the math uses (Peter 2026-09-25, "do
+//    whichever makes more sense"). Binder, New Business and Renewal: just the
+//    effective date, the day the term starts. Paid, Declined, Return, the two
+//    fees and Waiver: just the process date, the day it went through; they have
+//    no effective or due date. Bills and changes carry both: the process date
+//    says when they hit the bill, the effective or due date drives the math. A
+//    cancel notice's past-due amount is as of its process date.
+//  * Waiver is SF taking a fee back off: +$25 under Paid, linked to the latest
+//    fee below it on the same account (Peter 2026-09-25, "1A").
 //  * Order is the table's order, newest at the top, the way SF lists the lines.
 //    Dates drive the math, not the order, since some lines have no process date.
 //  * A billing account payment pays the oldest amount due first, across all the
@@ -62,6 +66,8 @@ import { fmtDate, fmtDateShort } from "./utils.js";
 
 export const RETURN_FEE_CENTS = 2500;
 export const LATE_FEE_CENTS = 2500;
+// A waiver takes one fee back off, and every fee is $25.
+export const WAIVER_CENTS = 2500;
 // SF's own fee line lands on the return's day or soon after.
 const FEE_CLAIM_DAYS = 31;
 // A bill this close to the lines counts as a match: SF rounds splits its own way.
@@ -78,11 +84,12 @@ export const DEWEY_TYPES = [
   { key: "bill",                label: "Bill",                    col: "owed",  sign: 0,  role: "bill",     proc: "required", due: "required" },
   { key: "autopay_revised_due", label: "AutoPay Revised Due",     col: "owed",  sign: 0,  role: "bill",     proc: "required", due: "required" },
   { key: "notice_cancel",       label: "Notice of Cancel NonPay", col: "owed",  sign: 1,  role: "notice",   proc: "required", due: "optional" },
-  { key: "paid",                label: "Paid",                    col: "paid",  sign: 1,  role: "payment",  proc: "none",     due: "required" },
-  { key: "declined",            label: "Declined",                col: "paid",  sign: -1, role: "declined", proc: "none",     due: "required" },
-  { key: "return",              label: "Return",                  col: "paid",  sign: -1, role: "return",   proc: "none",     due: "required" },
+  { key: "paid",                label: "Paid",                    col: "paid",  sign: 1,  role: "payment",  proc: "required", due: "none" },
+  { key: "declined",            label: "Declined",                col: "paid",  sign: -1, role: "declined", proc: "required", due: "none" },
+  { key: "return",              label: "Return",                  col: "paid",  sign: -1, role: "return",   proc: "required", due: "none" },
   { key: "return_fee",          label: "Return Payment Fee",      col: "paid",  sign: -1, role: "fee",      proc: "required", due: "none", fixed: RETURN_FEE_CENTS },
   { key: "late_fee",            label: "Late Payment Fee",        col: "paid",  sign: -1, role: "fee",      proc: "required", due: "none", fixed: LATE_FEE_CENTS },
+  { key: "waiver",              label: "Waiver",                  col: "paid",  sign: 1,  role: "waiver",   proc: "required", due: "none", fixed: WAIVER_CENTS },
 ];
 const TYPE = Object.fromEntries(DEWEY_TYPES.map(t => [t.key, t]));
 export const deweyType = (k) => TYPE[k] || null;
@@ -135,7 +142,7 @@ export function parseCents(v) {
 export function rowCents(row) {
   const t = TYPE[row?.type];
   if (!t) return null;
-  if (t.fixed) return -t.fixed;
+  if (t.fixed) return t.sign * t.fixed;
   const c = parseCents(row.amount);
   if (c === null) return null;
   if (t.sign === 1) return Math.abs(c);
@@ -148,6 +155,11 @@ export function rowCents(row) {
 export function lineDate(r) {
   if (!r) return "";
   return (TYPE[r.type]?.proc === "none" ? r.dueDate : r.processDate) || r.processDate || r.dueDate || "";
+}
+
+// A locked line takes its date in whichever box its own type uses.
+function datedAs(type, date) {
+  return TYPE[type]?.proc === "none" ? { processDate: "", dueDate: date } : { processDate: date, dueDate: "" };
 }
 
 // What the amount box should read once the line's type has had its say.
@@ -220,7 +232,7 @@ export function buildLedger(rows) {
     if (!c) continue;
     const paid = {
       id: `${r.id}~paid`, auto: "paid", sourceId: r.id, type: "paid",
-      processDate: "", dueDate: lineDate(r), account: r.account, amount: (-c / 100).toFixed(2),
+      ...datedAs("paid", lineDate(r)), account: r.account, amount: (-c / 100).toFixed(2),
     };
     display.push(paid);
     groups.push({ id: `g~${r.id}`, kind: "declined", sourceId: r.id, paymentId: paid.id, feeId: null, members: [r.id, paid.id] });
@@ -275,7 +287,7 @@ export function buildLedger(rows) {
     }
     const fee = {
       id: `${src.id}~fee`, auto: "fee", sourceId: src.id, type: "return_fee",
-      processDate: srcDate, dueDate: "", account: src.account, amount: "-25.00",
+      ...datedAs("return_fee", srcDate), account: src.account, amount: "-25.00",
     };
     display.splice(display.indexOf(src), 0, fee);   // just above: it came after
     g.feeId = fee.id;
@@ -283,8 +295,25 @@ export function buildLedger(rows) {
   }
 
   chrono = chronoSort(display);
+
+  // A Waiver takes back the latest fee below it on the same account.
+  const cpos = new Map(chrono.map((r, k) => [r.id, k]));
+  const waived = new Set();
+  const waivers = [];
+  for (const r of chrono) {
+    if (r.type !== "waiver") continue;
+    let fee = null;
+    for (let k = cpos.get(r.id) - 1; k >= 0; k--) {
+      const q = chrono[k];
+      if ((q.type === "return_fee" || q.type === "late_fee") && q.account === r.account && !waived.has(q.id)) { fee = q; break; }
+    }
+    if (fee) waived.add(fee.id);
+    waivers.push({ id: `w~${r.id}`, kind: "waiver", sourceId: r.id, feeId: fee ? fee.id : null, members: fee ? [r.id, fee.id] : [r.id] });
+  }
+  const waiverOf = new Map(waivers.map(w => [w.sourceId, w]));
+
   const at = new Map(display.map((r, i) => [r.id, i]));
-  const linked = groups.filter(g => g.members.length > 1);
+  const linked = [...groups, ...waivers].filter(g => g.members.length > 1);
   for (const g of linked) {
     const ix = g.members.map(id => at.get(id));
     g.top = Math.min(...ix);
@@ -302,7 +331,7 @@ export function buildLedger(rows) {
   for (const g of groups) for (const id of g.members) groupOf.set(id, g);
 
   return {
-    display, chrono, groups, linked, laneCount: laneEnds.length, groupOf, info,
+    display, chrono, groups, linked, laneCount: laneEnds.length, groupOf, waiverOf, info,
     byId: new Map(display.map(r => [r.id, r])),
   };
 }
@@ -401,6 +430,12 @@ export function explainBilling({ rows, accounts, today }) {
     warnings.push({ rowId: r.id,
       text: `No ${$(rowCents(r))} payment shows below the ${when(lineDate(r), today)} Return. The payment it undoes may be further back.` });
   }
+  for (const w of L.waiverOf.values()) {
+    if (w.feeId) continue;
+    const r = L.byId.get(w.sourceId);
+    warnings.push({ rowId: r.id,
+      text: `No fee shows below the ${when(lineDate(r), today)} Waiver. The fee it takes back may be further back.` });
+  }
   if (problems.length) return { ok: false, problems, warnings, sections: [], ledger: L };
 
   // ---------- the schedule for every account ----------
@@ -438,9 +473,10 @@ export function explainBilling({ rows, accounts, today }) {
   // What the account should have paid by the cutoff, less what it has.
   const expectedOf = (st, cutoff) => dueBy(st, cutoff) + sumC(st.oneTime) + st.credits - st.paid;
   // The amounts still unpaid, oldest first, once `applied` has paid the oldest ones.
+  // A minus item (a waiver with no fee to take back) pays down the oldest ones too.
   const unpaidOf = (items, applied) => {
-    const sorted = [...items].sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0));
-    let left = Math.max(0, applied);
+    const sorted = items.filter(it => it.cents > 0).sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0));
+    let left = Math.max(0, applied - items.reduce((s, it) => s + (it.cents < 0 ? it.cents : 0), 0));
     const out = [];
     for (const it of sorted) {
       const use = Math.min(left, it.cents);
@@ -515,6 +551,18 @@ export function explainBilling({ rows, accounts, today }) {
       : `SF's number is ${$(diff)} ${diff > 0 ? "more" : "less"} than these lines add up to. A line may be missing, or SF spread a change its own way.`] };
   };
 
+  // A waiver takes its fee back off the list of what is owed. With no fee
+  // found, it goes on the list as a fee of minus $25, which works as a credit.
+  const waive = (fees, r, c, base, onCredit) => {
+    const w = L.waiverOf.get(r.id);
+    const fee = w && w.feeId ? L.byId.get(w.feeId) : null;
+    const i = fee ? fees.findIndex(o => o.id === fee.id) : -1;
+    if (i >= 0) fees.splice(i, 1); else onCredit(c);
+    return { ...base, tone: "good", text: fee
+      ? `Waiver. SF took back the ${$(c)} ${fee.type === "late_fee" ? "late payment fee" : "return payment fee"} from ${when(lineDate(fee), today)}.`
+      : `Waiver. SF took ${$(c)} in fees back off.` };
+  };
+
   // ---------- one line on an account ----------
   const walkPolicy = (st, r, t, c, base) => {
     if (r.type === "binder" && st.hasNB) {
@@ -584,8 +632,12 @@ export function explainBilling({ rows, accounts, today }) {
           sub: feeLines(g) });
         break;
       }
+      case "waiver": {
+        st.steps.push(waive(st.oneTime, r, c, base, (v) => st.oneTime.push({ id: r.id, date: lineDate(r), cents: -v, kind: "fee" })));
+        break;
+      }
       case "fee": {
-        st.oneTime.push({ date: lineDate(r), cents: -c, kind: "fee" });
+        st.oneTime.push({ id: r.id, date: lineDate(r), cents: -c, kind: "fee" });
         if (!L.groupOf.get(r.id)) {
           st.steps.push({ ...base, tone: "warn", text: `${r.type === "late_fee" ? "Late payment fee" : "Return payment fee"}: ${$(c)}.` });
         }
@@ -598,7 +650,8 @@ export function explainBilling({ rows, accounts, today }) {
         const fees = sumC(st.oneTime, "fee");
         const extras = sumC(st.oneTime, "extra");
         const parts = [`${$(inst)} in payments`];
-        if (fees) parts.push(`+ ${$(fees)} in fees`);
+        if (fees > 0) parts.push(`+ ${$(fees)} in fees`);
+        if (fees < 0) parts.push(`\u2212 ${$(fees)} in fees waived`);
         if (extras) parts.push(`+ ${$(extras)} in changes`);
         if (st.credits) parts.push(`\u2212 ${$(st.credits)} in credits`);
         parts.push(st.paid >= 0 ? `\u2212 ${$(st.paid)} paid` : `+ ${$(st.paid)} came back`);
@@ -653,8 +706,12 @@ export function explainBilling({ rows, accounts, today }) {
         }
         break;
       }
+      case "waiver": {
+        bs.steps.push(waive(bs.fees, r, c, base, (v) => bs.fees.push({ id: r.id, date: lineDate(r), cents: -v, kind: "fee" })));
+        break;
+      }
       case "fee": {
-        bs.fees.push({ date: lineDate(r), cents: -c, kind: "fee" });
+        bs.fees.push({ id: r.id, date: lineDate(r), cents: -c, kind: "fee" });
         if (!g) bs.steps.push({ ...base, tone: "warn", text: `${r.type === "late_fee" ? "Late payment fee" : "Return payment fee"}: ${$(c)}.` });
         break;
       }
@@ -711,7 +768,8 @@ export function explainBilling({ rows, accounts, today }) {
       steps: bs.steps,
       summary: [
         { key: "cost", label: sts.length > 1 ? "Cost of the policies" : "Cost of the policy", value: $(cost),
-          note: feesB ? `That includes ${$(feesB)} in fees on ${accountLabel(bs.key)}` : "" },
+          note: feesB > 0 ? `That includes ${$(feesB)} in fees on ${accountLabel(bs.key)}`
+            : feesB < 0 ? `That takes off ${$(feesB)} in fees waived on ${accountLabel(bs.key)}` : "" },
         { key: "paid", label: "Paid so far", value: $s(paid),
           note: bs.reversed ? `${$(bs.reversed)} paid through ${accountLabel(bs.key)} was declined or came back` : "" },
         leftItem(cost - paid, "Over the whole of every policy it pays for."),
@@ -727,7 +785,8 @@ export function explainBilling({ rows, accounts, today }) {
     const costParts = [`${$(st.premium)} premium`];
     if (st.changesNet > 0) costParts.push(`${$(st.changesNet)} added in changes`);
     if (st.changesNet < 0) costParts.push(`${$(st.changesNet)} taken off in changes`);
-    if (fees) costParts.push(`${$(fees)} in fees`);
+    if (fees > 0) costParts.push(`${$(fees)} in fees`);
+    if (fees < 0) costParts.push(`${$(fees)} in fees waived`);
     const summary = [
       { key: "cost", label: st.terms.length > 1 ? `Cost of these ${st.terms.length} terms` : "Cost of the policy", value: $(totalCost), note: andList(costParts) },
       { key: "paid", label: "Paid so far", value: $s(st.paid),
