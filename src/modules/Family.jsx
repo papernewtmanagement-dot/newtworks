@@ -120,6 +120,7 @@ export default function Family({ userRole }) {
   const [ledger, setLedger] = useState([]);
   const [settings, setSettings] = useState(null);
   const [fineTypes, setFineTypes] = useState([]);
+  const [fineKids, setFineKids] = useState([]);
   const [expenseTypes, setExpenseTypes] = useState([]);
   const [board, setBoard] = useState([]);
   const [extras, setExtras] = useState([]);
@@ -145,7 +146,7 @@ export default function Family({ userRole }) {
     setErr(null);
     try {
       await supabase.rpc("family_sweep_missed");
-      const [k, c, cl, b, lg, s, ft, et, bw] = await Promise.all([
+      const [k, c, cl, b, lg, s, ft, et, bw, fk] = await Promise.all([
         supabase.from("family_kids").select("*").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("family_chores").select("*").eq("agency_id", AGENCY_ID).order("sort_order"),
         supabase.from("family_checklists").select("*").eq("agency_id", AGENCY_ID),
@@ -155,12 +156,14 @@ export default function Family({ userRole }) {
         supabase.from("family_fine_types").select("*").eq("agency_id", AGENCY_ID).order("sort_order").order("created_at"),
         supabase.from("family_expense_types").select("*").eq("agency_id", AGENCY_ID).order("sort_order").order("created_at"),
         supabase.rpc("family_burpee_week", { p_week_start: viewWeek }),
+        supabase.rpc("family_fine_kids"),
       ]);
-      const firstErr = [k, c, cl, b, lg, s, ft, et, bw].find(r => r?.error)?.error;
+      const firstErr = [k, c, cl, b, lg, s, ft, et, bw, fk].find(r => r?.error)?.error;
       if (firstErr) throw firstErr;
       setKids(k.data || []); setChores(c.data || []); setChecklists(cl.data || []);
       setBalances(b.data || []); setLedger(lg.data || []); setSettings(s.data || null); setFineTypes(ft.data || []); setExpenseTypes(et.data || []);
       setBurpees(Array.isArray(bw.data) ? bw.data : []);
+      setFineKids(Array.isArray(fk.data) ? fk.data : []);
     } catch (e) {
       setErr(e?.message || String(e));
     } finally {
@@ -269,7 +272,7 @@ export default function Family({ userRole }) {
         <SchoolWeek kids={kids} weekStart={viewWeek} today={today} dateHref={dateHref} setDate={setDateParam} setErr={setErr} />
       )}
       {activeTab === "fines" && isParent && (
-        <FinesView kids={kids} fineTypes={fineTypes} expenseTypes={expenseTypes} fines={ledger.filter(l => l.kind === "fine")} today={today} onSaved={load} setErr={setErr} />
+        <FinesView kids={kids} fineTypes={fineTypes} fineKids={fineKids} checklists={checklists} expenseTypes={expenseTypes} fines={ledger.filter(l => l.kind === "fine")} today={today} onSaved={load} setErr={setErr} />
       )}
       {activeTab === "setup" && isParent && (
         <SetupView kids={kids} chores={chores} checklists={checklists} settings={settings} today={today} onSaved={load} setErr={setErr} />
@@ -1557,13 +1560,25 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
 // Parents keep a list of fines and apply one to any kid. An applied fine is a
 // family_ledger row (kind "fine"), so it lands in balances and the close-out
 // the same way every other money event does.
-function FinesView({ kids, fineTypes, expenseTypes, fines, today, onSaved, setErr }) {
+function FinesView({ kids, fineTypes, fineKids, checklists, expenseTypes, fines, today, onSaved, setErr }) {
   const active = (fineTypes || []).filter(f => f.is_active);
   const [kidId, setKidId] = useState("");
   const [typeId, setTypeId] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const kidName = (id) => (kids || []).find(k => k.id === id)?.name || "";
+  // Who can get which fine comes from family_fine_kids (a fine tied to a chore goes only to kids
+  // who do that chore). The screen only looks the pair up.
+  const fits = useMemo(() => new Set((fineKids || []).map(r => `${r.fine_type_id}|${r.kid_id}`)), [fineKids]);
+  const kidOptions = typeId ? (kids || []).filter(k => fits.has(`${typeId}|${k.id}`)) : (kids || []);
+  const fineOptions = kidId ? active.filter(f => fits.has(`${f.id}|${kidId}`)) : active;
+  const pickKid = (id) => { setKidId(id); if (id && typeId && !fits.has(`${typeId}|${id}`)) setTypeId(""); };
+  const pickType = (id) => { setTypeId(id); if (id && kidId && !fits.has(`${id}|${kidId}`)) setKidId(""); };
+  const onlyFor = (f) => {
+    if (!f.chore_checklist_id) return null;
+    const cl = (checklists || []).find(c => c.id === f.chore_checklist_id);
+    return `Only for kids who do ${cl?.name || "that chore"}`;
+  };
 
   const apply = async () => {
     const t = active.find(f => f.id === typeId);
@@ -1587,13 +1602,13 @@ function FinesView({ kids, fineTypes, expenseTypes, fines, today, onSaved, setEr
     <div style={{ display: "grid", gap: 12 }}>
       <Section title="Give a fine">
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, paddingTop: 10 }}>
-          <select value={kidId} onChange={e => setKidId(e.target.value)} style={input}>
+          <select value={kidId} onChange={e => pickKid(e.target.value)} style={input}>
             <option value="">Who?</option>
-            {(kids || []).map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
+            {kidOptions.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
           </select>
-          <select value={typeId} onChange={e => setTypeId(e.target.value)} style={input}>
+          <select value={typeId} onChange={e => pickType(e.target.value)} style={input}>
             <option value="">What for?</option>
-            {active.map(f => <option key={f.id} value={f.id}>{f.name} · {money(f.amount)}</option>)}
+            {fineOptions.map(f => <option key={f.id} value={f.id}>{f.name} · {money(f.amount)}</option>)}
           </select>
           <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note (optional)" style={input} />
           <button disabled={saving || !kidId || !typeId} onClick={apply} style={btn("danger")}>Give fine</button>
@@ -1614,14 +1629,14 @@ function FinesView({ kids, fineTypes, expenseTypes, fines, today, onSaved, setEr
         </Section>
       )}
 
-      <PriceList title="Fine list" table="family_fine_types" items={fineTypes} placeholder="New fine, e.g. Talking back" addLabel="Add fine" onSaved={onSaved} setErr={setErr} />
+      <PriceList title="Fine list" table="family_fine_types" items={fineTypes} subFor={onlyFor} placeholder="New fine, e.g. Talking back" addLabel="Add fine" onSaved={onSaved} setErr={setErr} />
       <PriceList title="Expense list" table="family_expense_types" items={expenseTypes} placeholder="New expense, e.g. Movie ticket" addLabel="Add expense" onSaved={onSaved} setErr={setErr} />
     </div>
   );
 }
 
 // A parent-kept list of named amounts (fines, expenses). One component for both.
-function PriceList({ title, table, items, placeholder, addLabel, onSaved, setErr }) {
+function PriceList({ title, table, items, subFor, placeholder, addLabel, onSaved, setErr }) {
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1643,7 +1658,10 @@ function PriceList({ title, table, items, placeholder, addLabel, onSaved, setErr
     <Section title={title}>
       {(items || []).map(f => (
         <div key={f.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, borderTop: `1px solid ${T.slate100}`, padding: "8px 0", fontSize: 13 }}>
-          <div style={{ color: T.slate900 }}>{f.name}</div>
+          <div style={{ color: T.slate900 }}>
+            {f.name}
+            {subFor?.(f) && <div style={{ fontSize: 11, color: T.slate500 }}>{subFor(f)}</div>}
+          </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontWeight: 600, color: T.slate700 }}>{money(f.amount)}</span>
             <button style={btn("soft", true)} onClick={() => remove(f.id)} title="Delete">✕</button>
