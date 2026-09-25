@@ -15,8 +15,10 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 // master; the d20 stat block is kept as reading and flavor); players see a creature's names,
 // haunts and lore once a parent taps Show to players.
 // Step 4: Rules tab — the manual text verbatim (rpg_rules), every formula spelled out the
-// same way the sheet does it, a needed-roll calculator, and the level-cost table. Play and
-// Maps tabs land in later steps.
+// same way the sheet does it, a needed-roll calculator, and the level-cost table.
+// Step 5: Play tab, fights without a map. The game master sets up a fight, everyone takes turns by
+// Agility, players attack and roll checks on their character's turn, the game master rolls the
+// creatures' card actions, and every screen follows along live. Maps land in step 6.
 // Every number comes from the database, one saved function per job:
 //   rpg_character_list()                     the character cards
 //   rpg_sheet(id, difficulty)                every stat, what a roll needs at that difficulty
@@ -32,13 +34,18 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //   rpg_rules_page()                         the Rules tab in one read: rules, formulas, level costs
 //   rpg_needed(skill, difficulty)            what a roll needs; the calculator asks the same function a roll does
 //   rpg_difficulty(skill, can_act)           the difficulty a defender presents: their skill × 2 when they can act (skill and will)
+//   rpg_session_list() / rpg_session_state(id)   the fights, and one fight in one read (players: creatures without numbers)
+//   rpg_session_new / rpg_session_add / rpg_session_set_order   set up a fight; Agility places each one in the turn order
+//   rpg_session_next_turn(id)                starts the fight or passes the turn (legendary actions back, recharge dice)
+//   rpg_act(actor, targets, stat, action, against, difficulty)   one move: attack, card action or check, through rpg_roll
+//   rpg_session_set_status / rpg_session_adjust_vitality / rpg_session_remove / rpg_session_end   game master changes
 // Items and coins are plain rows the household edits directly (rpg_items, rpg_characters).
 // Show to players is a plain update on rpg_creatures (parents only, by row rules).
 // =========================================================================
 
 const PARENT_ROLES = ["owner", "admin"];
-const TABS = ["characters", "creatures", "rules"];
-const TAB_LABELS = { characters: "Characters", creatures: "Creatures", rules: "Rules" };
+const TABS = ["characters", "creatures", "rules", "play"];
+const TAB_LABELS = { characters: "Characters", creatures: "Creatures", rules: "Rules", play: "Play" };
 const GROUPS = [
   ["strength", "Strengths"],
   ["physical", "Physical Attributes"],
@@ -72,6 +79,7 @@ export default function Roleplaying({ userRole }) {
   const [tab, setTab, tabHref] = useTabParam("tab", "characters", TABS);
   const [characterId, setCharacterId, characterHref] = useTabParam("character", null);
   const [creatureId, setCreatureId, creatureHref] = useTabParam("creature", null);
+  const [fightId, setFightId, fightHref] = useTabParam("fight", null);
   const [kids, setKids] = useState([]);
   const [defs, setDefs] = useState([]);
   const [err, setErr] = useState(null);
@@ -120,6 +128,9 @@ export default function Roleplaying({ userRole }) {
           : <CreatureList isParent={isParent} onOpen={setCreatureId} hrefFor={creatureHref} onError={setErr} />
       )}
       {activeTab === "rules" && <RulesTab onError={setErr} />}
+      {activeTab === "play" && (fightId
+        ? <FightView id={fightId} isParent={isParent} defs={defs} onBack={() => setFightId(null)} backHref={fightHref(null)} onError={setErr} />
+        : <FightList isParent={isParent} onOpen={setFightId} hrefFor={fightHref} onError={setErr} />)}
     </div>
   );
 }
@@ -1037,6 +1048,487 @@ function FormulaTable({ stats }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── Play: fights, turns, attacks and the log (step 5) ──────────────────────
+// Every screen reads one payload, rpg_session_state(id). Whoever just did something sends a "refresh" nudge on
+// the fight's broadcast channel and the other screens re-read. The database never broadcasts: realtime.messages
+// has no partitions on this project, so writes there fail quietly. A 10-second re-read covers a lost nudge.
+// Same pattern as the trivia night.
+
+const CREATURE_SKILLS = [["attack", "Attack"], ["defense", "Defense"], ["strength", "Strength"], ["will", "Will"], ["stealth", "Stealth"], ["awareness", "Awareness"], ["agility", "Agility"]];
+const ACTION_GROUPS = [["action", "Actions"], ["bonus_action", "Bonus actions"], ["reaction", "Reactions"], ["legendary", "Legendary actions"], ["lair", "Lair actions"]];
+const fightStatus = (s) => (s?.status === "setup" ? "Setting up" : s?.status === "ended" ? "Over" : `Round ${s?.round || 1}`);
+const isDown = (p) => (p?.vitality_left != null ? Number(p.vitality_left) <= 0 : Number(p?.vitality_share) <= 0);
+const pill = (color, bg) => ({ fontSize: 11, fontWeight: 700, color, background: bg, borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap" });
+const hint = { fontSize: 12, color: T.slate500, marginTop: 4 };
+
+function useLiveChannel(name, onNudge) {
+  const chRef = useRef(null);
+  useEffect(() => {
+    if (!name) return undefined;
+    const ch = supabase.channel(name);
+    ch.on("broadcast", { event: "refresh" }, () => { onNudge(); }).subscribe();
+    chRef.current = ch;
+    const t = setInterval(onNudge, 10000);
+    return () => { clearInterval(t); chRef.current = null; supabase.removeChannel(ch); };
+  }, [name, onNudge]);
+  return useCallback(() => {
+    const ch = chRef.current;
+    if (!ch) return;
+    try { ch.send({ type: "broadcast", event: "refresh", payload: {} }); } catch (_) { /* the 10-second re-read covers it */ }
+  }, []);
+}
+
+function FightList({ isParent, onOpen, hrefFor, onError }) {
+  const [rows, setRows] = useState(null);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.rpc("rpg_session_list");
+    if (error) { onError(error.message); return; }
+    setRows(Array.isArray(data) ? data : []);
+  }, [onError]);
+  useEffect(() => { load(); }, [load]);
+  const nudge = useLiveChannel(`rpg_fights:${AGENCY_ID}`, load);
+
+  const create = async () => {
+    if (busy) return;
+    setBusy(true);
+    const { data, error } = await supabase.rpc("rpg_session_new", { p_name: name });
+    setBusy(false);
+    if (error) { onError(error.message); return; }
+    setName("");
+    nudge();
+    if (data) onOpen(data);
+  };
+
+  return (
+    <div>
+      {isParent && (
+        <div style={{ ...card, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+          <input style={{ ...input, flex: "1 1 200px" }} placeholder="Name the fight, or leave it blank" value={name}
+            onChange={e => setName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") create(); }} />
+          <button type="button" style={btn("primary")} onClick={create} disabled={busy}>{busy ? "Starting…" : "New fight"}</button>
+        </div>
+      )}
+      {rows === null ? <div style={{ fontSize: 13, color: T.slate500 }}>Loading…</div>
+        : rows.length === 0 ? (
+          <div style={{ ...card, fontSize: 13, color: T.slate600 }}>
+            {isParent ? "No fights yet. Start one above, add the characters and a creature, then start the fight." : "No fights yet. The game master starts one."}
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {rows.map(r => (
+              <TabLink key={r.id} href={hrefFor(r.id)} onSelect={() => onOpen(r.id)}
+                style={{ ...card, display: "block", textDecoration: "none", color: "inherit", opacity: r.status === "ended" ? 0.7 : 1 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 700, color: T.slate900 }}>{r.name}</span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: r.status === "active" ? T.green : T.slate500 }}>{fightStatus(r)}</span>
+                </div>
+                {r.who && <div style={{ fontSize: 12, color: T.slate600, marginTop: 4 }}>{r.who}</div>}
+              </TabLink>
+            ))}
+          </div>
+        )}
+    </div>
+  );
+}
+
+function FightView({ id, isParent, defs, onBack, backHref, onError }) {
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [last, setLast] = useState(null);
+  const [actorId, setActorId] = useState(null);
+  const [openRow, setOpenRow] = useState(null);
+
+  const pull = useCallback(async () => {
+    const { data, error } = await supabase.rpc("rpg_session_state", { p_session_id: id });
+    if (error) { onError(error.message); return; }
+    setSt(data || null);
+  }, [id, onError]);
+  useEffect(() => { pull(); }, [pull]);
+  const nudge = useLiveChannel(`rpg_fight:${id}`, pull);
+
+  const s = st?.session || {};
+  const parts = Array.isArray(st?.participants) ? st.participants : [];
+  const events = Array.isArray(st?.events) ? st.events : [];
+  const current = parts.find(p => p.is_current) || null;
+  useEffect(() => { setActorId(null); setLast(null); }, [s.current_participant_id]);
+
+  const run = useCallback(async (fn, args, showResult = false) => {
+    if (busy) return null;
+    setBusy(true); setMsg(null);
+    const { data, error } = await supabase.rpc(fn, args);
+    setBusy(false);
+    if (error) { setMsg(error.message); return null; }
+    if (showResult) setLast(Array.isArray(data?.results) ? data.results : null);
+    await pull();
+    nudge();
+    return data ?? true;
+  }, [busy, pull, nudge]);
+
+  if (!st) return <div style={{ fontSize: 13, color: T.slate500 }}>Loading…</div>;
+
+  const ended = s.status === "ended";
+  const active = s.status === "active";
+  const actor = isParent ? (parts.find(p => p.id === actorId) || current) : (current?.kind === "character" ? current : null);
+  const endTurn = () => run("rpg_session_next_turn", { p_session_id: id });
+  const move = (i, dir) => {
+    const ids = parts.map(p => p.id);
+    const j = i + dir;
+    if (j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    run("rpg_session_set_order", { p_session_id: id, p_order: ids });
+  };
+  const del = async () => {
+    if (!window.confirm(`Delete ${s.name} and everything in its log?`)) return;
+    const { error } = await supabase.from("rpg_sessions").delete().eq("id", id);
+    if (error) { setMsg(error.message); return; }
+    onBack();
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <TabLink href={backHref} onSelect={onBack} style={btn("soft", true)}>‹ All fights</TabLink>
+        {isParent && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {s.status === "setup" && (
+              <button type="button" style={btn("primary", true)} disabled={busy || parts.length === 0} onClick={endTurn}>Start the fight</button>
+            )}
+            {!ended && (
+              <button type="button" style={btn("soft", true)} disabled={busy}
+                onClick={() => { if (window.confirm("End this fight? Nothing more can happen in it.")) run("rpg_session_end", { p_session_id: id }); }}>End fight</button>
+            )}
+            {ended && <button type="button" style={btn("danger", true)} onClick={del}>Delete fight</button>}
+          </div>
+        )}
+      </div>
+
+      <div style={{ ...card, borderColor: active ? T.blue : T.slate200 }}>
+        <div style={{ fontSize: 12, color: T.slate500 }}>{s.name}</div>
+        <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, marginTop: 2 }}>
+          {active && current ? `Round ${s.round}: ${current.name}'s turn`
+            : s.status === "setup" ? (isParent ? "Add everyone, then start the fight" : "Getting ready")
+            : active ? `Round ${s.round}` : "This fight is over"}
+        </div>
+      </div>
+
+      {msg && <div style={{ ...card, borderColor: T.red, color: T.red, fontSize: 13 }}>{msg}</div>}
+
+      {isParent && !ended && <AddToFight st={st} id={id} busy={busy} run={run} startOpen={s.status === "setup"} />}
+
+      <div style={card}>
+        <div style={label}>Turn order</div>
+        {parts.length === 0
+          ? <div style={{ fontSize: 13, color: T.slate500, marginTop: 6 }}>No one is in this fight yet.</div>
+          : parts.map((p, i) => (
+            <ParticipantRow key={p.id} p={p} i={i} n={parts.length} isParent={isParent} ended={ended} busy={busy}
+              open={openRow === p.id} onToggle={() => setOpenRow(openRow === p.id ? null : p.id)} onMove={move} run={run} />
+          ))}
+        {s.status !== "ended" && parts.length > 1 && (
+          <div style={hint}>Highest Agility goes first. Agility 7 goes before Agility 1.</div>
+        )}
+      </div>
+
+      {isParent && active && parts.length > 1 && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, color: T.slate600 }}>Acting</span>
+          <select style={input} value={actor?.id || ""} onChange={e => setActorId(e.target.value || null)}>
+            {parts.map(p => <option key={p.id} value={p.id}>{p.name}{p.is_current ? " (their turn)" : ""}</option>)}
+          </select>
+        </div>
+      )}
+
+      {active && actor && actor.kind === "character" && (
+        <CharacterActions key={actor.id} actor={actor} parts={parts} s={s} busy={busy} run={run} onEnd={endTurn} />
+      )}
+      {active && actor && actor.kind === "creature" && isParent && (
+        <CreatureActions key={actor.id} actor={actor} parts={parts} defs={defs} busy={busy} run={run} onEnd={endTurn} />
+      )}
+      {active && !isParent && current && current.kind !== "character" && (
+        <div style={{ ...card, fontSize: 13, color: T.slate600 }}>{current.name} is taking its turn. The game master rolls for it.</div>
+      )}
+
+      {Array.isArray(last) && last.length > 0 && <ResultCard results={last} />}
+      <FightLog events={events} />
+    </div>
+  );
+}
+
+function AddToFight({ st, id, busy, run, startOpen }) {
+  const [open, setOpen] = useState(startOpen);
+  const [creature, setCreature] = useState("");
+  const chars = Array.isArray(st?.available?.characters) ? st.available.characters : [];
+  const creatures = Array.isArray(st?.available?.creatures) ? st.available.creatures : [];
+  const pick = creatures.some(c => c.id === creature) ? creature : (creatures[0]?.id || "");
+  if (chars.length === 0 && creatures.length === 0) return null;
+  if (!open && !startOpen) {
+    return <div><button type="button" style={btn("soft", true)} onClick={() => setOpen(true)}>Add someone to the fight</button></div>;
+  }
+  return (
+    <div style={{ ...card, display: "grid", gap: 8 }}>
+      <div style={label}>Add to the fight</div>
+      {chars.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {chars.map(c => (
+            <button key={c.id} type="button" style={btn("soft", true)} disabled={busy}
+              onClick={() => run("rpg_session_add", { p_session_id: id, p_character_id: c.id })}>+ {c.name}</button>
+          ))}
+        </div>
+      )}
+      {creatures.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <select style={input} value={pick} onChange={e => setCreature(e.target.value)}>
+            {creatures.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <button type="button" style={btn("soft", true)} disabled={busy || !pick}
+            onClick={() => run("rpg_session_add", { p_session_id: id, p_creature_id: pick })}>Add creature</button>
+        </div>
+      )}
+      {!startOpen && <div><button type="button" style={btn("soft", true)} onClick={() => setOpen(false)}>Done adding</button></div>}
+    </div>
+  );
+}
+
+function ParticipantRow({ p, i, n, isParent, ended, busy, open, onToggle, onMove, run }) {
+  const [note, setNote] = useState(p.status_note || "");
+  const [amount, setAmount] = useState("5");
+  useEffect(() => { setNote(p.status_note || ""); }, [p.status_note]);
+  const down = isDown(p);
+  const hasNums = p.vitality_left != null && p.vitality_max != null;
+  const share = hasNums ? (Number(p.vitality_max) > 0 ? Number(p.vitality_left) / Number(p.vitality_max) : 0) : (Number(p.vitality_share) || 0);
+  const amt = Math.round(Number(amount) || 0);
+  return (
+    <div style={{ borderTop: i ? `1px solid ${T.slate100}` : "none", padding: "9px 0", marginTop: i ? 0 : 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ width: 10, height: 10, borderRadius: 5, background: p.color || T.slate400, flexShrink: 0 }} />
+        <span style={{ fontWeight: p.is_current ? 800 : 600, color: T.slate900 }}>{p.name}</span>
+        {p.is_current && <span style={pill(T.blue, T.blueLt)}>Their turn</span>}
+        {down && <span style={pill(T.red, T.redLt)}>Down</span>}
+        {!down && !p.can_act && <span style={pill(T.amber, T.amberLt)}>Cannot act</span>}
+        {p.status_note && <span style={{ fontSize: 12, color: T.slate600 }}>{p.status_note}</span>}
+        <span style={{ flex: 1 }} />
+        {isParent && !ended && <button type="button" style={btn("soft", true)} onClick={onToggle}>{open ? "Done" : "Change"}</button>}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+        <div style={{ flex: 1, height: 8, background: T.slate100, borderRadius: 4, overflow: "hidden" }}>
+          <div style={{ width: `${Math.max(0, Math.min(1, share)) * 100}%`, height: "100%", background: share > 0.5 ? T.green : share > 0.2 ? T.amber : T.red }} />
+        </div>
+        {hasNums && <span style={{ fontSize: 12, color: T.slate600, minWidth: 64, textAlign: "right" }}>{p.vitality_left} of {p.vitality_max}</span>}
+      </div>
+      {open && (
+        <div style={{ display: "grid", gap: 8, marginTop: 8, padding: 10, background: T.slate50, borderRadius: 8, boxSizing: "border-box" }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <button type="button" style={btn("soft", true)} disabled={busy || i === 0} onClick={() => onMove(i, -1)}>Move up</button>
+            <button type="button" style={btn("soft", true)} disabled={busy || i === n - 1} onClick={() => onMove(i, 1)}>Move down</button>
+            <button type="button" style={btn("danger", true)} disabled={busy}
+              onClick={() => { if (window.confirm(`Take ${p.name} out of the fight?`)) run("rpg_session_remove", { p_participant_id: p.id }); }}>Take out</button>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <input style={{ ...input, flex: "1 1 180px" }} placeholder="Note the table sees, like Held until the next round" value={note} onChange={e => setNote(e.target.value)} />
+            <button type="button" style={btn(p.can_act ? "primary" : "soft", true)} disabled={busy}
+              onClick={() => run("rpg_session_set_status", { p_participant_id: p.id, p_can_act: true, p_status_note: note })}>Can act</button>
+            <button type="button" style={btn(!p.can_act ? "primary" : "soft", true)} disabled={busy}
+              onClick={() => run("rpg_session_set_status", { p_participant_id: p.id, p_can_act: false, p_status_note: note })}>Cannot act</button>
+          </div>
+          <div style={hint}>Someone who cannot act is easier to hit: Evade Enemy 5 is difficulty 5 instead of 10.</div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <input style={{ ...input, width: 70, textAlign: "center" }} inputMode="numeric" value={amount} onChange={e => setAmount(e.target.value)} />
+            <button type="button" style={btn("soft", true)} disabled={busy || amt <= 0}
+              onClick={() => run("rpg_session_adjust_vitality", { p_participant_id: p.id, p_delta: amt })}>Damage</button>
+            <button type="button" style={btn("soft", true)} disabled={busy || amt <= 0}
+              onClick={() => run("rpg_session_adjust_vitality", { p_participant_id: p.id, p_delta: -amt })}>Heal</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CharacterActions({ actor, parts, s, busy, run, onEnd }) {
+  const weapons = Array.isArray(actor.weapons) ? actor.weapons : [];
+  const stats = Array.isArray(actor.stats) ? actor.stats : [];
+  const targets = parts.filter(p => p.id !== actor.id);
+  const [weapon, setWeapon] = useState("");
+  const [target, setTarget] = useState("");
+  const [checkOpen, setCheckOpen] = useState(false);
+  const [checkKey, setCheckKey] = useState("CO");
+  const [difficulty, setDifficulty] = useState("5");
+  const w = weapons.some(x => x.key === weapon) ? weapon : (weapons[0]?.key || "");
+  const fallback = (targets.find(p => p.kind === "creature" && !isDown(p)) || targets[0])?.id || "";
+  const t = targets.some(x => x.id === target) ? target : fallback;
+  const used = actor.is_current ? (Number(s.turn_attacks) || 0) : 0;
+  const perTurn = Number(s.attacks_per_turn) || 1;
+  const blocked = !actor.can_act || isDown(actor);
+  return (
+    <div style={{ ...card, borderColor: T.blue, display: "grid", gap: 10 }}>
+      <div style={{ fontWeight: 700, color: T.slate900 }}>{actor.is_current ? `${actor.name}, it's your turn` : actor.name}</div>
+      {blocked ? (
+        <div style={{ fontSize: 13, color: T.slate600 }}>{actor.name} {isDown(actor) ? "is down" : "cannot act"}{actor.status_note ? `: ${actor.status_note}` : ""}.</div>
+      ) : (
+        <>
+          <div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <select style={input} value={w} onChange={e => setWeapon(e.target.value)}>
+                {weapons.map(x => <option key={x.key} value={x.key}>{x.name} {num(x.value)}</option>)}
+              </select>
+              <span style={{ fontSize: 13, color: T.slate600 }}>at</span>
+              <select style={input} value={t} onChange={e => setTarget(e.target.value)}>
+                {targets.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+              </select>
+              <button type="button" style={btn("primary")} disabled={busy || !w || !t || used >= perTurn}
+                onClick={() => run("rpg_act", { p_actor_id: actor.id, p_target_ids: [t], p_stat_key: w }, true)}>Attack</button>
+            </div>
+            <div style={hint}>
+              {used >= perTurn ? `${actor.name} has made this turn's attack.`
+                : "Your weapon skill against their Evade Enemy × 2. Dagger 6 against Evade Enemy 8 is difficulty 16 and needs 73 or more."}
+            </div>
+          </div>
+          <div>
+            <button type="button" style={btn("soft", true)} onClick={() => setCheckOpen(!checkOpen)}>{checkOpen ? "Hide the check" : "Roll a check"}</button>
+            {checkOpen && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: T.slate500, fontWeight: 700 }}>Skill</div>
+                    <select style={{ ...input, marginTop: 4 }} value={checkKey} onChange={e => setCheckKey(e.target.value)}>
+                      {stats.map(x => <option key={x.key} value={x.key}>{x.name} {num(x.value)}</option>)}
+                    </select>
+                  </div>
+                  <NumberBox title="Difficulty" value={difficulty} onChange={setDifficulty} />
+                  <button type="button" style={btn("primary", true)} disabled={busy}
+                    onClick={() => run("rpg_act", { p_actor_id: actor.id, p_stat_key: checkKey, p_difficulty: Math.max(0, Number(difficulty) || 0) }, true)}>Roll</button>
+                </div>
+                <div style={hint}>A check is one of your skills against a set difficulty. Courage 7 against 8, to shake off fear, needs 54 or more.</div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+      {actor.is_current && <div><button type="button" style={btn("soft")} disabled={busy} onClick={onEnd}>End turn</button></div>}
+    </div>
+  );
+}
+
+function CreatureActions({ actor, parts, defs, busy, run, onEnd }) {
+  const actions = Array.isArray(actor.actions) ? actor.actions : [];
+  const others = parts.filter(p => p.id !== actor.id);
+  const skills = actor.skills || {};
+  const [picked, setPicked] = useState([]);
+  const [skill, setSkill] = useState("strength");
+  const [against, setAgainst] = useState("ST");
+  const targetIds = picked.filter(x => others.some(o => o.id === x));
+  const toggle = (pid) => setPicked(targetIds.includes(pid) ? targetIds.filter(x => x !== pid) : [...targetIds, pid]);
+  const againstOpts = (Array.isArray(defs) ? defs : []).filter(d => d.grp === "physical" || d.grp === "ability");
+  const act = async (args) => { const r = await run("rpg_act", args, true); if (r) setPicked([]); };
+  const blocked = !actor.can_act || isDown(actor);
+  return (
+    <div style={{ ...card, borderColor: T.blue, display: "grid", gap: 12 }}>
+      <div style={{ fontWeight: 700, color: T.slate900 }}>{actor.is_current ? `${actor.name}'s turn` : actor.name}</div>
+      {blocked ? (
+        <div style={{ fontSize: 13, color: T.slate600 }}>{actor.name} {isDown(actor) ? "is down" : "cannot act"}.</div>
+      ) : (
+        <>
+          <div>
+            <div style={{ fontSize: 11, color: T.slate500, fontWeight: 700 }}>Aim at</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+              {others.map(o => (
+                <button key={o.id} type="button" style={btn(targetIds.includes(o.id) ? "primary" : "soft", true)} onClick={() => toggle(o.id)}>{o.name}</button>
+              ))}
+            </div>
+            <div style={hint}>Each one picked gets their own roll.</div>
+          </div>
+          {ACTION_GROUPS.map(([kind, title]) => {
+            const list = actions.filter(a => a.kind === kind);
+            if (list.length === 0) return null;
+            return (
+              <div key={kind}>
+                <div style={label}>{title}{kind === "legendary" && actor.legendary_per_round ? `, ${actor.legendary_left} of ${actor.legendary_per_round} left` : ""}</div>
+                {kind === "legendary" && <div style={hint}>Used on other turns. They come back when {actor.name}'s turn starts.</div>}
+                {list.map(a => {
+                  const rolls = a.skill != null && !a.several;
+                  const short = kind === "legendary" && Number(actor.legendary_left) < Number(a.legendary_cost);
+                  return (
+                    <div key={a.id} style={{ padding: "7px 0", borderTop: `1px solid ${T.slate100}` }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={{ fontWeight: 600, color: T.slate900 }}>{a.name}</span>
+                        {rolls && <span style={{ fontSize: 12, color: T.slate600 }}>{a.skill} against {a.against_name || a.against}{a.deals_damage ? ", does damage" : ""}</span>}
+                        {kind === "legendary" && <span style={{ fontSize: 12, color: T.slate500 }}>costs {a.legendary_cost}</span>}
+                        <span style={{ flex: 1 }} />
+                        {a.several ? null : a.spent ? (
+                          <span style={{ fontSize: 12, fontWeight: 600, color: T.amber }}>Recharging: ready on a {a.recharge_min} or more</span>
+                        ) : (
+                          <button type="button" style={btn("primary", true)} disabled={busy || short || (rolls && targetIds.length === 0)}
+                            onClick={() => act(rolls ? { p_actor_id: actor.id, p_target_ids: targetIds, p_action_id: a.id } : { p_actor_id: actor.id, p_action_id: a.id })}>
+                            {rolls ? "Roll" : "Use"}
+                          </button>
+                        )}
+                      </div>
+                      {a.table_note && <div style={hint}>{a.table_note}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+          <div>
+            <div style={label}>Roll one of its skills</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 4 }}>
+              <select style={input} value={skill} onChange={e => setSkill(e.target.value)}>
+                {CREATURE_SKILLS.filter(([k]) => skills[k] != null).map(([k, n]) => <option key={k} value={k}>{n} {skills[k]}</option>)}
+              </select>
+              <span style={{ fontSize: 13, color: T.slate600 }}>against their</span>
+              <select style={input} value={against} onChange={e => setAgainst(e.target.value)}>
+                {againstOpts.map(d => <option key={d.key} value={d.key}>{d.name}</option>)}
+              </select>
+              <button type="button" style={btn("primary", true)} disabled={busy || targetIds.length === 0}
+                onClick={() => act({ p_actor_id: actor.id, p_target_ids: targetIds, p_stat_key: skill, p_against: against })}>Roll</button>
+            </div>
+            <div style={hint}>For a Claw that knocks someone down: Strength 10 against their Strength 5 is difficulty 10 and needs 50 or more.</div>
+          </div>
+        </>
+      )}
+      {actor.is_current && <div><button type="button" style={btn("soft")} disabled={busy} onClick={onEnd}>End turn</button></div>}
+    </div>
+  );
+}
+
+function ResultCard({ results }) {
+  return (
+    <div style={{ ...card, display: "grid", gap: 10 }}>
+      {results.map((r, i) => (
+        <div key={i} style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <div style={{ fontSize: 34, fontWeight: 800, color: resultColor(r.result), minWidth: 56, textAlign: "center" }}>{r.roll}</div>
+          <div style={{ fontSize: 13, color: T.slate700 }}>{r.text}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FightLog({ events }) {
+  const [all, setAll] = useState(false);
+  if (events.length === 0) return null;
+  const shown = all ? events : events.slice(0, 12);
+  return (
+    <div style={card}>
+      <div style={label}>What happened</div>
+      <div style={{ display: "grid", gap: 4, marginTop: 6 }}>
+        {shown.map(e => {
+          const marker = ["turn", "round", "start", "end"].includes(e.kind);
+          return (
+            <div key={e.id} style={{ fontSize: 13, color: marker ? T.slate900 : T.slate700, fontWeight: marker ? 700 : 400, paddingTop: marker ? 4 : 0 }}>{e.text}</div>
+          );
+        })}
+      </div>
+      {events.length > 12 && (
+        <button type="button" style={{ ...btn("soft", true), marginTop: 8 }} onClick={() => setAll(!all)}>{all ? "Show less" : "Show all"}</button>
+      )}
     </div>
   );
 }
