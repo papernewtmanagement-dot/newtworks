@@ -102,6 +102,28 @@ const rowKey = (r) => (r.frequency === "extra" ? `${r.chore_id}:${r.slot ?? 1}` 
 // How often an extra chore comes back. 0 = any number of times a day, blank = one time.
 const REPEAT_OPTIONS = [["", "One time"], ["0", "Many times a day"], ["1", "Next day"], ["2", "In 2 days"], ["3", "In 3 days"], ["7", "In a week"], ["14", "In 2 weeks"], ["30", "In a month"]];
 const repeatValue = (v) => (v === "" || v == null ? null : Math.max(0, Math.round(Number(v)) || 0));
+// How often a weekly chore comes around: every week, every other week (Peter 2026-09-24) or
+// every 4 weeks (Peter 2026-09-25). A choice is "weeks:offset", read against the chore week of
+// `today`: offset 0 = due this week, 1 = next week, 2 = in 2 weeks, and so on. Saving turns it
+// into every_weeks + start_week; family_occurrence_date() in the database decides the due days.
+const EVERY_WEEKS = [1, 2, 4];
+const EVERY_OPTIONS = EVERY_WEEKS.flatMap(n => (n === 1 ? ["1"] : Array.from({ length: n }, (_, off) => `${n}:${off}`)));
+const everyLabel = (v) => {
+  const [n, off] = String(v).split(":").map(Number);
+  if (!(n > 1)) return "Every week";
+  const how = n === 2 ? "Every other week" : `Every ${n} weeks`;
+  return `${how}, ${off === 0 ? "starting this week" : off === 1 ? "starting next week" : `starting in ${off} weeks`}`;
+};
+const everyChoice = (c, today) => {
+  const n = Number(c.every_weeks);
+  if (!(n > 1) || !c.start_week) return "1";
+  const weeks = Math.round((parseDate(c.start_week) - parseDate(weekStartOf(today))) / (7 * 86400000));
+  return `${n}:${((weeks % n) + n) % n}`;
+};
+const everyFields = (v, today) => {
+  const [n, off] = String(v).split(":").map(Number);
+  return n > 1 ? { every_weeks: n, start_week: addDays(weekStartOf(today), 7 * (off || 0)) } : { every_weeks: 1, start_week: null };
+};
 const card = { background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 14, boxSizing: "border-box" };
 const input = { border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", background: T.white, color: T.slate900 };
 
@@ -1340,13 +1362,6 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
   const [addingExtra, setAddingExtra] = useState(null);
   const current = (k) => chores.filter(c => c.kid_id === k.id && c.frequency !== "extra" && (!c.active_to || c.active_to >= today));
   const extras = chores.filter(c => c.frequency === "extra" && (!c.active_to || c.active_to >= today));
-  // Every other week (Peter 2026-09-24), read against this chore week: "starting this week"
-  // on a week it is due, "starting next week" on a week it is off.
-  const everyNow = (c) => {
-    if (!(Number(c.every_weeks) > 1) || !c.start_week) return "1";
-    const weeks = Math.round((parseDate(weekStartOf(today)) - parseDate(c.start_week)) / (7 * 86400000));
-    return weeks % Number(c.every_weeks) === 0 ? "this" : "next";
-  };
 
   const saveChore = async (c) => {
     const d = draft[c.id]; if (!d) return;
@@ -1356,10 +1371,7 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
     if (d.fine !== undefined) patch.fine = d.fine === "" ? null : Number(d.fine);
     if (d.due_dow !== undefined) patch.due_dow = d.due_dow === "" ? null : Number(d.due_dow);
     if (d.repeat_days !== undefined) patch.repeat_days = repeatValue(d.repeat_days);
-    if (d.every !== undefined) {
-      patch.every_weeks = d.every === "1" ? 1 : 2;
-      patch.start_week = d.every === "1" ? null : addDays(weekStartOf(today), d.every === "next" ? 7 : 0);
-    }
+    if (d.every !== undefined) Object.assign(patch, everyFields(d.every, today));
     const { error } = await supabase.from("family_chores").update(patch).eq("id", c.id);
     if (error) { setErr(error.message); return; }
     setDraft(x => { const n = { ...x }; delete n[c.id]; return n; });
@@ -1380,6 +1392,7 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
       agency_id: AGENCY_ID, kid_id: a.kid_id, title: a.title, frequency: a.frequency,
       part_of_day: a.frequency === "daily" ? a.part_of_day : null, pay: Number(a.pay) || 0,
       due_dow: a.frequency === "weekly" && a.due_dow !== "" && a.due_dow != null ? Number(a.due_dow) : null,
+      ...(a.frequency === "weekly" ? everyFields(a.every || "1", today) : {}),
       checklist_id: a.checklist_id || null, sort_order: 99, active_from: today,
     });
     if (error) { setErr(error.message); return; }
@@ -1499,6 +1512,7 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
               <tbody>
                 {current(k).map(c => {
                   const d = draft[c.id] || {};
+                  const ev = everyChoice(c, today);
                   return (
                     <tr key={c.id} style={{ borderTop: `1px solid ${T.slate100}` }}>
                       <td style={{ ...td, minWidth: 170 }}>{cellIn(c, "title", c.title, "100%")}</td>
@@ -1512,11 +1526,10 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
                         {c.group_label && <span style={{ marginLeft: 6, fontSize: 11 }}>{c.group_label}</span>}
                         {c.frequency === "weekly" && (
                           <div>
-                            <select value={d.every ?? everyNow(c)} onChange={e => setDraft(x => ({ ...x, [c.id]: { ...(x[c.id] || {}), every: e.target.value } }))}
+                            <select value={d.every ?? ev} onChange={e => setDraft(x => ({ ...x, [c.id]: { ...(x[c.id] || {}), every: e.target.value } }))}
                               aria-label="How often" style={{ ...input, padding: "3px 4px", marginTop: 4, fontSize: 12, color: T.slate500, border: "none", background: "transparent" }}>
-                              <option value="1">Every week</option>
-                              <option value="this">Every other week, starting this week</option>
-                              <option value="next">Every other week, starting next week</option>
+                              {EVERY_OPTIONS.map(v => <option key={v} value={v}>{everyLabel(v)}</option>)}
+                              {!EVERY_OPTIONS.includes(ev) && <option value={ev}>{everyLabel(ev)}</option>}
                             </select>
                           </div>
                         )}
@@ -1545,6 +1558,11 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
                 <select value={adding.due_dow ?? ""} onChange={e => setAdding({ ...adding, due_dow: e.target.value })} style={input}>
                   <option value="">Any day</option>
                   {WEEK_ORDER.map(i => <option key={i} value={i}>{DAY_FULL[i]}</option>)}
+                </select>
+              )}
+              {adding.frequency === "weekly" && (
+                <select value={adding.every || "1"} onChange={e => setAdding({ ...adding, every: e.target.value })} aria-label="How often" style={input}>
+                  {EVERY_OPTIONS.map(v => <option key={v} value={v}>{everyLabel(v)}</option>)}
                 </select>
               )}
               <input value={adding.pay} onChange={e => setAdding({ ...adding, pay: e.target.value })} inputMode="decimal" placeholder="Pay" style={input} />
