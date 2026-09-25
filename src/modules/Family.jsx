@@ -1579,6 +1579,7 @@ function FinesView({ kids, fineTypes, fineKids, checklists, expenseTypes, fines,
     const cl = (checklists || []).find(c => c.id === f.chore_checklist_id);
     return `Only for kids who do ${cl?.name || "that chore"}`;
   };
+  const givenToday = (fines || []).filter(l => l.kid_id === kidId && l.fine_type_id === typeId && l.entry_date === today).length;
 
   const apply = async () => {
     const t = active.find(f => f.id === typeId);
@@ -1590,7 +1591,8 @@ function FinesView({ kids, fineTypes, fineKids, checklists, expenseTypes, fines,
     });
     setSaving(false);
     if (error) { setErr(error.message); return; }
-    setNote(""); setTypeId(""); onSaved();
+    // Who and what stay picked, so tapping again gives another one (Peter 2026-09-24).
+    setNote(""); onSaved();
   };
   const removeFine = async (id) => {
     const { error } = await supabase.from("family_ledger").delete().eq("id", id).eq("kind", "fine");
@@ -1613,6 +1615,9 @@ function FinesView({ kids, fineTypes, fineKids, checklists, expenseTypes, fines,
           <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note (optional)" style={input} />
           <button disabled={saving || !kidId || !typeId} onClick={apply} style={btn("danger")}>Give fine</button>
         </div>
+        {kidId && typeId && givenToday > 0 && (
+          <div style={{ fontSize: 12, color: T.slate500, paddingTop: 8 }}>Given to {kidName(kidId)} today: {givenToday}</div>
+        )}
       </Section>
 
       {fines.length > 0 && (
