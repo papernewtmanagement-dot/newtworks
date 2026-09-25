@@ -11,8 +11,9 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 // Build plan: persistent_memory spec "Roleplaying module — build plan" (project roleplaying).
 // Step 2: Characters tab — roll a character, the interactive sheet, rolls, items and coins.
 // Step 3: Creatures tab — creature cards (Bramblemaw first). Parents see the whole card and
-// the d100 numbers the table uses; players see a creature's names, haunts and lore once a
-// parent taps Show to players.
+// the character-scale numbers the table uses (attack, defense, vitality ... set by the game
+// master; the d20 stat block is kept as reading and flavor); players see a creature's names,
+// haunts and lore once a parent taps Show to players.
 // Step 4: Rules tab — the manual text verbatim (rpg_rules), every formula spelled out the
 // same way the sheet does it, a needed-roll calculator, and the level-cost table. Play and
 // Maps tabs land in later steps.
@@ -597,7 +598,7 @@ function CreatureList({ isParent, onOpen, hrefFor, onError }) {
               <div style={{ fontWeight: 700, fontSize: 15, color: T.slate900, minWidth: 0 }}>{r.name}</div>
               {isParent && <span style={tag(r.shown_to_players ? "on" : "off")}>{r.shown_to_players ? "Shown" : "Hidden"}</span>}
             </div>
-            {isParent && <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>Challenge {r.challenge ?? "—"} · Armor class {r.armor_class} · Hit points {r.hit_points}</div>}
+            {isParent && <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>Attack {num(r.attack_skill)} · Defense {num(r.defense_skill)} · Vitality {num(r.vitality)}</div>}
             {r.epigraph && <div style={{ fontSize: 12, color: T.slate600, fontStyle: "italic", marginTop: 6, lineHeight: 1.5 }}>{r.epigraph}</div>}
           </TabLink>
         ))}
@@ -689,22 +690,25 @@ function TableNumber({ big, small }) {
   );
 }
 
-// The game master's half of the card: d100 numbers, the stat block, every action, rumors, the tip.
+// The game master's half of the card: the character-scale numbers the table uses, the d20 stat
+// block as printed (reading and flavor), every action, rumors, the tip.
 function CreatureGmCard({ c, accent }) {
   const actions = Array.isArray(c.actions) ? c.actions : [];
   const ofKind = (k) => actions.filter(a => a.kind === k);
   const t = c.table || {};
+  const mult = num(t.will_multiplier);
   const rumors = Array.isArray(c.rumors) ? c.rumors : [];
 
   const statRow = (name, value) => (value ? (
     <div style={{ fontSize: 13, color: T.slate700, padding: "3px 0" }}><span style={{ fontWeight: 700, color: T.slate900 }}>{name}</span> {value}</div>
   ) : null);
-  const d100Line = (a) => {
-    const parts = [];
-    if (a.to_hit != null) parts.push(`Attack skill ${a.to_hit}`);
-    if (a.save_difficulty != null) parts.push(`${a.save_ability_name || "Save"} save at difficulty ${num(a.save_difficulty)}`);
-    return parts.length ? <div style={{ fontSize: 12, color: T.blue, fontWeight: 700 }}>{parts.join(" · ")}</div> : null;
-  };
+  // What the action does at the table: the skill it rolls, the stat the target defends with, and the note.
+  const tableLine = (a) => (a.skill == null && !a.table_note ? null : (
+    <div style={{ marginTop: 4 }}>
+      {a.skill != null && <div style={{ fontSize: 12, color: T.blue, fontWeight: 700 }}>Rolls {num(a.skill)} against {a.against_name || "the target"} × {mult}</div>}
+      {a.table_note && <div style={{ fontSize: 12, color: T.slate600, lineHeight: 1.5 }}>{a.table_note}</div>}
+    </div>
+  ));
   const section = (title, list, intro) => (list.length === 0 ? null : (
     <div style={{ ...card, marginBottom: 12 }}>
       <div style={label}>{title}</div>
@@ -714,7 +718,7 @@ function CreatureGmCard({ c, accent }) {
           <div key={a.id} style={{ padding: "8px 0", borderTop: `1px solid ${T.slate100}` }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>{a.heading || a.name}</div>
             <CardText text={a.description} />
-            {d100Line(a)}
+            {tableLine(a)}
           </div>
         ))}
       </div>
@@ -723,13 +727,18 @@ function CreatureGmCard({ c, accent }) {
 
   return (
     <>
-      {/* The d100 numbers the table uses, from Peter's ruling creature_conversion */}
+      {/* The character-scale numbers the table uses (rule creature_conversion). Difficulties come from rpg_difficulty. */}
       <div style={{ ...card, marginBottom: 12, background: T.blueLt, borderColor: T.blue }}>
         <div style={label}>At the table</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginTop: 8 }}>
-          <TableNumber big={num(t.difficulty_to_hit)} small="Difficulty to hit it" />
-          <TableNumber big={num(t.hit_points)} small="Hit points" />
-          <TableNumber big={t.attacks_roll_against || "—"} small="Its attacks roll against" />
+          <TableNumber big={num(t.vitality)} small="Vitality" />
+          <TableNumber big={num(t.attack_skill)} small={`Attack · rolls against ${t.attacks_roll_against || "Evade Enemy"} × ${mult}`} />
+          <TableNumber big={num(t.difficulty_to_hit)} small={`Difficulty to hit it (defense ${num(t.defense_skill)} × ${mult})`} />
+          <TableNumber big={num(t.difficulty_to_hit_still)} small="Difficulty to hit it asleep or held" />
+          <TableNumber big={num(t.strength_skill)} small="Strength" />
+          <TableNumber big={num(t.will_skill)} small="Will · persuade or frighten it against this × 2" />
+          <TableNumber big={num(t.stealth_skill)} small="Stealth · spot it hidden against this × 2" />
+          <TableNumber big={num(t.awareness_skill)} small="Awareness · sneak past it against this × 2" />
           {Number(c.legendary_per_round) > 0 && <TableNumber big={num(c.legendary_per_round)} small="Legendary actions a round" />}
         </div>
       </div>
