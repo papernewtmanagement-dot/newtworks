@@ -29,6 +29,10 @@ import { fmtDate, fmtDateShort } from "./utils.js";
 //    payment, draws a locked $25 Return Payment Fee.
 //  * Late Payment Fee is always $25, entered by hand.
 //  * Linked lines are joined by a drawn line, not by colour alone.
+//  * Payment plans: monthly, 2 payments, or paid in full.
+//  * One Paid line can pay for several policies. It goes on a billing account
+//    (Billing 1, Billing 2 and so on) that pays for the accounts picked for it,
+//    and the payment is split across them.
 //
 // Where the brief was silent (2026-09-25):
 //  * Payments are monthly across the term unless the start line says paid in
@@ -41,6 +45,13 @@ import { fmtDate, fmtDateShort } from "./utils.js";
 //    return or decline instead of adding a second fee.
 //  * Order is by process date. Lines on the same day keep the order they were
 //    entered, lower on the page being earlier, the way SF lists them.
+//  * A billing account payment pays the oldest amount due first, across all the
+//    accounts it pays for. That is the usual way a payment is applied to open
+//    balances. A payment it undoes comes back off the same accounts it went to.
+//  * Bills, cancel notices and fees can sit on a billing account too. A bill
+//    there is checked against every account it pays for, added together.
+//  * A line with no type and no amount is an empty line, even with dates in it,
+//    so a date carried down to a new line never turns it into a line to check.
 //  * Amounts are whole cents throughout, so nothing drifts by a penny.
 // ============================================================================
 
@@ -53,19 +64,19 @@ const MATCH_CENTS = 50;
 
 // due: whether the effective/due date column is required, optional, or unused.
 export const DEWEY_TYPES = [
-  { key: "binder",              label: "Binder",                  col: "debit",  sign: 1,  role: "start",    due: "required" },
-  { key: "new_business",        label: "New Business",            col: "debit",  sign: 1,  role: "start",    due: "required" },
-  { key: "renewal",             label: "Renewal",                 col: "debit",  sign: 1,  role: "start",    due: "required" },
-  { key: "policy_change",       label: "Policy Change",           col: "debit",  sign: 0,  role: "change",   due: "required" },
-  { key: "billing_change",      label: "Billing Change",          col: "debit",  sign: 0,  role: "change",   due: "required" },
-  { key: "bill",                label: "Bill",                    col: "debit",  sign: 0,  role: "bill",     due: "required" },
-  { key: "autopay_revised_due", label: "AutoPay Revised Due",     col: "debit",  sign: 0,  role: "bill",     due: "required" },
-  { key: "notice_cancel",       label: "Notice of Cancel NonPay", col: "debit",  sign: 1,  role: "notice",   due: "optional" },
-  { key: "paid",                label: "Paid",                    col: "credit", sign: 1,  role: "payment",  due: "none" },
-  { key: "declined",            label: "Declined",                col: "credit", sign: -1, role: "declined", due: "none" },
-  { key: "return",              label: "Return",                  col: "credit", sign: -1, role: "return",   due: "none" },
-  { key: "return_fee",          label: "Return Payment Fee",      col: "credit", sign: -1, role: "fee",      due: "none", fixed: RETURN_FEE_CENTS },
-  { key: "late_fee",            label: "Late Payment Fee",        col: "credit", sign: -1, role: "fee",      due: "none", fixed: LATE_FEE_CENTS },
+  { key: "binder",              label: "Binder",                  col: "owed",   sign: 1,  role: "start",    due: "required" },
+  { key: "new_business",        label: "New Business",            col: "owed",   sign: 1,  role: "start",    due: "required" },
+  { key: "renewal",             label: "Renewal",                 col: "owed",   sign: 1,  role: "start",    due: "required" },
+  { key: "policy_change",       label: "Policy Change",           col: "owed",   sign: 0,  role: "change",   due: "required" },
+  { key: "billing_change",      label: "Billing Change",          col: "owed",   sign: 0,  role: "change",   due: "required" },
+  { key: "bill",                label: "Bill",                    col: "owed",   sign: 0,  role: "bill",     due: "required" },
+  { key: "autopay_revised_due", label: "AutoPay Revised Due",     col: "owed",   sign: 0,  role: "bill",     due: "required" },
+  { key: "notice_cancel",       label: "Notice of Cancel NonPay", col: "owed",   sign: 1,  role: "notice",   due: "optional" },
+  { key: "paid",                label: "Paid",                    col: "paid",  sign: 1,  role: "payment",  due: "none" },
+  { key: "declined",            label: "Declined",                col: "paid",  sign: -1, role: "declined", due: "none" },
+  { key: "return",              label: "Return",                  col: "paid",  sign: -1, role: "return",   due: "none" },
+  { key: "return_fee",          label: "Return Payment Fee",      col: "paid",  sign: -1, role: "fee",      due: "none", fixed: RETURN_FEE_CENTS },
+  { key: "late_fee",            label: "Late Payment Fee",        col: "paid",  sign: -1, role: "fee",      due: "none", fixed: LATE_FEE_CENTS },
 ];
 const TYPE = Object.fromEntries(DEWEY_TYPES.map(t => [t.key, t]));
 export const deweyType = (k) => TYPE[k] || null;
@@ -78,8 +89,19 @@ export const DEWEY_LOBS = [
 const LOB = Object.fromEntries(DEWEY_LOBS.map(l => [l.key, l]));
 export const DEWEY_PLANS = [
   { key: "monthly", label: "Monthly" },
+  { key: "two",     label: "2 payments" },
   { key: "full",    label: "Paid in full" },
 ];
+const payCount = (plan, months) => (plan === "full" ? 1 : plan === "two" ? 2 : months);
+
+// Accounts are numbers (Account 1). Billing accounts are "B1", "B2" (Billing 1).
+export const isBillingKey = (k) => typeof k === "string" && /^B\d+$/.test(k);
+export const accountLabel = (k) => (isBillingKey(k) ? `Billing ${k.slice(1)}` : `Account ${k}`);
+export function normalizeAccountKey(k) {
+  if (isBillingKey(k)) return k;
+  const n = Number(k);
+  return Number.isInteger(n) && n > 0 ? n : 1;
+}
 
 // ---------- rows ----------
 export function newRowId() {
@@ -89,7 +111,7 @@ export function blankRow(account = 1) {
   return { id: newRowId(), type: "", processDate: "", amount: "", dueDate: "", account };
 }
 export function isBlankRow(r) {
-  return !r || (!r.type && !r.processDate && !String(r.amount ?? "").trim() && !r.dueDate);
+  return !r || (!r.type && !String(r.amount ?? "").trim());
 }
 
 // "$1,234.50", "(12)", "-12", "−12" all read. Returns whole cents, or null.
@@ -300,11 +322,15 @@ export function sortRowsByDate(rows) {
 }
 
 // ============================================================================
-// explainBilling: the step by step and the bottom line, per account.
-// accounts: { [n]: { lob: "auto" | "fire", plan: "monthly" | "full" } }
+// explainBilling: the step by step and the bottom line.
+// accounts: { [n]: { lob: "auto" | "fire", plan: "monthly" | "two" | "full" },
+//             ["Bn"]: { covers: [account numbers] } }
+// Returns sections: each billing account first (the bill the customer sees),
+// then each account.
 // ============================================================================
 export function explainBilling({ rows, accounts, today }) {
   const L = buildLedger(rows);
+  const meta = accounts || {};
   const problems = [];
   const warnings = [];
   const label = (k) => TYPE[k]?.label || "line";
@@ -312,207 +338,391 @@ export function explainBilling({ rows, accounts, today }) {
   for (const r of L.display) {
     if (r.auto || isBlankRow(r)) continue;
     const t = TYPE[r.type];
+    const on = r.processDate ? ` on ${when(r.processDate, today)}` : "";
     const miss = [];
     if (!t) miss.push("type");
     if (!r.processDate) miss.push("process date");
     if (t && !t.fixed && rowCents(r) === null) miss.push("amount");
     if (t && t.due === "required" && !r.dueDate) miss.push(t.role === "bill" ? "due date" : "effective date");
-    if (miss.length) {
-      problems.push({ rowId: r.id,
-        text: `${t ? t.label : "A line"}${r.processDate ? ` on ${when(r.processDate, today)}` : ""} needs its ${andList(miss)}.` });
+    if (miss.length) problems.push({ rowId: r.id, text: `${t ? t.label : "A line"}${on} needs its ${andList(miss)}.` });
+    if (t && isBillingKey(r.account) && (t.role === "start" || t.role === "change")) {
+      problems.push({ rowId: r.id, text: `${t.label}${on} goes on the account it is for, not on ${accountLabel(r.account)}.` });
     }
   }
 
-  const acctList = [...L.info.keys()].sort((a, b) => a - b);
-  if (!acctList.length) problems.push({ text: "Enter the lines from SF's Billing & payment history first." });
-  for (const a of acctList) {
+  const keys = [...L.info.keys()];
+  const billingKeys = keys.filter(isBillingKey).sort((x, y) => Number(x.slice(1)) - Number(y.slice(1)));
+  const coversOf = (b) => [...new Set((Array.isArray(meta[b]?.covers) ? meta[b].covers : [])
+    .map(Number).filter(n => Number.isInteger(n) && n > 0))].sort((x, y) => x - y);
+  const policySet = new Set(keys.filter(k => !isBillingKey(k)));
+  for (const b of billingKeys) for (const a of coversOf(b)) policySet.add(a);
+  const policyKeys = [...policySet].sort((x, y) => x - y);
+
+  if (!keys.length) problems.push({ text: "Enter the lines from SF's Billing & payment history first." });
+  for (const b of billingKeys) {
+    if (!coversOf(b).length) problems.push({ account: b, text: `Pick the accounts ${accountLabel(b)} pays for.` });
+  }
+  for (const a of policyKeys) {
     const inf = L.info.get(a);
-    if (!inf.terms.length) {
-      problems.push({ account: a, text: `Account ${a} needs its New Business or Renewal line. Keep going back in SF's history until you reach one.` });
+    if (!inf || !inf.terms.length) {
+      problems.push({ account: a, text: `${accountLabel(a)} needs its New Business or Renewal line. Keep going back in SF's history until you reach one.` });
       continue;
     }
-    const meta = (accounts || {})[a] || {};
-    if (!LOB[meta.lob]) {
+    if (!LOB[meta[a]?.lob]) {
       problems.push({ account: a, rowId: inf.terms[0].start.id,
-        text: `Pick Auto or Fire on Account ${a}'s ${label(inf.terms[0].start.type)} line.` });
+        text: `Pick Auto or Fire on ${accountLabel(a)}'s ${label(inf.terms[0].start.type)} line.` });
     }
   }
-
   for (const g of L.groups) {
     if (g.kind !== "return" || g.paymentId) continue;
     const r = L.byId.get(g.sourceId);
     warnings.push({ rowId: r.id,
       text: `No ${$(rowCents(r))} payment shows before the ${when(r.processDate, today)} Return. The payment it undoes may be further back.` });
   }
+  if (problems.length) return { ok: false, problems, warnings, sections: [], ledger: L };
 
-  if (problems.length) return { ok: false, problems, warnings, accounts: [], ledger: L };
+  // ---------- the schedule for every account ----------
+  // A policy's payment day comes from the first bill due after its term starts:
+  // its own bills, or bills on a billing account that pays for it.
+  const billsFor = (a) => L.chrono.filter(r => (r.type === "bill" || r.type === "autopay_revised_due") && r.dueDate
+    && (r.account === a || (isBillingKey(r.account) && coversOf(r.account).includes(a))));
+  const S = new Map();
+  for (const a of policyKeys) {
+    const lob = LOB[meta[a].lob];
+    const plan = DEWEY_PLANS.find(p => p.key === meta[a].plan) || DEWEY_PLANS[0];
+    const nPay = payCount(plan.key, lob.months);
+    const gap = lob.months / nPay;
+    const bills = billsFor(a);
+    const terms = L.info.get(a).terms.map(tm => {
+      const start = tm.start.dueDate || tm.start.processDate;
+      const P = rowCents(tm.start);
+      const firstBill = bills.find(r => r.dueDate > start);
+      const day = Number((firstBill ? firstBill.dueDate : start).slice(8, 10));
+      const dates = Array.from({ length: nPay }, (_, k) => (k === 0 ? start : addMonthsISO(start, k * gap, day)));
+      return { start: tm.start, S: start, P, end: addMonthsISO(start, lob.months), dates, amts: split(P, nPay) };
+    });
+    S.set(a, {
+      key: a, lob, plan, nPay, gap, terms, termByStart: new Map(terms.map(t => [t.start.id, t])), hasNB: L.info.get(a).hasNB,
+      cur: null, premium: 0, changesNet: 0, credits: 0, paid: 0, paidIn: 0, reversed: 0, oneTime: [], steps: [],
+    });
+  }
+  const Bs = new Map();
+  for (const b of billingKeys) {
+    Bs.set(b, { key: b, covers: coversOf(b), fees: [], paidB: 0, paidIn: 0, reversed: 0, steps: [], splits: new Map() });
+  }
 
+  const sumC = (list, kind) => list.reduce((s, o) => s + (!kind || o.kind === kind ? o.cents : 0), 0);
+  const dueBy = (st, cutoff) => st.terms.reduce((s, t) => s + t.dates.reduce((x, d, k) => x + (d <= cutoff ? t.amts[k] : 0), 0), 0);
+  // What the account should have paid by the cutoff, less what it has.
+  const expectedOf = (st, cutoff) => dueBy(st, cutoff) + sumC(st.oneTime) + st.credits - st.paid;
+  // The amounts still unpaid, oldest first, once `applied` has paid the oldest ones.
+  const unpaidOf = (items, applied) => {
+    const sorted = [...items].sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0));
+    let left = Math.max(0, applied);
+    const out = [];
+    for (const it of sorted) {
+      const use = Math.min(left, it.cents);
+      left -= use;
+      if (it.cents - use > 0) out.push({ date: it.date, cents: it.cents - use });
+    }
+    return out;
+  };
+  const itemsOf = (st) => [
+    ...st.terms.flatMap(t => t.dates.map((d, k) => ({ date: d, cents: t.amts[k] }))),
+    ...st.oneTime.map(o => ({ date: o.date, cents: o.cents })),
+  ];
+  // A billing payment pays the oldest amount due first, across its accounts.
+  // Paying more than everything left sits with the first account as a credit.
+  const allocate = (bs, cents) => {
+    const pool = [];
+    unpaidOf(bs.fees, bs.paidB).forEach(it => pool.push({ ...it, key: "fees", ord: 0 }));
+    bs.covers.forEach((a, i) => {
+      const st = S.get(a);
+      unpaidOf(itemsOf(st), st.paid - st.credits).forEach(it => pool.push({ ...it, key: a, ord: i + 1 }));
+    });
+    pool.sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : x.ord - y.ord));
+    const shares = new Map();
+    let left = cents;
+    for (const it of pool) {
+      if (left <= 0) break;
+      const use = Math.min(left, it.cents);
+      shares.set(it.key, (shares.get(it.key) || 0) + use);
+      left -= use;
+    }
+    if (left > 0) shares.set(bs.covers[0], (shares.get(bs.covers[0]) || 0) + left);
+    return shares;
+  };
+  // A return with no payment found comes back off each account in step with what it has paid.
+  const spreadBack = (bs, cents) => {
+    const w = [["fees", Math.max(0, bs.paidB)], ...bs.covers.map(a => [a, Math.max(0, S.get(a).paid)])].filter(([, v]) => v > 0);
+    const out = new Map();
+    if (!w.length) { out.set(bs.covers[0], cents); return out; }
+    const total = w.reduce((s, [, v]) => s + v, 0);
+    let given = 0;
+    w.forEach(([k, v], i) => {
+      const share = i === w.length - 1 ? cents - given : Math.round(cents * v / total);
+      out.set(k, share);
+      given += share;
+    });
+    return out;
+  };
+  const applyShares = (bs, shares, sign) => {
+    for (const [k, v] of shares) {
+      if (k === "fees") { bs.paidB += sign * v; continue; }
+      const st = S.get(k);
+      st.paid += sign * v;
+      if (sign > 0) st.paidIn += v; else st.reversed += v;
+    }
+  };
+  const shareText = (shares, word) => {
+    const bits = [...shares].filter(([, v]) => v).map(([k, v]) => `${$(v)} ${word} ${k === "fees" ? "the fees" : accountLabel(k)}`);
+    return bits.length ? `${andList(bits)}.` : "";
+  };
   const feeLines = (g) => (!g ? []
     : g.firstPayment ? ["No return payment fee. It was the first New Business payment."]
     : g.feeId ? [`That adds a ${$(RETURN_FEE_CENTS)} return payment fee.`] : []);
+  const billStep = (base, r, t, c, eq, diff) => {
+    const due = r.dueDate ? `, due ${when(r.dueDate, today)}` : "";
+    const head = t.role === "notice"
+      ? `Cancel notice: ${$(c)} past due${r.dueDate ? `, to be paid by ${when(r.dueDate, today)}` : ""}.`
+      : c < 0 ? `SF shows a ${$(c)} credit${due}.`
+      : r.type === "bill" ? `SF billed ${$(c)}${due}.`
+      : `SF changed the amount due to ${$(c)}${due}.`;
+    const ok = Math.abs(diff) <= MATCH_CENTS;
+    return { ...base, tone: ok ? "match" : "off", text: head, sub: [eq, ok ? "Matches SF."
+      : `SF's number is ${$(diff)} ${diff > 0 ? "more" : "less"} than these lines add up to. A line may be missing, or SF spread a change its own way.`] };
+  };
 
-  const out = [];
-  for (const a of acctList) {
-    const meta = accounts[a];
-    const lob = LOB[meta.lob];
-    const nPay = meta.plan === "full" ? 1 : lob.months;
-    const inf = L.info.get(a);
-
-    const terms = inf.terms.map(tm => {
-      const S = tm.start.dueDate || tm.start.processDate;
-      const P = rowCents(tm.start);
-      const firstBill = tm.rows.find(r => (r.type === "bill" || r.type === "autopay_revised_due") && r.dueDate && r.dueDate > S);
-      const day = Number((firstBill ? firstBill.dueDate : S).slice(8, 10));
-      const dates = Array.from({ length: nPay }, (_, k) => (k === 0 ? S : addMonthsISO(S, k, day)));
-      return { start: tm.start, S, P, end: addMonthsISO(S, lob.months), dates, amts: split(P, nPay) };
-    });
-    const termByStart = new Map(terms.map(t => [t.start.id, t]));
-    const dueBy = (cutoff) => terms.reduce((s, t) => s + t.dates.reduce((x, d, k) => x + (d <= cutoff ? t.amts[k] : 0), 0), 0);
-
-    let cur = null;
-    let paid = 0, paidIn = 0, reversed = 0, fees = 0, credits = 0, extras = 0, changesNet = 0, premium = 0;
-    const steps = [];
-
-    for (const r of L.chrono.filter(x => x.account === a)) {
-      const t = TYPE[r.type];
-      const c = rowCents(r);
-      const base = { rowId: r.id, date: r.processDate };
-
-      if (r.type === "binder" && inf.hasNB) {
-        steps.push({ ...base, tone: "muted", text: "Binder. Same as the New Business line, so it is not counted." });
-        continue;
-      }
-      if (termByStart.has(r.id)) {
-        cur = termByStart.get(r.id);
-        premium += cur.P;
-        const sub = [nPay === 1
-          ? `Paid in full: one payment of ${$(cur.P)}.`
-          : `Split into ${nPay} monthly payments of about ${$(cur.amts[nPay - 1])}.`];
-        if (r.type === "binder") sub.unshift("There is no New Business line, so the Binder counts as the start.");
-        steps.push({ ...base, tone: "start",
-          text: `${label(r.type)}. ${lob.label} policy, ${$(cur.P)} for ${lob.months} months, starting ${when(cur.S, today)}.`, sub });
-        continue;
-      }
-      const term = cur || terms[0];
-
-      switch (t.role) {
-        case "change": {
-          changesNet += c;
-          const nm = r.type === "policy_change" ? "Policy change" : "Billing change";
-          const why = r.type === "billing_change" ? " A correction to the bill." : "";
-          if (c > 0) {
-            const E = r.dueDate || r.processDate;
-            const left = term.dates.map((d, k) => (d >= E ? k : -1)).filter(k => k >= 0);
-            if (left.length) {
-              const shares = split(c, left.length);
-              left.forEach((k, j) => { term.amts[k] += shares[j]; });
-              steps.push({ ...base, text: `${nm} added ${$(c)}.${why}`, sub: [left.length === 1
-                ? `One payment left, so it all goes on that one. It is now ${$(term.amts[left[0]])}.`
-                : `Split over the ${left.length} payments left: about ${$(shares[shares.length - 1])} more on each. Payments are now about ${$(term.amts[left[left.length - 1]])}.`] });
-            } else {
-              extras += c;
-              steps.push({ ...base, text: `${nm} added ${$(c)}.${why}`, sub: ["No payments left in this term, so it is due all at once."] });
-            }
-          } else if (c < 0) {
-            credits += c;
-            steps.push({ ...base, text: `${nm} took off ${$(c)}.${why}`, sub: ["Credited all at once, right away."] });
-          } else {
-            steps.push({ ...base, tone: "muted", text: `${nm} for ${$(0)}. The cost did not move.` });
-          }
-          break;
-        }
-        case "payment": {
-          paid += c;
-          paidIn += c;
-          if (!r.auto) steps.push({ ...base, tone: "good", text: `Paid ${$(c)}.`, sub: [`Paid so far: ${$s(paid)}.`] });
-          break;
-        }
-        case "declined": {
-          paid += c;
-          reversed -= c;
-          steps.push({ ...base, tone: "warn", text: `A ${$(c)} payment was declined. It never went through.`, sub: feeLines(L.groupOf.get(r.id)) });
-          break;
-        }
-        case "return": {
-          paid += c;
-          reversed -= c;
-          const g = L.groupOf.get(r.id);
-          const m = g && g.paymentId ? L.byId.get(g.paymentId) : null;
-          steps.push({ ...base, tone: "warn",
-            text: m ? `The ${$(c)} payment from ${when(m.processDate, today)} came back. It no longer counts as paid.`
-                    : `A ${$(c)} payment came back. It no longer counts as paid.`,
-            sub: feeLines(g) });
-          break;
-        }
-        case "fee": {
-          fees -= c;
-          if (!L.groupOf.get(r.id)) {
-            steps.push({ ...base, tone: "warn", text: `${r.type === "late_fee" ? "Late payment fee" : "Return payment fee"}: ${$(c)}.` });
-          }
-          break;
-        }
-        case "bill":
-        case "notice": {
-          const notice = t.role === "notice";
-          const cutoff = notice ? r.processDate : (r.dueDate || r.processDate);
-          const inst = dueBy(cutoff);
-          const expected = inst + fees + extras + credits - paid;
-          const diff = c - expected;
-          const due = r.dueDate ? `, due ${when(r.dueDate, today)}` : "";
-          const head = notice
-            ? `Cancel notice: ${$(c)} past due${r.dueDate ? `, to be paid by ${when(r.dueDate, today)}` : ""}.`
-            : c < 0 ? `SF shows a ${$(c)} credit${due}.`
-            : r.type === "bill" ? `SF billed ${$(c)}${due}.`
-            : `SF changed the amount due to ${$(c)}${due}.`;
-          const parts = [`${$(inst)} in payments`];
-          if (fees) parts.push(`+ ${$(fees)} in fees`);
-          if (extras) parts.push(`+ ${$(extras)} in changes`);
-          if (credits) parts.push(`\u2212 ${$(credits)} in credits`);
-          parts.push(paid >= 0 ? `\u2212 ${$(paid)} paid` : `+ ${$(paid)} came back`);
-          const ok = Math.abs(diff) <= MATCH_CENTS;
-          steps.push({ ...base, tone: ok ? "match" : "off", text: head, sub: [
-            `${notice ? "Past due as of" : "By"} ${when(cutoff, today)}: ${parts.join(" ")} = ${$s(expected)}.`,
-            ok ? "Matches SF." : `SF's number is ${$(diff)} ${diff > 0 ? "more" : "less"} than these lines add up to. A line may be missing, or SF spread a change its own way.`,
-          ] });
-          break;
-        }
-        default:
-          break;
-      }
+  // ---------- one line on an account ----------
+  const walkPolicy = (st, r, t, c, base) => {
+    if (r.type === "binder" && st.hasNB) {
+      st.steps.push({ ...base, tone: "muted", text: "Binder. Same as the New Business line, so it is not counted." });
+      return;
     }
+    if (st.termByStart.has(r.id)) {
+      st.cur = st.termByStart.get(r.id);
+      st.premium += st.cur.P;
+      const sub = [st.nPay === 1
+        ? `Paid in full: one payment of ${$(st.cur.P)}.`
+        : st.nPay === 2
+          ? `Split into 2 payments of about ${$(st.cur.amts[1])}, ${st.gap} months apart.`
+          : `Split into ${st.nPay} monthly payments of about ${$(st.cur.amts[st.nPay - 1])}.`];
+      if (r.type === "binder") sub.unshift("There is no New Business line, so the Binder counts as the start.");
+      st.steps.push({ ...base, tone: "start",
+        text: `${label(r.type)}. ${st.lob.label} policy, ${$(st.cur.P)} for ${st.lob.months} months, starting ${when(st.cur.S, today)}.`, sub });
+      return;
+    }
+    const term = st.cur || st.terms[0];
+    switch (t.role) {
+      case "change": {
+        st.changesNet += c;
+        const nm = r.type === "policy_change" ? "Policy change" : "Billing change";
+        const why = r.type === "billing_change" ? " A correction to the bill." : "";
+        if (c > 0) {
+          const E = r.dueDate || r.processDate;
+          const left = term.dates.map((d, k) => (d >= E ? k : -1)).filter(k => k >= 0);
+          if (left.length) {
+            const shares = split(c, left.length);
+            left.forEach((k, j) => { term.amts[k] += shares[j]; });
+            st.steps.push({ ...base, text: `${nm} added ${$(c)}.${why}`, sub: [left.length === 1
+              ? `One payment left, so it all goes on that one. It is now ${$(term.amts[left[0]])}.`
+              : `Split over the ${left.length} payments left: about ${$(shares[shares.length - 1])} more on each. Payments are now about ${$(term.amts[left[left.length - 1]])}.`] });
+          } else {
+            st.oneTime.push({ date: r.processDate, cents: c, kind: "extra" });
+            st.steps.push({ ...base, text: `${nm} added ${$(c)}.${why}`, sub: ["No payments left in this term, so it is due all at once."] });
+          }
+        } else if (c < 0) {
+          st.credits += c;
+          st.steps.push({ ...base, text: `${nm} took off ${$(c)}.${why}`, sub: ["Credited all at once, right away."] });
+        } else {
+          st.steps.push({ ...base, tone: "muted", text: `${nm} for ${$(0)}. The cost did not move.` });
+        }
+        break;
+      }
+      case "payment": {
+        st.paid += c;
+        st.paidIn += c;
+        if (!r.auto) st.steps.push({ ...base, tone: "good", text: `Paid ${$(c)}.`, sub: [`Paid so far: ${$s(st.paid)}.`] });
+        break;
+      }
+      case "declined": {
+        st.paid += c;
+        st.reversed -= c;
+        st.steps.push({ ...base, tone: "warn", text: `A ${$(c)} payment was declined. It never went through.`, sub: feeLines(L.groupOf.get(r.id)) });
+        break;
+      }
+      case "return": {
+        st.paid += c;
+        st.reversed -= c;
+        const g = L.groupOf.get(r.id);
+        const m = g && g.paymentId ? L.byId.get(g.paymentId) : null;
+        st.steps.push({ ...base, tone: "warn",
+          text: m ? `The ${$(c)} payment from ${when(m.processDate, today)} came back. It no longer counts as paid.`
+                  : `A ${$(c)} payment came back. It no longer counts as paid.`,
+          sub: feeLines(g) });
+        break;
+      }
+      case "fee": {
+        st.oneTime.push({ date: r.processDate, cents: -c, kind: "fee" });
+        if (!L.groupOf.get(r.id)) {
+          st.steps.push({ ...base, tone: "warn", text: `${r.type === "late_fee" ? "Late payment fee" : "Return payment fee"}: ${$(c)}.` });
+        }
+        break;
+      }
+      case "bill":
+      case "notice": {
+        const cutoff = t.role === "notice" ? r.processDate : (r.dueDate || r.processDate);
+        const inst = dueBy(st, cutoff);
+        const fees = sumC(st.oneTime, "fee");
+        const extras = sumC(st.oneTime, "extra");
+        const parts = [`${$(inst)} in payments`];
+        if (fees) parts.push(`+ ${$(fees)} in fees`);
+        if (extras) parts.push(`+ ${$(extras)} in changes`);
+        if (st.credits) parts.push(`\u2212 ${$(st.credits)} in credits`);
+        parts.push(st.paid >= 0 ? `\u2212 ${$(st.paid)} paid` : `+ ${$(st.paid)} came back`);
+        const expected = expectedOf(st, cutoff);
+        st.steps.push(billStep(base, r, t, c,
+          `${t.role === "notice" ? "Past due as of" : "By"} ${when(cutoff, today)}: ${parts.join(" ")} = ${$s(expected)}.`, c - expected));
+        break;
+      }
+      default:
+        break;
+    }
+  };
 
-    const totalCost = premium + changesNet + fees;
-    const left = totalCost - paid;
-    const nowDue = dueBy(today) + fees + extras + credits - paid;
-    const last = terms[terms.length - 1];
+  // ---------- one line on a billing account ----------
+  const walkBilling = (bs, r, t, c, base) => {
+    const g = L.groupOf.get(r.id);
+    switch (t.role) {
+      case "payment": {
+        const shares = allocate(bs, c);
+        bs.splits.set(r.id, shares);
+        applyShares(bs, shares, 1);
+        bs.paidIn += c;
+        if (r.auto) break;
+        bs.steps.push({ ...base, tone: "good", text: `Paid ${$(c)}.`, sub: [`Split, oldest amount due first: ${shareText(shares, "to")}`] });
+        for (const [k, v] of shares) {
+          if (k === "fees" || !v) continue;
+          const st = S.get(k);
+          st.steps.push({ ...base, tone: "good", text: `${$(v)} of a ${$(c)} ${accountLabel(bs.key)} payment came here.`, sub: [`Paid so far: ${$s(st.paid)}.`] });
+        }
+        break;
+      }
+      case "declined": {
+        const shares = g && g.paymentId ? bs.splits.get(g.paymentId) : null;
+        if (shares) applyShares(bs, shares, -1);
+        bs.reversed -= c;
+        bs.steps.push({ ...base, tone: "warn", text: `A ${$(c)} payment was declined. It never went through.`, sub: feeLines(g) });
+        break;
+      }
+      case "return": {
+        const m = g && g.paymentId ? L.byId.get(g.paymentId) : null;
+        const shares = (m && bs.splits.get(m.id)) || spreadBack(bs, -c);
+        applyShares(bs, shares, -1);
+        bs.reversed -= c;
+        bs.steps.push({ ...base, tone: "warn",
+          text: m ? `The ${$(c)} payment from ${when(m.processDate, today)} came back. It no longer counts as paid.`
+                  : `A ${$(c)} payment came back. It no longer counts as paid.`,
+          sub: [`Taken back: ${shareText(shares, "from")}`, ...feeLines(g)] });
+        for (const [k, v] of shares) {
+          if (k === "fees" || !v) continue;
+          const st = S.get(k);
+          st.steps.push({ ...base, tone: "warn", text: `A ${accountLabel(bs.key)} payment came back. ${$(v)} of it comes off here.`, sub: [`Paid so far: ${$s(st.paid)}.`] });
+        }
+        break;
+      }
+      case "fee": {
+        bs.fees.push({ date: r.processDate, cents: -c, kind: "fee" });
+        if (!g) bs.steps.push({ ...base, tone: "warn", text: `${r.type === "late_fee" ? "Late payment fee" : "Return payment fee"}: ${$(c)}.` });
+        break;
+      }
+      case "bill":
+      case "notice": {
+        const cutoff = t.role === "notice" ? r.processDate : (r.dueDate || r.processDate);
+        const per = bs.covers.map(a => [a, expectedOf(S.get(a), cutoff)]);
+        const feesOut = sumC(bs.fees) - bs.paidB;
+        const expected = per.reduce((s, [, v]) => s + v, 0) + feesOut;
+        const parts = per.map(([a, v]) => `${accountLabel(a)} ${$s(v)}`);
+        if (feesOut) parts.push(`${$s(feesOut)} in fees`);
+        bs.steps.push(billStep(base, r, t, c,
+          `${t.role === "notice" ? "Past due as of" : "By"} ${when(cutoff, today)}: ${parts.join(" + ")} = ${$s(expected)}.`, c - expected));
+        break;
+      }
+      default:
+        break;
+    }
+  };
+
+  for (const r of L.chrono) {
+    const t = TYPE[r.type];
+    if (!t) continue;
+    const c = rowCents(r);
+    const base = { rowId: r.id, date: r.processDate };
+    if (isBillingKey(r.account)) {
+      const bs = Bs.get(r.account);
+      if (bs) walkBilling(bs, r, t, c, base);
+    } else {
+      const st = S.get(r.account);
+      if (st) walkPolicy(st, r, t, c, base);
+    }
+  }
+
+  // ---------- the bottom lines ----------
+  const leftItem = (left, whole) => (left > MATCH_CENTS ? { key: "left", label: "Still to pay", value: $(left), note: whole }
+    : left < -MATCH_CENTS ? { key: "left", label: "Overpaid", value: $(left), note: "That is a credit to the customer." }
+    : { key: "left", label: "Still to pay", value: $(0), note: "Paid in full." });
+  const nowItem = (nowDue) => (nowDue > MATCH_CENTS ? { key: "now", tone: "warn", label: "Behind today", value: $(nowDue), note: "Should already be paid, and is not." }
+    : nowDue < -MATCH_CENTS ? { key: "now", tone: "good", label: "Ahead today", value: $(nowDue), note: "Paid more than is due so far." }
+    : { key: "now", tone: "good", label: "Today", value: "On schedule", note: "" });
+  const costOf = (st) => st.premium + st.changesNet + sumC(st.oneTime, "fee");
+  const planWords = (st) => (st.nPay === 1 ? "paid in full" : st.nPay === 2 ? "2 payments" : "monthly payments");
+
+  const sections = [];
+  for (const bs of Bs.values()) {
+    const sts = bs.covers.map(a => S.get(a)).filter(Boolean);
+    const feesB = sumC(bs.fees);
+    const cost = sts.reduce((s, st) => s + costOf(st), 0) + feesB;
+    const paid = sts.reduce((s, st) => s + st.paid, 0) + bs.paidB;
+    const nowDue = sts.reduce((s, st) => s + expectedOf(st, today), 0) + feesB - bs.paidB;
+    sections.push({
+      kind: "billing", key: bs.key, title: `${accountLabel(bs.key)}: pays for ${andList(bs.covers.map(accountLabel))}`,
+      steps: bs.steps,
+      summary: [
+        { key: "cost", label: sts.length > 1 ? "Cost of the policies" : "Cost of the policy", value: $(cost),
+          note: feesB ? `That includes ${$(feesB)} in fees on ${accountLabel(bs.key)}` : "" },
+        { key: "paid", label: "Paid so far", value: $s(paid),
+          note: bs.reversed ? `${$(bs.reversed)} paid through ${accountLabel(bs.key)} was declined or came back` : "" },
+        leftItem(cost - paid, "Over the whole of every policy it pays for."),
+        nowItem(nowDue),
+      ],
+    });
+  }
+  for (const st of S.values()) {
+    const fees = sumC(st.oneTime, "fee");
+    const totalCost = costOf(st);
+    const last = st.terms[st.terms.length - 1];
     const future = last.dates.map((d, k) => [d, k]).filter(([d]) => d > today);
-
-    const costParts = [`${$(premium)} premium`];
-    if (changesNet > 0) costParts.push(`${$(changesNet)} added in changes`);
-    if (changesNet < 0) costParts.push(`${$(changesNet)} taken off in changes`);
+    const costParts = [`${$(st.premium)} premium`];
+    if (st.changesNet > 0) costParts.push(`${$(st.changesNet)} added in changes`);
+    if (st.changesNet < 0) costParts.push(`${$(st.changesNet)} taken off in changes`);
     if (fees) costParts.push(`${$(fees)} in fees`);
-
     const summary = [
-      { key: "cost", label: terms.length > 1 ? `Cost of these ${terms.length} terms` : "Cost of the policy", value: $(totalCost), note: andList(costParts) },
-      { key: "paid", label: "Paid so far", value: $s(paid),
-        note: reversed ? `${$(paidIn)} in payments, less ${$(reversed)} that was declined or came back.` : "" },
-      left > MATCH_CENTS ? { key: "left", label: "Still to pay", value: $(left), note: "Over the whole policy." }
-        : left < -MATCH_CENTS ? { key: "left", label: "Overpaid", value: $(left), note: "That is a credit to the customer." }
-        : { key: "left", label: "Still to pay", value: $(0), note: "Paid in full." },
-      nowDue > MATCH_CENTS ? { key: "now", tone: "warn", label: "Behind today", value: $(nowDue), note: "Should already be paid, and is not." }
-        : nowDue < -MATCH_CENTS ? { key: "now", tone: "good", label: "Ahead today", value: $(nowDue), note: "Paid more than is due so far." }
-        : { key: "now", tone: "good", label: "Today", value: "On schedule", note: "" },
+      { key: "cost", label: st.terms.length > 1 ? `Cost of these ${st.terms.length} terms` : "Cost of the policy", value: $(totalCost), note: andList(costParts) },
+      { key: "paid", label: "Paid so far", value: $s(st.paid),
+        note: st.reversed ? `${$(st.paidIn)} in payments, less ${$(st.reversed)} that was declined or came back.` : "" },
+      leftItem(totalCost - st.paid, "Over the whole policy."),
+      nowItem(expectedOf(st, today)),
     ];
     if (future.length) {
       const [nextDate, nextK] = future[0];
-      summary.push({ key: "next", label: "Payments left", value: `${future.length} of about ${$(last.amts[future[future.length - 1][1]])}`,
-        note: `Next one around ${when(nextDate, today)}${nextK !== future[future.length - 1][1] && last.amts[nextK] !== last.amts[future[future.length - 1][1]] ? `, for ${$(last.amts[nextK])}` : ""}.` });
+      const lastK = future[future.length - 1][1];
+      summary.push({ key: "next", label: "Payments left", value: `${future.length} of about ${$(last.amts[lastK])}`,
+        note: `Next one around ${when(nextDate, today)}${nextK !== lastK && last.amts[nextK] !== last.amts[lastK] ? `, for ${$(last.amts[nextK])}` : ""}.` });
     } else if (last.end && last.end <= today) {
       summary.push({ key: "next", label: "Term", value: "Over", note: `This term ended ${when(last.end, today)}.` });
     }
-
-    out.push({ account: a, lob: lob.label, plan: nPay === 1 ? "paid in full" : "monthly payments", steps, summary });
+    sections.push({ kind: "account", key: st.key, title: `${accountLabel(st.key)}: ${st.lob.label}, ${planWords(st)}`, steps: st.steps, summary });
   }
 
-  return { ok: true, problems: [], warnings, accounts: out, ledger: L };
+  return { ok: true, problems: [], warnings, sections, ledger: L };
 }

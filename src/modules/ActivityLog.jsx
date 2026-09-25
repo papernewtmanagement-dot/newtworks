@@ -17,6 +17,7 @@ import InfoDot from "../components/InfoDot.jsx";
 import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 import DeweyOwe from "../components/DeweyOwe.jsx";
+import { noPwManager } from "../lib/forms.js";
 
 // ============================================================
 // ActivityLog — the Production module (nav label "Production", route
@@ -126,20 +127,8 @@ const inputBase = {
 };
 // Money reads right-aligned so the digits line up column to column.
 const moneyInput = { ...inputBase, textAlign: "right" };
-// Password managers (LastPass, 1Password, Bitwarden, Dashlane, Proton Pass)
-// read these customer boxes as login or address fields and put their icon in
-// them. Spread this onto every one: the data attributes are each vendor's own
-// opt-out. Two things the attributes alone do not cover, both handled here:
-// LastPass ignores autoComplete "off", so each box gets a nonsense token
-// instead; and when a box has no name or id LastPass falls back to guessing
-// from the nearby label, so each box gets a meaningless name and id. Pass a
-// short opaque key that says nothing about the field.
-// Suppressing one box only moves the offer to the next one, so they all carry it.
-const noPwManager = (key) => ({
-  name: `nw${key}`, id: `nw${key}`, autoComplete: `nw${key}-x`,
-  "data-lpignore": "true", "data-1p-ignore": true, "data-bwignore": true,
-  "data-protonpass-ignore": true, "data-form-type": "other",
-});
+// Password managers put their icon in customer boxes; noPwManager (src/lib/forms.js)
+// is the one opt-out, spread onto every customer box.
 const labelStyle = { fontSize: 12, fontWeight: 600, color: T.slate600, marginBottom: 6, display: "block" };
 const hintStyle = { color: T.slate400, fontWeight: 400 };
 const cardStyle = {
@@ -4685,7 +4674,7 @@ export default function ActivityLog({ userRole, userId }) {
     { id: "hours", label: "Hours" },
     { id: "deposits", label: "Deposits" },
     { id: "development", label: "Development" },
-    { id: "billing", label: "Dewey Owe" },  // the billing explainer (Peter 2026-09-25)
+    { id: "billing", label: "Dewey" },  // the billing explainer; one word (Peter 2026-09-25)
   ];
 
   // One provider for the whole Dashboard. Every customer name on every tab

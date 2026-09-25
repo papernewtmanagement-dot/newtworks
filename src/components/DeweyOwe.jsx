@@ -1,27 +1,36 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { supabase } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport, useElementWidth } from "../lib/hooks.js";
 import { todayISOCentral } from "../lib/weeks.js";
 import { fmtDateShort } from "../lib/utils.js";
+import { noPwManager } from "../lib/forms.js";
 import {
-  DEWEY_TYPES, DEWEY_LOBS, DEWEY_PLANS, deweyType, blankRow, rowCents, tidyAmount,
-  buildLedger, explainBilling, outOfOrderIds, sortRowsByDate,
+  DEWEY_TYPES, DEWEY_LOBS, DEWEY_PLANS, deweyType, blankRow, isBlankRow, rowCents, tidyAmount,
+  buildLedger, explainBilling, outOfOrderIds, sortRowsByDate, isBillingKey, accountLabel, normalizeAccountKey,
 } from "../lib/deweyOwe.js";
 
 // =====================================================================
-// Dewey Owe: the Dashboard's billing explainer (Peter 2026-09-25).
+// Dewey: the Dashboard's billing explainer (Peter 2026-09-25).
 // The team copies every line of the customer's SF Billing & payment
 // history into the table, newest first, then presses Make it Make Sense.
 // All the math lives in src/lib/deweyOwe.js; this file only draws it.
 //
-//  * The page is a scratchpad. Lines stay in this browser until Start over,
-//    so a refresh loses nothing, and no customer detail is ever saved.
-//  * Each type forces its own column, so credit and debit never share a line.
+//  * Worksheets save by customer: first name, last initial and the last 4
+//    of the phone (billing_worksheet_save / _get / _list). Saving happens as
+//    they type once the customer is filled in. The page also keeps the
+//    current worksheet in this browser, so a refresh loses nothing.
+//  * Each type forces its own column: Paid or Owed. Credit and debit never
+//    share a line.
+//  * A new line starts on the date of the line above it, and a due date box
+//    starts on the last due date entered above, so the calendar opens where
+//    the team already is.
+//  * One Paid line that pays for several policies goes on a billing account
+//    (Billing 1 and so on), which pays for the accounts picked for it.
 //  * Locked lines (the Paid behind a Declined, the fee behind a return or
-//    decline) are drawn for the team, never typed, and cannot be changed.
-//  * Linked lines are joined by a drawn line in the left margin, one lane
-//    per link, so two links never share a line (Peter asked for lines over
-//    colour alone).
+//    decline) are drawn for the team and cannot be changed.
+//  * Linked lines are joined by a drawn line in the left margin, one track
+//    per link (Peter asked for lines over colour alone).
 //  * Problems show after the button is pressed, not while typing
 //    (Bargas-Avila et al. 2007), the same way the Log tab does it.
 // =====================================================================
@@ -32,6 +41,7 @@ const LANE_W = 12;
 const INPUT_H = 34;
 const ROW_PAD = 8;
 const COMPACT_BELOW = 900;
+const SAVE_AFTER_MS = 1200;
 const GRID = "minmax(170px, 1.6fr) 138px 104px 104px 138px minmax(120px, 1fr) 28px";
 const LOB_LABEL = Object.fromEntries(DEWEY_LOBS.map(l => [l.key, l.label]));
 
@@ -68,18 +78,32 @@ const chip = (on) => ({
 });
 const TONE_COLOR = { start: T.blue, good: T.green, warn: T.amber, match: T.green, off: T.red, muted: T.slate300 };
 
+// ---------- the worksheet in hand ----------
+const emptyCustomer = () => ({ first: "", initial: "", phone4: "" });
 function freshDraft() {
-  return { rows: [blankRow(1)], accounts: { 1: { lob: "", plan: "monthly" } } };
+  return { rows: [blankRow(1)], accounts: { 1: { lob: "", plan: "monthly" } }, customer: emptyCustomer(), loadedKey: "" };
+}
+function cleanRows(list) {
+  return (Array.isArray(list) ? list : []).filter(r => r && typeof r.id === "string").map(r => ({
+    id: r.id, type: deweyType(r.type) ? r.type : "", processDate: r.processDate || "", amount: r.amount ?? "",
+    dueDate: r.dueDate || "", account: normalizeAccountKey(r.account),
+  }));
+}
+function cleanAccounts(obj) {
+  return obj && typeof obj === "object" && !Array.isArray(obj) ? obj : { 1: { lob: "", plan: "monthly" } };
 }
 function loadDraft() {
   try {
     const d = JSON.parse(window.localStorage.getItem(STORE_KEY) || "null");
-    if (d && Array.isArray(d.rows) && d.accounts && typeof d.accounts === "object") {
-      const rows = d.rows.filter(r => r && typeof r.id === "string").map(r => ({
-        id: r.id, type: r.type || "", processDate: r.processDate || "", amount: r.amount ?? "",
-        dueDate: r.dueDate || "", account: Number(r.account) || 1,
-      }));
-      if (rows.length) return { rows, accounts: d.accounts };
+    if (d && typeof d === "object") {
+      const rows = cleanRows(d.rows);
+      const c = d.customer || {};
+      return {
+        rows: rows.length ? rows : [blankRow(1)],
+        accounts: cleanAccounts(d.accounts),
+        customer: { first: String(c.first || ""), initial: String(c.initial || ""), phone4: String(c.phone4 || "") },
+        loadedKey: typeof d.loadedKey === "string" ? d.loadedKey : "",
+      };
     }
   } catch { /* private mode or a damaged draft: start clean */ }
   return freshDraft();
@@ -87,6 +111,26 @@ function loadDraft() {
 function saveDraft(d) {
   try { window.localStorage.setItem(STORE_KEY, JSON.stringify(d)); } catch { /* private mode */ }
 }
+const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+// First name (any capitals), last initial, phone last 4. Empty until all three are in.
+function keyOf(c) {
+  const first = String(c.first || "").trim();
+  const initial = String(c.initial || "").trim().toUpperCase();
+  const phone = String(c.phone4 || "").trim();
+  return first && /^[A-Z]$/.test(initial) && /^\d{4}$/.test(phone) ? `${first.toLowerCase()}|${initial}|${phone}` : "";
+}
+const customerName = (c) => `${cap(String(c.first || "").trim())} ${String(c.initial || "").trim().toUpperCase()}.`;
+const savedLines = (rows) => rows.filter(r => !isBlankRow(r));
+function errText(e) {
+  return String(e?.message || e || "Something went wrong.").replace(/^.*?ERROR:\s*/, "");
+}
+// Today reads as a time, any other day as a date.
+function savedWhen(d) {
+  return d.toDateString() === new Date().toDateString()
+    ? d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+    : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 // Locked dates read like the date boxes around them.
 function usDate(iso) {
   if (!iso) return "";
@@ -106,7 +150,27 @@ function DeweyStyles() {
         100% { transform: none; }
       }
       .nw-dewey-pop { animation: nwDeweyPop 480ms cubic-bezier(.2,.8,.3,1.2); transform-origin: 50% 90%; }
-      @media (prefers-reduced-motion: reduce) { .nw-dewey-pop { animation: none; } }
+      /* The scratch: the arm swings up from the shoulder, rubs a few times, rests. */
+      @keyframes nwDeweyScratch {
+        0%, 50%, 100% { transform: rotate(0deg); }
+        8%  { transform: rotate(-13deg); }
+        14% { transform: rotate(-5deg); }
+        20% { transform: rotate(-13deg); }
+        26% { transform: rotate(-5deg); }
+        32% { transform: rotate(-13deg); }
+        38% { transform: rotate(-5deg); }
+        44% { transform: rotate(-11deg); }
+      }
+      .nw-dewey-arm { transform-box: view-box; transform-origin: 100px 74px; animation: nwDeweyScratch 2.6s ease-in-out infinite; }
+      @keyframes nwDeweyBob {
+        0%, 100% { transform: translateY(0) rotate(0deg); }
+        50%      { transform: translateY(-5px) rotate(-10deg); }
+      }
+      .nw-dewey-q1 { transform-box: fill-box; transform-origin: center; animation: nwDeweyBob 1.8s ease-in-out infinite; }
+      .nw-dewey-q2 { transform-box: fill-box; transform-origin: center; animation: nwDeweyBob 2.3s ease-in-out -0.9s infinite; }
+      @media (prefers-reduced-motion: reduce) {
+        .nw-dewey-pop, .nw-dewey-arm, .nw-dewey-q1, .nw-dewey-q2 { animation: none; }
+      }
       .nw-dewey input:focus, .nw-dewey select:focus { border-color: ${T.blue} !important; }
       .nw-dewey input:focus-visible, .nw-dewey select:focus-visible, .nw-dewey button:focus-visible {
         outline: none; box-shadow: 0 0 0 3px ${T.blueLt}, 0 0 0 4px ${T.blue};
@@ -115,8 +179,8 @@ function DeweyStyles() {
   );
 }
 
-// Dewey: a receipt scratching his head. Once the lines make sense he
-// stops scratching and smiles.
+// Dewey: a receipt scratching his head, question marks bobbing. Once the
+// lines make sense he stops scratching and smiles.
 function Dewey({ mood, size }) {
   const happy = mood === "happy";
   const ink = T.slate900;
@@ -131,8 +195,8 @@ function Dewey({ mood, size }) {
         </g>
       ) : (
         <g fill={T.amber} fontWeight="800" style={{ fontFamily: "inherit" }}>
-          <text x="102" y="26" fontSize="26" transform="rotate(12 102 26)">?</text>
-          <text x="1" y="40" fontSize="17" transform="rotate(-12 1 40)" opacity="0.85">?</text>
+          <g className="nw-dewey-q1"><text x="102" y="26" fontSize="26" transform="rotate(12 102 26)">?</text></g>
+          <g className="nw-dewey-q2"><text x="1" y="40" fontSize="17" transform="rotate(-12 1 40)" opacity="0.85">?</text></g>
         </g>
       )}
       <path d="M24 12 H96 Q100 12 100 16 V118 L92 126 L84 118 L76 126 L68 118 L60 126 L52 118 L44 126 L36 118 L28 126 L20 118 V16 Q20 12 24 12 Z"
@@ -161,8 +225,10 @@ function Dewey({ mood, size }) {
         <g>
           <circle cx="46" cy="57" r="4.5" fill={ink} />
           <circle cx="74" cy="56" r="4.5" fill={ink} />
-          <path d="M100 74 Q116 66 111 47" stroke={T.slate700} strokeWidth="3" fill="none" strokeLinecap="round" />
-          <circle cx="111" cy="44" r="4.5" fill={T.white} stroke={T.slate700} strokeWidth="2.5" />
+          <g className="nw-dewey-arm">
+            <path d="M100 74 Q116 66 111 47" stroke={T.slate700} strokeWidth="3" fill="none" strokeLinecap="round" />
+            <circle cx="111" cy="44" r="4.5" fill={T.white} stroke={T.slate700} strokeWidth="2.5" />
+          </g>
         </g>
       )}
       <path d="M34 92 H86 M34 100 H72 M34 108 H80" stroke={T.slate300} strokeWidth="3" strokeLinecap="round" />
@@ -222,16 +288,19 @@ function Gutter({ i, ledger, width, dotY }) {
 }
 
 function Row({
-  r, i, ledger, accounts, accountIds, compact, gutterW, dotY, tint, greyed,
-  onRow, onRemove, onLob, onPlan, onNewAccount, typeRef, isLast, onEnter,
+  r, i, ledger, accounts, policyIds, billingIds, compact, gutterW, dotY, tint, greyed,
+  onRow, onRemove, onLob, onPlan, onNewAccount, onNewBilling, typeRef, isLast, onEnter,
 }) {
   const t = deweyType(r.type);
   const locked = !!r.auto;
-  const meta = accounts[r.account] || {};
+  const billing = isBillingKey(r.account);
+  const meta = billing ? {} : (accounts[r.account] || {});
   const lob = LOB_LABEL[meta.lob] || "";
   const start = t?.role === "start";
+  const billingOk = !t || (t.role !== "start" && t.role !== "change");
   const shown = t && (locked || t.fixed) ? (rowCents(r) / 100).toFixed(2) : "";
   const dueLabel = t && (t.role === "bill" || t.role === "notice") ? "Due date" : "Effective date";
+  const colLabel = (col) => (col === "paid" ? "Paid" : "Owed");
 
   const cell = (label, content, extra) => (
     <div style={{ minWidth: 0, ...extra }}>
@@ -256,7 +325,7 @@ function Row({
         </select>
         {compact && <button type="button" onClick={() => onRemove(r.id)} style={xBtn} aria-label="Remove line" title="Remove line">×</button>}
       </div>
-      {start && !greyed && (
+      {start && !greyed && !billing && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6, alignItems: "center" }}>
           {DEWEY_LOBS.map(l => (
             <button key={l.key} type="button" aria-pressed={meta.lob === l.key} onClick={() => onLob(r.account, l.key)}
@@ -281,7 +350,7 @@ function Row({
     if (!t || t.col !== col) return <div style={{ height: INPUT_H }} />;
     if (locked || t.fixed) return <div style={{ ...lockedCell, justifyContent: "flex-end" }}>{shown}</div>;
     return (
-      <input type="text" inputMode="decimal" value={r.amount} aria-label={col === "credit" ? "Credit" : "Debit"}
+      <input type="text" inputMode="decimal" value={r.amount} aria-label={colLabel(col)}
         placeholder={t.sign === -1 ? "-0.00" : "0.00"}
         onChange={e => onRow(r.id, { amount: e.target.value })}
         onBlur={() => onRow(r.id, { amount: tidyAmount(r) })} style={moneyBox} />
@@ -293,14 +362,21 @@ function Row({
     : <input type="date" value={r.dueDate} aria-label={dueLabel}
         onChange={e => onRow(r.id, { dueDate: e.target.value })} style={box} />;
 
+  const pick = (v) => {
+    if (v === "new") onNewAccount(r.id);
+    else if (v === "newb") onNewBilling(r.id);
+    else onRow(r.id, { account: normalizeAccountKey(v) });
+  };
   const acctCell = locked ? (
-    <div style={lockedCell}>Account {r.account}{lob ? <Tag>{lob}</Tag> : null}</div>
+    <div style={lockedCell}>{accountLabel(r.account)}{lob ? <Tag>{lob}</Tag> : null}</div>
   ) : (
     <div style={{ display: "flex", gap: 6, alignItems: "center", height: INPUT_H }}>
       <select value={String(r.account)} aria-label="Account" style={{ ...box, flex: "1 1 auto", minWidth: 0 }}
-        onChange={e => (e.target.value === "new" ? onNewAccount(r.id) : onRow(r.id, { account: Number(e.target.value) }))}>
-        {accountIds.map(a => <option key={a} value={String(a)}>Account {a}</option>)}
+        onChange={e => pick(e.target.value)}>
+        {policyIds.map(a => <option key={a} value={String(a)}>{accountLabel(a)}</option>)}
+        {(billingOk || billing) && billingIds.map(b => <option key={b} value={b}>{accountLabel(b)}</option>)}
         <option value="new">+ New account</option>
+        {billingOk && <option value="newb">+ New billing account</option>}
       </select>
       {lob && !start ? <Tag>{lob}</Tag> : null}
     </div>
@@ -327,7 +403,7 @@ function Row({
           <>
             {cell("Type", typeCell, { gridColumn: "1 / -1" })}
             {cell("Process date", dateCell)}
-            {t ? cell(t.col === "credit" ? "Credit" : "Debit", amountCell(t.col)) : null}
+            {t ? cell(colLabel(t.col), amountCell(t.col)) : null}
             {t && t.due !== "none" ? cell(dueLabel, dueCell) : null}
             {cell("Account", acctCell)}
           </>
@@ -335,8 +411,8 @@ function Row({
           <>
             {typeCell}
             {dateCell}
-            {amountCell("credit")}
-            {amountCell("debit")}
+            {amountCell("paid")}
+            {amountCell("owed")}
             {dueCell}
             {acctCell}
             {locked ? <div /> : <button type="button" onClick={() => onRemove(r.id)} style={xBtn} aria-label="Remove line" title="Remove line">×</button>}
@@ -357,34 +433,34 @@ function StepSub({ step, line, last }) {
   return <div style={{ fontSize: 13, color: T.slate600, lineHeight: 1.45 }}>{line}</div>;
 }
 
-function AccountExplained({ a, many, onJump }) {
+function SectionExplained({ s, many, onJump }) {
   return (
     <div style={{ display: "grid", gap: 12 }}>
-      {many && <div style={{ fontSize: 14, fontWeight: 800, color: T.slate900 }}>Account {a.account}: {a.lob}, {a.plan}</div>}
+      {many && <div style={{ fontSize: 14, fontWeight: 800, color: T.slate900 }}>{s.title}</div>}
       <div style={{ background: T.slate50, borderRadius: 10, padding: "12px 14px", display: "grid", gap: 6 }}>
-        {a.summary.map(s => (
-          <div key={s.key} style={{ fontSize: 14, color: T.slate600, lineHeight: 1.5 }}>
-            {s.label}: <strong style={{ color: s.tone === "warn" ? T.red : T.slate900 }}>{s.value}</strong>.
-            {s.note ? <span> {withPeriod(s.note)}</span> : null}
+        {s.summary.map(x => (
+          <div key={x.key} style={{ fontSize: 14, color: T.slate600, lineHeight: 1.5 }}>
+            {x.label}: <strong style={{ color: x.tone === "warn" ? T.red : T.slate900 }}>{x.value}</strong>.
+            {x.note ? <span> {withPeriod(x.note)}</span> : null}
           </div>
         ))}
       </div>
-      <div style={{ fontSize: 13, fontWeight: 700, color: T.slate600 }}>How it got here</div>
+      {s.steps.length > 0 && <div style={{ fontSize: 13, fontWeight: 700, color: T.slate600 }}>How it got here</div>}
       <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 10 }}>
-        {a.steps.map((s, k) => (
-          <li key={`${s.rowId}-${k}`} style={{ display: "grid", gridTemplateColumns: "54px 1fr", gap: 10, opacity: s.tone === "muted" ? 0.65 : 1 }}>
-            <button type="button" onClick={() => onJump(s.rowId)} title="Show this line in the table" style={{
+        {s.steps.map((st, k) => (
+          <li key={`${st.rowId}-${k}`} style={{ display: "grid", gridTemplateColumns: "54px 1fr", gap: 10, opacity: st.tone === "muted" ? 0.65 : 1 }}>
+            <button type="button" onClick={() => onJump(st.rowId)} title="Show this line in the table" style={{
               background: "none", border: "none", padding: "2px 0 0", textAlign: "left", fontSize: 12, fontWeight: 700,
               color: T.slate500, cursor: "pointer", fontFamily: "inherit", alignSelf: "start",
-            }}>{fmtDateShort(s.date)}</button>
+            }}>{fmtDateShort(st.date)}</button>
             <div style={{ display: "grid", gap: 2 }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: 14, color: T.slate900, fontWeight: s.tone === "start" ? 700 : 500 }}>
-                <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: TONE_COLOR[s.tone] || T.slate400 }} />
-                <span>{s.text}</span>
+              <div style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: 14, color: T.slate900, fontWeight: st.tone === "start" ? 700 : 500 }}>
+                <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: TONE_COLOR[st.tone] || T.slate400 }} />
+                <span>{st.text}</span>
               </div>
-              {(s.sub || []).filter(Boolean).length > 0 && (
+              {(st.sub || []).filter(Boolean).length > 0 && (
                 <div style={{ marginLeft: 16, display: "grid", gap: 2 }}>
-                  {s.sub.filter(Boolean).map((line, j, arr) => <StepSub key={j} step={s} line={line} last={j === arr.length - 1} />)}
+                  {st.sub.filter(Boolean).map((line, j, arr) => <StepSub key={j} step={st} line={line} last={j === arr.length - 1} />)}
                 </div>
               )}
             </div>
@@ -395,12 +471,12 @@ function AccountExplained({ a, many, onJump }) {
   );
 }
 
-function Explanation({ expl, onClose, onJump }) {
+function Explanation({ expl, who, onClose, onJump }) {
   return (
     <section style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 18, display: "grid", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
         <div style={{ fontSize: 16, fontWeight: 800, color: T.slate900 }}>
-          {expl.ok ? "Here's what happened" : "A few lines need fixing first"}
+          {expl.ok ? `Here's what happened${who ? ` for ${who}` : ""}` : "A few lines need fixing first"}
         </div>
         <button type="button" onClick={onClose} style={xBtn} aria-label="Close" title="Close">×</button>
       </div>
@@ -414,8 +490,8 @@ function Explanation({ expl, onClose, onJump }) {
           ))}
         </div>
       )}
-      {expl.ok && expl.accounts.map(a => (
-        <AccountExplained key={a.account} a={a} many={expl.accounts.length > 1} onJump={onJump} />
+      {expl.ok && expl.sections.map(s => (
+        <SectionExplained key={String(s.key)} s={s} many={expl.sections.length > 1} onJump={onJump} />
       ))}
       {expl.warnings.length > 0 && (
         <div style={{ display: "grid", gap: 6 }}>
@@ -428,6 +504,72 @@ function Explanation({ expl, onClose, onJump }) {
   );
 }
 
+// ---------- the customer the worksheet belongs to ----------
+function CustomerBar({ customer, onCustomer, status, onToggleList, listOpen }) {
+  const statusColor = status.kind === "error" ? T.red : T.slate500;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "10px 12px", borderBottom: `1px solid ${T.slate200}` }}>
+      <span style={{ fontSize: 13, fontWeight: 700, color: T.slate700 }}>Customer</span>
+      <input {...noPwManager("dw1")} value={customer.first} placeholder="First name" aria-label="Customer first name"
+        onChange={e => onCustomer({ first: e.target.value })} style={{ ...box, width: 150 }} />
+      <input {...noPwManager("dw2")} value={customer.initial} placeholder="Last initial" aria-label="Customer last initial"
+        maxLength={1} onChange={e => onCustomer({ initial: e.target.value.replace(/[^A-Za-z]/g, "").slice(0, 1).toUpperCase() })}
+        style={{ ...box, width: 96 }} />
+      <input {...noPwManager("dw3")} value={customer.phone4} placeholder="Phone last 4" aria-label="Customer phone last 4"
+        inputMode="numeric" maxLength={4} onChange={e => onCustomer({ phone4: e.target.value.replace(/\D/g, "").slice(0, 4) })}
+        style={{ ...box, width: 112 }} />
+      {status.text ? <span style={{ fontSize: 12, color: statusColor }}>{status.text}</span> : null}
+      <button type="button" onClick={onToggleList} aria-expanded={listOpen} style={{ ...btnGhost, marginLeft: "auto" }}>
+        Saved worksheets
+      </button>
+    </div>
+  );
+}
+
+function SavedList({ onOpen }) {
+  const [q, setQ] = useState("");
+  const [list, setList] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let alive = true;
+    const t = setTimeout(async () => {
+      if (!supabase) { setErr("Saved worksheets need the live site."); setList([]); return; }
+      const r = await supabase.rpc("billing_worksheet_list", { p_search: q.trim() || null, p_limit: 25 });
+      if (!alive) return;
+      if (r.error) { setErr(errText(r.error)); setList([]); return; }
+      setErr("");
+      setList(Array.isArray(r.data) ? r.data : []);
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [q]);
+  return (
+    <div style={{ padding: 12, background: T.slate50, borderBottom: `1px solid ${T.slate200}`, display: "grid", gap: 8 }}>
+      <input {...noPwManager("dw4")} value={q} onChange={e => setQ(e.target.value)} placeholder="Search by first name"
+        aria-label="Search saved worksheets" style={{ ...box, maxWidth: 260 }} />
+      {err ? <div style={{ fontSize: 13, color: T.red }}>{err}</div> : null}
+      {list === null ? <div style={{ fontSize: 13, color: T.slate500 }}>Loading…</div>
+        : list.length === 0 ? (!err && <div style={{ fontSize: 13, color: T.slate500 }}>No saved worksheets{q.trim() ? " by that name" : " yet"}.</div>)
+        : (
+          <div style={{ display: "grid", gap: 4 }}>
+            {list.map(w => (
+              <button key={w.id} type="button" onClick={() => onOpen(w)} style={{
+                display: "flex", flexWrap: "wrap", gap: "2px 12px", alignItems: "baseline", textAlign: "left", width: "100%",
+                background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "8px 12px", cursor: "pointer",
+                fontFamily: "inherit", fontSize: 13, color: T.slate800, boxSizing: "border-box",
+              }}>
+                <strong>{customerName(w)}</strong>
+                <span style={{ color: T.slate600 }}>Phone ends {w.phone4}</span>
+                <span style={{ marginLeft: "auto", color: T.slate500 }}>
+                  {w.line_count} {w.line_count === 1 ? "line" : "lines"}, saved {fmtDateShort(String(w.updated_at).slice(0, 10))}{w.updated_by ? ` by ${w.updated_by}` : ""}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+    </div>
+  );
+}
+
 export default function DeweyOwe() {
   const _vp = useViewport();
   const phone = _vp.isPhone;
@@ -437,12 +579,18 @@ export default function DeweyOwe() {
   const [scrollTick, setScrollTick] = useState(0);
   const [focusId, setFocusId] = useState(null);
   const [flashId, setFlashId] = useState(null);
+  const [found, setFound] = useState(null);           // a saved worksheet for the customer typed, not opened yet
+  const [save, setSave] = useState({ kind: "", at: null, msg: "" });
+  const [listOpen, setListOpen] = useState(false);
   const tableRef = useRef(null);
   const boxRef = useRef(null);
   const typeRefs = useRef(new Map());
+  const lastSaved = useRef("");
   const width = useElementWidth(tableRef);
   const compact = width > 0 && width < COMPACT_BELOW;
-  const { rows, accounts } = draft;
+  const { rows, accounts, customer, loadedKey } = draft;
+  const key = keyOf(customer);
+  const hasLines = rows.some(r => !isBlankRow(r));
 
   useEffect(() => { saveDraft(draft); }, [draft]);
   useEffect(() => {
@@ -462,25 +610,77 @@ export default function DeweyOwe() {
     return () => clearTimeout(t);
   }, [flashId]);
 
+  // Once the customer is filled in, look for their saved worksheet. An empty
+  // page opens it; a page with lines on it asks first.
+  useEffect(() => {
+    setFound(null);
+    if (!key || key === loadedKey || !supabase) return undefined;
+    let alive = true;
+    const t = setTimeout(async () => {
+      const r = await supabase.rpc("billing_worksheet_get", { p_first: customer.first, p_initial: customer.initial, p_phone4: customer.phone4 });
+      if (!alive) return;
+      if (r.error) { setSave({ kind: "error", at: null, msg: errText(r.error) }); return; }
+      const w = r.data && typeof r.data === "object" ? r.data : null;
+      if (!w) { setDraft(d => ({ ...d, loadedKey: key })); return; }
+      if (!hasLines) openWorksheet(w);
+      else setFound(w);
+    }, 400);
+    return () => { alive = false; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, loadedKey]);
+
+  // Saves as they go, once the worksheet belongs to a customer.
+  useEffect(() => {
+    if (!key || key !== loadedKey || !hasLines || !supabase) return undefined;
+    const body = JSON.stringify({ lines: savedLines(rows), accounts });
+    if (body === lastSaved.current) return undefined;
+    const t = setTimeout(async () => {
+      setSave({ kind: "saving", at: null, msg: "" });
+      const r = await supabase.rpc("billing_worksheet_save", {
+        p_first: cap(customer.first.trim()), p_initial: customer.initial, p_phone4: customer.phone4,
+        p_lines: savedLines(rows), p_accounts: accounts,
+      });
+      if (r.error || !r.data?.ok) { setSave({ kind: "error", at: null, msg: errText(r.error || "Not saved.") }); return; }
+      lastSaved.current = body;
+      setSave({ kind: "saved", at: new Date(), msg: "" });
+    }, SAVE_AFTER_MS);
+    return () => clearTimeout(t);
+  }, [rows, accounts, customer, key, loadedKey, hasLines]);
+
   const ledger = useMemo(() => buildLedger(rows), [rows]);
   const expl = useMemo(() => (open ? explainBilling({ rows, accounts, today }) : null), [open, rows, accounts, today]);
   const ooo = useMemo(() => new Set(outOfOrderIds(rows)), [rows]);
-  const accountIds = useMemo(
-    () => Object.keys(accounts || {}).map(Number).filter(Number.isFinite).sort((a, b) => a - b),
-    [accounts],
-  );
+  // Every account the page knows of, whether set up or only named on a line.
+  const policyIds = useMemo(() => {
+    const s = new Set(Object.keys(accounts || {}).filter(k => /^\d+$/.test(k)).map(Number));
+    for (const r of rows) if (!isBillingKey(r.account)) s.add(r.account);
+    return [...s].sort((a, b) => a - b);
+  }, [accounts, rows]);
+  const billingIds = useMemo(() => {
+    const s = new Set(Object.keys(accounts || {}).filter(isBillingKey));
+    for (const r of rows) if (isBillingKey(r.account)) s.add(r.account);
+    return [...s].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+  }, [accounts, rows]);
   const problemIds = useMemo(() => new Set((expl?.problems || []).map(p => p.rowId).filter(Boolean)), [expl]);
   const warnIds = useMemo(() => new Set((expl?.warnings || []).map(w => w.rowId).filter(Boolean)), [expl]);
 
   const setRows = (fn) => setDraft(d => ({ ...d, rows: fn(d.rows) }));
-  const onRow = (id, patch) => setRows(rs => rs.map(r => {
+  const onRow = (id, patch) => setRows(rs => rs.map((r, idx) => {
     if (r.id !== id) return r;
     const next = { ...r, ...patch };
     if ("type" in patch) {
       const t = deweyType(next.type);
       if (!t || t.due === "none") next.dueDate = "";
+      else if (!next.dueDate) {
+        // Start the due date box where the team already is: the last due date entered above.
+        for (let k = idx - 1; k >= 0; k--) { if (rs[k].dueDate) { next.dueDate = rs[k].dueDate; break; } }
+      }
       if (t && t.fixed) next.amount = "";
       else if (t && String(next.amount).trim() !== "") next.amount = tidyAmount(next);
+      if (t && (t.role === "start" || t.role === "change") && isBillingKey(next.account)) {
+        const covers = (draft.accounts[next.account]?.covers || []).map(Number);
+        next.account = covers[0] || policyIds[0] || 1;
+      }
     }
     return next;
   }));
@@ -490,24 +690,66 @@ export default function DeweyOwe() {
   });
   const addRow = () => {
     const last = rows[rows.length - 1];
-    const nr = blankRow(last ? last.account : 1);
+    const lastDate = [...rows].reverse().find(r => r.processDate)?.processDate || "";
+    const nr = { ...blankRow(last ? last.account : 1), processDate: lastDate };
     setRows(rs => [...rs, nr]);
     setFocusId(nr.id);
   };
   const onLob = (a, lob) => setDraft(d => ({ ...d, accounts: { ...d.accounts, [a]: { plan: "monthly", ...(d.accounts[a] || {}), lob } } }));
   const onPlan = (a, plan) => setDraft(d => ({ ...d, accounts: { ...d.accounts, [a]: { lob: "", ...(d.accounts[a] || {}), plan } } }));
   const onNewAccount = (rowId) => {
-    const n = (accountIds.length ? Math.max(...accountIds) : 0) + 1;
+    const n = (policyIds.length ? Math.max(...policyIds) : 0) + 1;
     setDraft(d => ({
+      ...d,
       rows: d.rows.map(r => (r.id === rowId ? { ...r, account: n } : r)),
       accounts: { ...d.accounts, [n]: { lob: "", plan: "monthly" } },
     }));
   };
+  // A new billing account starts out paying for every account on the page.
+  const onNewBilling = (rowId) => {
+    const m = (billingIds.length ? Math.max(...billingIds.map(b => Number(b.slice(1)))) : 0) + 1;
+    const b = `B${m}`;
+    setDraft(d => ({
+      ...d,
+      rows: d.rows.map(r => (r.id === rowId ? { ...r, account: b } : r)),
+      accounts: { ...d.accounts, [b]: { covers: [...policyIds] } },
+    }));
+  };
+  const onCover = (b, a) => setDraft(d => {
+    const cur = (d.accounts[b]?.covers || []).map(Number);
+    const covers = cur.includes(a) ? cur.filter(x => x !== a) : [...cur, a].sort((x, y) => x - y);
+    return { ...d, accounts: { ...d.accounts, [b]: { ...(d.accounts[b] || {}), covers } } };
+  });
+  const onCustomer = (patch) => {
+    setSave({ kind: "", at: null, msg: "" });
+    setDraft(d => ({ ...d, customer: { ...d.customer, ...patch } }));
+  };
+  function openWorksheet(w) {
+    const lines = cleanRows(w.lines);
+    const acc = cleanAccounts(w.accounts);
+    const cust = { first: cap(String(w.first || "")), initial: String(w.initial || ""), phone4: String(w.phone4 || "") };
+    lastSaved.current = JSON.stringify({ lines, accounts: acc });
+    setDraft({ rows: lines.length ? lines : [blankRow(1)], accounts: acc, customer: cust, loadedKey: keyOf(cust) });
+    setFound(null);
+    setOpen(false);
+    setSave({ kind: "saved", at: w.updated_at ? new Date(w.updated_at) : null, msg: "" });
+  }
+  const openFromList = async (w) => {
+    if (!supabase) return;
+    if (hasLines && (!key || key !== loadedKey) && !window.confirm("Replace the lines on this page with the saved worksheet?")) return;
+    const r = await supabase.rpc("billing_worksheet_get", { p_first: w.first, p_initial: w.initial, p_phone4: w.phone4 });
+    if (r.error || !r.data) { setSave({ kind: "error", at: null, msg: errText(r.error || "That worksheet is gone.") }); return; }
+    openWorksheet(r.data);
+    setListOpen(false);
+  };
   const makeSense = () => { setOpen(true); setScrollTick(t => t + 1); };
   const startOver = () => {
-    if (!window.confirm("Clear every line and start over?")) return;
+    if (!window.confirm("Clear the page and start a new worksheet? Saved worksheets stay saved.")) return;
+    lastSaved.current = "";
     setDraft(freshDraft());
     setOpen(false);
+    setFound(null);
+    setSave({ kind: "", at: null, msg: "" });
   };
   const jumpTo = (rowId) => {
     const el = document.getElementById(`dewey-row-${rowId}`);
@@ -515,6 +757,11 @@ export default function DeweyOwe() {
     setFlashId(rowId);
   };
 
+  const status = save.kind === "saving" ? { text: "Saving…" }
+    : save.kind === "saved" ? { text: save.at ? `Saved ${savedWhen(save.at)}` : "Saved" }
+    : save.kind === "error" ? { kind: "error", text: save.msg }
+    : hasLines && !key ? { text: "Fill in the customer to save." }
+    : { text: "" };
   const gutterW = ledger.laneCount ? 12 + ledger.laneCount * LANE_W : 10;
   const dotY = ROW_PAD + (compact ? 16 : 0) + INPUT_H / 2;
   const lastUserId = rows.length ? rows[rows.length - 1].id : null;
@@ -529,7 +776,7 @@ export default function DeweyOwe() {
       </div>
 
       <div ref={boxRef} style={{ scrollMarginTop: 16 }}>
-        {expl ? <Explanation expl={expl} onClose={() => setOpen(false)} onJump={jumpTo} /> : null}
+        {expl ? <Explanation expl={expl} who={key ? customerName(customer) : ""} onClose={() => setOpen(false)} onJump={jumpTo} /> : null}
       </div>
 
       {ooo.size > 0 && (
@@ -543,11 +790,46 @@ export default function DeweyOwe() {
       )}
 
       <div ref={tableRef} style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, overflow: "hidden" }}>
+        <CustomerBar customer={customer} onCustomer={onCustomer} status={status}
+          listOpen={listOpen} onToggleList={() => setListOpen(o => !o)} />
+        {found && (
+          <div style={{
+            display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", padding: "10px 12px",
+            background: T.blueLt, borderBottom: `1px solid ${T.slate200}`, fontSize: 13, color: T.slate800,
+          }}>
+            <span>
+              {customerName(found)} already has a saved worksheet
+              {found.updated_at ? `, last saved ${fmtDateShort(String(found.updated_at).slice(0, 10))}` : ""}
+              {found.updated_by ? ` by ${found.updated_by}` : ""}.
+            </span>
+            <button type="button" onClick={() => openWorksheet(found)} style={btnGhost}>Open it</button>
+            <button type="button" onClick={() => { setFound(null); setDraft(d => ({ ...d, loadedKey: key })); }} style={linkBtn}>
+              Replace it with this page
+            </button>
+          </div>
+        )}
+        {listOpen && <SavedList onOpen={openFromList} />}
+        {billingIds.map(b => {
+          const covers = (accounts[b]?.covers || []).map(Number);
+          return (
+            <div key={b} style={{
+              display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", padding: "8px 12px",
+              borderBottom: `1px solid ${T.slate100}`, fontSize: 13, color: T.slate700,
+            }}>
+              <span style={{ fontWeight: 700 }}>{accountLabel(b)} pays for</span>
+              {policyIds.map(a => (
+                <button key={a} type="button" aria-pressed={covers.includes(a)} onClick={() => onCover(b, a)} style={chip(covers.includes(a))}>
+                  {accountLabel(a)}
+                </button>
+              ))}
+            </div>
+          );
+        })}
         {!compact && (
           <div style={{ display: "flex", background: T.slate50, borderBottom: `1px solid ${T.slate200}` }}>
             <div style={{ width: gutterW, flexShrink: 0 }} />
             <div style={{ flex: 1, minWidth: 0, display: "grid", gap: 8, gridTemplateColumns: GRID, padding: "8px 10px 8px 0" }}>
-              {["Type", "Process date", "Credit", "Debit", "Effective / due date", "Account", ""].map((h, k) => (
+              {["Type", "Process date", "Paid", "Owed", "Effective / due date", "Account", ""].map((h, k) => (
                 <div key={k} style={{ fontSize: 12, fontWeight: 700, color: T.slate600, textAlign: k === 2 || k === 3 ? "right" : "left", paddingRight: k === 2 || k === 3 ? 8 : 0 }}>{h}</div>
               ))}
             </div>
@@ -559,9 +841,9 @@ export default function DeweyOwe() {
             : problemIds.has(r.id) ? "problem"
             : (warnIds.has(r.id) || ooo.has(r.id)) ? "warn" : "";
           return (
-            <Row key={r.id} r={r} i={i} ledger={ledger} accounts={accounts} accountIds={accountIds} compact={compact}
-              gutterW={gutterW} dotY={dotY} tint={tint} greyed={greyed}
-              onRow={onRow} onRemove={onRemove} onLob={onLob} onPlan={onPlan} onNewAccount={onNewAccount}
+            <Row key={r.id} r={r} i={i} ledger={ledger} accounts={accounts} policyIds={policyIds} billingIds={billingIds}
+              compact={compact} gutterW={gutterW} dotY={dotY} tint={tint} greyed={greyed}
+              onRow={onRow} onRemove={onRemove} onLob={onLob} onPlan={onPlan} onNewAccount={onNewAccount} onNewBilling={onNewBilling}
               typeRef={(el) => { if (el) typeRefs.current.set(r.id, el); else typeRefs.current.delete(r.id); }}
               isLast={r.id === lastUserId} onEnter={addRow} />
           );
