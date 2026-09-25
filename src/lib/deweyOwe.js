@@ -39,8 +39,18 @@ import { fmtDate, fmtDateShort } from "./utils.js";
 //    full. Payment one is due the day the term starts. The rest fall on the
 //    day of the month SF's first bill in the term is due, or the start day
 //    when there is no bill yet.
-//  * The payments left for a positive change are those due on or after the
-//    change's effective date.
+//  * Peter 2026-09-25 (Kevin J 6573): a change goes on the payments still open
+//    from the day it PROCESSED, even when it is dated back, because nothing can
+//    be collected for it before then. Open means due after that day and not on
+//    a bill SF had already sent, unless SF sent a revised amount for it after.
+//    Policy changes spread that way whether they add or take off. A billing
+//    change that takes money off is still credited at once. SF re-spreads the
+//    way it bills: the open payments' total split evenly, spare cents last.
+//  * SF's revised amount for a payment is taken as that payment's amount; the
+//    difference moves to the payments after it, so the total holds. SF's bill
+//    lines are read as being for the first payment due on or after the day SF
+//    sent them, since SF shows a revised amount with its own date.
+//  * A payment pays any unpaid fee first, then the policy (SF's order).
 //  * If the team typed SF's own Return Payment Fee line, it is linked to the
 //    return or decline instead of adding a second fee.
 //  * Each line carries only the dates the math uses (Peter 2026-09-25, "do
@@ -54,9 +64,9 @@ import { fmtDate, fmtDateShort } from "./utils.js";
 //    fee below it on the same account (Peter 2026-09-25, "1A").
 //  * Order is the table's order, newest at the top, the way SF lists the lines.
 //    Dates drive the math, not the order, since some lines have no process date.
-//  * A billing account payment pays the oldest amount due first, across all the
-//    accounts it pays for. That is the usual way a payment is applied to open
-//    balances. A payment it undoes comes back off the same accounts it went to.
+//  * A billing account payment pays fees first, then the oldest amount due,
+//    across all the accounts it pays for. A payment it undoes comes back off
+//    the same accounts it went to.
 //  * Bills, cancel notices and fees can sit on a billing account too. A bill
 //    there is checked against every account it pays for, added together.
 //  * A line with no type and no amount is an empty line, even with dates in it,
@@ -185,13 +195,17 @@ function andList(words) {
   return `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
 }
 // n shares adding back to the total exactly; the first carries the odd cents.
-function split(total, n) {
+// Split cents into n payments. The leftover cents go on the first payment for a
+// new term (SF's first payment carries them), or on the last when SF re-spreads
+// what is left after a change (Kevin J: 500.79 over 4 billed 125.19 first).
+function split(total, n, leftoverLast = false) {
   if (n <= 0) return [];
   const sign = total < 0 ? -1 : 1;
   const abs = Math.abs(total);
   const base = Math.floor(abs / n);
   const rem = abs - base * n;
-  return Array.from({ length: n }, (_, k) => sign * (base + (k === 0 ? rem : 0)));
+  const at = leftoverLast ? n - 1 : 0;
+  return Array.from({ length: n }, (_, k) => sign * (base + (k === at ? rem : 0)));
 }
 // Earliest first: the table read from the bottom up, the way SF lists the lines.
 function chronoSort(list) {
@@ -445,7 +459,8 @@ export function explainBilling({ rows, accounts, today }) {
   // ---------- the schedule for every account ----------
   // A policy's payment day comes from the first bill due after its term starts:
   // its own bills, or bills on a billing account that pays for it.
-  const billsFor = (a) => L.chrono.filter(r => (r.type === "bill" || r.type === "autopay_revised_due") && r.dueDate
+  // Every SF bill line that speaks for an account: its own, or its billing account's.
+  const sfLinesFor = (a) => L.chrono.filter(r => (r.type === "bill" || r.type === "autopay_revised_due")
     && (r.account === a || (isBillingKey(r.account) && coversOf(r.account).includes(a))));
   const S = new Map();
   for (const a of policyKeys) {
@@ -453,7 +468,7 @@ export function explainBilling({ rows, accounts, today }) {
     const plan = DEWEY_PLANS.find(p => p.key === meta[a].plan) || DEWEY_PLANS[0];
     const nPay = payCount(plan.key, lob.months);
     const gap = lob.months / nPay;
-    const bills = billsFor(a);
+    const bills = sfLinesFor(a).filter(r => r.type === "bill" && r.dueDate);
     const terms = L.info.get(a).terms.map(tm => {
       const start = tm.start.dueDate || tm.start.processDate;
       const P = rowCents(tm.start);
@@ -465,6 +480,7 @@ export function explainBilling({ rows, accounts, today }) {
     S.set(a, {
       key: a, lob, plan, nPay, gap, terms, termByStart: new Map(terms.map(t => [t.start.id, t])), hasNB: L.info.get(a).hasNB,
       cur: null, premium: 0, changesNet: 0, credits: 0, paid: 0, paidIn: 0, reversed: 0, oneTime: [], steps: [], ev: [],
+      feesOwed: 0, payFee: new Map(),
     });
   }
   const Bs = new Map();
@@ -476,33 +492,36 @@ export function explainBilling({ rows, accounts, today }) {
   const dueBy = (st, cutoff) => st.terms.reduce((s, t) => s + t.dates.reduce((x, d, k) => x + (d <= cutoff ? t.amts[k] : 0), 0), 0);
   // What the account should have paid by the cutoff, less what it has.
   const expectedOf = (st, cutoff) => dueBy(st, cutoff) + sumC(st.oneTime) + st.credits - st.paid;
-  // The amounts still unpaid, oldest first, once `applied` has paid the oldest ones.
-  // A minus item (a waiver with no fee to take back) pays down the oldest ones too.
+  // The amounts still unpaid once `applied` has paid them in SF's order: fees
+  // first, then the oldest amount due. A minus item (a waiver with no fee to
+  // take back) pays them down too.
+  const byDate = (x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0);
+  const feesFirst = (x, y) => (!!x.fee === !!y.fee ? byDate(x, y) : x.fee ? -1 : 1);
   const unpaidOf = (items, applied) => {
-    const sorted = items.filter(it => it.cents > 0).sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0));
+    const sorted = items.filter(it => it.cents > 0).sort(feesFirst);
     let left = Math.max(0, applied - items.reduce((s, it) => s + (it.cents < 0 ? it.cents : 0), 0));
     const out = [];
     for (const it of sorted) {
       const use = Math.min(left, it.cents);
       left -= use;
-      if (it.cents - use > 0) out.push({ date: it.date, cents: it.cents - use });
+      if (it.cents - use > 0) out.push({ date: it.date, cents: it.cents - use, fee: !!it.fee });
     }
     return out;
   };
   const itemsOf = (st) => [
     ...st.terms.flatMap(t => t.dates.map((d, k) => ({ date: d, cents: t.amts[k] }))),
-    ...st.oneTime.map(o => ({ date: o.date, cents: o.cents })),
+    ...st.oneTime.map(o => ({ date: o.date, cents: o.cents, fee: o.kind === "fee" })),
   ];
-  // A billing payment pays the oldest amount due first, across its accounts.
-  // Paying more than everything left sits with the first account as a credit.
+  // A billing payment pays fees first, then the oldest amount due, across its
+  // accounts. Paying more than everything left sits with the first account.
   const allocate = (bs, cents) => {
     const pool = [];
-    unpaidOf(bs.fees, bs.paidB).forEach(it => pool.push({ ...it, key: "fees", ord: 0 }));
+    unpaidOf(bs.fees.map(f => ({ ...f, fee: true })), bs.paidB).forEach(it => pool.push({ ...it, key: "fees", ord: 0 }));
     bs.covers.forEach((a, i) => {
       const st = S.get(a);
       unpaidOf(itemsOf(st), st.paid - st.credits).forEach(it => pool.push({ ...it, key: a, ord: i + 1 }));
     });
-    pool.sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : x.ord - y.ord));
+    pool.sort((x, y) => feesFirst(x, y) || x.ord - y.ord);
     const shares = new Map();
     let left = cents;
     for (const it of pool) {
@@ -543,8 +562,8 @@ export function explainBilling({ rows, accounts, today }) {
   const feeLines = (g) => (!g ? []
     : g.firstPayment ? ["No return payment fee. It was the first New Business payment."]
     : g.feeId ? [`That adds a ${$(RETURN_FEE_CENTS)} return payment fee.`] : []);
-  const billStep = (base, r, t, c, eq, diff) => {
-    const due = r.dueDate ? `, due ${when(r.dueDate, today)}` : "";
+  const billStep = (base, r, t, c, eq, diff, cutoff) => {
+    const due = cutoff ? `, due ${when(cutoff, today)}` : "";
     const head = t.role === "notice"
       ? `Cancel notice: ${$(c)} past due${r.dueDate ? `, to be paid by ${when(r.dueDate, today)}` : ""}.`
       : c < 0 ? `SF shows a ${$(c)} credit${due}.`
@@ -568,12 +587,62 @@ export function explainBilling({ rows, accounts, today }) {
   };
 
   const feeName = (r) => (r.type === "late_fee" ? "Late fee" : "Return fee");
-  // SF's own amount goes in the grid on the day it is due (a cancel notice on
-  // the day it was sent), checked against what the lines add up to.
-  const sfEvent = (r, t, c, expected) => ({
-    date: t.role === "notice" ? r.processDate : (r.dueDate || r.processDate),
+  const datesOf = (st) => st.terms.flatMap(t => t.dates);
+  // The payment an SF bill line is for: the first payment due on or after the
+  // day SF sent it, or the due date typed on the line when that is later. SF
+  // shows a revised amount with its own date, not the payment's, so the
+  // typed date alone can't be trusted (Kevin J, 2026-09-25).
+  const billCutoff = (dates, r) => {
+    if (r.type === "notice_cancel") return r.processDate || r.dueDate;
+    const from = r.processDate || r.dueDate;
+    const next = dates.filter(d => d >= from).sort()[0] || "";
+    const typed = r.dueDate || "";
+    return (typed > next ? typed : next) || from;
+  };
+  // Peter 2026-09-25: a change goes on the payments still open from the day it
+  // processed, even when it is dated back, because nothing can be collected for
+  // it before then. Open means due after that day and not on a bill SF had
+  // already sent, unless SF sent a revised amount for that payment afterward.
+  const openPayments = (st, term, P) => {
+    const dates = datesOf(st);
+    const sf = sfLinesFor(st.key);
+    const onLine = (d, type, when) => sf.some(b => b.type === type && when(lineDate(b)) && billCutoff(dates, b) === d);
+    return term.dates.map((d, k) => [d, k])
+      .filter(([d]) => d > P && (!onLine(d, "bill", x => x <= P) || onLine(d, "autopay_revised_due", x => x > P)))
+      .map(([, k]) => k);
+  };
+  // Spread an amount over some payments the way SF does: add it to what they
+  // already come to, then split the total evenly.
+  const respread = (term, ks, delta) => {
+    const shares = split(ks.reduce((sum, k) => sum + term.amts[k], 0) + delta, ks.length, true);
+    ks.forEach((k, j) => { term.amts[k] = shares[j]; });
+  };
+  // Peter 2026-09-25: SF's billing is rarely wrong, but it needs reading. When
+  // SF sends a revised amount for a payment, that payment becomes SF's number
+  // and the difference moves to the payments after it, so the total holds.
+  const adoptRevised = (st, cutoff, diff) => {
+    if (Math.abs(diff) <= MATCH_CENTS) return null;
+    for (const term of st.terms) {
+      const k = term.dates.indexOf(cutoff);
+      if (k < 0) continue;
+      const later = term.dates.map((d, j) => j).filter(j => j > k);
+      if (!later.length) return null;
+      term.amts[k] += diff;
+      respread(term, later, -diff);
+      return { diff, date: cutoff, amount: term.amts[k], count: later.length, each: term.amts[later[0]] };
+    }
+    return null;
+  };
+  const movedText = (m) => `SF made the ${when(m.date, today)} payment ${$(m.amount)}, ${$(m.diff)} ${m.diff < 0 ? "less" : "more"} than the lines had. `
+    + `The ${$(m.diff)} ${m.diff < 0 ? "moves to" : "comes off"} the ${m.count === 1 ? "payment" : `${m.count} payments`} after it`
+    + `${m.count > 1 ? `, now about ${$(m.each)} each` : ""}.`;
+  // SF's own amount goes in the grid under the payment it is for (a cancel
+  // notice on the day it was sent), checked against what the lines add up to.
+  const sfEvent = (r, t, c, expected, cutoff, moved) => ({
+    date: t.role === "notice" ? r.processDate : cutoff,
     label: t.role === "notice" ? "Cancel notice" : null, tone: "bounce",
-    sf: { cents: c, expected, ok: Math.abs(c - expected) <= MATCH_CENTS, revised: r.type === "autopay_revised_due" },
+    sf: { cents: c, expected, ok: Math.abs(c - expected) <= MATCH_CENTS, revised: r.type === "autopay_revised_due",
+      note: moved ? `${fmtAmount(moved.diff)} ${moved.diff < 0 ? "moved to later payments" : "moved up from later payments"}` : "" },
   });
 
   // ---------- one line on an account ----------
@@ -600,44 +669,62 @@ export function explainBilling({ rows, accounts, today }) {
     switch (t.role) {
       case "change": {
         st.changesNet += c;
-        const nm = r.type === "policy_change" ? "Policy change" : "Billing change";
-        const why = r.type === "billing_change" ? " A correction to the bill." : "";
-        const E = r.dueDate || r.processDate;
-        if (c > 0) st.ev.push({ date: E, label: `${nm} +${fmtAmount(c)}`, tone: "change" });
-        if (c < 0) st.ev.push({ date: E, label: `${nm} \u2212${fmtAmount(c)}`, tone: "credit", due: c });
-        if (c > 0) {
-          const left = term.dates.map((d, k) => (d >= E ? k : -1)).filter(k => k >= 0);
-          if (left.length) {
-            const shares = split(c, left.length);
-            left.forEach((k, j) => { term.amts[k] += shares[j]; });
-            st.steps.push({ ...base, text: `${nm} added ${$(c)}.${why}`, sub: [left.length === 1
-              ? `One payment left, so it all goes on that one. It is now ${$(term.amts[left[0]])}.`
-              : `Split over the ${left.length} payments left: about ${$(shares[shares.length - 1])} more on each. Payments are now about ${$(term.amts[left[left.length - 1]])}.`] });
-          } else {
-            st.ev[st.ev.length - 1].due = c;
-            st.oneTime.push({ date: lineDate(r), cents: c, kind: "extra" });
-            st.steps.push({ ...base, text: `${nm} added ${$(c)}.${why}`, sub: ["No payments left in this term, so it is due all at once."] });
-          }
-        } else if (c < 0) {
-          st.credits += c;
-          st.steps.push({ ...base, text: `${nm} took off ${$(c)}.${why}`, sub: ["Credited all at once, right away."] });
-        } else {
+        const policy = r.type === "policy_change";
+        const nm = policy ? "Policy change" : "Billing change";
+        const why = policy ? "" : " A correction to the bill.";
+        const P = lineDate(r);
+        const E = r.dueDate || P;
+        if (!c) {
           st.steps.push({ ...base, tone: "muted", text: `${nm} for ${$(0)}. The cost did not move.` });
+          break;
         }
+        // Policy changes spread either way; a billing change that takes money
+        // off is still credited at once.
+        const open = c > 0 || policy ? openPayments(st, term, P) : [];
+        const ev = { date: P, label: `${nm} ${c > 0 ? "+" : "\u2212"}${fmtAmount(c)}`, tone: c > 0 ? "change" : "credit" };
+        const sub = [];
+        if (E < P) sub.push(`It is dated back to ${when(E, today)}, but it processed ${when(P, today)}, so it only goes on payments after that.`);
+        if (open.length) {
+          respread(term, open, c);
+          sub.push(open.length === 1
+            ? `One payment still open, so it all goes on that one. It is now ${$(term.amts[open[0]])}.`
+            : `Spread over the ${open.length} payments still open. They are now about ${$(term.amts[open[0]])} each.`);
+          term.dates.forEach((d, k) => {
+            if (d > P && !open.includes(k)) sub.push(`SF had already billed the ${when(d, today)} payment, so it stays ${$(term.amts[k])}.`);
+          });
+        } else if (c > 0) {
+          ev.due = c;
+          st.oneTime.push({ date: P, cents: c, kind: "extra" });
+          sub.push("No payments left in this term, so it is due all at once.");
+        } else {
+          ev.due = c;
+          st.credits += c;
+          sub.push(policy ? "No payments left in this term, so it is credited all at once." : "Credited all at once, right away.");
+        }
+        st.ev.push(ev);
+        if (E < P) st.ev.push({ date: P, label: `dated back to ${when(E, today)}`, tone: "muted" });
+        st.steps.push({ ...base, text: `${nm} ${c > 0 ? "added" : "took off"} ${$(c)}.${why}`, sub });
         break;
       }
       case "payment": {
         st.paid += c;
         st.paidIn += c;
-        if (!r.auto) st.steps.push({ ...base, tone: "good", text: `Paid ${$(c)}.`, sub: [`Paid so far: ${$s(st.paid)}.`] });
-        if (!r.auto) st.ev.push({ date: lineDate(r), paid: c, bucket: true });
+        if (r.auto) break;
+        // SF puts a payment toward any unpaid fee first, then the policy.
+        const toFee = Math.min(Math.max(0, c), st.feesOwed);
+        st.feesOwed -= toFee;
+        if (toFee) st.payFee.set(r.id, toFee);
+        st.steps.push({ ...base, tone: "good", text: `Paid ${$(c)}.`, sub: [
+          toFee ? `The first ${$(toFee)} paid the fee${c > toFee ? `, and ${$(c - toFee)} went to the policy` : ""}.` : "",
+          `Paid so far: ${$s(st.paid)}.`] });
+        st.ev.push({ date: lineDate(r), pay: { cents: c, kind: "paid", note: toFee ? `${fmtAmount(toFee)} to the fee` : "" } });
         break;
       }
       case "declined": {
         st.paid += c;
         st.reversed -= c;
         st.steps.push({ ...base, tone: "warn", text: `A ${$(c)} payment was declined. It never went through.`, sub: feeLines(L.groupOf.get(r.id)) });
-        st.ev.push({ date: lineDate(r), label: `Declined ${fmtAmount(c)}`, tone: "bounce" });
+        st.ev.push({ date: lineDate(r), pay: { cents: -c, kind: "declined" } });
         break;
       }
       case "return": {
@@ -645,19 +732,22 @@ export function explainBilling({ rows, accounts, today }) {
         st.reversed -= c;
         const g = L.groupOf.get(r.id);
         const m = g && g.paymentId ? L.byId.get(g.paymentId) : null;
+        if (m) st.feesOwed += st.payFee.get(m.id) || 0;
         st.steps.push({ ...base, tone: "warn",
           text: m ? `The ${$(c)} payment from ${when(lineDate(m), today)} came back. It no longer counts as paid.`
                   : `A ${$(c)} payment came back. It no longer counts as paid.`,
           sub: feeLines(g) });
-        st.ev.push({ date: lineDate(r), label: `Returned ${fmtAmount(c)}`, tone: "bounce", paid: c });
+        st.ev.push({ date: lineDate(r), pay: { cents: c, kind: "returned" } });
         break;
       }
       case "waiver": {
+        st.feesOwed = Math.max(0, st.feesOwed - c);
         st.steps.push(waive(st.oneTime, r, c, base, (v) => st.oneTime.push({ id: r.id, date: lineDate(r), cents: -v, kind: "fee" })));
         st.ev.push({ date: lineDate(r), label: `Waiver \u2212${fmtAmount(c)}`, tone: "credit", due: -c });
         break;
       }
       case "fee": {
+        st.feesOwed += -c;
         st.oneTime.push({ id: r.id, date: lineDate(r), cents: -c, kind: "fee" });
         st.ev.push({ date: lineDate(r), label: `${feeName(r)} ${fmtAmount(c)}`, tone: "fee", due: -c });
         if (!L.groupOf.get(r.id)) {
@@ -667,7 +757,8 @@ export function explainBilling({ rows, accounts, today }) {
       }
       case "bill":
       case "notice": {
-        const cutoff = t.role === "notice" ? r.processDate : (r.dueDate || r.processDate);
+        const cutoff = billCutoff(datesOf(st), r);
+        const moved = r.type === "autopay_revised_due" ? adoptRevised(st, cutoff, c - expectedOf(st, cutoff)) : null;
         const inst = dueBy(st, cutoff);
         const fees = sumC(st.oneTime, "fee");
         const extras = sumC(st.oneTime, "extra");
@@ -678,9 +769,11 @@ export function explainBilling({ rows, accounts, today }) {
         if (st.credits) parts.push(`\u2212 ${$(st.credits)} in credits`);
         parts.push(st.paid >= 0 ? `\u2212 ${$(st.paid)} paid` : `+ ${$(st.paid)} came back`);
         const expected = expectedOf(st, cutoff);
-        st.steps.push(billStep(base, r, t, c,
-          `${t.role === "notice" ? "Past due as of" : "By"} ${when(cutoff, today)}: ${parts.join(" ")} = ${$s(expected)}.`, c - expected));
-        st.ev.push(sfEvent(r, t, c, expected));
+        const step = billStep(base, r, t, c,
+          `${t.role === "notice" ? "Past due as of" : "By"} ${when(cutoff, today)}: ${parts.join(" ")} = ${$s(expected)}.`, c - expected, cutoff);
+        if (moved) step.sub.unshift(movedText(moved));
+        st.steps.push(step);
+        st.ev.push(sfEvent(r, t, c, expected, cutoff, moved));
         break;
       }
       default:
@@ -698,13 +791,14 @@ export function explainBilling({ rows, accounts, today }) {
         applyShares(bs, shares, 1);
         bs.paidIn += c;
         if (r.auto) break;
-        bs.steps.push({ ...base, tone: "good", text: `Paid ${$(c)}.`, sub: [`Split, oldest amount due first: ${shareText(shares, "to")}`] });
-        bs.ev.push({ date: lineDate(r), paid: c, bucket: true });
+        bs.steps.push({ ...base, tone: "good", text: `Paid ${$(c)}.`, sub: [`Split, fees first, then the oldest amount due: ${shareText(shares, "to")}`] });
+        bs.ev.push({ date: lineDate(r), pay: { cents: c, kind: "paid", note: shares.get("fees") ? `${fmtAmount(shares.get("fees"))} to the fee` : "" } });
         for (const [k, v] of shares) {
           if (k === "fees" || !v) continue;
           const st = S.get(k);
+          st.feesOwed -= Math.min(v, st.feesOwed);
           st.steps.push({ ...base, tone: "good", text: `${$(v)} of a ${$(c)} ${accountLabel(bs.key)} payment came here.`, sub: [`Paid so far: ${$s(st.paid)}.`] });
-          st.ev.push({ date: lineDate(r), paid: v, bucket: true, via: bs.key });
+          st.ev.push({ date: lineDate(r), pay: { cents: v, kind: "paid", note: `from ${accountLabel(bs.key)}` }, via: bs.key });
         }
         break;
       }
@@ -713,7 +807,7 @@ export function explainBilling({ rows, accounts, today }) {
         if (shares) applyShares(bs, shares, -1);
         bs.reversed -= c;
         bs.steps.push({ ...base, tone: "warn", text: `A ${$(c)} payment was declined. It never went through.`, sub: feeLines(g) });
-        bs.ev.push({ date: lineDate(r), label: `Declined ${fmtAmount(c)}`, tone: "bounce" });
+        bs.ev.push({ date: lineDate(r), pay: { cents: -c, kind: "declined" } });
         break;
       }
       case "return": {
@@ -725,12 +819,12 @@ export function explainBilling({ rows, accounts, today }) {
           text: m ? `The ${$(c)} payment from ${when(lineDate(m), today)} came back. It no longer counts as paid.`
                   : `A ${$(c)} payment came back. It no longer counts as paid.`,
           sub: [`Taken back: ${shareText(shares, "from")}`, ...feeLines(g)] });
-        bs.ev.push({ date: lineDate(r), label: `Returned ${fmtAmount(c)}`, tone: "bounce", paid: c });
+        bs.ev.push({ date: lineDate(r), pay: { cents: c, kind: "returned" } });
         for (const [k, v] of shares) {
           if (k === "fees" || !v) continue;
           const st = S.get(k);
           st.steps.push({ ...base, tone: "warn", text: `A ${accountLabel(bs.key)} payment came back. ${$(v)} of it comes off here.`, sub: [`Paid so far: ${$s(st.paid)}.`] });
-          st.ev.push({ date: lineDate(r), label: `${accountLabel(bs.key)} payment returned`, tone: "bounce", paid: -v, via: bs.key });
+          st.ev.push({ date: lineDate(r), pay: { cents: -v, kind: "returned", note: `from ${accountLabel(bs.key)}` }, via: bs.key });
         }
         break;
       }
@@ -747,15 +841,15 @@ export function explainBilling({ rows, accounts, today }) {
       }
       case "bill":
       case "notice": {
-        const cutoff = t.role === "notice" ? r.processDate : (r.dueDate || r.processDate);
+        const cutoff = billCutoff(bs.covers.flatMap(a => datesOf(S.get(a))), r);
         const per = bs.covers.map(a => [a, expectedOf(S.get(a), cutoff)]);
         const feesOut = sumC(bs.fees) - bs.paidB;
-        const expected = per.reduce((s, [, v]) => s + v, 0) + feesOut;
+        const expected = per.reduce((sum, [, v]) => sum + v, 0) + feesOut;
         const parts = per.map(([a, v]) => `${accountLabel(a)} ${$s(v)}`);
         if (feesOut) parts.push(`${$s(feesOut)} in fees`);
         bs.steps.push(billStep(base, r, t, c,
-          `${t.role === "notice" ? "Past due as of" : "By"} ${when(cutoff, today)}: ${parts.join(" + ")} = ${$s(expected)}.`, c - expected));
-        bs.ev.push(sfEvent(r, t, c, expected));
+          `${t.role === "notice" ? "Past due as of" : "By"} ${when(cutoff, today)}: ${parts.join(" + ")} = ${$s(expected)}.`, c - expected, cutoff));
+        bs.ev.push(sfEvent(r, t, c, expected, cutoff));
         break;
       }
       default:
@@ -779,42 +873,46 @@ export function explainBilling({ rows, accounts, today }) {
 
   // ---------- the grid: dates across, what was due, paid and still owed ----------
   // Peter 2026-09-25: the answer is a small grid like his spreadsheet, not a lot
-  // of reading. One column per date that matters: every payment due date, and
-  // the day of each change, fee, waiver, bounced payment and SF bill. A payment
-  // lands in the first column on or after the day it was made. Today gets a
-  // column, and Total ends the row.
+  // of reading. One column per date that matters: every payment due date and
+  // the day of every line, payments included, on the date typed. Today gets a
+  // column, and Total ends the row. Months alternate so they read as groups.
   const installmentsOf = (st) => st.terms.flatMap(t => t.dates.map((d, k) => ({ date: d, cents: t.amts[k] })));
   const buildGrid = (installments, events) => {
     const cols = new Map();
     const col = (d) => {
-      if (!cols.has(d)) cols.set(d, { date: d, labels: [], due: 0, paid: 0, sf: [], hasDue: false, hasPaid: false });
+      if (!cols.has(d)) cols.set(d, { date: d, labels: [], due: 0, hasDue: false, pays: [], sf: [], isDue: false });
       return cols.get(d);
     };
-    for (const it of installments) { const c = col(it.date); c.due += it.cents; c.hasDue = true; }
-    for (const e of events) if (e.date && !e.bucket) col(e.date);
+    for (const it of installments) { const c = col(it.date); c.due += it.cents; c.hasDue = true; c.isDue = true; }
+    for (const e of events) if (e.date) col(e.date);
     const firstDate = [...cols.keys()].sort()[0];
     if (!firstDate || today >= firstDate) col(today);
-    const ordered = () => [...cols.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
     for (const e of events) {
       if (!e.date) continue;
-      const c = (e.bucket ? ordered().find(x => x.date >= e.date) : cols.get(e.date)) || col(e.date);
+      const c = col(e.date);
       if (e.label) c.labels.push({ text: e.label, tone: e.tone || "" });
       if (e.due) { c.due += e.due; c.hasDue = true; }
-      if (e.paid) { c.paid += e.paid; c.hasPaid = true; }
+      if (e.pay) c.pays.push(e.pay);
       if (e.sf) c.sf.push(e.sf);
     }
     let run = 0;
     let dueAll = 0;
     let paidAll = 0;
-    const out = ordered().map(c => {
-      run += c.due - c.paid;
+    let band = 0;
+    let month = "";
+    const out = [...cols.values()].sort(byDate).map(c => {
+      // A declined payment shows, struck through, but never counts.
+      const paid = c.pays.reduce((sum, p) => sum + (p.kind === "declined" ? 0 : p.cents), 0);
+      run += c.due - paid;
       dueAll += c.due;
-      paidAll += c.paid;
+      paidAll += paid;
+      if (month && c.date.slice(0, 7) !== month) band = 1 - band;
+      month = c.date.slice(0, 7);
       const future = c.date > today;
-      return { key: c.date, date: c.date, today: c.date === today, future, labels: c.labels,
-        due: c.hasDue ? c.due : null, paid: c.hasPaid ? c.paid : null, balance: future ? null : run, sf: c.sf };
+      return { key: c.date, date: c.date, today: c.date === today, future, isDue: c.isDue, band, labels: c.labels,
+        due: c.hasDue ? c.due : null, pays: c.pays, paid: c.pays.length ? paid : null, balance: future ? null : run, sf: c.sf };
     });
-    out.push({ key: "total", total: true, labels: [], due: dueAll, paid: paidAll, balance: run, sf: [] });
+    out.push({ key: "total", total: true, labels: [], due: dueAll, pays: [], paid: paidAll, balance: run, sf: [] });
     return out;
   };
   const planWords = (st) => (st.nPay === 1 ? "paid in full" : st.nPay === 2 ? "2 payments" : "monthly payments");

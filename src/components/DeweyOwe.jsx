@@ -36,7 +36,9 @@ import {
 //    per link (Peter asked for lines over colour alone).
 //  * The answer is a small grid, dates across, like Peter's own spreadsheet:
 //    what happened above each date, then Due, Paid and Balance, then SF's bill
-//    with a check. The step by step sits behind "Show every step".
+//    with a check. Every line sits on its own date. Months alternate and the
+//    regular due dates are marked. A declined payment shows struck through.
+//    The step by step sits behind "Show every step".
 //  * Problems show after the button is pressed, not while typing
 //    (Bargas-Avila et al. 2007), the same way the Log tab does it.
 // =====================================================================
@@ -457,24 +459,58 @@ function StepSub({ step, line, last }) {
 // last row with a check against the lines. On a narrow screen the grid turns
 // so the dates run down the page instead of scrolling sideways.
 const signed = (c) => (c == null ? "" : `${c < 0 ? "\u2212" : ""}${fmtAmount(c)}`);
-const LABEL_TONE = { start: T.blue, change: T.slate700, credit: T.teal, fee: T.gold, bounce: T.red };
-const GRID_ROWS = [
-  { key: "due", label: "Due", help: "What came due that day: a payment, a fee, a change.", cell: (c) => signed(c.due) },
-  { key: "paid", label: "Paid", help: "What came in that day. A minus is a payment that came back.", cell: (c) => signed(c.paid) },
-  { key: "balance", label: "Balance", help: "What was still owed at that point. A minus means paid ahead.", cell: (c) => signed(c.balance) },
-];
-const GRID_COL_W = 84;
-const gridDate = (c) => (c.total ? "Total" : c.today ? "Today" : fmtDateShort(c.date));
+const LABEL_TONE = { start: T.blue, change: T.slate700, credit: T.teal, fee: T.gold, bounce: T.red, muted: T.slate500 };
+const TAG = { display: "block", fontSize: 10, fontWeight: 700, color: T.red };
 
-function SfCell({ list }) {
+// Every payment on its day. A declined one shows struck through and never
+// counts; one that came back shows as a minus. A note says where it went.
+function PaidCell({ c }) {
+  if (c.total || !c.pays.length) return signed(c.paid);
   return (
     <div style={{ display: "grid", gap: 2, justifyItems: "end" }}>
+      {c.pays.map((p, i) => (
+        <span key={i} style={{ whiteSpace: "nowrap" }}>
+          {p.kind === "declined"
+            ? <><span style={{ textDecoration: "line-through", color: T.slate400 }}>{fmtAmount(p.cents)}</span><span style={TAG}>declined</span></>
+            : <>{signed(p.cents)}{p.kind === "returned" ? <span style={TAG}>returned</span> : null}</>}
+          {p.note ? <span style={{ display: "block", fontSize: 11, fontWeight: 500, color: T.slate500 }}>{p.note}</span> : null}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+const GRID_ROWS = [
+  { key: "due", label: "Due", help: "What came due that day: a payment, a fee, a change.", cell: (c) => signed(c.due) },
+  { key: "paid", label: "Paid", help: "What came in that day. A minus is a payment that came back.", cell: (c) => <PaidCell c={c} /> },
+  { key: "balance", label: "Balance", help: "What was still owed at that point. A minus means paid ahead.", cell: (c) => signed(c.balance) },
+];
+// Peter 2026-09-25: months alternate so they read as groups, and the regular
+// payment due dates stand out.
+const colBg = (c) => (c.today ? T.amberLt : c.total ? T.white : c.band ? T.slate100 : T.white);
+const DUE_PILL = { display: "inline-block", background: T.blue, color: T.white, borderRadius: 999, padding: "2px 8px" };
+function GridDate({ c }) {
+  if (c.total) return "Total";
+  if (c.today) return <>Today<div style={{ fontSize: 10, fontWeight: 600, color: T.slate500 }}>{fmtDateShort(c.date)}</div></>;
+  return c.isDue ? <span style={DUE_PILL} title="A regular payment due date">{fmtDateShort(c.date)}</span> : fmtDateShort(c.date);
+}
+const GRID_COL_W = 78;
+// Dates run across on a computer, like Peter's sheet; a very long policy
+// scrolls inside the box with the row names pinned. On a phone they run down.
+const ACROSS_MIN_W = 700;
+
+function SfCell({ list, inline }) {
+  return (
+    <div style={inline ? { display: "flex", flexWrap: "wrap", justifyContent: "flex-end", alignItems: "baseline", gap: "2px 12px" }
+      : { display: "grid", gap: 2, justifyItems: "end" }}>
+      {inline && <span style={{ fontSize: 11, fontWeight: 700, color: T.slate500 }}>SF bill</span>}
       {list.map((x, i) => (
         <span key={i} title={x.ok ? "Matches the lines." : `The lines add up to ${signed(x.expected)}.`} style={{ whiteSpace: "nowrap" }}>
           {x.revised ? <span style={{ fontSize: 10, color: T.slate500, marginRight: 4 }}>revised</span> : null}
           {signed(x.cents)}{" "}
           <span style={{ color: x.ok ? T.green : T.red, fontWeight: 800 }}>{x.ok ? "✓" : "≠"}</span>
           {!x.ok && <span style={{ display: "block", fontSize: 11, color: T.slate500 }}>lines say {signed(x.expected)}</span>}
+          {x.note && <span style={{ display: "block", fontSize: 11, color: T.slate500, whiteSpace: "normal" }}>{x.note}</span>}
         </span>
       ))}
     </div>
@@ -483,36 +519,40 @@ function SfCell({ list }) {
 
 function DateGrid({ grid, width }) {
   const anySf = grid.some(c => c.sf.length);
-  const across = width === 0 || width >= 96 + grid.length * GRID_COL_W;
-  const tint = (c) => (c.today ? T.blueLt : c.total ? T.slate50 : "transparent");
+  const across = width === 0 || width >= ACROSS_MIN_W;
+  // Columns share the width when they fit, so Total never hides off the side.
+  const fit = width === 0 || width >= 80 + grid.length * GRID_COL_W;
   const ink = (c) => (c.future ? T.slate400 : T.slate800);
   const balInk = (c) => (c.balance == null || c.future ? ink(c) : c.balance > 50 ? T.red : c.balance < -50 ? T.teal : ink(c));
   const bold = (c) => (c.today || c.total ? 800 : 500);
+  const edge = (c) => (c.total ? `2px solid ${T.slate300}` : "none");
   const th = { fontSize: 12, fontWeight: 700, color: T.slate600, textAlign: "left", padding: "6px 10px 6px 0", whiteSpace: "nowrap" };
-  const num = { padding: "6px 8px", textAlign: "right", whiteSpace: "nowrap", borderTop: `1px solid ${T.slate100}` };
+  const pin = { position: "sticky", left: 0, zIndex: 1, background: T.white };
+  const num = { padding: "6px 6px", textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top", borderTop: `1px solid ${T.slate200}` };
 
   if (across) {
     return (
       <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-        <table style={{ borderCollapse: "collapse", fontSize: 13, fontVariantNumeric: "tabular-nums" }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 13, fontVariantNumeric: "tabular-nums",
+          ...(fit ? { width: "100%", tableLayout: "fixed" } : {}) }}>
+          {fit && <colgroup><col style={{ width: 72 }} />{grid.map(c => <col key={c.key} />)}</colgroup>}
           <thead>
             <tr>
-              <th />
+              <th style={pin} />
               {grid.map(c => (
-                <th key={c.key} style={{ verticalAlign: "bottom", padding: "0 8px 4px", textAlign: "right", minWidth: GRID_COL_W - 16, background: tint(c) }}>
+                <th key={c.key} style={{ verticalAlign: "bottom", padding: "6px 6px 4px", textAlign: "right", minWidth: fit ? 0 : GRID_COL_W - 12, background: colBg(c), borderLeft: edge(c) }}>
                   {c.labels.map((l, i) => (
-                    <div key={i} style={{ fontSize: 11, fontWeight: 700, lineHeight: 1.3, color: LABEL_TONE[l.tone] || T.slate700 }}>{l.text}</div>
+                    <div key={i} style={{ fontSize: 11, fontWeight: l.tone === "muted" ? 500 : 700, lineHeight: 1.3, color: LABEL_TONE[l.tone] || T.slate700 }}>{l.text}</div>
                   ))}
                 </th>
               ))}
             </tr>
             <tr>
-              <th />
+              <th style={pin} />
               {grid.map(c => (
-                <th key={c.key} style={{ padding: "4px 8px", textAlign: "right", fontSize: 12, fontWeight: 800, color: c.future ? T.slate400 : T.slate900,
-                  background: tint(c), borderLeft: c.total ? `1px solid ${T.slate200}` : "none", whiteSpace: "nowrap" }}>
-                  {gridDate(c)}
-                  {c.today ? <div style={{ fontSize: 10, fontWeight: 600, color: T.slate500 }}>{fmtDateShort(c.date)}</div> : null}
+                <th key={c.key} style={{ padding: "4px 6px 6px", textAlign: "right", fontSize: 12, fontWeight: 800, color: c.future ? T.slate400 : T.slate900,
+                  background: colBg(c), borderLeft: edge(c), whiteSpace: "nowrap" }}>
+                  <GridDate c={c} />
                 </th>
               ))}
             </tr>
@@ -520,18 +560,18 @@ function DateGrid({ grid, width }) {
           <tbody>
             {GRID_ROWS.map(rd => (
               <tr key={rd.key}>
-                <th scope="row" title={rd.help} style={{ ...th, borderTop: `1px solid ${T.slate100}` }}>{rd.label}</th>
+                <th scope="row" title={rd.help} style={{ ...th, ...pin, borderTop: `1px solid ${T.slate200}` }}>{rd.label}</th>
                 {grid.map(c => (
-                  <td key={c.key} style={{ ...num, background: tint(c), fontWeight: bold(c), borderLeft: c.total ? `1px solid ${T.slate200}` : "none",
+                  <td key={c.key} style={{ ...num, background: colBg(c), fontWeight: bold(c), borderLeft: edge(c),
                     color: rd.key === "balance" ? balInk(c) : ink(c) }}>{rd.cell(c)}</td>
                 ))}
               </tr>
             ))}
             {anySf && (
               <tr>
-                <th scope="row" title="What SF billed, checked against the lines." style={{ ...th, borderTop: `1px solid ${T.slate100}` }}>SF bill</th>
+                <th scope="row" title="What SF billed, checked against the lines." style={{ ...th, ...pin, borderTop: `1px solid ${T.slate200}` }}>SF bill</th>
                 {grid.map(c => (
-                  <td key={c.key} style={{ ...num, background: tint(c), borderLeft: c.total ? `1px solid ${T.slate200}` : "none", color: ink(c) }}>
+                  <td key={c.key} style={{ ...num, background: colBg(c), borderLeft: edge(c), color: ink(c) }}>
                     {c.sf.length ? <SfCell list={c.sf} /> : null}
                   </td>
                 ))}
@@ -543,7 +583,8 @@ function DateGrid({ grid, width }) {
     );
   }
 
-  const heads = ["", ...GRID_ROWS.map(r => r.label), ...(anySf ? ["SF bill"] : [])];
+  const heads = ["", ...GRID_ROWS.map(r => r.label)];
+  const cell = { padding: "4px 6px 6px", textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" };
   return (
     <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
       <table style={{ borderCollapse: "collapse", fontSize: 13, fontVariantNumeric: "tabular-nums", width: "100%", maxWidth: 560 }}>
@@ -554,27 +595,25 @@ function DateGrid({ grid, width }) {
           {grid.map(c => (
             <Fragment key={c.key}>
               {c.labels.length > 0 && (
-                <tr>
-                  <td colSpan={heads.length} style={{ padding: "8px 6px 0", fontSize: 11, fontWeight: 700, background: tint(c) }}>
+                <tr style={{ background: colBg(c) }}>
+                  <td colSpan={heads.length} style={{ padding: "8px 6px 0", fontSize: 11, fontWeight: 700, borderTop: `1px solid ${T.slate200}` }}>
                     {c.labels.map((l, i) => (
-                      <span key={i} style={{ color: LABEL_TONE[l.tone] || T.slate700, marginRight: 10 }}>{l.text}</span>
+                      <span key={i} style={{ color: LABEL_TONE[l.tone] || T.slate700, fontWeight: l.tone === "muted" ? 500 : 700, marginRight: 10 }}>{l.text}</span>
                     ))}
                   </td>
                 </tr>
               )}
-              <tr style={{ background: tint(c) }}>
-                <td style={{ padding: "4px 6px 6px", fontWeight: 800, color: c.future ? T.slate400 : T.slate900, whiteSpace: "nowrap",
-                  borderBottom: `1px solid ${T.slate100}` }}>{gridDate(c)}</td>
+              <tr style={{ background: colBg(c), borderTop: c.total ? `2px solid ${T.slate300}` : c.labels.length ? "none" : `1px solid ${T.slate200}` }}>
+                <td style={{ ...cell, textAlign: "left", fontWeight: 800, color: c.future ? T.slate400 : T.slate900 }}><GridDate c={c} /></td>
                 {GRID_ROWS.map(rd => (
-                  <td key={rd.key} style={{ padding: "4px 6px 6px", textAlign: "right", whiteSpace: "nowrap", fontWeight: bold(c),
-                    borderBottom: `1px solid ${T.slate100}`, color: rd.key === "balance" ? balInk(c) : ink(c) }}>{rd.cell(c)}</td>
+                  <td key={rd.key} style={{ ...cell, fontWeight: bold(c), color: rd.key === "balance" ? balInk(c) : ink(c) }}>{rd.cell(c)}</td>
                 ))}
-                {anySf && (
-                  <td style={{ padding: "4px 6px 6px", textAlign: "right", borderBottom: `1px solid ${T.slate100}`, color: ink(c) }}>
-                    {c.sf.length ? <SfCell list={c.sf} /> : null}
-                  </td>
-                )}
               </tr>
+              {c.sf.length > 0 && (
+                <tr style={{ background: colBg(c) }}>
+                  <td colSpan={heads.length} style={{ padding: "0 6px 8px", fontSize: 12, color: ink(c) }}><SfCell list={c.sf} inline /></td>
+                </tr>
+              )}
             </Fragment>
           ))}
         </tbody>
