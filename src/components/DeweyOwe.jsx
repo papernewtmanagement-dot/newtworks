@@ -35,8 +35,9 @@ import {
 //  * Linked lines are joined by a drawn line in the left margin, one track
 //    per link (Peter asked for lines over colour alone).
 //  * The answer is a small grid, dates across, like Peter's own spreadsheet:
-//    what happened above each date, then Due, Paid and Balance, then SF's bill
-//    with a check. Every line sits on its own date. Months alternate and the
+//    what happened above each date, then Due, Paid, Unpaid (due and not yet
+//    paid) and Balance (left on the whole policy), then SF's latest bill with a
+//    check. Every line sits on its own date. Months alternate and the
 //    regular due dates are marked. A declined payment shows struck through.
 //    The step by step sits behind "Show every step".
 //  * Problems show after the button is pressed, not while typing
@@ -473,7 +474,7 @@ function PaidCell({ c }) {
           {p.kind === "declined"
             ? <><span style={{ textDecoration: "line-through", color: T.slate400 }}>{fmtAmount(p.cents)}</span><span style={TAG}>declined</span></>
             : <>{signed(p.cents)}{p.kind === "returned" ? <span style={TAG}>returned</span> : null}</>}
-          {p.note ? <span style={{ display: "block", fontSize: 11, fontWeight: 500, color: T.slate500 }}>{p.note}</span> : null}
+          {p.note ? <span style={{ display: "block", fontSize: 11, fontWeight: 500, color: T.slate500, whiteSpace: "normal" }}>{p.note}</span> : null}
         </span>
       ))}
     </div>
@@ -483,7 +484,8 @@ function PaidCell({ c }) {
 const GRID_ROWS = [
   { key: "due", label: "Due", help: "What came due that day: a payment, a fee, a change.", cell: (c) => signed(c.due) },
   { key: "paid", label: "Paid", help: "What came in that day. A minus is a payment that came back.", cell: (c) => <PaidCell c={c} /> },
-  { key: "balance", label: "Balance", help: "What was still owed at that point. A minus means paid ahead.", cell: (c) => signed(c.balance) },
+  { key: "owed", label: "Unpaid", help: "Due so far and not paid yet. This is what SF bills and sends notices on. A minus means paid ahead.", cell: (c) => signed(c.owed) },
+  { key: "balance", label: "Balance", help: "What is left to pay on the whole policy. A change, a fee or a payment moves it the day it happens.", cell: (c) => signed(c.balance) },
 ];
 // Peter 2026-09-25: months alternate so they read as groups, and the regular
 // payment due dates stand out.
@@ -523,7 +525,12 @@ function DateGrid({ grid, width }) {
   // Columns share the width when they fit, so Total never hides off the side.
   const fit = width === 0 || width >= 80 + grid.length * GRID_COL_W;
   const ink = (c) => (c.future ? T.slate400 : T.slate800);
-  const balInk = (c) => (c.balance == null || c.future ? ink(c) : c.balance > 50 ? T.red : c.balance < -50 ? T.teal : ink(c));
+  // Unpaid is red when behind; either total goes teal when paid ahead.
+  const rowInk = (c, key) => {
+    const v = c[key];
+    if (v == null || c.future || (key !== "owed" && key !== "balance")) return ink(c);
+    return key === "owed" && v > 50 ? T.red : v < -50 ? T.teal : ink(c);
+  };
   const bold = (c) => (c.today || c.total ? 800 : 500);
   const edge = (c) => (c.total ? `2px solid ${T.slate300}` : "none");
   const th = { fontSize: 12, fontWeight: 700, color: T.slate600, textAlign: "left", padding: "6px 10px 6px 0", whiteSpace: "nowrap" };
@@ -563,7 +570,7 @@ function DateGrid({ grid, width }) {
                 <th scope="row" title={rd.help} style={{ ...th, ...pin, borderTop: `1px solid ${T.slate200}` }}>{rd.label}</th>
                 {grid.map(c => (
                   <td key={c.key} style={{ ...num, background: colBg(c), fontWeight: bold(c), borderLeft: edge(c),
-                    color: rd.key === "balance" ? balInk(c) : ink(c) }}>{rd.cell(c)}</td>
+                    color: rowInk(c, rd.key) }}>{rd.cell(c)}</td>
                 ))}
               </tr>
             ))}
@@ -584,7 +591,7 @@ function DateGrid({ grid, width }) {
   }
 
   const heads = ["", ...GRID_ROWS.map(r => r.label)];
-  const cell = { padding: "4px 6px 6px", textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" };
+  const cell = { padding: "4px 4px 6px", textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" };
   return (
     <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
       <table style={{ borderCollapse: "collapse", fontSize: 13, fontVariantNumeric: "tabular-nums", width: "100%", maxWidth: 560 }}>
@@ -598,7 +605,7 @@ function DateGrid({ grid, width }) {
                 <tr style={{ background: colBg(c) }}>
                   <td colSpan={heads.length} style={{ padding: "8px 6px 0", fontSize: 11, fontWeight: 700, borderTop: `1px solid ${T.slate200}` }}>
                     {c.labels.map((l, i) => (
-                      <span key={i} style={{ color: LABEL_TONE[l.tone] || T.slate700, fontWeight: l.tone === "muted" ? 500 : 700, marginRight: 10 }}>{l.text}</span>
+                      <span key={i} style={{ color: LABEL_TONE[l.tone] || T.slate700, fontWeight: l.tone === "muted" ? 500 : 700, marginRight: 10, whiteSpace: "nowrap" }}>{l.text}</span>
                     ))}
                   </td>
                 </tr>
@@ -606,7 +613,7 @@ function DateGrid({ grid, width }) {
               <tr style={{ background: colBg(c), borderTop: c.total ? `2px solid ${T.slate300}` : c.labels.length ? "none" : `1px solid ${T.slate200}` }}>
                 <td style={{ ...cell, textAlign: "left", fontWeight: 800, color: c.future ? T.slate400 : T.slate900 }}><GridDate c={c} /></td>
                 {GRID_ROWS.map(rd => (
-                  <td key={rd.key} style={{ ...cell, fontWeight: bold(c), color: rd.key === "balance" ? balInk(c) : ink(c) }}>{rd.cell(c)}</td>
+                  <td key={rd.key} style={{ ...cell, fontWeight: bold(c), color: rowInk(c, rd.key) }}>{rd.cell(c)}</td>
                 ))}
               </tr>
               {c.sf.length > 0 && (

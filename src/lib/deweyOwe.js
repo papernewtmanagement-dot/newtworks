@@ -641,7 +641,7 @@ export function explainBilling({ rows, accounts, today }) {
   const sfEvent = (r, t, c, expected, cutoff, moved) => ({
     date: t.role === "notice" ? r.processDate : cutoff,
     label: t.role === "notice" ? "Cancel notice" : null, tone: "bounce",
-    sf: { cents: c, expected, ok: Math.abs(c - expected) <= MATCH_CENTS, revised: r.type === "autopay_revised_due",
+    sf: { cents: c, expected, ok: Math.abs(c - expected) <= MATCH_CENTS, revised: r.type === "autopay_revised_due", notice: t.role === "notice",
       note: moved ? `${fmtAmount(moved.diff)} ${moved.diff < 0 ? "moved to later payments" : "moved up from later payments"}` : "" },
   });
 
@@ -662,7 +662,7 @@ export function explainBilling({ rows, accounts, today }) {
       if (r.type === "binder") sub.unshift("There is no New Business line, so the Binder counts as the start.");
       st.steps.push({ ...base, tone: "start",
         text: `${label(r.type)}. ${st.lob.label} policy, ${$(st.cur.P)} for ${st.lob.months} months, starting ${when(st.cur.S, today)}.`, sub });
-      st.ev.push({ date: st.cur.S, label: `${label(r.type)} ${fmtAmount(st.cur.P)}`, tone: "start" });
+      st.ev.push({ date: st.cur.S, label: `${label(r.type)} ${fmtAmount(st.cur.P)}`, tone: "start", cost: st.cur.P });
       return;
     }
     const term = st.cur || st.terms[0];
@@ -681,7 +681,7 @@ export function explainBilling({ rows, accounts, today }) {
         // Policy changes spread either way; a billing change that takes money
         // off is still credited at once.
         const open = c > 0 || policy ? openPayments(st, term, P) : [];
-        const ev = { date: P, label: `${nm} ${c > 0 ? "+" : "\u2212"}${fmtAmount(c)}`, tone: c > 0 ? "change" : "credit" };
+        const ev = { date: P, label: `${nm} ${c > 0 ? "+" : "\u2212"}${fmtAmount(c)}`, tone: c > 0 ? "change" : "credit", cost: c };
         const sub = [];
         if (E < P) sub.push(`It is dated back to ${when(E, today)}, but it processed ${when(P, today)}, so it only goes on payments after that.`);
         if (open.length) {
@@ -703,6 +703,12 @@ export function explainBilling({ rows, accounts, today }) {
         }
         st.ev.push(ev);
         if (E < P) st.ev.push({ date: P, label: `dated back to ${when(E, today)}`, tone: "muted" });
+        // Where it went: the later Due amounts carry it.
+        if (open.length) {
+          const first = when(term.dates[open[0]], today);
+          const last = when(term.dates[open[open.length - 1]], today);
+          st.ev.push({ date: P, label: open.length === 1 ? `on the ${first} payment` : `spread ${first} to ${last}`, tone: "muted" });
+        }
         st.steps.push({ ...base, text: `${nm} ${c > 0 ? "added" : "took off"} ${$(c)}.${why}`, sub });
         break;
       }
@@ -743,13 +749,13 @@ export function explainBilling({ rows, accounts, today }) {
       case "waiver": {
         st.feesOwed = Math.max(0, st.feesOwed - c);
         st.steps.push(waive(st.oneTime, r, c, base, (v) => st.oneTime.push({ id: r.id, date: lineDate(r), cents: -v, kind: "fee" })));
-        st.ev.push({ date: lineDate(r), label: `Waiver \u2212${fmtAmount(c)}`, tone: "credit", due: -c });
+        st.ev.push({ date: lineDate(r), label: `Waiver \u2212${fmtAmount(c)}`, tone: "credit", due: -c, cost: -c });
         break;
       }
       case "fee": {
         st.feesOwed += -c;
         st.oneTime.push({ id: r.id, date: lineDate(r), cents: -c, kind: "fee" });
-        st.ev.push({ date: lineDate(r), label: `${feeName(r)} ${fmtAmount(c)}`, tone: "fee", due: -c });
+        st.ev.push({ date: lineDate(r), label: `${feeName(r)} ${fmtAmount(c)}`, tone: "fee", due: -c, cost: -c });
         if (!L.groupOf.get(r.id)) {
           st.steps.push({ ...base, tone: "warn", text: `${r.type === "late_fee" ? "Late payment fee" : "Return payment fee"}: ${$(c)}.` });
         }
@@ -830,12 +836,12 @@ export function explainBilling({ rows, accounts, today }) {
       }
       case "waiver": {
         bs.steps.push(waive(bs.fees, r, c, base, (v) => bs.fees.push({ id: r.id, date: lineDate(r), cents: -v, kind: "fee" })));
-        bs.ev.push({ date: lineDate(r), label: `Waiver \u2212${fmtAmount(c)}`, tone: "credit", due: -c });
+        bs.ev.push({ date: lineDate(r), label: `Waiver \u2212${fmtAmount(c)}`, tone: "credit", due: -c, cost: -c });
         break;
       }
       case "fee": {
         bs.fees.push({ id: r.id, date: lineDate(r), cents: -c, kind: "fee" });
-        bs.ev.push({ date: lineDate(r), label: `${feeName(r)} ${fmtAmount(c)}`, tone: "fee", due: -c });
+        bs.ev.push({ date: lineDate(r), label: `${feeName(r)} ${fmtAmount(c)}`, tone: "fee", due: -c, cost: -c });
         if (!g) bs.steps.push({ ...base, tone: "warn", text: `${r.type === "late_fee" ? "Late payment fee" : "Return payment fee"}: ${$(c)}.` });
         break;
       }
@@ -877,10 +883,13 @@ export function explainBilling({ rows, accounts, today }) {
   // the day of every line, payments included, on the date typed. Today gets a
   // column, and Total ends the row. Months alternate so they read as groups.
   const installmentsOf = (st) => st.terms.flatMap(t => t.dates.map((d, k) => ({ date: d, cents: t.amts[k] })));
+  // Two running totals (Peter 2026-09-25): Unpaid is what has come due and
+  // not been paid, the number SF bills and sends notices on. Balance is what
+  // is left on the whole policy, so a change or a fee moves it the day it hits.
   const buildGrid = (installments, events) => {
     const cols = new Map();
     const col = (d) => {
-      if (!cols.has(d)) cols.set(d, { date: d, labels: [], due: 0, hasDue: false, pays: [], sf: [], isDue: false });
+      if (!cols.has(d)) cols.set(d, { date: d, labels: [], due: 0, hasDue: false, cost: 0, pays: [], sf: [], isDue: false });
       return cols.get(d);
     };
     for (const it of installments) { const c = col(it.date); c.due += it.cents; c.hasDue = true; c.isDue = true; }
@@ -892,10 +901,12 @@ export function explainBilling({ rows, accounts, today }) {
       const c = col(e.date);
       if (e.label) c.labels.push({ text: e.label, tone: e.tone || "" });
       if (e.due) { c.due += e.due; c.hasDue = true; }
+      if (e.cost) c.cost += e.cost;
       if (e.pay) c.pays.push(e.pay);
       if (e.sf) c.sf.push(e.sf);
     }
-    let run = 0;
+    let owed = 0;
+    let left = 0;
     let dueAll = 0;
     let paidAll = 0;
     let band = 0;
@@ -903,16 +914,21 @@ export function explainBilling({ rows, accounts, today }) {
     const out = [...cols.values()].sort(byDate).map(c => {
       // A declined payment shows, struck through, but never counts.
       const paid = c.pays.reduce((sum, p) => sum + (p.kind === "declined" ? 0 : p.cents), 0);
-      run += c.due - paid;
+      owed += c.due - paid;
+      left += c.cost - paid;
       dueAll += c.due;
       paidAll += paid;
       if (month && c.date.slice(0, 7) !== month) band = 1 - band;
       month = c.date.slice(0, 7);
       const future = c.date > today;
+      // Once SF revises a bill, only its latest amount for that payment shows.
+      const lastBill = c.sf.map(x => !x.notice).lastIndexOf(true);
+      const sf = c.sf.filter((x, i) => x.notice || i === lastBill);
       return { key: c.date, date: c.date, today: c.date === today, future, isDue: c.isDue, band, labels: c.labels,
-        due: c.hasDue ? c.due : null, pays: c.pays, paid: c.pays.length ? paid : null, balance: future ? null : run, sf: c.sf };
+        due: c.hasDue ? c.due : null, pays: c.pays, paid: c.pays.length ? paid : null,
+        owed: future ? null : owed, balance: future ? null : left, sf };
     });
-    out.push({ key: "total", total: true, labels: [], due: dueAll, pays: [], paid: paidAll, balance: run, sf: [] });
+    out.push({ key: "total", total: true, labels: [], due: dueAll, pays: [], paid: paidAll, owed: null, balance: left, sf: [] });
     return out;
   };
   const planWords = (st) => (st.nPay === 1 ? "paid in full" : st.nPay === 2 ? "2 payments" : "monthly payments");
