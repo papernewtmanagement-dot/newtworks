@@ -16,6 +16,7 @@ import CommitPicker from "../components/CommitPicker.jsx";
 import InfoDot from "../components/InfoDot.jsx";
 import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
+import DeweyOwe from "../components/DeweyOwe.jsx";
 
 // ============================================================
 // ActivityLog — the Production module (nav label "Production", route
@@ -103,7 +104,7 @@ const RELATIONSHIPS = [
   { key: "existing", label: "Existing" },
   { key: "winback",  label: "Winback" },
 ];
-const TABS = ["log", "checklist", "hours", "deposits", "week", "issued", "development", "changes", "spotcheck", "backfill", "history"];
+const TABS = ["log", "checklist", "hours", "deposits", "week", "issued", "development", "changes", "spotcheck", "backfill", "history", "billing"];
 const CARD_PARTS = [
   { key: "demeanor_score",        label: "Demeanor",              short: "Demeanor" },
   { key: "frogs_score",           label: "FROGS",                 short: "FROGS" },
@@ -2636,7 +2637,8 @@ function changeSummary(r, ctx) {
 // ChangeGroups, so the two read the same way. Each change is filed under the
 // CPR week whose sales points it moved (cpr_week_for in the database): a
 // Sunday fix before last week's CPR goes out lands on last week. The Telegram link still lands
-// here with ?tab=changes&day=YYYY-MM-DD; that day's week opens.
+// here with ?tab=changes&day=YYYY-MM-DD: the module shell turns that into History > Changes
+// and that day's week opens.
 function weekStartOf(iso) {
   const d = new Date(`${iso}T12:00:00`);
   return addDays(iso, -d.getDay());
@@ -4544,6 +4546,50 @@ function CustomerAccount({ token, values, sources, types, isOwner, roster, onLog
 }
 
 // =====================================================================
+// History and its sub-tabs (Peter 2026-09-25): Changes, Spot-check and
+// Backfill moved in under History. Each is the same component it was as a
+// top tab, with the same rule on who sees it. An old link to ?tab=changes,
+// ?tab=spotcheck or ?tab=backfill (the daily change digest sends
+// ?tab=changes&day=...) opens History on that sub-tab.
+// =====================================================================
+const HISTORY_SUBTABS = ["history", "changes", "spotcheck", "backfill"];
+const MOVED_UNDER_HISTORY = ["changes", "spotcheck", "backfill"];
+function HistoryGroup({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, refreshKey, onChanged }) {
+  const [sub, setSub, subHref] = useTabParam("htab", "history", HISTORY_SUBTABS);
+  const subs = [
+    { id: "history", label: "History" },
+    { id: "changes", label: "Changes" },  // who changed what and when (Peter 2026-09-10); teammates see their own entries (2026-09-21)
+    ...(isAdmin ? [{ id: "spotcheck", label: "Spot-check" }] : []),  // monthly check of self-logged entries, owner and managers only (Peter 2026-09-16)
+    ...(isAdmin ? [{ id: "backfill", label: "Backfill" }] : []),  // gaps on older records: phone, marketing source, ECRM link (Peter 2026-09-17)
+  ];
+  const cur = subs.some(s => s.id === sub) ? sub : "history";
+  // A sub-tab this person can't open falls back to History, and so does the URL.
+  useEffect(() => { if (sub !== cur) setSub(cur); }, [sub, cur, setSub]);
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ display: "flex", maxWidth: "100%", overflowX: "auto", whiteSpace: "nowrap" }}>
+        <div style={{ display: "inline-flex", gap: 2, padding: 3, borderRadius: 999, background: T.slate100 }}>
+          {subs.map(s => (
+            <TabLink key={s.id} href={subHref(s.id)} onSelect={() => setSub(s.id)} style={{
+              flexShrink: 0, padding: "6px 14px", borderRadius: 999, fontSize: 12, fontWeight: 700, textDecoration: "none",
+              background: cur === s.id ? T.white : "transparent", color: cur === s.id ? T.slate900 : T.slate600,
+              boxShadow: cur === s.id ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+            }}>{s.label}</TabLink>
+          ))}
+        </div>
+      </div>
+      {cur === "history" && <HistoryTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin}
+        myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={onChanged} refreshKey={refreshKey} />}
+      {cur === "changes" && <ChangesTab roster={roster} nameOf={nameOf} values={values} sources={sources}
+        types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={onChanged} />}
+      {cur === "spotcheck" && isAdmin && <SpotCheck isAdmin={isAdmin} values={values} sources={sources}
+        types={types} isOwner={isOwner} roster={roster} />}
+      {cur === "backfill" && isAdmin && <BackfillTab sources={sources} roster={roster} types={types} />}
+    </div>
+  );
+}
+
+// =====================================================================
 // Module shell
 // =====================================================================
 export default function ActivityLog({ userRole, userId }) {
@@ -4551,6 +4597,13 @@ export default function ActivityLog({ userRole, userId }) {
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
   const [tab, setTab, tabHref] = useTabParam("tab", "log", [...TABS, "earnings", "history"]);
   const [acct, setAcct] = useTabParam("acct", "");   // the customer account popup, open from any tab
+  // Changes, Spot-check and Backfill live under History now (Peter 2026-09-25).
+  // A link to one of the old tabs opens History on that sub-tab instead.
+  useEffect(() => {
+    if (!MOVED_UNDER_HISTORY.includes(tab)) return;
+    window.history.replaceState({}, "", hrefWithParam("htab", tab, "history"));
+    setTab("history");
+  }, [tab, setTab]);
   const [values, setValues] = useState([]);
   const [sources, setSources] = useState([]);
   const [types, setTypes] = useState({});
@@ -4626,15 +4679,13 @@ export default function ActivityLog({ userRole, userId }) {
     { id: "week", label: "Score" },
     { id: "earnings", label: "Earnings" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
     { id: "issued", label: "Pending" },
-    { id: "changes", label: "Changes" },  // who changed what and when (Peter 2026-09-10); teammates see their own entries (2026-09-21)
-    ...(isAdmin ? [{ id: "spotcheck", label: "Spot-check" }] : []),  // monthly check of self-logged entries, owner and managers only (Peter 2026-09-16)
-    ...(isAdmin ? [{ id: "backfill", label: "Backfill" }] : []),  // gaps on older records: phone, marketing source, ECRM link (Peter 2026-09-17)
-    { id: "history", label: "History" },
+    { id: "history", label: "History" },  // Changes, Spot-check and Backfill are its sub-tabs (Peter 2026-09-25)
     { type: "divider", id: "_dv_rest" },
     { id: "checklist", label: "Checklist" },
     { id: "hours", label: "Hours" },
     { id: "deposits", label: "Deposits" },
     { id: "development", label: "Development" },
+    { id: "billing", label: "Dewey Owe" },  // the billing explainer (Peter 2026-09-25)
   ];
 
   // One provider for the whole Dashboard. Every customer name on every tab
@@ -4703,12 +4754,9 @@ export default function ActivityLog({ userRole, userId }) {
       {tab === "deposits" && <PFA userRole={userRole} embedded />}
       {tab === "development" && <Development userRole={userRole} userId={userId} embedded />}
       {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
-      {tab === "changes" && <ChangesTab roster={roster} nameOf={nameOf} values={values} sources={sources}
-        types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={bump} />}
-      {tab === "spotcheck" && isAdmin && <SpotCheck isAdmin={isAdmin} values={values} sources={sources}
-        types={types} isOwner={isOwner} roster={roster} />}
-      {tab === "backfill" && isAdmin && <BackfillTab sources={sources} roster={roster} types={types} />}
-      {tab === "history" && <HistoryTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} />}
+      {tab === "history" && <HistoryGroup values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin}
+        myTeamId={myTeamId} roster={roster} nameOf={nameOf} refreshKey={refreshKey} onChanged={bump} />}
+      {tab === "billing" && <DeweyOwe />}
     </div>
     </AccountCtx.Provider>
   );

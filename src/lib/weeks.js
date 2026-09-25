@@ -41,6 +41,21 @@ export function addDaysISO(iso, days) {
   return t.toISOString().slice(0, 10);
 }
 
+// A number of whole months on from an ISO date. Pass a day and the result lands
+// on that day of the target month instead of the start date's day. Either way a
+// day past the end of a short month settles on its last day, so Jan 31 plus one
+// month is Feb 28 (29 in a leap year). Negative months step back.
+export function addMonthsISO(iso, months, day) {
+  if (!isValidISODate(iso)) return null;
+  const [y, m, d] = iso.split("-").map(Number);
+  const idx = (m - 1) + Number(months || 0);
+  const ty = y + Math.floor(idx / 12);
+  const tm = ((idx % 12) + 12) % 12;
+  const last = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate();
+  const want = Math.min(Number(day) || d, last);
+  return `${ty}-${String(tm + 1).padStart(2, "0")}-${String(want).padStart(2, "0")}`;
+}
+
 // The Saturday that ends the week the given ISO date falls in.
 export function weekEndingSaturdayISO(iso) {
   const dow = dayOfWeekISO(iso);

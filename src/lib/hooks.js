@@ -119,6 +119,29 @@ export function useViewport() {
 }
 
 
+// ─── useElementWidth ──────────────────────────────────────────
+// The rendered width of one element, kept current as it resizes (window,
+// sidebar, zoom). For layouts that depend on the space a block actually gets,
+// not the window: a table inside the app shell is much narrower than the
+// window it sits in. Returns 0 until the element has been measured.
+export function useElementWidth(ref) {
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const read = () => setW(el.clientWidth);
+    read();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", read);
+      return () => window.removeEventListener("resize", read);
+    }
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  return w;
+}
+
 // ─── useVerdictThresholds ─────────────────────────────────────
 // Reads per-layer verdict cutoffs (pass / consider) from
 // public.hiregauge_verdict_thresholds. Single source of truth
