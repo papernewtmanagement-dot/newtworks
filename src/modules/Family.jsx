@@ -141,6 +141,12 @@ export default function Family({ userRole }) {
   const kidId = kid?.id || null;
   const visibleTabs = isParent ? TABS : TABS.filter(t => t !== "setup" && t !== "fines" && t !== "school");
   const activeTab = visibleTabs.includes(tab) ? tab : "week";
+  // Who can get which fine comes from family_fine_kids (a fine tied to a chore goes only to kids
+  // who do that chore). Every screen only looks the pair up.
+  const fineFits = useMemo(() => {
+    const s = new Set((fineKids || []).map(r => `${r.fine_type_id}|${r.kid_id}`));
+    return (typeId, kidId) => s.has(`${typeId}|${kidId}`);
+  }, [fineKids]);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -260,6 +266,7 @@ export default function Family({ userRole }) {
           burpee={burpees.find(b => b.kid_id === kid.id)}
           hasBurpees={chores.some(c => c.kid_id === kid.id && c.is_burpees && (!c.active_to || c.active_to >= today))}
           expenseTypes={expenseTypes} expenses={ledger.filter(l => l.kid_id === kid.id && l.kind === "expense" && l.entry_date >= viewWeek && l.entry_date <= addDays(viewWeek, 6))}
+          fineTypes={fineTypes} fineFits={fineFits} fines={ledger.filter(l => l.kid_id === kid.id && l.kind === "fine" && l.entry_date === day)}
           onLedgerChanged={load} onTimerStopped={() => afterChoreChange(todayDone(board))}
           day={day} today={today} weekStart={viewWeek} dateHref={dateHref} setDate={setDateParam}
           busy={busy} setStatus={setStatus} balance={bal} />
@@ -272,7 +279,7 @@ export default function Family({ userRole }) {
         <SchoolWeek kids={kids} weekStart={viewWeek} today={today} dateHref={dateHref} setDate={setDateParam} setErr={setErr} />
       )}
       {activeTab === "fines" && isParent && (
-        <FinesView kids={kids} fineTypes={fineTypes} fineKids={fineKids} checklists={checklists} expenseTypes={expenseTypes} fines={ledger.filter(l => l.kind === "fine")} today={today} onSaved={load} setErr={setErr} />
+        <FinesView kids={kids} fineTypes={fineTypes} fineFits={fineFits} checklists={checklists} expenseTypes={expenseTypes} fines={ledger.filter(l => l.kind === "fine")} today={today} onSaved={load} setErr={setErr} />
       )}
       {activeTab === "setup" && isParent && (
         <SetupView kids={kids} chores={chores} checklists={checklists} settings={settings} today={today} onSaved={load} setErr={setErr} />
@@ -313,7 +320,7 @@ function KidPicker({ kids, kid, balances, kidHref, setKid }) {
 }
 
 // ─── Week grid ────────────────────────────────────────────────────────────
-function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpee, hasBurpees, expenseTypes, expenses, onLedgerChanged, onTimerStopped, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
+function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpee, hasBurpees, expenseTypes, expenses, fineTypes, fineFits, fines, onLedgerChanged, onTimerStopped, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
   const _vp = useViewport();
   const [openInfo, setOpenInfo] = useState(null);
   const [pickId, setPickId] = useState("");
@@ -454,6 +461,9 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
       )}
       {canPick && (
         <ExpenseCard kid={kid} day={day} isParent={isParent} expenseTypes={expenseTypes} expenses={expenses} onChanged={onLedgerChanged} />
+      )}
+      {canPick && (
+        <FineCard kid={kid} day={day} isParent={isParent} fineTypes={fineTypes} fineFits={fineFits} fines={fines} onChanged={onLedgerChanged} />
       )}
       {day < kid.tracking_start && <div style={{ fontSize: 12, color: T.slate500 }}>Tracking for {kid.name} starts {shortDate(kid.tracking_start)}.</div>}
     </div>
@@ -1560,20 +1570,17 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
 // Parents keep a list of fines and apply one to any kid. An applied fine is a
 // family_ledger row (kind "fine"), so it lands in balances and the close-out
 // the same way every other money event does.
-function FinesView({ kids, fineTypes, fineKids, checklists, expenseTypes, fines, today, onSaved, setErr }) {
+function FinesView({ kids, fineTypes, fineFits, checklists, expenseTypes, fines, today, onSaved, setErr }) {
   const active = (fineTypes || []).filter(f => f.is_active);
   const [kidId, setKidId] = useState("");
   const [typeId, setTypeId] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const kidName = (id) => (kids || []).find(k => k.id === id)?.name || "";
-  // Who can get which fine comes from family_fine_kids (a fine tied to a chore goes only to kids
-  // who do that chore). The screen only looks the pair up.
-  const fits = useMemo(() => new Set((fineKids || []).map(r => `${r.fine_type_id}|${r.kid_id}`)), [fineKids]);
-  const kidOptions = typeId ? (kids || []).filter(k => fits.has(`${typeId}|${k.id}`)) : (kids || []);
-  const fineOptions = kidId ? active.filter(f => fits.has(`${f.id}|${kidId}`)) : active;
-  const pickKid = (id) => { setKidId(id); if (id && typeId && !fits.has(`${typeId}|${id}`)) setTypeId(""); };
-  const pickType = (id) => { setTypeId(id); if (id && kidId && !fits.has(`${id}|${kidId}`)) setKidId(""); };
+  const kidOptions = typeId ? (kids || []).filter(k => fineFits(typeId, k.id)) : (kids || []);
+  const fineOptions = kidId ? active.filter(f => fineFits(f.id, kidId)) : active;
+  const pickKid = (id) => { setKidId(id); if (id && typeId && !fineFits(typeId, id)) setTypeId(""); };
+  const pickType = (id) => { setTypeId(id); if (id && kidId && !fineFits(id, kidId)) setKidId(""); };
   const onlyFor = (f) => {
     if (!f.chore_checklist_id) return null;
     const cl = (checklists || []).find(c => c.id === f.chore_checklist_id);
@@ -1741,6 +1748,56 @@ function ExpenseCard({ kid, day, isParent, expenseTypes, expenses, onChanged }) 
           <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontWeight: 600, color: T.slate700 }}>{money(x.amount)}</span>
             {isParent && <button style={btn("soft", true)} onClick={() => remove(x.id)} title="Take it back">Undo</button>}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// A fine given from the kid's own page. The hub or a parent picks it from the fine list (only
+// fines that fit this kid show); it settles at the week close-out like any fine. The fine stays
+// picked, so tapping again gives another one. Shows that day's fines; parents can take one back.
+function FineCard({ kid, day, isParent, fineTypes, fineFits, fines, onChanged }) {
+  const [typeId, setTypeId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+  const options = (fineTypes || []).filter(f => f.is_active && fineFits(f.id, kid.id));
+  const t = options.find(f => f.id === typeId);
+  const give = async () => {
+    if (!t || saving) return;
+    setSaving(true); setErr(null);
+    const { error } = await supabase.from("family_ledger").insert({
+      agency_id: AGENCY_ID, kid_id: kid.id, bucket: "spend", kind: "fine", fine_type_id: t.id,
+      amount: -Math.abs(Number(t.amount)), note: t.name, entry_date: day,
+    });
+    setSaving(false);
+    if (error) { setErr(error.message); return; }
+    onChanged();
+  };
+  const remove = async (id) => {
+    const { error } = await supabase.from("family_ledger").delete().eq("id", id).eq("kind", "fine");
+    if (error) { setErr(error.message); return; }
+    onChanged();
+  };
+  if (!options.length && !(fines || []).length) return null;
+  return (
+    <div style={{ ...card, display: "grid", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700 }}>Give a fine</div>
+        <select value={typeId} onChange={e => setTypeId(e.target.value)} style={{ ...input, flex: "1 1 200px" }}>
+          <option value="">Pick a fine…</option>
+          {options.map(f => <option key={f.id} value={f.id}>{f.name} · {money(f.amount)}</option>)}
+        </select>
+        <button style={btn("danger")} disabled={!t || saving} onClick={give}>Give fine</button>
+      </div>
+      {err && <div style={{ fontSize: 12, color: T.red }}>{err}</div>}
+      {(fines || []).map(x => (
+        <div key={x.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, borderTop: `1px solid ${T.slate100}`, paddingTop: 6, fontSize: 13 }}>
+          <span style={{ color: T.slate700 }}>{x.note || "Fine"}</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontWeight: 600, color: T.red }}>{money(x.amount)}</span>
+            {isParent && <button style={btn("soft", true)} onClick={() => remove(x.id)} title="Take this fine back">Undo</button>}
           </span>
         </div>
       ))}
