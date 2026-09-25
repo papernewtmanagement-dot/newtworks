@@ -1,3 +1,224 @@
+// =========================================================================
+// terminate-team-member bundle (auto-generated)
+// Source of truth: supabase/functions/terminate-team-member/ + supabase/functions/_shared/
+// This single-file bundle is what gets deployed to the Supabase edge runtime.
+// Do NOT hand-edit. Regenerate via `python3 scripts/bundle_edge_fn.py terminate-team-member`.
+// =========================================================================
+
+import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+
+// ==================== _shared/supabase.ts ====================
+// =========================================================================
+// _shared/supabase.ts
+// =========================================================================
+// Canonical Supabase client + settings + response helpers for ALL Newtworks
+// edge functions. Source of truth for code that used to be copy-pasted into
+// every function (client creation, getSetting, jsonResponse, stripFences).
+//
+// Edge functions deploy as single-file bundles: `scripts/bundle_edge_fn.py`
+// inlines this file into each function's bundle. Never edit a bundle by hand;
+// edit here and rebundle every consumer.
+// =========================================================================
+
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+// Service role — bypasses RLS. Same client options every function used.
+const sb: SupabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+
+// Single-agency install. Functions that accept agency_id in the request body
+// should still prefer the body value; this is the fallback.
+const AGENCY_ID_DEFAULT = "126794dd-25ff-47d2-a436-724499733365";
+
+// -------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------
+// Two variants on purpose — they preserve the two behaviors that existed in
+// the wild before consolidation:
+//   getSetting        — THROWS if the settings table read itself errors
+//                       (infra failure ≠ missing row). Use on critical paths.
+//   getSettingOrNull  — swallows read errors, returns null. Use where the
+//                       caller treats "can't read" the same as "not set".
+// Both return null when the row simply doesn't exist.
+// -------------------------------------------------------------------------
+
+async function getSetting(
+  agencyId: string,
+  key: string,
+): Promise<string | null> {
+  const { data, error } = await sb
+    .from("settings")
+    .select("setting_value")
+    .eq("agency_id", agencyId)
+    .eq("setting_key", key)
+    .maybeSingle();
+  if (error) {
+    throw new Error(
+      `settings read failed for agency ${agencyId} key ${key}: ${error.message}`,
+    );
+  }
+  return data?.setting_value ?? null;
+}
+
+async function getSettingOrNull(
+  agencyId: string,
+  key: string,
+): Promise<string | null> {
+  try {
+    const { data } = await sb
+      .from("settings")
+      .select("setting_value")
+      .eq("agency_id", agencyId)
+      .eq("setting_key", key)
+      .maybeSingle();
+    return (data?.setting_value as string | null) ?? null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+// Batch read — one query for N keys. Missing keys come back as null.
+async function getSettings(
+  agencyId: string,
+  keys: string[],
+): Promise<Record<string, string | null>> {
+  const out: Record<string, string | null> = {};
+  for (const k of keys) out[k] = null;
+  const { data, error } = await sb
+    .from("settings")
+    .select("setting_key,setting_value")
+    .eq("agency_id", agencyId)
+    .in("setting_key", keys);
+  if (error) {
+    throw new Error(`settings batch read failed for agency ${agencyId}: ${error.message}`);
+  }
+  for (const row of data ?? []) {
+    out[(row as any).setting_key] = (row as any).setting_value ?? null;
+  }
+  return out;
+}
+
+// -------------------------------------------------------------------------
+// HTTP responses
+// -------------------------------------------------------------------------
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body, null, 2), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function corsJson(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+  });
+}
+
+// -------------------------------------------------------------------------
+// Text helpers
+// -------------------------------------------------------------------------
+
+// Strip ```json fences an LLM wrapped around its output.
+function stripFences(s: string): string {
+  return s
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```\s*$/i, "")
+    .trim();
+}
+
+// ==================== _shared/watchers.ts ====================
+// =========================================================================
+// _shared/watchers.ts
+// =========================================================================
+// Canonical "something needs a human" writer for ALL Newtworks edge
+// functions. Replaces the retired _shared/alerts.ts.
+//
+// Why this exists: the alerts table was retired 2026-09-16 because nothing
+// read it. A condition that genuinely needs Peter to act now becomes an
+// ordinary row in tasks, so it gets scored, gets hours, and lands in a week
+// like every other piece of work. Both helpers wrap the SQL functions
+// ensure_watcher_task / close_watcher_task so the shaping lives in exactly
+// one place, database side and edge side alike.
+//
+// Dedupe is on created_by ('watcher:' || source) plus related_id, open rows
+// only. related_id must be a uuid or null. When the thing repeats per period
+// and has no uuid of its own, PUT THE PERIOD IN THE SOURCE STRING
+// (e.g. "wrapup_parser_stuck:2026-09-12") and leave relatedId null.
+// =========================================================================
+
+
+// tasks_priority_check allows exactly these four. "urgent" is NOT one of them.
+type WatcherPriority = "low" | "medium" | "high" | "critical";
+
+// tasks.task_category is a fixed check-constrained list. Anything outside it
+// fails the insert.
+type WatcherCategory =
+  | "web_app"
+  | "admin"
+  | "marketing"
+  | "team_development"
+  | "handbook"
+  | "processes"
+  | "finances";
+
+async function ensureWatcherTask(opts: {
+  agencyId: string;
+  source: string;
+  relatedId?: string | null;
+  title: string;
+  description: string;
+  priority?: WatcherPriority;
+  category?: WatcherCategory;
+}): Promise<{ ok: boolean; created: boolean; error: string | null }> {
+  const { data, error } = await sb.rpc("ensure_watcher_task", {
+    p_agency_id: opts.agencyId,
+    p_source: opts.source,
+    p_related_id: opts.relatedId ?? null,
+    p_title: opts.title,
+    p_description: opts.description,
+    p_priority: opts.priority ?? "medium",
+    p_category: opts.category ?? "admin",
+  });
+  if (error) {
+    // Never throw — reporting a problem must not mask the problem being
+    // reported. Surface the miss to whoever reads the function logs.
+    console.error(`ensureWatcherTask failed (${opts.source}): ${error.message}`);
+    return { ok: false, created: false, error: error.message };
+  }
+  return { ok: true, created: data === true, error: null };
+}
+
+async function closeWatcherTask(opts: {
+  agencyId: string;
+  source: string;
+  relatedId?: string | null;
+}): Promise<{ ok: boolean; closed: boolean; error: string | null }> {
+  const { data, error } = await sb.rpc("close_watcher_task", {
+    p_agency_id: opts.agencyId,
+    p_source: opts.source,
+    p_related_id: opts.relatedId ?? null,
+  });
+  if (error) {
+    console.error(`closeWatcherTask failed (${opts.source}): ${error.message}`);
+    return { ok: false, closed: false, error: error.message };
+  }
+  return { ok: true, closed: data === true, error: null };
+}
+
+// ==================== terminate-team-member/index.ts ====================
 // terminate-team-member edge function (v2)
 //
 // Orchestrates a State Farm team-member termination:
@@ -29,9 +250,6 @@
 // but do not roll back the archive.
 
 // deno-lint-ignore-file no-explicit-any
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { sb, getSetting } from "../_shared/supabase.ts";
-import { ensureWatcherTask } from "../_shared/watchers.ts";
 
 const AGENCY_ID = "126794dd-25ff-47d2-a436-724499733365";
 const COMPOSIO_GMAIL_URL = "https://backend.composio.dev/api/v3/tools/execute/GMAIL_SEND_EMAIL";
