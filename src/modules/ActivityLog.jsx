@@ -3633,7 +3633,7 @@ function ChecklistTab() {
   const save = async () => {
     setSaving(true); setErr(""); setOk("");
     const { data, error } = await supabase.rpc("my_wrapup_save", {
-      p_parts: parts, p_code_reds: null, p_code_yellows: null, p_week_ending: null,
+      p_parts: parts, p_week_ending: null,
     });
     setSaving(false);
     if (error) { setErr(error.message || "Could not save the wrap-up."); return false; }
