@@ -29,7 +29,8 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //   rpg_creature_list()                      the creature cards (players: shown ones only)
 //   rpg_creature_card(id)                    one card; players get names, haunts and lore only
 //   rpg_rules_page()                         the Rules tab in one read: rules, formulas, level costs
-//   rpg_needed(skill, difficulty, opposed)   what a roll needs; opposed = the difficulty is someone's skill and counts double
+//   rpg_needed(skill, difficulty)            what a roll needs; the calculator asks the same function a roll does
+//   rpg_difficulty(skill, can_act)           the difficulty a defender presents: their skill × 2 when they can act (skill and will)
 // Items and coins are plain rows the household edits directly (rpg_items, rpg_characters).
 // Show to players is a plain update on rpg_creatures (parents only, by row rules).
 // =========================================================================
@@ -414,7 +415,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
             <input style={{ ...input, width: 70, textAlign: "center", fontSize: 18, fontWeight: 700 }} inputMode="numeric" value={difficulty ?? ""} onChange={e => changeDifficulty(e.target.value)} />
             <button type="button" style={btn("soft", true)} onClick={() => changeDifficulty((effDiff ?? 5) + 1)}>+</button>
           </div>
-          <div style={{ fontSize: 12, color: T.slate500, marginTop: 8 }}>Needed = 100 × difficulty ÷ (difficulty + skill) for a fixed challenge. Against an opponent who can act, their skill counts double. The top 10% of the success range is a critical.</div>
+          <div style={{ fontSize: 12, color: T.slate500, marginTop: 8 }}>Needed = 100 × difficulty ÷ (difficulty + skill). An opponent who can act has difficulty = their skill × 2 (their skill and their will). The top 10% of the success range is a critical.</div>
         </div>
       </div>
 
@@ -884,8 +885,9 @@ function RulesTab({ onError }) {
 }
 
 // Try a roll: pick a skill and a difficulty, see what a d100 needs. rpg_needed() answers, the
-// same function a real roll calls, so this can never disagree with the sheet. The switch is the
-// function's opposed flag: against an opponent who can act, their skill counts double.
+// same function a real roll calls, so this can never disagree with the sheet. Against an
+// opponent, rpg_difficulty() first turns their skill into the difficulty (× 2 when they can act,
+// for their skill and their will), and that number is what rpg_needed() gets.
 function RollCalculator({ defaultDifficulty, onError }) {
   const [skill, setSkill] = useState("5");
   const [difficulty, setDifficulty] = useState(String(Number.isFinite(Number(defaultDifficulty)) ? Number(defaultDifficulty) : 5));
@@ -898,10 +900,17 @@ function RollCalculator({ defaultDifficulty, onError }) {
     if (skill === "" || difficulty === "" || !Number.isFinite(s) || !Number.isFinite(d)) { setCalc(null); return undefined; }
     const mine = ++seq.current;
     const t = setTimeout(async () => {
-      const { data, error } = await supabase.rpc("rpg_needed", { p_skill: Math.max(0, s), p_difficulty: Math.max(0, d), p_opposed: opposed });
+      let diff = Math.max(0, d);
+      if (opposed) {
+        const r = await supabase.rpc("rpg_difficulty", { p_skill: diff, p_can_act: true });
+        if (mine !== seq.current) return;
+        if (r.error) { onError(r.error.message); return; }
+        diff = Number(r.data) || 0;
+      }
+      const { data, error } = await supabase.rpc("rpg_needed", { p_skill: Math.max(0, s), p_difficulty: diff });
       if (mine !== seq.current) return;
       if (error) { onError(error.message); return; }
-      setCalc(data || null);
+      setCalc(data ? { ...data, difficulty: diff } : null);
     }, 200);
     return () => clearTimeout(t);
   }, [skill, difficulty, opposed, onError]);
@@ -914,18 +923,19 @@ function RollCalculator({ defaultDifficulty, onError }) {
     <div style={{ marginTop: 10, background: T.blueLt, border: `1px solid ${T.blue}`, borderRadius: 10, padding: 12, boxSizing: "border-box" }}>
       <div style={label}>Try a roll</div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-        <button type="button" style={btn(!opposed ? "primary" : "soft", true)} onClick={() => setOpposed(false)}>Against a fixed challenge</button>
+        <button type="button" style={btn(!opposed ? "primary" : "soft", true)} onClick={() => setOpposed(false)}>Against a difficulty</button>
         <button type="button" style={btn(opposed ? "primary" : "soft", true)} onClick={() => setOpposed(true)}>Against an opponent</button>
       </div>
       <div style={{ fontSize: 12, color: T.slate600, marginTop: 6 }}>
-        {opposed ? "An opponent who can act: their skill is the difficulty and counts double. Skill 5 against skill 5 needs 67 or more."
-                 : "A fixed challenge (a wall, a lock, a jump) cannot act, so the difficulty counts once. Skill 5 against difficulty 5 needs 50 or more."}
+        {opposed ? "An opponent who can act: the difficulty is their skill × 2, for their skill and their will to use it. Skill 5 against skill 5 is difficulty 10 and needs 67 or more."
+                 : "A fixed challenge, or a defender who cannot act, is just its difficulty number. Skill 5 against difficulty 5 needs 50 or more."}
       </div>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 8 }}>
         <NumberBox title="Your skill" value={skill} onChange={setSkill} />
         <NumberBox title={opposed ? "Their skill" : "Difficulty"} value={difficulty} onChange={setDifficulty} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, marginTop: 10 }}>
+        {opposed && <TableNumber big={calc == null ? "—" : num(calc.difficulty)} small="Difficulty (skill and will)" />}
         <TableNumber big={needed == null ? "—" : `${needed}+`} small="Succeeds" />
         <TableNumber big={crit == null ? "—" : `${crit}+`} small="Critical" />
         <TableNumber big={chance == null ? "—" : `${chance} in 100`} small="Chance to succeed" />
