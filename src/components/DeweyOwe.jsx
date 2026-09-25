@@ -39,7 +39,8 @@ import {
 //    paid) and Balance (left on the whole policy), then SF's latest bill with a
 //    check. Every line sits on its own date. Months alternate and the
 //    regular due dates are marked. A declined payment shows struck through.
-//    The step by step sits behind "Show every step".
+//    The step by step sits behind "Show every step", and what each row
+//    means sits behind "What the rows mean" (the team asked, 2026-09-25).
 //  * Problems show after the button is pressed, not while typing
 //    (Bargas-Avila et al. 2007), the same way the Log tab does it.
 // =====================================================================
@@ -487,11 +488,12 @@ function PaidCell({ c }) {
 }
 
 const GRID_ROWS = [
-  { key: "due", label: "Due", help: "What came due that day: a payment, a fee, a change.", cell: (c) => signed(c.due) },
-  { key: "paid", label: "Paid", help: "What came in that day. A minus is a payment that came back.", cell: (c) => <PaidCell c={c} /> },
-  { key: "owed", label: "Unpaid", help: "Due so far and not paid yet. This is what SF bills and sends notices on. On a future date, what will be owed by then if nothing more is paid. A minus means paid ahead.", cell: (c) => signed(c.owed) },
-  { key: "balance", label: "Balance", help: "What is left to pay on the whole policy. A change, a fee or a payment moves it the day it happens.", cell: (c) => signed(c.balance) },
+  { key: "due", label: "Due", help: "New money that comes due on that date, like a payment, a fee or a change. Money already past due isn't repeated here. It carries in Unpaid.", cell: (c) => signed(c.due) },
+  { key: "paid", label: "Paid", help: "Money that came in on that date. Struck through means it was declined. A minus means it came back.", cell: (c) => <PaidCell c={c} /> },
+  { key: "owed", label: "Unpaid", help: "Everything due so far that hasn't been paid. It's what the customer owes right now, and what SF bills and sends notices on. On a future date, it's what will be owed by then if nothing more is paid. A minus means paid ahead.", cell: (c) => signed(c.owed) },
+  { key: "balance", label: "Balance", help: "What's left to pay on the whole policy, including payments that aren't due yet. Payments bring it down. Changes and fees move it the day they happen.", cell: (c) => signed(c.balance) },
 ];
+const SF_ROW = { label: "SF bill", help: "SF's own number for that date, from its bill, revised amount or cancel notice. \u2713\u00a0means the lines add up to it. \u2260\u00a0means they don't, so look for a missing line." };
 // Peter 2026-09-25: months alternate so they read as groups, and the regular
 // payment due dates stand out.
 const colBg = (c) => (c.today ? T.amberLt : c.total ? T.white : c.band ? T.slate100 : T.white);
@@ -510,7 +512,7 @@ function SfCell({ list, inline }) {
   return (
     <div style={inline ? { display: "flex", flexWrap: "wrap", justifyContent: "flex-end", alignItems: "baseline", gap: "2px 12px" }
       : { display: "grid", gap: 2, justifyItems: "end" }}>
-      {inline && <span style={{ fontSize: 11, fontWeight: 700, color: T.slate500 }}>SF bill</span>}
+      {inline && <span style={{ fontSize: 11, fontWeight: 700, color: T.slate500 }}>{SF_ROW.label}</span>}
       {list.map((x, i) => (
         <span key={i} title={x.ok ? "Matches the lines." : `The lines add up to ${signed(x.expected)}.`} style={{ whiteSpace: "nowrap" }}>
           {x.revised ? <span style={{ fontSize: 10, color: T.slate500, marginRight: 4 }}>revised</span> : null}
@@ -581,7 +583,7 @@ function DateGrid({ grid, width }) {
             ))}
             {anySf && (
               <tr>
-                <th scope="row" title="What SF billed, checked against the lines." style={{ ...th, ...pin, borderTop: `1px solid ${T.slate200}` }}>SF bill</th>
+                <th scope="row" title={SF_ROW.help} style={{ ...th, ...pin, borderTop: `1px solid ${T.slate200}` }}>{SF_ROW.label}</th>
                 {grid.map(c => (
                   <td key={c.key} style={{ ...num, background: colBg(c), borderLeft: edge(c), color: ink(c) }}>
                     {c.sf.length ? <SfCell list={c.sf} /> : null}
@@ -596,12 +598,12 @@ function DateGrid({ grid, width }) {
   }
 
   const heads = ["", ...GRID_ROWS.map(r => r.label)];
-  const cell = { padding: "4px 4px 6px", textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" };
+  const cell = { padding: "4px 3px 6px", textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" };
   return (
     <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
       <table style={{ borderCollapse: "collapse", fontSize: 13, fontVariantNumeric: "tabular-nums", width: "100%", maxWidth: 560 }}>
         <thead>
-          <tr>{heads.map((h, i) => <th key={i} style={{ ...th, textAlign: i ? "right" : "left", padding: "4px 6px" }}>{h}</th>)}</tr>
+          <tr>{heads.map((h, i) => <th key={i} style={{ ...th, textAlign: i ? "right" : "left", padding: "4px 3px" }}>{h}</th>)}</tr>
         </thead>
         <tbody>
           {grid.map(c => (
@@ -609,9 +611,11 @@ function DateGrid({ grid, width }) {
               {c.labels.length > 0 && (
                 <tr style={{ background: colBg(c) }}>
                   <td colSpan={heads.length} style={{ padding: "8px 6px 0", fontSize: 11, fontWeight: 700, borderTop: `1px solid ${T.slate200}` }}>
-                    {c.labels.map((l, i) => (
-                      <span key={i} style={{ color: LABEL_TONE[l.tone] || T.slate700, fontWeight: l.tone === "muted" ? 500 : 700, marginRight: 10, whiteSpace: "nowrap" }}>{l.text}</span>
-                    ))}
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 10px" }}>
+                      {c.labels.map((l, i) => (
+                        <span key={i} style={{ color: LABEL_TONE[l.tone] || T.slate700, fontWeight: l.tone === "muted" ? 500 : 700, whiteSpace: "nowrap" }}>{l.text}</span>
+                      ))}
+                    </div>
                   </td>
                 </tr>
               )}
@@ -661,20 +665,58 @@ function StepList({ steps, onJump }) {
   );
 }
 
+// What each row means, one tap under the grid (the team asked, 2026-09-25).
+// Same words as the row names' hover text, so they change in one place. Today's
+// column is put into words last, so Unpaid and Balance sit side by side with
+// the customer's real numbers.
+function todayInWords(c, many) {
+  const what = many ? "all the policies it pays for" : "the whole policy";
+  const $a = (v) => `$${fmtAmount(v)}`;
+  const owed = c.owed > 0 ? `${$a(c.owed)} is unpaid` : c.owed < 0 ? `they're ${$a(c.owed)} paid ahead` : "nothing is unpaid";
+  const left = c.balance > 0 ? `${$a(c.balance)} is left on ${what}` : c.balance < 0 ? `they've paid ${$a(c.balance)} more than ${what} costs` : `nothing is left on ${what}`;
+  return `Today ${owed}, and ${left}.`;
+}
+function RowKey({ grid, many }) {
+  const rows = grid.some(c => c.sf.length) ? [...GRID_ROWS, SF_ROW] : GRID_ROWS;
+  const now = grid.find(c => c.today);
+  return (
+    <div style={{ display: "grid", gap: 8, maxWidth: 620 }}>
+      {rows.map(r => (
+        <div key={r.label} style={{ display: "grid", gridTemplateColumns: "64px 1fr", gap: 10, fontSize: 13, lineHeight: 1.45 }}>
+          <span style={{ fontWeight: 800, color: T.slate900 }}>{r.label}</span>
+          <span style={{ color: T.slate700 }}>{r.help}</span>
+        </div>
+      ))}
+      {now && now.owed != null && now.balance != null && (
+        <div style={{ fontSize: 13, lineHeight: 1.45, color: T.slate800, background: T.amberLt, borderRadius: 8, padding: "8px 12px" }}>
+          {todayInWords(now, many)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SectionExplained({ s, showTitle, width, onJump }) {
   const [stepsOpen, setStepsOpen] = useState(false);
+  const [keyOpen, setKeyOpen] = useState(false);
   return (
     <div style={{ display: "grid", gap: 10 }}>
       {showTitle && <div style={{ fontSize: 14, fontWeight: 800, color: T.slate900 }}>{s.title}</div>}
       <DateGrid grid={s.grid} width={width} />
-      {s.steps.length > 0 && (
-        <div>
-          <button type="button" onClick={() => setStepsOpen(o => !o)} aria-expanded={stepsOpen} style={linkBtn}>
-            {stepsOpen ? "Hide the steps" : "Show every step"}
+      <div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 20px" }}>
+          {s.steps.length > 0 && (
+            <button type="button" onClick={() => setStepsOpen(o => !o)} aria-expanded={stepsOpen} style={linkBtn}>
+              {stepsOpen ? "Hide the steps" : "Show every step"}
+            </button>
+          )}
+          <button type="button" onClick={() => setKeyOpen(o => !o)} aria-expanded={keyOpen} style={linkBtn}>
+            {keyOpen ? "Hide what the rows mean" : "What the rows mean"}
           </button>
-          {stepsOpen && <div style={{ marginTop: 10 }}><StepList steps={s.steps} onJump={onJump} /></div>}
         </div>
-      )}
+        {keyOpen && <div style={{ marginTop: 10 }}><RowKey grid={s.grid} many={s.kind === "billing"} /></div>}
+        {stepsOpen && <div style={{ marginTop: 10 }}><StepList steps={s.steps} onJump={onJump} /></div>}
+      </div>
     </div>
   );
 }
@@ -685,8 +727,10 @@ function Explanation({ expl, who, onClose, onJump }) {
   const [eachOpen, setEachOpen] = useState(false);
   const billing = (expl.sections || []).filter(s => s.kind === "billing");
   const accounts = (expl.sections || []).filter(s => s.kind === "account");
+  // Less padding on a phone, so four amounts fit across without scrolling sideways.
+  const pad = width > 0 && width < 520 ? 12 : 18;
   return (
-    <section ref={ref} style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 18, display: "grid", gap: 16 }}>
+    <section ref={ref} style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: pad, display: "grid", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
         <div style={{ fontSize: 16, fontWeight: 800, color: T.slate900 }}>
           {expl.ok ? `Here's what happened${who ? ` for ${who}` : ""}` : "A few lines need fixing first"}
@@ -703,7 +747,7 @@ function Explanation({ expl, who, onClose, onJump }) {
           ))}
         </div>
       )}
-      {expl.ok && billing.map(s => <SectionExplained key={String(s.key)} s={s} showTitle width={width - 36} onJump={onJump} />)}
+      {expl.ok && billing.map(s => <SectionExplained key={String(s.key)} s={s} showTitle width={width - 2 * pad} onJump={onJump} />)}
       {expl.ok && billing.length > 0 && accounts.length > 0 && (
         <div>
           <button type="button" onClick={() => setEachOpen(o => !o)} aria-expanded={eachOpen} style={linkBtn}>
@@ -712,7 +756,7 @@ function Explanation({ expl, who, onClose, onJump }) {
         </div>
       )}
       {expl.ok && (!billing.length || eachOpen) && accounts.map(s => (
-        <SectionExplained key={String(s.key)} s={s} showTitle={billing.length > 0 || accounts.length > 1} width={width - 36} onJump={onJump} />
+        <SectionExplained key={String(s.key)} s={s} showTitle={billing.length > 0 || accounts.length > 1} width={width - 2 * pad} onJump={onJump} />
       ))}
       {expl.warnings.length > 0 && (
         <div style={{ display: "grid", gap: 6 }}>
