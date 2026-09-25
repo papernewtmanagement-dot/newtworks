@@ -54,9 +54,9 @@ const PARENT_ROLES = ["owner", "admin"];
 const TABS = ["characters", "creatures", "rules", "play"];
 const TAB_LABELS = { characters: "Characters", creatures: "Creatures", rules: "Rules", play: "Play" };
 const GROUPS = [
-  ["strength", "Strengths"],
-  ["physical", "Physical Attributes"],
-  ["spiritual", "Spiritual Attributes"],
+  ["strength", "Spiritual Traits"],
+  ["physical", "Physical Traits"],
+  ["spiritual", "Spiritual Skills"],
   ["ability", "Character Abilities"],
   ["fighting", "Fighting"],
 ];
@@ -852,13 +852,13 @@ function CreatureGmCard({ c, accent }) {
         </div>
       </div>
 
-      <Fold title="Actions and traits" open>
+      <Fold title="Actions and nature" open>
         {group("Actions", ofKind("action"))}
         {group("Bonus actions", ofKind("bonus_action"))}
         {group("Reactions", ofKind("reaction"))}
         {group(`Legendary actions (${num(c.legendary_per_round)} a round)`, ofKind("legendary"), c.legendary_intro)}
         {group(c.lair_title ? `Lair actions (${c.lair_title})` : "Lair actions", ofKind("lair"), c.lair_intro)}
-        {group("Traits", ofKind("trait"))}
+        {group("Nature", ofKind("trait"))}
       </Fold>
 
       <Fold title="Printed stat block (the d20 numbers, for reading)">
