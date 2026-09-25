@@ -260,11 +260,10 @@ const AGENCY_ID = "126794dd-25ff-47d2-a436-724499733365";
 const COMPOSIO_GMAIL_URL = "https://backend.composio.dev/api/v3/tools/execute/GMAIL_SEND_EMAIL";
 const NOTICE_RECIPIENT = "peter.story.yrru@statefarm.com";
 
+// Every reply carries the CORS headers. The site calls this from the browser,
+// and without them the browser throws the reply away.
 function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+  return corsJson(body, status);
 }
 
 function htmlEscape(s: string | null | undefined): string {
@@ -350,6 +349,9 @@ async function logAlert(severity: string, title: string, message: string): Promi
 }
 
 Deno.serve(async (req: Request) => {
+  // The browser asks permission before the real call (CORS preflight). Answering
+  // it with a 405 is what made the site report "Failed to send a request".
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS_HEADERS });
   if (req.method !== "POST") return json({ error: "POST only" }, 405);
 
   let body: TerminateBody;
