@@ -1352,9 +1352,10 @@ const StaffDirectory = ({ staff }) => {
   // be linked to the new team row once it exists.
   const [hiredFrom, setHiredFrom] = useState(null);
 
-  // Hired-from-pipeline handoff. CandidateDetail's stage stepper opens
-  // /team?tab=members&newhire=<candidate id> in a new tab when a candidate is
-  // moved to Hired; this reads that candidate and fills in what the hiring
+  // Hired-from-pipeline handoff. CandidateDetail's stage stepper sends you to
+  // /team?tab=members&newhire=<candidate id>, in the same tab and only after
+  // asking, when a candidate moved to Hired has no team record yet. This reads
+  // that candidate and fills in what the hiring
   // record actually knows — name, personal email, personal phone. Role, level,
   // employment type, start date and licensing are left blank on purpose: the
   // job posting title a candidate applied under is not the same vocabulary as

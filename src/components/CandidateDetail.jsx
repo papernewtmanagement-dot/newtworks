@@ -2322,15 +2322,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     // the way they do for the interview — and the picker books the calendar
     // event, emails the candidate and does the stage write itself.
     if (newStatus === "meet_and_greet") { setMeetGreetOpen(true); return; }
-    // Moving to Hired opens the new team member form in a second tab with this
-    // candidate's details already filled in. The tab is opened here, before the
-    // first await, because browsers only allow a new window while the click that
-    // asked for it is still being handled — opening it after the database write
-    // comes back gets it blocked. If the write then fails we close it again.
-    let hireTab = null;
-    if (newStatus === "hired" && typeof window !== "undefined") {
-      hireTab = window.open(`/team?tab=members&newhire=${encodeURIComponent(detail.id)}`, "_blank");
-    }
     setStageSaving(newStatus);
     const nowIso = new Date().toISOString();
     const { error } = await supabase
@@ -2339,14 +2330,8 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
       .eq("id", detail.id);
     if (error) {
       setStageSaving(null);
-      try { if (hireTab && !hireTab.closed) hireTab.close(); } catch (e) { /* popup blocked — nothing to close */ }
       alert("Stage change failed: " + error.message);
       return;
-    }
-    if (newStatus === "hired" && !hireTab) {
-      // The browser blocked the second tab. Say so plainly rather than leaving
-      // the impression the form is waiting somewhere.
-      alert("Moved to Hired. Your browser blocked the new tab — open Team › Members and use + Add member.");
     }
     const { data } = await supabase
       .from("v_hiring_candidates")
@@ -2357,6 +2342,14 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     if (data) setDetail(data);
     else setDetail(prev => ({ ...prev, status: newStatus, status_updated_at: nowIso }));
     if (typeof onUpdate === "function") onUpdate(detail.id, newStatus, { alreadyPersisted: true });
+    // Moving to Hired never opens a second tab (Peter 2026-09-25). The team
+    // record is normally built when the offer is accepted, or entered by hand.
+    // Only when it is still missing, offer the prefilled form, in this tab.
+    const teamMemberId = data ? data.team_member_id : detail.team_member_id;
+    if (newStatus === "hired" && !teamMemberId
+        && window.confirm("Moved to Hired. They don't have a team record yet. Open the new team member form now?")) {
+      window.location.assign(`/team?tab=members&newhire=${encodeURIComponent(detail.id)}`);
+    }
   };
 
   const saveDecline = async () => {
