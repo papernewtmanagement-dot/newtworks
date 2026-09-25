@@ -489,7 +489,7 @@ function PaidCell({ c }) {
 const GRID_ROWS = [
   { key: "due", label: "Due", help: "What came due that day: a payment, a fee, a change.", cell: (c) => signed(c.due) },
   { key: "paid", label: "Paid", help: "What came in that day. A minus is a payment that came back.", cell: (c) => <PaidCell c={c} /> },
-  { key: "owed", label: "Unpaid", help: "Due so far and not paid yet. This is what SF bills and sends notices on. A minus means paid ahead.", cell: (c) => signed(c.owed) },
+  { key: "owed", label: "Unpaid", help: "Due so far and not paid yet. This is what SF bills and sends notices on. On a future date, what will be owed by then if nothing more is paid. A minus means paid ahead.", cell: (c) => signed(c.owed) },
   { key: "balance", label: "Balance", help: "What is left to pay on the whole policy. A change, a fee or a payment moves it the day it happens.", cell: (c) => signed(c.balance) },
 ];
 // Peter 2026-09-25: months alternate so they read as groups, and the regular

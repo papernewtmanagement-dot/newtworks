@@ -644,6 +644,10 @@ export function explainBilling({ rows, accounts, today }) {
     sf: { cents: c, expected, ok: Math.abs(c - expected) <= MATCH_CENTS, revised: r.type === "autopay_revised_due", notice: t.role === "notice",
       note: moved ? `${fmtAmount(moved.diff)} ${moved.diff < 0 ? "moved to later payments" : "moved up from later payments"}` : "" },
   });
+  // A cancel notice's pay-by date gets its own column, so the deadline shows in
+  // the grid and Unpaid under it says what has to be paid by then.
+  const payBy = (r, t) => (t.role === "notice" && r.dueDate
+    ? [{ date: r.dueDate, label: "Pay by, or it cancels", tone: "bounce" }] : []);
 
   // ---------- one line on an account ----------
   const walkPolicy = (st, r, t, c, base) => {
@@ -779,7 +783,7 @@ export function explainBilling({ rows, accounts, today }) {
           `${t.role === "notice" ? "Past due as of" : "By"} ${when(cutoff, today)}: ${parts.join(" ")} = ${$s(expected)}.`, c - expected, cutoff);
         if (moved) step.sub.unshift(movedText(moved));
         st.steps.push(step);
-        st.ev.push(sfEvent(r, t, c, expected, cutoff, moved));
+        st.ev.push(sfEvent(r, t, c, expected, cutoff, moved), ...payBy(r, t));
         break;
       }
       default:
@@ -855,7 +859,7 @@ export function explainBilling({ rows, accounts, today }) {
         if (feesOut) parts.push(`${$s(feesOut)} in fees`);
         bs.steps.push(billStep(base, r, t, c,
           `${t.role === "notice" ? "Past due as of" : "By"} ${when(cutoff, today)}: ${parts.join(" + ")} = ${$s(expected)}.`, c - expected, cutoff));
-        bs.ev.push(sfEvent(r, t, c, expected, cutoff));
+        bs.ev.push(sfEvent(r, t, c, expected, cutoff), ...payBy(r, t));
         break;
       }
       default:
@@ -886,6 +890,10 @@ export function explainBilling({ rows, accounts, today }) {
   // Two running totals (Peter 2026-09-25): Unpaid is what has come due and
   // not been paid, the number SF bills and sends notices on. Balance is what
   // is left on the whole policy, so a change or a fee moves it the day it hits.
+  // Unpaid shows on future dates too: what will be owed by then if nothing
+  // more is paid. A past-due amount carries into the next amount due, so SF's
+  // bill for that payment lines up with it (team question, Kevin J 6573,
+  // 2026-09-25). Balance stays blank ahead: only a payment or a change moves it.
   const buildGrid = (installments, events) => {
     const cols = new Map();
     const col = (d) => {
@@ -926,7 +934,7 @@ export function explainBilling({ rows, accounts, today }) {
       const sf = c.sf.filter((x, i) => x.notice || i === lastBill);
       return { key: c.date, date: c.date, today: c.date === today, future, isDue: c.isDue, band, labels: c.labels,
         due: c.hasDue ? c.due : null, pays: c.pays, paid: c.pays.length ? paid : null,
-        owed: future ? null : owed, balance: future ? null : left, sf };
+        owed, balance: future ? null : left, sf };
     });
     out.push({ key: "total", total: true, labels: [], due: dueAll, pays: [], paid: paidAll, owed: null, balance: left, sf: [] });
     return out;
