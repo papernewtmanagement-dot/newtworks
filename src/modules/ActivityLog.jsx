@@ -15,6 +15,7 @@ import { kickoffToday } from "../lib/kickoff.js";
 import CommitPicker from "../components/CommitPicker.jsx";
 import InfoDot from "../components/InfoDot.jsx";
 import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
+import { checklistBands } from "../lib/checklist.js";
 import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 import DeweyOwe from "../components/DeweyOwe.jsx";
 import { noPwManager } from "../lib/forms.js";
@@ -3262,12 +3263,21 @@ const checklistRowBtn = {
   boxSizing: "border-box", border: `1px solid ${T.slate300}`, background: T.white, color: T.slate600,
 };
 
-function ChecklistRow({ item, checked, byLabel, byOwner, busy, disabled, onToggle, openHelp, setOpenHelp, editMode, onEdit, onMove, children }) {
+function ChecklistRow({ item, checked, byLabel, byOwner, busy, disabled, onToggle, openHelp, setOpenHelp, editMode, onEdit, onMove, band, children }) {
   const open = openHelp === item.id;
   const off = !!busy || !!disabled;
+  // Team rows carry their group's background (Peter 2026-09-25). The color
+  // reaches 8px past the words on each side, so nothing on the row moves.
+  const round = (on) => (on ? 8 : 0);
+  const bandStyle = band ? {
+    background: band.bg, margin: "0 -8px", padding: "0 8px",
+    borderTopLeftRadius: round(band.first), borderTopRightRadius: round(band.first),
+    borderBottomLeftRadius: round(band.last), borderBottomRightRadius: round(band.last),
+  } : undefined;
+  const noRule = open || children || band?.last;
   return (
-    <div>
-      <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 2px", borderBottom: open || children ? "none" : `1px solid ${T.slate100}` }}>
+    <div style={bandStyle}>
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "8px 2px", borderBottom: noRule ? "none" : `1px solid ${band ? band.rule : T.slate100}` }}>
         <input
           type="checkbox"
           id={`chk_${item.id}`}
@@ -3716,6 +3726,8 @@ function ChecklistTab() {
 
   const canEdit = !!state?.can_edit;
   const items = Array.isArray(state?.items) ? state.items : [];
+  // Each team row's background, by its group (Peter 2026-09-25).
+  const bands = checklistBands(items.map((i) => i.item_type));
   const cleared = items.filter(i => i.ticked_at).length;
   const personal = Array.isArray(state?.personal) ? state.personal : [];
   const commitHitNames = commitPeople.filter(p => p.hit === true).map(p => p.name).join(", ");
@@ -3812,10 +3824,11 @@ function ChecklistTab() {
         <div style={{ marginTop: 12 }}>
           {items.length === 0
             ? <div style={{ fontSize: 13, color: T.slate500 }}>No items for this day.</div>
-            : items.map(it => (
+            : items.map((it, idx) => (
                 <ChecklistRow
                   key={it.id}
                   item={it}
+                  band={bands[idx]}
                   checked={!!it.ticked_at}
                   byLabel={it.ticked_at ? it.ticked_by : null}
                   byOwner={!!it.by_owner}

@@ -4,6 +4,7 @@ import { T, BAND } from "../lib/theme.js";
 import { fmtMoney as _fmtMoney, fmtMoneyR as _fmtMoneyR } from "../lib/format.jsx";
 import { addDaysISO, currentWeekSaturdayCT } from "../lib/weeks.js";
 import { ChangeGroups, groupChangesByOwner } from "../lib/changeLog.jsx";
+import { checklistBands } from "../lib/checklist.js";
 
 
 // Sales Points band badge colours (Peter 2026-08-28). The badge shows the
@@ -1841,6 +1842,9 @@ function TeamChecklistLive({ report, weekDate, editMode, formReport, isReportDir
   const personalRows = personalKeys.map(([key, label]) => ({
     key, label, missed: people.filter((d) => !personalVal(d, key)),
   }));
+  // Same group colors as the Checklist tab, from the same item_type column
+  // (Peter 2026-09-25). Wrap-up and Inbox close the table as a group of their own.
+  const bands = checklistBands([...items.map((it) => it.item_type), ...personalRows.map(() => "personal")]);
   const hits = items.filter((it) => it.done === true).length
     + personalRows.filter((r) => people.length > 0 && r.missed.length === 0).length;
   const dayLabel = (iso) => {
@@ -1864,12 +1868,12 @@ function TeamChecklistLive({ report, weekDate, editMode, formReport, isReportDir
             </tr>
           </thead>
           <tbody>
-            {items.map((it) => {
+            {items.map((it, idx) => {
               const val = valueOf(it);
               const dirty = editMode ? isReportDirty(CHECKLIST_KEY_PREFIX + it.id) : false;
               const ticks = it.ticks && typeof it.ticks === "object" ? it.ticks : {};
               return (
-                <tr key={it.id} style={{ borderTop: `1px solid ${T.slate200}`, background: dirty ? (T.amber50 || "#fef3c7") : "transparent" }}>
+                <tr key={it.id} style={{ borderTop: `1px solid ${T.slate200}`, background: dirty ? (T.amber50 || "#fef3c7") : (bands[idx]?.bg || "transparent") }}>
                   <td style={{ fontSize: 12, color: T.slate700, padding: "5px 6px" }}>{it.title}</td>
                   {workdays.map((d) => {
                     const t = ticks[d];
@@ -1888,10 +1892,10 @@ function TeamChecklistLive({ report, weekDate, editMode, formReport, isReportDir
                 </tr>
               );
             })}
-            {personalRows.map((r) => {
+            {personalRows.map((r, j) => {
               const rowDirty = editMode && people.some((d) => isDetailDirty?.(d.id, r.key));
               return (
-                <tr key={r.key} style={{ borderTop: `1px solid ${T.slate200}`, background: rowDirty ? (T.amber50 || "#fef3c7") : "transparent" }}>
+                <tr key={r.key} style={{ borderTop: `1px solid ${T.slate200}`, background: rowDirty ? (T.amber50 || "#fef3c7") : (bands[items.length + j]?.bg || "transparent") }}>
                   <td style={{ fontSize: 12, color: T.slate700, padding: "5px 6px" }}>{r.label}</td>
                   {workdays.length > 0 && <td colSpan={workdays.length} />}
                   <td style={{ textAlign: "center", padding: "3px 6px", fontSize: 12 }}>
