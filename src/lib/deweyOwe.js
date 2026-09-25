@@ -170,6 +170,10 @@ export function tidyAmount(row) {
 }
 
 // ---------- helpers ----------
+// A grid amount: 1,234.56 with no dollar sign. The sign is shown by the caller.
+export function fmtAmount(c) {
+  return (Math.abs(c) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 const $ = (c) => fmtMoney(Math.abs(c) / 100, { decimals: 2 });
 const $s = (c) => (c < 0 ? `\u2212${$(c)}` : $(c));
 function when(iso, today) {
@@ -460,12 +464,12 @@ export function explainBilling({ rows, accounts, today }) {
     });
     S.set(a, {
       key: a, lob, plan, nPay, gap, terms, termByStart: new Map(terms.map(t => [t.start.id, t])), hasNB: L.info.get(a).hasNB,
-      cur: null, premium: 0, changesNet: 0, credits: 0, paid: 0, paidIn: 0, reversed: 0, oneTime: [], steps: [],
+      cur: null, premium: 0, changesNet: 0, credits: 0, paid: 0, paidIn: 0, reversed: 0, oneTime: [], steps: [], ev: [],
     });
   }
   const Bs = new Map();
   for (const b of billingKeys) {
-    Bs.set(b, { key: b, covers: coversOf(b), fees: [], paidB: 0, paidIn: 0, reversed: 0, steps: [], splits: new Map() });
+    Bs.set(b, { key: b, covers: coversOf(b), fees: [], paidB: 0, paidIn: 0, reversed: 0, steps: [], ev: [], splits: new Map() });
   }
 
   const sumC = (list, kind) => list.reduce((s, o) => s + (!kind || o.kind === kind ? o.cents : 0), 0);
@@ -563,6 +567,15 @@ export function explainBilling({ rows, accounts, today }) {
       : `Waiver. SF took ${$(c)} in fees back off.` };
   };
 
+  const feeName = (r) => (r.type === "late_fee" ? "Late fee" : "Return fee");
+  // SF's own amount goes in the grid on the day it is due (a cancel notice on
+  // the day it was sent), checked against what the lines add up to.
+  const sfEvent = (r, t, c, expected) => ({
+    date: t.role === "notice" ? r.processDate : (r.dueDate || r.processDate),
+    label: t.role === "notice" ? "Cancel notice" : null, tone: "bounce",
+    sf: { cents: c, expected, ok: Math.abs(c - expected) <= MATCH_CENTS, revised: r.type === "autopay_revised_due" },
+  });
+
   // ---------- one line on an account ----------
   const walkPolicy = (st, r, t, c, base) => {
     if (r.type === "binder" && st.hasNB) {
@@ -580,6 +593,7 @@ export function explainBilling({ rows, accounts, today }) {
       if (r.type === "binder") sub.unshift("There is no New Business line, so the Binder counts as the start.");
       st.steps.push({ ...base, tone: "start",
         text: `${label(r.type)}. ${st.lob.label} policy, ${$(st.cur.P)} for ${st.lob.months} months, starting ${when(st.cur.S, today)}.`, sub });
+      st.ev.push({ date: st.cur.S, label: `${label(r.type)} ${fmtAmount(st.cur.P)}`, tone: "start" });
       return;
     }
     const term = st.cur || st.terms[0];
@@ -588,8 +602,10 @@ export function explainBilling({ rows, accounts, today }) {
         st.changesNet += c;
         const nm = r.type === "policy_change" ? "Policy change" : "Billing change";
         const why = r.type === "billing_change" ? " A correction to the bill." : "";
+        const E = r.dueDate || r.processDate;
+        if (c > 0) st.ev.push({ date: E, label: `${nm} +${fmtAmount(c)}`, tone: "change" });
+        if (c < 0) st.ev.push({ date: E, label: `${nm} \u2212${fmtAmount(c)}`, tone: "credit", due: c });
         if (c > 0) {
-          const E = r.dueDate || r.processDate;
           const left = term.dates.map((d, k) => (d >= E ? k : -1)).filter(k => k >= 0);
           if (left.length) {
             const shares = split(c, left.length);
@@ -598,6 +614,7 @@ export function explainBilling({ rows, accounts, today }) {
               ? `One payment left, so it all goes on that one. It is now ${$(term.amts[left[0]])}.`
               : `Split over the ${left.length} payments left: about ${$(shares[shares.length - 1])} more on each. Payments are now about ${$(term.amts[left[left.length - 1]])}.`] });
           } else {
+            st.ev[st.ev.length - 1].due = c;
             st.oneTime.push({ date: lineDate(r), cents: c, kind: "extra" });
             st.steps.push({ ...base, text: `${nm} added ${$(c)}.${why}`, sub: ["No payments left in this term, so it is due all at once."] });
           }
@@ -613,12 +630,14 @@ export function explainBilling({ rows, accounts, today }) {
         st.paid += c;
         st.paidIn += c;
         if (!r.auto) st.steps.push({ ...base, tone: "good", text: `Paid ${$(c)}.`, sub: [`Paid so far: ${$s(st.paid)}.`] });
+        if (!r.auto) st.ev.push({ date: lineDate(r), paid: c, bucket: true });
         break;
       }
       case "declined": {
         st.paid += c;
         st.reversed -= c;
         st.steps.push({ ...base, tone: "warn", text: `A ${$(c)} payment was declined. It never went through.`, sub: feeLines(L.groupOf.get(r.id)) });
+        st.ev.push({ date: lineDate(r), label: `Declined ${fmtAmount(c)}`, tone: "bounce" });
         break;
       }
       case "return": {
@@ -630,14 +649,17 @@ export function explainBilling({ rows, accounts, today }) {
           text: m ? `The ${$(c)} payment from ${when(lineDate(m), today)} came back. It no longer counts as paid.`
                   : `A ${$(c)} payment came back. It no longer counts as paid.`,
           sub: feeLines(g) });
+        st.ev.push({ date: lineDate(r), label: `Returned ${fmtAmount(c)}`, tone: "bounce", paid: c });
         break;
       }
       case "waiver": {
         st.steps.push(waive(st.oneTime, r, c, base, (v) => st.oneTime.push({ id: r.id, date: lineDate(r), cents: -v, kind: "fee" })));
+        st.ev.push({ date: lineDate(r), label: `Waiver \u2212${fmtAmount(c)}`, tone: "credit", due: -c });
         break;
       }
       case "fee": {
         st.oneTime.push({ id: r.id, date: lineDate(r), cents: -c, kind: "fee" });
+        st.ev.push({ date: lineDate(r), label: `${feeName(r)} ${fmtAmount(c)}`, tone: "fee", due: -c });
         if (!L.groupOf.get(r.id)) {
           st.steps.push({ ...base, tone: "warn", text: `${r.type === "late_fee" ? "Late payment fee" : "Return payment fee"}: ${$(c)}.` });
         }
@@ -658,6 +680,7 @@ export function explainBilling({ rows, accounts, today }) {
         const expected = expectedOf(st, cutoff);
         st.steps.push(billStep(base, r, t, c,
           `${t.role === "notice" ? "Past due as of" : "By"} ${when(cutoff, today)}: ${parts.join(" ")} = ${$s(expected)}.`, c - expected));
+        st.ev.push(sfEvent(r, t, c, expected));
         break;
       }
       default:
@@ -676,10 +699,12 @@ export function explainBilling({ rows, accounts, today }) {
         bs.paidIn += c;
         if (r.auto) break;
         bs.steps.push({ ...base, tone: "good", text: `Paid ${$(c)}.`, sub: [`Split, oldest amount due first: ${shareText(shares, "to")}`] });
+        bs.ev.push({ date: lineDate(r), paid: c, bucket: true });
         for (const [k, v] of shares) {
           if (k === "fees" || !v) continue;
           const st = S.get(k);
           st.steps.push({ ...base, tone: "good", text: `${$(v)} of a ${$(c)} ${accountLabel(bs.key)} payment came here.`, sub: [`Paid so far: ${$s(st.paid)}.`] });
+          st.ev.push({ date: lineDate(r), paid: v, bucket: true, via: bs.key });
         }
         break;
       }
@@ -688,6 +713,7 @@ export function explainBilling({ rows, accounts, today }) {
         if (shares) applyShares(bs, shares, -1);
         bs.reversed -= c;
         bs.steps.push({ ...base, tone: "warn", text: `A ${$(c)} payment was declined. It never went through.`, sub: feeLines(g) });
+        bs.ev.push({ date: lineDate(r), label: `Declined ${fmtAmount(c)}`, tone: "bounce" });
         break;
       }
       case "return": {
@@ -699,19 +725,23 @@ export function explainBilling({ rows, accounts, today }) {
           text: m ? `The ${$(c)} payment from ${when(lineDate(m), today)} came back. It no longer counts as paid.`
                   : `A ${$(c)} payment came back. It no longer counts as paid.`,
           sub: [`Taken back: ${shareText(shares, "from")}`, ...feeLines(g)] });
+        bs.ev.push({ date: lineDate(r), label: `Returned ${fmtAmount(c)}`, tone: "bounce", paid: c });
         for (const [k, v] of shares) {
           if (k === "fees" || !v) continue;
           const st = S.get(k);
           st.steps.push({ ...base, tone: "warn", text: `A ${accountLabel(bs.key)} payment came back. ${$(v)} of it comes off here.`, sub: [`Paid so far: ${$s(st.paid)}.`] });
+          st.ev.push({ date: lineDate(r), label: `${accountLabel(bs.key)} payment returned`, tone: "bounce", paid: -v, via: bs.key });
         }
         break;
       }
       case "waiver": {
         bs.steps.push(waive(bs.fees, r, c, base, (v) => bs.fees.push({ id: r.id, date: lineDate(r), cents: -v, kind: "fee" })));
+        bs.ev.push({ date: lineDate(r), label: `Waiver \u2212${fmtAmount(c)}`, tone: "credit", due: -c });
         break;
       }
       case "fee": {
         bs.fees.push({ id: r.id, date: lineDate(r), cents: -c, kind: "fee" });
+        bs.ev.push({ date: lineDate(r), label: `${feeName(r)} ${fmtAmount(c)}`, tone: "fee", due: -c });
         if (!g) bs.steps.push({ ...base, tone: "warn", text: `${r.type === "late_fee" ? "Late payment fee" : "Return payment fee"}: ${$(c)}.` });
         break;
       }
@@ -725,6 +755,7 @@ export function explainBilling({ rows, accounts, today }) {
         if (feesOut) parts.push(`${$s(feesOut)} in fees`);
         bs.steps.push(billStep(base, r, t, c,
           `${t.role === "notice" ? "Past due as of" : "By"} ${when(cutoff, today)}: ${parts.join(" + ")} = ${$s(expected)}.`, c - expected));
+        bs.ev.push(sfEvent(r, t, c, expected));
         break;
       }
       default:
@@ -746,63 +777,64 @@ export function explainBilling({ rows, accounts, today }) {
     }
   }
 
-  // ---------- the bottom lines ----------
-  const leftItem = (left, whole) => (left > MATCH_CENTS ? { key: "left", label: "Still to pay", value: $(left), note: whole }
-    : left < -MATCH_CENTS ? { key: "left", label: "Overpaid", value: $(left), note: "That is a credit to the customer." }
-    : { key: "left", label: "Still to pay", value: $(0), note: "Paid in full." });
-  const nowItem = (nowDue) => (nowDue > MATCH_CENTS ? { key: "now", tone: "warn", label: "Behind today", value: $(nowDue), note: "Should already be paid, and is not." }
-    : nowDue < -MATCH_CENTS ? { key: "now", tone: "good", label: "Ahead today", value: $(nowDue), note: "Paid more than is due so far." }
-    : { key: "now", tone: "good", label: "Today", value: "On schedule", note: "" });
-  const costOf = (st) => st.premium + st.changesNet + sumC(st.oneTime, "fee");
+  // ---------- the grid: dates across, what was due, paid and still owed ----------
+  // Peter 2026-09-25: the answer is a small grid like his spreadsheet, not a lot
+  // of reading. One column per date that matters: every payment due date, and
+  // the day of each change, fee, waiver, bounced payment and SF bill. A payment
+  // lands in the first column on or after the day it was made. Today gets a
+  // column, and Total ends the row.
+  const installmentsOf = (st) => st.terms.flatMap(t => t.dates.map((d, k) => ({ date: d, cents: t.amts[k] })));
+  const buildGrid = (installments, events) => {
+    const cols = new Map();
+    const col = (d) => {
+      if (!cols.has(d)) cols.set(d, { date: d, labels: [], due: 0, paid: 0, sf: [], hasDue: false, hasPaid: false });
+      return cols.get(d);
+    };
+    for (const it of installments) { const c = col(it.date); c.due += it.cents; c.hasDue = true; }
+    for (const e of events) if (e.date && !e.bucket) col(e.date);
+    const firstDate = [...cols.keys()].sort()[0];
+    if (!firstDate || today >= firstDate) col(today);
+    const ordered = () => [...cols.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    for (const e of events) {
+      if (!e.date) continue;
+      const c = (e.bucket ? ordered().find(x => x.date >= e.date) : cols.get(e.date)) || col(e.date);
+      if (e.label) c.labels.push({ text: e.label, tone: e.tone || "" });
+      if (e.due) { c.due += e.due; c.hasDue = true; }
+      if (e.paid) { c.paid += e.paid; c.hasPaid = true; }
+      if (e.sf) c.sf.push(e.sf);
+    }
+    let run = 0;
+    let dueAll = 0;
+    let paidAll = 0;
+    const out = ordered().map(c => {
+      run += c.due - c.paid;
+      dueAll += c.due;
+      paidAll += c.paid;
+      const future = c.date > today;
+      return { key: c.date, date: c.date, today: c.date === today, future, labels: c.labels,
+        due: c.hasDue ? c.due : null, paid: c.hasPaid ? c.paid : null, balance: future ? null : run, sf: c.sf };
+    });
+    out.push({ key: "total", total: true, labels: [], due: dueAll, paid: paidAll, balance: run, sf: [] });
+    return out;
+  };
   const planWords = (st) => (st.nPay === 1 ? "paid in full" : st.nPay === 2 ? "2 payments" : "monthly payments");
 
   const sections = [];
   for (const bs of Bs.values()) {
-    const sts = bs.covers.map(a => S.get(a)).filter(Boolean);
-    const feesB = sumC(bs.fees);
-    const cost = sts.reduce((s, st) => s + costOf(st), 0) + feesB;
-    const paid = sts.reduce((s, st) => s + st.paid, 0) + bs.paidB;
-    const nowDue = sts.reduce((s, st) => s + expectedOf(st, today), 0) + feesB - bs.paidB;
+    const inst = bs.covers.flatMap(a => installmentsOf(S.get(a)));
+    const acctEvents = bs.covers.flatMap(a => S.get(a).ev
+      .filter(e => !e.via && !e.sf)
+      .map(e => (e.label ? { ...e, label: `${accountLabel(a)}: ${e.label}` } : e)));
     sections.push({
       kind: "billing", key: bs.key, title: `${accountLabel(bs.key)}: pays for ${andList(bs.covers.map(accountLabel))}`,
-      steps: bs.steps,
-      summary: [
-        { key: "cost", label: sts.length > 1 ? "Cost of the policies" : "Cost of the policy", value: $(cost),
-          note: feesB > 0 ? `That includes ${$(feesB)} in fees on ${accountLabel(bs.key)}`
-            : feesB < 0 ? `That takes off ${$(feesB)} in fees waived on ${accountLabel(bs.key)}` : "" },
-        { key: "paid", label: "Paid so far", value: $s(paid),
-          note: bs.reversed ? `${$(bs.reversed)} paid through ${accountLabel(bs.key)} was declined or came back` : "" },
-        leftItem(cost - paid, "Over the whole of every policy it pays for."),
-        nowItem(nowDue),
-      ],
+      steps: bs.steps, grid: buildGrid(inst, [...acctEvents, ...bs.ev]),
     });
   }
   for (const st of S.values()) {
-    const fees = sumC(st.oneTime, "fee");
-    const totalCost = costOf(st);
-    const last = st.terms[st.terms.length - 1];
-    const future = last.dates.map((d, k) => [d, k]).filter(([d]) => d > today);
-    const costParts = [`${$(st.premium)} premium`];
-    if (st.changesNet > 0) costParts.push(`${$(st.changesNet)} added in changes`);
-    if (st.changesNet < 0) costParts.push(`${$(st.changesNet)} taken off in changes`);
-    if (fees > 0) costParts.push(`${$(fees)} in fees`);
-    if (fees < 0) costParts.push(`${$(fees)} in fees waived`);
-    const summary = [
-      { key: "cost", label: st.terms.length > 1 ? `Cost of these ${st.terms.length} terms` : "Cost of the policy", value: $(totalCost), note: andList(costParts) },
-      { key: "paid", label: "Paid so far", value: $s(st.paid),
-        note: st.reversed ? `${$(st.paidIn)} in payments, less ${$(st.reversed)} that was declined or came back.` : "" },
-      leftItem(totalCost - st.paid, "Over the whole policy."),
-      nowItem(expectedOf(st, today)),
-    ];
-    if (future.length) {
-      const [nextDate, nextK] = future[0];
-      const lastK = future[future.length - 1][1];
-      summary.push({ key: "next", label: "Payments left", value: `${future.length} of about ${$(last.amts[lastK])}`,
-        note: `Next one around ${when(nextDate, today)}${nextK !== lastK && last.amts[nextK] !== last.amts[lastK] ? `, for ${$(last.amts[nextK])}` : ""}.` });
-    } else if (last.end && last.end <= today) {
-      summary.push({ key: "next", label: "Term", value: "Over", note: `This term ended ${when(last.end, today)}.` });
-    }
-    sections.push({ kind: "account", key: st.key, title: `${accountLabel(st.key)}: ${st.lob.label}, ${planWords(st)}`, steps: st.steps, summary });
+    sections.push({
+      kind: "account", key: st.key, title: `${accountLabel(st.key)}: ${st.lob.label}, ${planWords(st)}`,
+      steps: st.steps, grid: buildGrid(installmentsOf(st), st.ev),
+    });
   }
 
   return { ok: true, problems: [], warnings, sections, ledger: L };

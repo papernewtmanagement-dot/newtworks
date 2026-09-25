@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { Fragment, useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport, useElementWidth } from "../lib/hooks.js";
@@ -7,7 +7,7 @@ import { fmtDateShort } from "../lib/utils.js";
 import { noPwManager } from "../lib/forms.js";
 import {
   DEWEY_TYPES, DEWEY_LOBS, DEWEY_PLANS, deweyType, blankRow, isBlankRow, rowCents, tidyAmount,
-  buildLedger, explainBilling, outOfOrderIds, sortRowsByDate, isBillingKey, accountLabel, normalizeAccountKey, lineDate,
+  buildLedger, explainBilling, outOfOrderIds, sortRowsByDate, isBillingKey, accountLabel, normalizeAccountKey, lineDate, fmtAmount,
 } from "../lib/deweyOwe.js";
 
 // =====================================================================
@@ -34,6 +34,9 @@ import {
 //    decline) are drawn for the team and cannot be changed.
 //  * Linked lines are joined by a drawn line in the left margin, one track
 //    per link (Peter asked for lines over colour alone).
+//  * The answer is a small grid, dates across, like Peter's own spreadsheet:
+//    what happened above each date, then Due, Paid and Balance, then SF's bill
+//    with a check. The step by step sits behind "Show every step".
 //  * Problems show after the button is pressed, not while typing
 //    (Bargas-Avila et al. 2007), the same way the Log tab does it.
 // =====================================================================
@@ -151,9 +154,6 @@ function usDate(iso) {
   if (!iso) return "";
   const [y, m, d] = iso.split("-");
   return `${m}/${d}/${y}`;
-}
-function withPeriod(s) {
-  return /[.!?]$/.test(s) ? s : `${s}.`;
 }
 
 function DeweyStyles() {
@@ -450,47 +450,192 @@ function StepSub({ step, line, last }) {
   return <div style={{ fontSize: 13, color: T.slate600, lineHeight: 1.45 }}>{line}</div>;
 }
 
-function SectionExplained({ s, many, onJump }) {
+// ---------- the answer: a small grid, dates across ----------
+// Peter 2026-09-25: laid out like his spreadsheet, simple and not a lot of
+// reading. What happened sits above its date; under it, what came due, what
+// was paid, and what was still owed at that point. SF's own bills sit in the
+// last row with a check against the lines. On a narrow screen the grid turns
+// so the dates run down the page instead of scrolling sideways.
+const signed = (c) => (c == null ? "" : `${c < 0 ? "\u2212" : ""}${fmtAmount(c)}`);
+const LABEL_TONE = { start: T.blue, change: T.slate700, credit: T.teal, fee: T.gold, bounce: T.red };
+const GRID_ROWS = [
+  { key: "due", label: "Due", help: "What came due that day: a payment, a fee, a change.", cell: (c) => signed(c.due) },
+  { key: "paid", label: "Paid", help: "What came in that day. A minus is a payment that came back.", cell: (c) => signed(c.paid) },
+  { key: "balance", label: "Balance", help: "What was still owed at that point. A minus means paid ahead.", cell: (c) => signed(c.balance) },
+];
+const GRID_COL_W = 84;
+const gridDate = (c) => (c.total ? "Total" : c.today ? "Today" : fmtDateShort(c.date));
+
+function SfCell({ list }) {
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      {many && <div style={{ fontSize: 14, fontWeight: 800, color: T.slate900 }}>{s.title}</div>}
-      <div style={{ background: T.slate50, borderRadius: 10, padding: "12px 14px", display: "grid", gap: 6 }}>
-        {s.summary.map(x => (
-          <div key={x.key} style={{ fontSize: 14, color: T.slate600, lineHeight: 1.5 }}>
-            {x.label}: <strong style={{ color: x.tone === "warn" ? T.red : T.slate900 }}>{x.value}</strong>.
-            {x.note ? <span> {withPeriod(x.note)}</span> : null}
-          </div>
-        ))}
+    <div style={{ display: "grid", gap: 2, justifyItems: "end" }}>
+      {list.map((x, i) => (
+        <span key={i} title={x.ok ? "Matches the lines." : `The lines add up to ${signed(x.expected)}.`} style={{ whiteSpace: "nowrap" }}>
+          {x.revised ? <span style={{ fontSize: 10, color: T.slate500, marginRight: 4 }}>revised</span> : null}
+          {signed(x.cents)}{" "}
+          <span style={{ color: x.ok ? T.green : T.red, fontWeight: 800 }}>{x.ok ? "✓" : "≠"}</span>
+          {!x.ok && <span style={{ display: "block", fontSize: 11, color: T.slate500 }}>lines say {signed(x.expected)}</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function DateGrid({ grid, width }) {
+  const anySf = grid.some(c => c.sf.length);
+  const across = width === 0 || width >= 96 + grid.length * GRID_COL_W;
+  const tint = (c) => (c.today ? T.blueLt : c.total ? T.slate50 : "transparent");
+  const ink = (c) => (c.future ? T.slate400 : T.slate800);
+  const balInk = (c) => (c.balance == null || c.future ? ink(c) : c.balance > 50 ? T.red : c.balance < -50 ? T.teal : ink(c));
+  const bold = (c) => (c.today || c.total ? 800 : 500);
+  const th = { fontSize: 12, fontWeight: 700, color: T.slate600, textAlign: "left", padding: "6px 10px 6px 0", whiteSpace: "nowrap" };
+  const num = { padding: "6px 8px", textAlign: "right", whiteSpace: "nowrap", borderTop: `1px solid ${T.slate100}` };
+
+  if (across) {
+    return (
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 13, fontVariantNumeric: "tabular-nums" }}>
+          <thead>
+            <tr>
+              <th />
+              {grid.map(c => (
+                <th key={c.key} style={{ verticalAlign: "bottom", padding: "0 8px 4px", textAlign: "right", minWidth: GRID_COL_W - 16, background: tint(c) }}>
+                  {c.labels.map((l, i) => (
+                    <div key={i} style={{ fontSize: 11, fontWeight: 700, lineHeight: 1.3, color: LABEL_TONE[l.tone] || T.slate700 }}>{l.text}</div>
+                  ))}
+                </th>
+              ))}
+            </tr>
+            <tr>
+              <th />
+              {grid.map(c => (
+                <th key={c.key} style={{ padding: "4px 8px", textAlign: "right", fontSize: 12, fontWeight: 800, color: c.future ? T.slate400 : T.slate900,
+                  background: tint(c), borderLeft: c.total ? `1px solid ${T.slate200}` : "none", whiteSpace: "nowrap" }}>
+                  {gridDate(c)}
+                  {c.today ? <div style={{ fontSize: 10, fontWeight: 600, color: T.slate500 }}>{fmtDateShort(c.date)}</div> : null}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {GRID_ROWS.map(rd => (
+              <tr key={rd.key}>
+                <th scope="row" title={rd.help} style={{ ...th, borderTop: `1px solid ${T.slate100}` }}>{rd.label}</th>
+                {grid.map(c => (
+                  <td key={c.key} style={{ ...num, background: tint(c), fontWeight: bold(c), borderLeft: c.total ? `1px solid ${T.slate200}` : "none",
+                    color: rd.key === "balance" ? balInk(c) : ink(c) }}>{rd.cell(c)}</td>
+                ))}
+              </tr>
+            ))}
+            {anySf && (
+              <tr>
+                <th scope="row" title="What SF billed, checked against the lines." style={{ ...th, borderTop: `1px solid ${T.slate100}` }}>SF bill</th>
+                {grid.map(c => (
+                  <td key={c.key} style={{ ...num, background: tint(c), borderLeft: c.total ? `1px solid ${T.slate200}` : "none", color: ink(c) }}>
+                    {c.sf.length ? <SfCell list={c.sf} /> : null}
+                  </td>
+                ))}
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
-      {s.steps.length > 0 && <div style={{ fontSize: 13, fontWeight: 700, color: T.slate600 }}>How it got here</div>}
-      <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 10 }}>
-        {s.steps.map((st, k) => (
-          <li key={`${st.rowId}-${k}`} style={{ display: "grid", gridTemplateColumns: "54px 1fr", gap: 10, opacity: st.tone === "muted" ? 0.65 : 1 }}>
-            <button type="button" onClick={() => onJump(st.rowId)} title="Show this line in the table" style={{
-              background: "none", border: "none", padding: "2px 0 0", textAlign: "left", fontSize: 12, fontWeight: 700,
-              color: T.slate500, cursor: "pointer", fontFamily: "inherit", alignSelf: "start",
-            }}>{fmtDateShort(st.date)}</button>
-            <div style={{ display: "grid", gap: 2 }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: 14, color: T.slate900, fontWeight: st.tone === "start" ? 700 : 500 }}>
-                <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: TONE_COLOR[st.tone] || T.slate400 }} />
-                <span>{st.text}</span>
-              </div>
-              {(st.sub || []).filter(Boolean).length > 0 && (
-                <div style={{ marginLeft: 16, display: "grid", gap: 2 }}>
-                  {st.sub.filter(Boolean).map((line, j, arr) => <StepSub key={j} step={st} line={line} last={j === arr.length - 1} />)}
-                </div>
+    );
+  }
+
+  const heads = ["", ...GRID_ROWS.map(r => r.label), ...(anySf ? ["SF bill"] : [])];
+  return (
+    <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+      <table style={{ borderCollapse: "collapse", fontSize: 13, fontVariantNumeric: "tabular-nums", width: "100%", maxWidth: 560 }}>
+        <thead>
+          <tr>{heads.map((h, i) => <th key={i} style={{ ...th, textAlign: i ? "right" : "left", padding: "4px 6px" }}>{h}</th>)}</tr>
+        </thead>
+        <tbody>
+          {grid.map(c => (
+            <Fragment key={c.key}>
+              {c.labels.length > 0 && (
+                <tr>
+                  <td colSpan={heads.length} style={{ padding: "8px 6px 0", fontSize: 11, fontWeight: 700, background: tint(c) }}>
+                    {c.labels.map((l, i) => (
+                      <span key={i} style={{ color: LABEL_TONE[l.tone] || T.slate700, marginRight: 10 }}>{l.text}</span>
+                    ))}
+                  </td>
+                </tr>
               )}
+              <tr style={{ background: tint(c) }}>
+                <td style={{ padding: "4px 6px 6px", fontWeight: 800, color: c.future ? T.slate400 : T.slate900, whiteSpace: "nowrap",
+                  borderBottom: `1px solid ${T.slate100}` }}>{gridDate(c)}</td>
+                {GRID_ROWS.map(rd => (
+                  <td key={rd.key} style={{ padding: "4px 6px 6px", textAlign: "right", whiteSpace: "nowrap", fontWeight: bold(c),
+                    borderBottom: `1px solid ${T.slate100}`, color: rd.key === "balance" ? balInk(c) : ink(c) }}>{rd.cell(c)}</td>
+                ))}
+                {anySf && (
+                  <td style={{ padding: "4px 6px 6px", textAlign: "right", borderBottom: `1px solid ${T.slate100}`, color: ink(c) }}>
+                    {c.sf.length ? <SfCell list={c.sf} /> : null}
+                  </td>
+                )}
+              </tr>
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// The old step by step, kept one tap away for when a number needs explaining.
+function StepList({ steps, onJump }) {
+  return (
+    <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 10 }}>
+      {steps.map((st, k) => (
+        <li key={`${st.rowId}-${k}`} style={{ display: "grid", gridTemplateColumns: "54px 1fr", gap: 10, opacity: st.tone === "muted" ? 0.65 : 1 }}>
+          <button type="button" onClick={() => onJump(st.rowId)} title="Show this line in the table" style={{
+            background: "none", border: "none", padding: "2px 0 0", textAlign: "left", fontSize: 12, fontWeight: 700,
+            color: T.slate500, cursor: "pointer", fontFamily: "inherit", alignSelf: "start",
+          }}>{fmtDateShort(st.date)}</button>
+          <div style={{ display: "grid", gap: 2 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: 14, color: T.slate900, fontWeight: st.tone === "start" ? 700 : 500 }}>
+              <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: TONE_COLOR[st.tone] || T.slate400 }} />
+              <span>{st.text}</span>
             </div>
-          </li>
-        ))}
-      </ol>
+            {(st.sub || []).filter(Boolean).length > 0 && (
+              <div style={{ marginLeft: 16, display: "grid", gap: 2 }}>
+                {st.sub.filter(Boolean).map((line, j, arr) => <StepSub key={j} step={st} line={line} last={j === arr.length - 1} />)}
+              </div>
+            )}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function SectionExplained({ s, showTitle, width, onJump }) {
+  const [stepsOpen, setStepsOpen] = useState(false);
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      {showTitle && <div style={{ fontSize: 14, fontWeight: 800, color: T.slate900 }}>{s.title}</div>}
+      <DateGrid grid={s.grid} width={width} />
+      {s.steps.length > 0 && (
+        <div>
+          <button type="button" onClick={() => setStepsOpen(o => !o)} aria-expanded={stepsOpen} style={linkBtn}>
+            {stepsOpen ? "Hide the steps" : "Show every step"}
+          </button>
+          {stepsOpen && <div style={{ marginTop: 10 }}><StepList steps={s.steps} onJump={onJump} /></div>}
+        </div>
+      )}
     </div>
   );
 }
 
 function Explanation({ expl, who, onClose, onJump }) {
+  const ref = useRef(null);
+  const width = useElementWidth(ref);
+  const [eachOpen, setEachOpen] = useState(false);
+  const billing = (expl.sections || []).filter(s => s.kind === "billing");
+  const accounts = (expl.sections || []).filter(s => s.kind === "account");
   return (
-    <section style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 18, display: "grid", gap: 16 }}>
+    <section ref={ref} style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 18, display: "grid", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
         <div style={{ fontSize: 16, fontWeight: 800, color: T.slate900 }}>
           {expl.ok ? `Here's what happened${who ? ` for ${who}` : ""}` : "A few lines need fixing first"}
@@ -507,8 +652,16 @@ function Explanation({ expl, who, onClose, onJump }) {
           ))}
         </div>
       )}
-      {expl.ok && expl.sections.map(s => (
-        <SectionExplained key={String(s.key)} s={s} many={expl.sections.length > 1} onJump={onJump} />
+      {expl.ok && billing.map(s => <SectionExplained key={String(s.key)} s={s} showTitle width={width - 36} onJump={onJump} />)}
+      {expl.ok && billing.length > 0 && accounts.length > 0 && (
+        <div>
+          <button type="button" onClick={() => setEachOpen(o => !o)} aria-expanded={eachOpen} style={linkBtn}>
+            {eachOpen ? "Hide each account" : "Show each account"}
+          </button>
+        </div>
+      )}
+      {expl.ok && (!billing.length || eachOpen) && accounts.map(s => (
+        <SectionExplained key={String(s.key)} s={s} showTitle={billing.length > 0 || accounts.length > 1} width={width - 36} onJump={onJump} />
       ))}
       {expl.warnings.length > 0 && (
         <div style={{ display: "grid", gap: 6 }}>
