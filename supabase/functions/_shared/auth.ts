@@ -50,6 +50,24 @@ export async function requireOwnerOrManager(
   req: Request,
   agencyId: string,
 ): Promise<Response | null> {
+  return requireCallerRole(req, agencyId, ADMIN_ROLES);
+}
+
+// Owner only. Terminations use this. Peter 2026-09-25: "A termination should
+// only come from me through the website."
+export async function requireOwner(
+  req: Request,
+  agencyId: string,
+): Promise<Response | null> {
+  return requireCallerRole(req, agencyId, ["owner"]);
+}
+
+// The one caller check. The wrappers above only choose which roles pass.
+async function requireCallerRole(
+  req: Request,
+  agencyId: string,
+  roles: string[],
+): Promise<Response | null> {
   const token = (req.headers.get("Authorization") || "").replace("Bearer ", "").trim();
   if (!token) return corsJson({ ok: false, error: "missing session token" }, 401);
 
@@ -72,7 +90,7 @@ export async function requireOwnerOrManager(
     .eq("auth_user_id", who.user.id)
     .maybeSingle();
   if (rowErr) return corsJson({ ok: false, error: "could not verify caller" }, 500);
-  if (!row || row.agency_id !== agencyId || !ADMIN_ROLES.includes(row.role as string)) {
+  if (!row || row.agency_id !== agencyId || !roles.includes(row.role as string)) {
     return corsJson({ ok: false, error: "not permitted" }, 403);
   }
   return null;

@@ -1,6 +1,7 @@
 // terminate-team-member edge function (v2)
 //
 // Orchestrates a State Farm team-member termination:
+//   0. Refuses anyone but the owner's own login (Peter 2026-09-25).
 //   1. Loads the team member + the termination checklist (Team → Termination
 //      tab, public.termination_checklist).
 //   2. Composes an HTML notification email with identity, contact (incl. physical
@@ -37,6 +38,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { sb, getSetting, CORS_HEADERS, corsJson } from "../_shared/supabase.ts";
 import { ensureWatcherTask } from "../_shared/watchers.ts";
+import { requireOwner } from "../_shared/auth.ts";
 
 const AGENCY_ID = "126794dd-25ff-47d2-a436-724499733365";
 const COMPOSIO_GMAIL_URL = "https://backend.composio.dev/api/v3/tools/execute/GMAIL_SEND_EMAIL";
@@ -135,6 +137,11 @@ Deno.serve(async (req: Request) => {
   // it with a 405 is what made the site report "Failed to send a request".
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS_HEADERS });
   if (req.method !== "POST") return json({ error: "POST only" }, 405);
+
+  // Only the owner terminates. The platform check lets any valid key through,
+  // including the site's public one, so check who is actually asking.
+  const denied = await requireOwner(req, AGENCY_ID);
+  if (denied) return denied;
 
   let body: TerminateBody;
   try { body = await req.json(); } catch { return json({ error: "invalid JSON" }, 400); }
