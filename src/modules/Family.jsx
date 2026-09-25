@@ -47,7 +47,7 @@ const LEDGER_KINDS = [
   { kind: "bonus",       bucket: "spend",  label: "Bonus",            sign: 1 },
   { kind: "adjustment",  bucket: "spend",  label: "Adjustment (+/−)", sign: 0 },
 ];
-const KIND_LABELS = { opening_balance: "Starting balance", fine: "Fine" };
+const KIND_LABELS = { opening_balance: "Starting balance", fine: "Fine", expense: "Spent" };
 
 const STATUS = {
   claimed:     { icon: "✓", fg: T.blue,     label: "Done" },
@@ -66,6 +66,13 @@ const money = (n) => {
 };
 const cents = (n) => Math.round(Number(n || 0) * 100);
 const fromCents = (c) => c / 100;
+// A typed dollar amount ("1.25", "$1.25", "1,000") as a number rounded to the cent; null when it is not one.
+const parseMoney = (s) => {
+  const t = String(s ?? "").replace(/[$,\s]/g, "");
+  if (t === "") return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? fromCents(cents(n)) : null;
+};
 const todayCentral = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
 const parseDate = (s) => { const [y, m, d] = String(s).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)); };
 const fmtDate = (dt) => dt.toISOString().slice(0, 10);
@@ -924,8 +931,8 @@ function MoneyView({ kid, balance, isParent, ledger, onSaved, setErr, onClose })
   const def = LEDGER_KINDS.find(k => k.kind === kind);
 
   const save = async () => {
-    const n = Number(amount);
-    if (!Number.isFinite(n) || n === 0) return;
+    const n = parseMoney(amount);
+    if (n == null || n === 0) return;
     setSaving(true);
     const { error } = await supabase.from("family_ledger").insert({
       agency_id: AGENCY_ID, kid_id: kid.id, bucket: def.bucket, kind,
@@ -1619,10 +1626,10 @@ function PriceList({ title, table, items, placeholder, addLabel, onSaved, setErr
   const [amount, setAmount] = useState("");
   const [saving, setSaving] = useState(false);
   const add = async () => {
-    const n = Number(amount);
-    if (!name.trim() || !Number.isFinite(n) || n <= 0) return;
+    const n = parseMoney(amount);
+    if (!name.trim() || !(n > 0)) return;
     setSaving(true);
-    const { error } = await supabase.from(table).insert({ agency_id: AGENCY_ID, name: name.trim(), amount: Math.abs(n), sort_order: (items || []).length + 1 });
+    const { error } = await supabase.from(table).insert({ agency_id: AGENCY_ID, name: name.trim(), amount: n, sort_order: (items || []).length + 1 });
     setSaving(false);
     if (error) { setErr(error.message); return; }
     setName(""); setAmount(""); onSaved();
@@ -1652,40 +1659,57 @@ function PriceList({ title, table, items, placeholder, addLabel, onSaved, setErr
   );
 }
 
-// A kid spent money. The hub or a parent picks it from the expense list; it comes
-// out of spending money at the week close-out. Parents can take one back.
+// A kid spent money. The hub or a parent picks it from the expense list, or picks
+// "Something else…" and types what it was and how much. It comes out of spending
+// money at the week close-out. Parents can take one back.
+const OTHER_EXPENSE = "other";
 function ExpenseCard({ kid, day, isParent, expenseTypes, expenses, onChanged }) {
   const [typeId, setTypeId] = useState("");
+  const [name, setName] = useState("");
+  const [amount, setAmount] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
   const active = (expenseTypes || []).filter(x => x.is_active);
+  const custom = typeId === OTHER_EXPENSE || !active.length;
+  const n = parseMoney(amount);
+  const ready = custom ? (name.trim() !== "" && n > 0) : active.some(x => x.id === typeId);
   const add = async () => {
-    const t = active.find(x => x.id === typeId);
-    if (!t) return;
+    if (!ready || saving) return;
+    const t = custom ? null : active.find(x => x.id === typeId);
     setSaving(true); setErr(null);
     const { error } = await supabase.from("family_ledger").insert({
-      agency_id: AGENCY_ID, kid_id: kid.id, bucket: "spend", kind: "expense", expense_type_id: t.id,
-      amount: -Math.abs(Number(t.amount)), note: t.name, entry_date: day,
+      agency_id: AGENCY_ID, kid_id: kid.id, bucket: "spend", kind: "expense", expense_type_id: t ? t.id : null,
+      amount: t ? -Math.abs(Number(t.amount)) : -n, note: t ? t.name : name.trim(), entry_date: day,
     });
     setSaving(false);
     if (error) { setErr(error.message); return; }
-    setTypeId(""); onChanged();
+    setTypeId(""); setName(""); setAmount(""); onChanged();
   };
   const remove = async (id) => {
     const { error } = await supabase.from("family_ledger").delete().eq("id", id).eq("kind", "expense");
     if (error) { setErr(error.message); return; }
     onChanged();
   };
-  if (!active.length && !(expenses || []).length) return null;
   return (
     <div style={{ ...card, display: "grid", gap: 8 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700 }}>Spent something?</div>
-        <select value={typeId} onChange={e => setTypeId(e.target.value)} style={{ ...input, flex: "1 1 200px" }}>
-          <option value="">Pick an expense…</option>
-          {active.map(x => <option key={x.id} value={x.id}>{x.name} · {money(x.amount)}</option>)}
-        </select>
-        <button style={btn("primary")} disabled={!typeId || saving} onClick={add}>Add</button>
+        {active.length > 0 && (
+          <select value={typeId} onChange={e => setTypeId(e.target.value)} style={{ ...input, flex: "1 1 200px" }}>
+            <option value="">Pick an expense…</option>
+            {active.map(x => <option key={x.id} value={x.id}>{x.name} · {money(x.amount)}</option>)}
+            <option value={OTHER_EXPENSE}>Something else…</option>
+          </select>
+        )}
+        {custom && (
+          <input value={name} onChange={e => setName(e.target.value)} maxLength={60} placeholder="What did you buy?" aria-label="What did you buy?"
+            style={{ ...input, flex: "2 1 160px", width: 160 }} />
+        )}
+        {custom && (
+          <input value={amount} onChange={e => setAmount(e.target.value)} onKeyDown={e => { if (e.key === "Enter") add(); }}
+            inputMode="decimal" placeholder="How much?" aria-label="How much?" style={{ ...input, flex: "1 1 90px", width: 90 }} />
+        )}
+        <button style={btn("primary")} disabled={!ready || saving} onClick={add}>{custom && n > 0 ? `Add ${money(n)}` : "Add"}</button>
       </div>
       {err && <div style={{ fontSize: 12, color: T.red }}>{err}</div>}
       {(expenses || []).map(x => (
