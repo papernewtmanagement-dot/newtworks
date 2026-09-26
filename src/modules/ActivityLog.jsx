@@ -148,6 +148,14 @@ const btnPrimary = (disabled) => ({
   background: disabled ? T.slate200 : T.blue, color: disabled ? T.slate500 : T.white,
 });
 const btnGhost = { padding: "6px 10px", borderRadius: 6, border: `1px solid ${T.slate300}`, background: T.white, color: T.slate700, fontSize: 12, cursor: "pointer" };
+// The pill toggle: History's sub-tabs and the Spot-check's To check / Checked and Day / Week switches.
+// One look, used by all of them.
+const segWrap = { display: "inline-flex", gap: 2, padding: 3, borderRadius: 999, background: T.slate100 };
+const segTab = (on) => ({
+  flexShrink: 0, padding: "6px 14px", borderRadius: 999, fontSize: 12, fontWeight: 700, textDecoration: "none",
+  background: on ? T.white : "transparent", color: on ? T.slate900 : T.slate600,
+  boxShadow: on ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+});
 const chip = (on) => ({
   padding: "8px 12px", borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: "pointer", userSelect: "none",
   border: `1px solid ${on ? T.blue : T.slate300}`, background: on ? T.blueLt : T.white, color: on ? T.blue : T.slate700,
@@ -1433,12 +1441,21 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   const [converting, setConverting] = useState(null);  // the flagged entry being turned into a cancelation
   const [msg, setMsg] = useState("");
   const [notes, setNotes] = useState({});        // spot-check notes he is typing, by entry
+  // Two views (Peter 2026-09-26): what is still to check, and what has already been checked, a day or a week
+  // at a time, with the same buttons plus Undo. The view, Day or Week, and the day or week picked all live in
+  // the URL, so a refresh stays put.
+  const [view, setView, viewHref] = useTabParam("scview", "tocheck", ["tocheck", "checked"]);
+  const [by, setBy, byHref] = useTabParam("scby", "day", ["day", "week"]);
+  const [on, setOn] = useTabParam("scon", "");
+  const [days, setDays] = useState([]);          // days with checks on them: checked_on, week_end, verified, removed
+  const [checked, setChecked] = useState([]);    // the records checked on the day or in the week picked
+  const _vp = useViewport();
 
   // Which weeks the picker offers, and which one we land on. A week stays in
   // the list once it is cleared, so the week being worked does not disappear
   // out from under the dropdown as entries get verified.
   useEffect(() => {
-    if (!isAdmin) return undefined;
+    if (!isAdmin || view !== "tocheck") return undefined;
     let alive = true;
     (async () => {
       const { data, error } = await supabase.rpc("rp_spot_check_weeks", { p_weeks: 12 });
@@ -1453,10 +1470,10 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
       ));
     })();
     return () => { alive = false; };
-  }, [isAdmin, thisWeek, tick]);
+  }, [isAdmin, view, thisWeek, tick]);
 
   useEffect(() => {
-    if (!isAdmin || !week) return undefined;
+    if (!isAdmin || !week || view !== "tocheck") return undefined;
     let alive = true;
     (async () => {
       const [sample, cancels] = await Promise.all([
@@ -1473,7 +1490,20 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
       setFlags(Array.isArray(cancels.data) ? cancels.data : []);
     })();
     return () => { alive = false; };
-  }, [isAdmin, week, tick]);
+  }, [isAdmin, view, week, tick]);
+
+  // Checked view: the days with checks on them in the last 90, newest first.
+  useEffect(() => {
+    if (!isAdmin || view !== "checked") return undefined;
+    let alive = true;
+    (async () => {
+      const { data, error } = await supabase.rpc("rp_spot_check_checked_days", { p_days: 90 });
+      if (!alive) return;
+      if (error) { setErr(errText(error)); return; }
+      setDays(Array.isArray(data) ? data : []);
+    })();
+    return () => { alive = false; };
+  }, [isAdmin, view, tick]);
 
   const act = async (fn, id) => {
     setErr(""); setBusyId(id);
@@ -1483,6 +1513,39 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
     } finally { setBusyId(null); }
   };
   const weekLabel = (iso) => `Week of ${fmtDate(addDays(iso, -6))} \u2013 ${fmtDate(iso)}`;
+  const dayName = (iso) => {
+    const [y, m, d] = iso.split("-").map(Number);
+    return `${new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })} ${m}/${d}`;
+  };
+  // The Checked view's picker, built from the days list. A day is one choice; a week gathers its days. The
+  // server says which week each day falls in, so there is no week math here.
+  const dayOpts = days.map(d => ({ key: d.checked_on, from: d.checked_on, to: d.checked_on,
+    v: Number(d.verified) || 0, r: Number(d.removed) || 0, name: dayName(d.checked_on) }));
+  const weekOpts = [];
+  days.forEach(d => {
+    const w = weekOpts.find(x => x.key === d.week_end);
+    if (w) { w.v += Number(d.verified) || 0; w.r += Number(d.removed) || 0; return; }
+    weekOpts.push({ key: d.week_end, from: addDays(d.week_end, -6), to: d.week_end,
+      v: Number(d.verified) || 0, r: Number(d.removed) || 0, name: weekLabel(d.week_end) });
+  });
+  const opts = by === "week" ? weekOpts : dayOpts;
+  // Flipping between Day and Week keeps the same stretch of time: a day opens its week, a week opens its
+  // latest day. Nothing picked yet, the newest.
+  const wanted = by === "week"
+    ? (days.find(d => d.checked_on === on)?.week_end || on)
+    : (days.some(d => d.checked_on === on) ? on : (days.find(d => d.week_end === on)?.checked_on || on));
+  const pick = opts.find(o => o.key === wanted) || opts[0] || null;
+  useEffect(() => {
+    if (!isAdmin || view !== "checked" || !pick) { setChecked([]); return undefined; }
+    let alive = true;
+    (async () => {
+      const { data, error } = await supabase.rpc("rp_spot_check_checked", { p_from: pick.from, p_to: pick.to });
+      if (!alive) return;
+      if (error) { setErr(errText(error)); return; }
+      setChecked(Array.isArray(data) ? data : []);
+    })();
+    return () => { alive = false; };
+  }, [isAdmin, view, pick?.from, pick?.to, tick]);
   // Peter 2026-09-19: a note left while checking reads on the CPR change
   // report, so Verified carries whatever is in the box with it.
   const noteFor = (r) => notes[r.id] !== undefined ? notes[r.id] : (r.spot_check_note || "");
@@ -1496,28 +1559,90 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   const canCheck = (r) => !!r.in_scope && !r.verified_at;
   // A sale carries a premium where an entry carries points.
   const worth = (r) => (kindOf(r) === "sale" ? fmtMoney(r.premium) : fmtPts(r.points));
-  const rowActions = (r) => (!canCheck(r) ? (
-    <span style={{ color: r.verified_at ? T.green : T.slate400, fontWeight: r.verified_at ? 700 : 400 }}>
-      {r.verified_at ? "Verified" : "\u2014"}
-    </span>
-  ) : (
+  // The buttons, each written once. The Checked view uses the same ones, with Undo where Verified was.
+  const editButton = (r) => (
+    <button style={{ ...btnGhost, marginRight: 6 }} disabled={busyId === r.id} onClick={() => setEditing({ kind: kindOf(r), id: r.id })}>Edit</button>
+  );
+  const verifyButton = (r) => (
+    <button style={{ ...btnGhost, color: T.green, marginRight: 6 }} disabled={busyId === r.id} onClick={() => act(() => supabase.rpc("rp_spot_check_verify", { p_kind: kindOf(r), p_id: r.id, p_note: noteFor(r) || null }), r.id)}>Verified</button>
+  );
+  const removeButton = (r) => (
+    <button style={{ ...btnGhost, color: T.red, marginRight: 6 }} disabled={busyId === r.id} onClick={() => { if (window.confirm(`Remove ${r.label || r.activity_key} for ${r.customer_label}? It will not be paid.`)) act(() => supabase.rpc("rp_spot_check_remove", { p_kind: kindOf(r), p_id: r.id, p_reason: "spot-check: could not verify" }), r.id); }}>Remove</button>
+  );
+  // Undo takes the check back: a verified record goes back on the list to check, a removed one comes back
+  // and gets paid again (rp_spot_check_undo).
+  const undoButton = (r) => (
+    <button style={{ ...btnGhost, color: T.blue, marginRight: 6 }} disabled={busyId === r.id} onClick={() => act(() => supabase.rpc("rp_spot_check_undo", { p_kind: kindOf(r), p_id: r.id }), r.id)}>Undo</button>
+  );
+  const rowActions = (r) => {
+    if (view === "checked") return (
+      <>
+        {r.outcome === "verified" && editButton(r)}
+        {undoButton(r)}
+        {r.outcome === "verified" && removeButton(r)}
+      </>
+    );
+    return !canCheck(r) ? (
+      <span style={{ color: r.verified_at ? T.green : T.slate400, fontWeight: r.verified_at ? 700 : 400 }}>
+        {r.verified_at ? "Verified" : "\u2014"}
+      </span>
+    ) : (
+      <>
+        {flags.find(f => f.id === r.id) && (
+          <button style={{ ...btnGhost, color: T.amber, marginRight: 6 }} disabled={busyId === r.id}
+                  onClick={() => { setMsg(""); setConverting(flags.find(f => f.id === r.id)); }}>This was a cancelation</button>
+        )}
+        {editButton(r)}
+        {verifyButton(r)}
+        {removeButton(r)}
+      </>
+    );
+  };
+  // A spot-check note can be typed on anything still to check, and on anything already checked.
+  const canNote = (r) => view === "checked" || canCheck(r);
+  // How and when a checked record was checked: "Verified 6:36 PM by Peter", "Removed 6:41 PM by Peter · could
+  // not verify". A week shows the day too.
+  const checkedLine = (r) => {
+    const d = r.checked_at ? new Date(r.checked_at) : null;
+    const when = d && !isNaN(d)
+      ? d.toLocaleString("en-US", { timeZone: "America/Chicago", ...(by === "week" ? { weekday: "short" } : {}), hour: "numeric", minute: "2-digit" })
+      : "";
+    const why = r.outcome === "removed" ? String(r.void_reason || "").replace(/^spot-check:\s*/i, "") : "";
+    return (
+      <span style={{ fontWeight: 700, color: r.outcome === "removed" ? T.red : T.green }}>
+        {r.outcome === "removed" ? "Removed" : "Verified"}
+        <span style={{ fontWeight: 400, color: T.slate500 }}>{` ${when}${r.checked_by ? ` by ${r.checked_by}` : ""}${why ? ` \u00b7 ${why}` : ""}`}</span>
+      </span>
+    );
+  };
+  // The record's own note, the cancel warning, and the spot-check note box. Table and phone both use it.
+  const noteCell = (r) => (
     <>
-      {flags.find(f => f.id === r.id) && (
-        <button style={{ ...btnGhost, color: T.amber, marginRight: 6 }} disabled={busyId === r.id}
-                onClick={() => { setMsg(""); setConverting(flags.find(f => f.id === r.id)); }}>This was a cancelation</button>
+      {r.note || "\u2014"}
+      {view === "tocheck" && flags.some(f => f.id === r.id) && (
+        <div style={{ fontSize: 11, fontWeight: 700, color: T.amber }}>Note says cancel — policy change or cancelation?</div>
       )}
-      <button style={{ ...btnGhost, marginRight: 6 }} disabled={busyId === r.id} onClick={() => setEditing({ kind: kindOf(r), id: r.id })}>Edit</button>
-      <button style={{ ...btnGhost, color: T.green, marginRight: 6 }} disabled={busyId === r.id} onClick={() => act(() => supabase.rpc("rp_spot_check_verify", { p_kind: kindOf(r), p_id: r.id, p_note: noteFor(r) || null }), r.id)}>Verified</button>
-      <button style={{ ...btnGhost, color: T.red }} disabled={busyId === r.id} onClick={() => { if (window.confirm(`Remove ${r.label || r.activity_key} for ${r.customer_label}? It will not be paid.`)) act(() => supabase.rpc("rp_spot_check_remove", { p_kind: kindOf(r), p_id: r.id, p_reason: "spot-check: could not verify" }), r.id); }}>Remove</button>
+      {canNote(r) && (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
+          <input style={{ ...inputBase, fontSize: 12, padding: "4px 6px", minWidth: 0 }}
+                 value={noteFor(r)} placeholder="Spot-check note (goes on the change report)"
+                 onChange={e => setNotes(s => ({ ...s, [r.id]: e.target.value }))} />
+          {noteFor(r) !== (r.spot_check_note || "") && (
+            <button type="button" style={{ ...miniBtn, whiteSpace: "nowrap" }} disabled={busyId === r.id}
+                    onClick={() => act(() => supabase.rpc("rp_spot_check_note", { p_kind: kindOf(r), p_id: r.id, p_note: noteFor(r) }), r.id)}>Save note</button>
+          )}
+        </div>
+      )}
     </>
-  ));
+  );
   // Flagged entries already in the ten below are marked there instead, so
   // the same entry never gets two sets of buttons.
-  const flagsAbove = flags.filter(f => !rows.some(r => r.id === f.id));
-  // The sample comes back as entries, ordered by household. Walking it in order
-  // keeps each household together without sorting it again here.
+  const flagsAbove = view === "tocheck" ? flags.filter(f => !rows.some(r => r.id === f.id)) : [];
+  // Both lists come back as entries, ordered by household (the Checked one in the order the households were
+  // first checked). Walking them in order keeps each household together without sorting again here.
+  const shown = view === "checked" ? checked : rows;
   const households = [];
-  rows.forEach(r => {
+  shown.forEach(r => {
     const key = `${(r.customer_label || "").trim().toLowerCase()}|${r.phone_last4 || ""}`;
     const last = households[households.length - 1];
     if (last && last.key === key) last.entries.push(r);
@@ -1530,16 +1655,47 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   return (
     <div style={cardStyle}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Spot-check</div>
-        <select style={{ ...inputBase, width: "auto" }} value={week} onChange={e => setWeek(e.target.value)}>
-          {(weeks.length ? weeks : [{ week_end: thisWeek }]).map(w => (
-            <option key={w.week_end} value={w.week_end}>{weekLabel(w.week_end)}</option>
-          ))}
-        </select>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Spot-check</div>
+          <div style={segWrap}>
+            {[["tocheck", "To check"], ["checked", "Checked"]].map(([k, lbl]) => (
+              <TabLink key={k} href={viewHref(k)} onSelect={() => setView(k)} style={segTab(view === k)}>{lbl}</TabLink>
+            ))}
+          </div>
+        </div>
+        {view === "tocheck" ? (
+          <select style={{ ...inputBase, width: "auto" }} value={week} onChange={e => setWeek(e.target.value)}>
+            {(weeks.length ? weeks : [{ week_end: thisWeek }]).map(w => (
+              <option key={w.week_end} value={w.week_end}>{weekLabel(w.week_end)}</option>
+            ))}
+          </select>
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            <div style={segWrap}>
+              {[["day", "Day"], ["week", "Week"]].map(([k, lbl]) => (
+                <TabLink key={k} href={byHref(k)} onSelect={() => setBy(k)} style={segTab(by === k)}>{lbl}</TabLink>
+              ))}
+            </div>
+            {opts.length > 0 && (
+              <select style={{ ...inputBase, width: "auto", maxWidth: "100%" }} value={pick ? pick.key : ""} onChange={e => setOn(e.target.value)}>
+                {opts.map(o => <option key={o.key} value={o.key}>{`${o.name} \u00b7 ${o.v + o.r} checked`}</option>)}
+              </select>
+            )}
+          </div>
+        )}
       </div>
+      {view === "checked" ? (
+        <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
+          {pick
+            ? `${pick.v + pick.r} checked ${by === "week" ? "that week" : `on ${pick.name}`}: ${pick.v} verified, ${pick.r} removed. `
+            : "Nothing checked in the last 90 days. "}
+          Undo sends a record back to the list to check. A removed record comes back and gets paid again.
+        </div>
+      ) : (
       <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
         Ten households from the week, with their whole file: this week's entries and sales, plus prior weeks, backfill, and the credits a sale wrote on its own. Only the rows still open to checking have buttons. Clear a household and the next one takes its place, so the list refills until the week is done. A verified entry never comes back unless it gets changed. Open the ECRM link, check the notes, tap Verified. {housesLeft > 10 ? `${housesLeft} households still unchecked this week, ${remaining} entries in all.` : housesLeft > 0 ? `${housesLeft} households left this week.` : "Nothing left to check this week."}
       </div>
+      )}
       {flagsAbove.length > 0 && (
         <div style={{ border: `1px solid ${T.amber}`, background: "#fffbeb", borderRadius: 10, padding: 12, marginBottom: 14 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>
@@ -1587,7 +1743,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
           </div>
         </div>
       )}
-      {rows.length > 0 && (
+      {shown.length > 0 && (
         <div style={{ display: "grid", gap: 12 }}>
           {households.map(h => (
             <div key={h.key} style={{ border: `1px solid ${T.slate200}`, borderRadius: 10, padding: 12, background: T.white }}>
@@ -1596,47 +1752,58 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                   <CustomerName label={h.label} phone4={h.phone} />
                   {h.phone ? <span style={{ color: T.slate400, fontWeight: 400 }}> ·{h.phone}</span> : null}
                 </div>
-                <div style={{ fontSize: 12, color: h.toCheck > 2 ? T.amber : T.slate500, fontWeight: h.toCheck > 2 ? 700 : 400 }}>
-                  {h.entries.length} {h.entries.length === 1 ? "record" : "records"} on file \u00b7 {h.toCheck} to check
-                </div>
+                {view === "checked" ? (
+                  <div style={{ fontSize: 12, color: T.slate500 }}>{h.entries.length} checked</div>
+                ) : (
+                  <div style={{ fontSize: 12, color: h.toCheck > 2 ? T.amber : T.slate500, fontWeight: h.toCheck > 2 ? 700 : 400 }}>
+                    {h.entries.length} {h.entries.length === 1 ? "record" : "records"} on file · {h.toCheck} to check
+                  </div>
+                )}
               </div>
+              {_vp.isPhone ? (
+                // A phone gets each record as a few short lines, never a table that scrolls sideways.
+                <div>
+                  {h.entries.map(r => (
+                    <div key={r.id} style={{ padding: "10px 0", borderTop: `1px solid ${T.slate100}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, minWidth: 0 }}>{r.label || r.activity_key}</div>
+                        <div style={{ fontSize: 13, color: T.slate700, whiteSpace: "nowrap" }}>{worth(r)}</div>
+                      </div>
+                      <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>
+                        {r.first_name || "—"} · {fmtDate(r.occurred_on)} · {r.ecrm_url
+                          ? <a href={r.ecrm_url} target="ecrm" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
+                          : "no ECRM link"}
+                      </div>
+                      <div style={{ fontSize: 13, color: T.slate800, marginTop: 4 }}>{noteCell(r)}</div>
+                      {view === "checked" && <div style={{ fontSize: 12, marginTop: 4 }}>{checkedLine(r)}</div>}
+                      <div style={{ display: "flex", flexWrap: "wrap", rowGap: 6, alignItems: "center", marginTop: 6, fontSize: 13 }}>{rowActions(r)}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
               <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead><tr><th style={tableTh}>Who</th><th style={tableTh}>Date</th><th style={tableTh}>What</th><th style={tableTh}>Note</th><th style={tableTh}>ECRM</th><th style={tableTh}>Points</th><th style={tableTh}></th></tr></thead>
+                  <thead><tr><th style={tableTh}>Who</th><th style={tableTh}>Date</th><th style={tableTh}>What</th><th style={tableTh}>Note</th><th style={tableTh}>ECRM</th><th style={tableTh}>Points</th>{view === "checked" && <th style={tableTh}>Checked</th>}<th style={tableTh}></th></tr></thead>
                   <tbody>
                     {h.entries.map(r => (
                       <tr key={r.id}>
                         <td style={tableTd}>{r.first_name || "—"}</td>
                         <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{fmtDate(r.occurred_on)}</td>
                         <td style={tableTd}>{r.label || r.activity_key}</td>
-                        <td style={{ ...tableTd, maxWidth: 260 }}>
-                          {r.note || "—"}
-                          {flags.some(f => f.id === r.id) && (
-                            <div style={{ fontSize: 11, fontWeight: 700, color: T.amber }}>Note says cancel — policy change or cancelation?</div>
-                          )}
-                          {canCheck(r) && (
-                          <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
-                            <input style={{ ...inputBase, fontSize: 12, padding: "4px 6px" }}
-                                   value={noteFor(r)} placeholder="Spot-check note (goes on the change report)"
-                                   onChange={e => setNotes(s => ({ ...s, [r.id]: e.target.value }))} />
-                            {noteFor(r) !== (r.spot_check_note || "") && (
-                              <button type="button" style={miniBtn} disabled={busyId === r.id}
-                                      onClick={() => act(() => supabase.rpc("rp_spot_check_note", { p_kind: kindOf(r), p_id: r.id, p_note: noteFor(r) }), r.id)}>Save note</button>
-                            )}
-                          </div>
-                          )}
-                        </td>
+                        <td style={{ ...tableTd, maxWidth: 260 }}>{noteCell(r)}</td>
                         <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
                           {r.ecrm_url ? <a href={r.ecrm_url} target="ecrm" rel="noreferrer" style={{ color: T.blue }}>ECRM</a>
                             : <span style={{ color: T.slate300 }}>—</span>}
                         </td>
                         <td style={tableTd}>{worth(r)}</td>
+                        {view === "checked" && <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{checkedLine(r)}</td>}
                         <td style={{ ...tableTd, whiteSpace: "nowrap" }}>{rowActions(r)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              )}
             </div>
           ))}
         </div>
@@ -4586,13 +4753,9 @@ function HistoryGroup({ values, sources, types, isOwner, isAdmin, myTeamId, rost
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <div style={{ display: "flex", maxWidth: "100%", overflowX: "auto", whiteSpace: "nowrap" }}>
-        <div style={{ display: "inline-flex", gap: 2, padding: 3, borderRadius: 999, background: T.slate100 }}>
+        <div style={segWrap}>
           {subs.map(s => (
-            <TabLink key={s.id} href={subHref(s.id)} onSelect={() => setSub(s.id)} style={{
-              flexShrink: 0, padding: "6px 14px", borderRadius: 999, fontSize: 12, fontWeight: 700, textDecoration: "none",
-              background: cur === s.id ? T.white : "transparent", color: cur === s.id ? T.slate900 : T.slate600,
-              boxShadow: cur === s.id ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
-            }}>{s.label}{onKind && kindCounts[s.id] != null ? ` (${kindCounts[s.id]})` : ""}</TabLink>
+            <TabLink key={s.id} href={subHref(s.id)} onSelect={() => setSub(s.id)} style={segTab(cur === s.id)}>{s.label}{onKind && kindCounts[s.id] != null ? ` (${kindCounts[s.id]})` : ""}</TabLink>
           ))}
         </div>
       </div>
