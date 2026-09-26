@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
@@ -1023,13 +1023,18 @@ function MoneyView({ kid, balance, isParent, ledger, onSaved, setErr, onClose })
 
 // ─── Close-out: the week's money, one problem at a time ──────────────────
 // Turns the register from the database into steps. Balances change only
-// when a step that moves money is solved.
+// when a step that moves money is solved. Fines and expenses come off as one
+// total in a single step, not one step each (Peter 2026-09-26).
+const LUMP_KINDS = ["fines", "fine", "expense"];
+const bucketOf = (e) => (["spend", "tithe", "invest"].includes(e.bucket) ? e.bucket : "spend");
 function buildSteps(reg) {
   const pctT = Number(reg?.tithe_pct ?? 10), pctI = Number(reg?.invest_pct ?? 10);
   const bal = { spend: cents(reg?.start?.spend), tithe: cents(reg?.start?.tithe), invest: cents(reg?.start?.invest) };
   const start = { ...bal };
   const steps = [];
-  for (const e of (reg?.events || [])) {
+  const events = reg?.events || [];
+  const lumped = new Set();
+  for (const e of events) {
     const amt = cents(e.amount);
     if (e.is_income && e.math_done) {
       // Already split when the money came in; carry it through without asking again.
@@ -1050,8 +1055,21 @@ function buildSteps(reg) {
       const net = amt - t - iv;
       bal.spend += net;
       steps.push({ kind: "col", head: "Spending money", text: "Add the rest to your spending money.", a: bal.spend - net, sign: 1, b: net, after: { ...bal } });
+    } else if (LUMP_KINDS.includes(e.kind)) {
+      // Every fine and expense in this bucket at once, where the first one falls.
+      const bucket = bucketOf(e);
+      if (lumped.has(bucket)) continue;
+      lumped.add(bucket);
+      const lump = events.filter(x => !x.is_income && LUMP_KINDS.includes(x.kind) && bucketOf(x) === bucket);
+      const total = lump.reduce((s, x) => s + cents(x.amount), 0);
+      if (total === 0) continue;
+      const fines = lump.some(x => x.kind !== "expense"), spent = lump.some(x => x.kind === "expense");
+      const what = fines && spent ? "fines and expenses" : fines ? "fines" : "expenses";
+      const before = bal[bucket];
+      bal[bucket] += total;
+      steps.push({ kind: "col", head: what[0].toUpperCase() + what.slice(1), text: total < 0 ? `Take out your ${what}.` : "Add it in.", a: before, sign: total < 0 ? -1 : 1, b: Math.abs(total), after: { ...bal } });
     } else {
-      const bucket = ["spend", "tithe", "invest"].includes(e.bucket) ? e.bucket : "spend";
+      const bucket = bucketOf(e);
       const before = bal[bucket];
       bal[bucket] += amt;
       steps.push({ kind: "col", head: e.label, text: amt < 0 ? "Take it out." : "Add it in.", a: before, sign: amt < 0 ? -1 : 1, b: Math.abs(amt), after: { ...bal } });
@@ -1320,30 +1338,49 @@ function ColumnMath({ a, sign, b, onSolved }) {
 }
 
 // 10% of an amount. Fill in each digit place, then check. Rounds to the cent.
+// The boxes type like one number: a digit moves the cursor to the next box,
+// Backspace in an empty box goes back one, and Enter checks.
 function PercentStep({ base, answer, onSolved }) {
   const len = Math.max(String(answer).length, 3);
   const want = digitsOf(answer, len);
   const [vals, setVals] = useState(Array(len).fill(""));
   const [checked, setChecked] = useState(false);
   const [tries, setTries] = useState(0);
+  const boxes = useRef([]);
+  const solved = useRef(false);
   const places = [];
   for (let i = len - 1; i >= 0; i--) { places.push(i); if (i === 2) places.push("."); }
   const right = vals.every((v, i) => v !== "" && Number(v) === want[i]);
   const check = () => {
+    if (solved.current || vals.some(v => v === "")) return;
     setChecked(true); setTries(t => t + 1);
-    if (right) setTimeout(onSolved, 700);
+    // Move on once only. A double tap must not skip the next step.
+    if (right) { solved.current = true; setTimeout(onSolved, 700); }
+  };
+  const setBox = (i, d) => { const n = [...vals]; n[i] = d; setVals(n); setChecked(false); };
+  // Places run biggest to smallest, so the box to the right of place i is place i - 1.
+  const type = (i, raw) => {
+    // A box that already has a digit takes the new one.
+    const d = raw.length <= 1 ? raw : raw.startsWith(vals[i]) ? raw.slice(-1) : raw[0];
+    if (d && !/^[0-9]$/.test(d)) return;
+    setBox(i, d);
+    if (d && i > 0) boxes.current[i - 1]?.focus();
+  };
+  const onKey = (i, e) => {
+    if (e.key === "Enter") check();
+    else if (e.key === "Backspace" && vals[i] === "" && i < len - 1) { e.preventDefault(); setBox(i + 1, ""); boxes.current[i + 1]?.focus(); }
   };
   return (
     <div style={{ display: "grid", gap: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
         <span style={{ fontSize: 22, marginRight: 4 }}>$</span>
         {places.map((i, k) => i === "." ? <span key={k} style={{ fontSize: 22 }}>.</span> : (
-          <input key={k} value={vals[i]} inputMode="numeric" maxLength={1} aria-label="Digit"
-            onChange={e => { const d = e.target.value.slice(-1); if (d && !/^[0-9]$/.test(d)) return; const n = [...vals]; n[i] = d; setVals(n); setChecked(false); }}
+          <input key={k} ref={el => { boxes.current[i] = el; }} autoFocus={i === len - 1} value={vals[i]} inputMode="numeric" aria-label="Digit"
+            onChange={e => type(i, e.target.value)} onKeyDown={e => onKey(i, e)}
             style={{ width: 30, height: 34, textAlign: "center", fontSize: 20, boxSizing: "border-box", borderRadius: 6, padding: 0, fontFamily: "inherit",
               border: `2px solid ${checked ? (Number(vals[i]) === want[i] && vals[i] !== "" ? T.green : T.red) : T.slate300}` }} />
         ))}
-        <button style={{ ...btn("primary"), marginLeft: 8 }} disabled={vals.some(v => v === "")} onClick={check}>Check</button>
+        <button style={{ ...btn("primary"), marginLeft: 8 }} disabled={vals.some(v => v === "") || (checked && right)} onClick={check}>Check</button>
       </div>
       {checked && right && <div style={{ fontSize: 14, fontWeight: 700, color: T.green }}>Right! {money(fromCents(answer))}</div>}
       {checked && !right && (
