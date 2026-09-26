@@ -283,32 +283,16 @@ export function IssueEntry({ r, withDay = false, showWho = true, hideCustomer = 
   );
 }
 
-// The four kinds, in the order they show everywhere — the Changes tab toggle
-// and the CPR cards (Peter 2026-09-21): notes, issued, canceled, changes.
+// The four kinds, in the order they show everywhere — the Dashboard's History
+// sub-tabs and the CPR cards (Peter 2026-09-21): notes, issued, canceled,
+// changes. They were a toggle inside the Changes tab until they moved up to be
+// History sub-tabs of their own (Peter 2026-09-25).
 export const CHANGE_KINDS = [
   { key: "spot_check", label: "Notes" },
   { key: "issue", label: "Issued" },
   { key: "canceled", label: "Canceled" },
   { key: "change", label: "Changes" },
 ];
-export function ChangeKindToggle({ value, onChange, counts = {} }) {
-  const opts = CHANGE_KINDS;
-  return (
-    <div role="group" style={{ display: "inline-flex", flexWrap: "wrap", border: `1px solid ${T.slate300}`, borderRadius: 8, overflow: "hidden" }}>
-      {opts.map(o => {
-        const on = value === o.key;
-        return (
-          <button key={o.key} type="button" onClick={() => onChange(o.key)} aria-pressed={on}
-            style={{ border: "none", padding: "6px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                     background: on ? T.blue : T.white, color: on ? T.white : T.slate700 }}>
-            {o.label}{counts[o.key] != null ? ` (${counts[o.key]})` : ""}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 // Entries grouped by the teammate whose record it is (owner_name from the
 // database), each line saying who made the change. The CPR and the Changes tab
 // both draw a week this way. exclude = team ids that get no group (the CPR

@@ -4,7 +4,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink, hrefWithParam } from "../lib/routing.jsx";
 import { AccountCtx, CustomerName, parseAcctToken } from "../lib/customerAccount.jsx";
-import { ChangeDiffs, changeDiffList, changeEvents, changeTone, changeItemKind, ChangeKindToggle, ChangeGroups, groupChangesByOwner } from "../lib/changeLog.jsx";
+import { ChangeDiffs, changeDiffList, changeEvents, changeTone, changeItemKind, CHANGE_KINDS, ChangeGroups, groupChangesByOwner } from "../lib/changeLog.jsx";
 import TimeHub from "./TimeHub.jsx";
 import PFA from "./PFA.jsx";
 import Development from "./Development.jsx";
@@ -2627,13 +2627,13 @@ function changeSummary(r, ctx) {
 // ChangeGroups, so the two read the same way. Each change is filed under the
 // CPR week whose sales points it moved (cpr_week_for in the database): a
 // Sunday fix before last week's CPR goes out lands on last week. The Telegram link still lands
-// here with ?tab=changes&day=YYYY-MM-DD: the module shell turns that into History > Changes
-// and that day's week opens.
+// here with ?tab=changes&day=YYYY-MM-DD: the module shell turns that into History, which
+// opens Notes (the first kind, where the Changes group used to open) on that day's week.
 function weekStartOf(iso) {
   const d = new Date(`${iso}T12:00:00`);
   return addDays(iso, -d.getDay());
 }
-function ChangeWeek({ day, setDay, kind, setKind, isAdmin, myTeamId }) {
+function ChangeWeek({ day, setDay, kind, isAdmin, myTeamId, onCounts }) {
   const start = weekStartOf(day);
   const end = addDays(start, 6);
   const [rows, setRows] = useState(null);
@@ -2657,15 +2657,17 @@ function ChangeWeek({ day, setDay, kind, setKind, isAdmin, myTeamId }) {
   const arrow = { ...btnGhost, padding: "6px 12px", fontSize: 15, lineHeight: 1 };
   // A teammate sees only the changes to their own entries; managers see all
   // (Peter 2026-09-21). Their own group sits at the top, then fewest to most.
-  const mine = (rows || []).filter(l => isAdmin || l.owner_id === myTeamId);
+  const mine = useMemo(() => (rows || []).filter(l => isAdmin || l.owner_id === myTeamId), [rows, isAdmin, myTeamId]);
   const kindOf = (l) => l.kind || "change";
   const list = mine.filter(l => kindOf(l) === kind);
-  const counts = {
+  const counts = useMemo(() => ({
     change: mine.filter(l => kindOf(l) === "change").length,
     issue: mine.filter(l => kindOf(l) === "issue").length,
     canceled: mine.filter(l => kindOf(l) === "canceled").length,
     spot_check: mine.filter(l => kindOf(l) === "spot_check").length,
-  };
+  }), [mine]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The counts show on the History sub-tabs now (Peter 2026-09-25).
+  useEffect(() => { if (onCounts) onCounts(rows ? counts : {}); }, [rows, counts, onCounts]);
   const groups = groupChangesByOwner(list, null, myTeamId);
   return (
     <div style={cardStyle}>
@@ -2680,9 +2682,6 @@ function ChangeWeek({ day, setDay, kind, setKind, isAdmin, myTeamId }) {
             onChange={e => { if (e.target.value) setDay(e.target.value); }} />
           <button style={arrow} disabled={start >= thisWeek} onClick={() => setDay(addDays(start, 7))} aria-label="next week">&rsaquo;</button>
         </div>
-      </div>
-      <div style={{ marginBottom: 12 }}>
-        <ChangeKindToggle value={kind} onChange={setKind} counts={rows ? counts : {}} />
       </div>
       {err && <Notice kind="error">{err}</Notice>}
       {rows === null ? (
@@ -2701,11 +2700,12 @@ function ChangeWeek({ day, setDay, kind, setKind, isAdmin, myTeamId }) {
   );
 }
 
-function ChangesTab({ roster, nameOf, values, sources, types, isOwner, isAdmin, myTeamId, refreshKey, onChanged }) {
+// kind = which of the four kinds shows. It is picked by the History sub-tab
+// now (Peter 2026-09-25); the kinds are still kept apart, Notes first
+// (2026-09-21). onCounts hands each kind's count up to the sub-tab labels.
+function ChangesTab({ kind, onCounts, roster, nameOf, values, sources, types, isOwner, isAdmin, myTeamId, refreshKey, onChanged }) {
   const [day, setDay] = useTabParam("day", "");
   const [view, setView] = useState("day");
-  // The kinds are kept apart, Notes first (Peter 2026-09-21).
-  const [kind, setKind] = useState("spot_check");
   const [days, setDays] = useState(30);
   const [who, setWho] = useState("");
   const [rows, setRows] = useState(null);
@@ -2808,6 +2808,11 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, isAdmin, 
     });
   }, [rows, sort, kind]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The every-change list sends its counts up to the sub-tab labels; the week
+  // view's ChangeWeek sends its own. Leaving these sub-tabs clears them.
+  useEffect(() => { if (view === "all" && onCounts) onCounts(rows ? kindCounts : {}); }, [view, rows, kindCounts, onCounts]);
+  useEffect(() => () => { if (onCounts) onCounts({}); }, [onCounts]);
+
   if (view === "day") {
     return (
       <div style={{ display: "grid", gap: 12 }}>
@@ -2817,7 +2822,7 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, isAdmin, 
             : "Changes made to your entries, one week at a time."}</div>
           {isAdmin ? <button style={btnGhost} onClick={() => setView("all")}>See every change</button> : null}
         </div>
-        <ChangeWeek day={day || todayCentral()} setDay={setDay} kind={kind} setKind={setKind} isAdmin={isAdmin} myTeamId={myTeamId} />
+        <ChangeWeek day={day || todayCentral()} setDay={setDay} kind={kind} isAdmin={isAdmin} myTeamId={myTeamId} onCounts={onCounts} />
       </div>
     );
   }
@@ -2837,7 +2842,6 @@ function ChangesTab({ roster, nameOf, values, sources, types, isOwner, isAdmin, 
           </select>
         </div>
       </div>
-      <div><ChangeKindToggle value={kind} onChange={setKind} counts={rows ? kindCounts : {}} /></div>
       {flash && <Notice kind="ok">{flash}</Notice>}
       {err && <Notice kind="error">{err}</Notice>}
       {rows === null ? (
@@ -4553,18 +4557,30 @@ function CustomerAccount({ token, values, sources, types, isOwner, roster, onLog
 // top tab, with the same rule on who sees it. An old link to ?tab=changes,
 // ?tab=spotcheck or ?tab=backfill (the daily change digest sends
 // ?tab=changes&day=...) opens History on that sub-tab.
+// Later the same day (Peter 2026-09-25): the four kinds that sat inside
+// Changes (Notes, Issued, Canceled, Changes) moved up to be History sub-tabs
+// of their own, in Changes' old spot and in CHANGE_KINDS order. Everyone sees
+// them, as everyone saw Changes. Each one's URL name is its kind key
+// (spot_check is Notes, not the Spot-check sub-tab). An old link to the
+// Changes group (htab=changes) opens Notes, which is where the group opened.
 // =====================================================================
-const HISTORY_SUBTABS = ["history", "changes", "spotcheck", "backfill"];
+const KIND_SUBTABS = CHANGE_KINDS.map(k => k.key);
+const HISTORY_SUBTABS = ["history", ...KIND_SUBTABS, "spotcheck", "backfill"];
 const MOVED_UNDER_HISTORY = ["changes", "spotcheck", "backfill"];
 function HistoryGroup({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, refreshKey, onChanged }) {
-  const [sub, setSub, subHref] = useTabParam("htab", "history", HISTORY_SUBTABS);
+  const [sub, setSub, subHref] = useTabParam("htab", "history", [...HISTORY_SUBTABS, "changes"]);
+  // Each kind's count for the week or list on screen, sent up by ChangesTab.
+  const [kindCounts, setKindCounts] = useState({});
   const subs = [
     { id: "history", label: "History" },
-    { id: "changes", label: "Changes" },  // who changed what and when (Peter 2026-09-10); teammates see their own entries (2026-09-21)
+    // who changed what and when (Peter 2026-09-10); teammates see their own entries (2026-09-21)
+    ...CHANGE_KINDS.map(k => ({ id: k.key, label: k.label })),
     ...(isAdmin ? [{ id: "spotcheck", label: "Spot-check" }] : []),  // monthly check of self-logged entries, owner and managers only (Peter 2026-09-16)
     ...(isAdmin ? [{ id: "backfill", label: "Backfill" }] : []),  // gaps on older records: phone, marketing source, ECRM link (Peter 2026-09-17)
   ];
-  const cur = subs.some(s => s.id === sub) ? sub : "history";
+  const want = sub === "changes" ? KIND_SUBTABS[0] : sub;
+  const cur = subs.some(s => s.id === want) ? want : "history";
+  const onKind = KIND_SUBTABS.includes(cur);
   // A sub-tab this person can't open falls back to History, and so does the URL.
   useEffect(() => { if (sub !== cur) setSub(cur); }, [sub, cur, setSub]);
   return (
@@ -4576,13 +4592,13 @@ function HistoryGroup({ values, sources, types, isOwner, isAdmin, myTeamId, rost
               flexShrink: 0, padding: "6px 14px", borderRadius: 999, fontSize: 12, fontWeight: 700, textDecoration: "none",
               background: cur === s.id ? T.white : "transparent", color: cur === s.id ? T.slate900 : T.slate600,
               boxShadow: cur === s.id ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
-            }}>{s.label}</TabLink>
+            }}>{s.label}{onKind && kindCounts[s.id] != null ? ` (${kindCounts[s.id]})` : ""}</TabLink>
           ))}
         </div>
       </div>
       {cur === "history" && <HistoryTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin}
         myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={onChanged} refreshKey={refreshKey} />}
-      {cur === "changes" && <ChangesTab roster={roster} nameOf={nameOf} values={values} sources={sources}
+      {onKind && <ChangesTab kind={cur} onCounts={setKindCounts} roster={roster} nameOf={nameOf} values={values} sources={sources}
         types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={onChanged} />}
       {cur === "spotcheck" && isAdmin && <SpotCheck isAdmin={isAdmin} values={values} sources={sources}
         types={types} isOwner={isOwner} roster={roster} />}
