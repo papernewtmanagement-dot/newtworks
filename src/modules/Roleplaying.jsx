@@ -26,6 +26,8 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //                                            the server rolls it from the card's blueprint
 //   rpg_reroll_character(id)                 fresh strengths (household: only before the first roll)
 //   rpg_set_input(id, key, value)            parents set a rolled stat by hand ("special means")
+//   rpg_adjust_trait(id, key, delta)         an event moves a trait (parents): a Spirit pair's growth pulls its other side
+//                                            down as much and cannot pass the root (Connection with God / Fascination with Evil)
 //   rpg_roll(id, stat, difficulty, label)    one d100 roll: result, skill points, level-ups
 //   rpg_roll_extra(roll_id)                  the additional roll a critical prompts (can chain)
 //   rpg_adjust_vitality(id, delta)           damage taken (+) or healed (−)
@@ -354,6 +356,12 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     if (error) onError(error.message);
     load(effDiff);
   };
+  // An event at the table: +1 or -1 on a trait, on either side of a Spirit pair.
+  const adjustTrait = async (key, delta) => {
+    const { error } = await supabase.rpc("rpg_adjust_trait", { p_character_id: id, p_key: key, p_delta: delta });
+    if (error) onError(error.message);
+    load(effDiff);
+  };
   const reroll = async () => {
     if (!window.confirm("Roll a fresh set of strengths for this character?")) return;
     const { error } = await supabase.rpc("rpg_reroll_character", { p_character_id: id });
@@ -389,7 +397,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
           {String(sheet.name || "?").slice(0, 1).toUpperCase()}
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 18, fontWeight: 700, color: T.slate900 }}>{sheet.name}</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: T.slate900 }}>{sheet.name}{sheet.side === "evil" && <span style={{ ...tag("off"), marginLeft: 8, verticalAlign: "middle" }}>Evil</span>}</div>
           <div style={{ fontSize: 12, color: T.slate500 }}>{sheet.is_npc ? "NPC" : (sheet.kid_name ? `Played by ${sheet.kid_name}` : "No player yet")}</div>
         </div>
         <button type="button" style={btn("soft", true)} onClick={editing ? () => setEditing(false) : startEdit}>{editing ? "Cancel" : "Edit"}</button>
@@ -485,6 +493,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
                       <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={s.formula_text || ""}>{s.name}</div>
                       <div style={{ fontSize: 11, color: T.slate500 }}>
                         {needsText(s)}
+                        {s.pair_key && Number(s.evil) > 0 && ` · ${s.good_name} ${num(s.good)}, ${s.evil_name} ${num(s.evil)}`}
                         {Number(s.item_bonus) !== 0 && ` · items +${num(s.item_bonus)}`}
                         {Number(s.earned_levels) > 0 && ` · trained +${num(s.earned_levels)}`}
                         {s.trainable && Number(s.next_level_cost) > 0 && ` · ${num(s.skill_points)}/${num(s.next_level_cost)} pts`}
@@ -493,6 +502,16 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
                     <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, minWidth: 34, textAlign: "right" }}>{num(s.value)}</div>
                     {isParent && s.kind !== "derived" && (
                       <button type="button" style={btn("soft", true)} title="Set by hand (special means)" onClick={() => setInput(s)}>Set</button>
+                    )}
+                    {isParent && s.kind !== "derived" && (
+                      <select style={{ ...input, padding: "4px 6px", fontSize: 12 }} value="" title="An event moves the trait" aria-label="Event"
+                        onChange={e => { const v = e.target.value; if (!v) return; const [k, d] = v.split(":"); adjustTrait(k, Number(d)); }}>
+                        <option value="">Event…</option>
+                        <option value={`${s.key}:1`}>+1 {s.pair_key ? s.good_name : s.name}</option>
+                        <option value={`${s.key}:-1`}>−1 {s.pair_key ? s.good_name : s.name}</option>
+                        {s.pair_key && <option value={`${s.pair_key}:1`}>+1 {s.evil_name}</option>}
+                        {s.pair_key && <option value={`${s.pair_key}:-1`}>−1 {s.evil_name}</option>}
+                      </select>
                     )}
                     <button type="button" style={btn("primary", true)} disabled={!!rolling} onClick={() => roll(s)}>{rolling === s.key ? "…" : "Roll"}</button>
                   </div>
