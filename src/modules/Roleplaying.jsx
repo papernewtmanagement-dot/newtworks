@@ -22,7 +22,8 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 // Every number comes from the database, one saved function per job:
 //   rpg_character_list()                     the character cards
 //   rpg_sheet(id, difficulty)                every stat, what a roll needs at that difficulty
-//   rpg_new_character(name, kid, is_npc)     rolls the strengths on the server
+//   rpg_new_character(name, kid, is_npc, card)   makes a character from a card (Human when none is named);
+//                                            the server rolls it from the card's blueprint
 //   rpg_reroll_character(id)                 fresh strengths (household: only before the first roll)
 //   rpg_set_input(id, key, value)            parents set a rolled stat by hand ("special means")
 //   rpg_roll(id, stat, difficulty, label)    one d100 roll: result, skill points, level-ups
@@ -30,7 +31,8 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //   rpg_adjust_vitality(id, delta)           damage taken (+) or healed (−)
 //   rpg_recent_rolls(id)                     the roll log
 //   rpg_creature_list()                      the creature cards (players: shown ones only)
-//   rpg_creature_card(id)                    one card; players get names, haunts and lore only
+//   rpg_creature_card(id)                    one card; players get names, haunts and lore only. The game master also
+//                                            gets how one is made (template: the parent card, ranges, fixed numbers)
 //   rpg_rules_page()                         the Rules tab in one read: rules, formulas, level costs
 //   rpg_needed(skill, difficulty)            what a roll needs; the calculator asks the same function a roll does
 //   rpg_difficulty(skill, can_act)           the difficulty a defender presents: their skill × 2 when they can act (skill and will)
@@ -521,7 +523,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
             <input style={{ ...input, gridColumn: isPhone ? "1 / -1" : "span 2" }} placeholder="Item name" value={item.name} onChange={e => setItem(i => ({ ...i, name: e.target.value }))} />
             <select style={input} value={item.stat_key} onChange={e => setItem(i => ({ ...i, stat_key: e.target.value }))}>
               <option value="">Boosts…</option>
-              {(defs || []).map(d => <option key={d.key} value={d.key}>{d.name}</option>)}
+              {(sheet.stats || []).map(d => <option key={d.key} value={d.key}>{d.name}</option>)}
             </select>
             <input style={input} inputMode="numeric" placeholder="+" value={item.bonus} onChange={e => setItem(i => ({ ...i, bonus: e.target.value }))} title="Bonus" />
             <input style={input} inputMode="numeric" placeholder="Uses (blank = always)" value={item.uses_left} onChange={e => setItem(i => ({ ...i, uses_left: e.target.value }))} />
@@ -616,7 +618,7 @@ function CreatureList({ isParent, onOpen, hrefFor, onError }) {
               <div style={{ fontWeight: 700, fontSize: 15, color: T.slate900, minWidth: 0 }}>{r.name}</div>
               {isParent && <span style={tag(r.shown_to_players ? "on" : "off")}>{r.shown_to_players ? "Shown" : "Hidden"}</span>}
             </div>
-            {isParent && <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>Attack {num(r.attack_skill)} · Defense {num(r.defense_skill)} · Vitality {num(r.vitality)}</div>}
+            {isParent && (r.attack_skill != null || r.defense_skill != null || r.vitality != null) && <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>Attack {num(r.attack_skill)} · Defense {num(r.defense_skill)} · Vitality {num(r.vitality)}</div>}
             {r.epigraph && <div style={{ fontSize: 12, color: T.slate600, fontStyle: "italic", marginTop: 6, lineHeight: 1.5 }}>{r.epigraph}</div>}
           </TabLink>
         ))}
@@ -801,6 +803,38 @@ function TableNumber({ big, small }) {
   );
 }
 
+// How a character made from this card is rolled (rpg_creature_card -> template): the card above it, each blueprint
+// entry as a set number (a boss) or the divider that trait rolls with, then the one rolling rule for everything else.
+const rollUp = (n, d) => Math.ceil(n / d);
+function CardRecipe({ tmpl, entries }) {
+  const die = Number(tmpl.die) || 100;
+  const div = Number(tmpl.divisor) || 10;
+  const sample = Math.round(die * 0.47);
+  const own = entries.find(e => e.divisor != null);
+  const fixed = entries.some(e => e.fixed != null);
+  const chip = { fontSize: 12, color: T.slate800, background: T.slate100, border: `1px solid ${T.slate200}`, borderRadius: 999, padding: "3px 10px", boxSizing: "border-box" };
+  return (
+    <div style={{ ...card, marginBottom: 12 }}>
+      <div style={label}>How one is made</div>
+      {tmpl.parent_name && <div style={{ fontSize: 13, color: T.slate700, marginTop: 6 }}>Made from the {tmpl.parent_name} card: anything this card leaves out comes from that one.</div>}
+      {entries.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+          {entries.map(e => (
+            <span key={e.key} style={chip}>
+              {e.name} {e.fixed != null ? `${num(e.fixed)}, set` : `÷ ${Number(e.divisor)}, lands ${rollUp(1, Number(e.divisor))} to ${num(e.top)}`}{e.inherited && tmpl.parent_name ? ` (from ${tmpl.parent_name})` : ""}
+            </span>
+          ))}
+        </div>
+      )}
+      <div style={{ fontSize: 12, color: T.slate600, lineHeight: 1.5, marginTop: 8 }}>
+        {fixed && "A set number is the same every time, the way a boss is made. "}
+        {entries.length > 0 ? "Every other trait" : "Every trait"} rolls a {die}-sided die, divided by {div} and rounded up: a {sample} makes {rollUp(sample, div)}, so it lands {rollUp(1, div)} to {rollUp(die, div)}.
+        {own && ` ${own.name} rolls the same die divided by ${Number(own.divisor)}: a ${sample} makes ${rollUp(sample, Number(own.divisor))}, so it lands ${rollUp(1, Number(own.divisor))} to ${num(own.top)}.`}
+      </div>
+    </div>
+  );
+}
+
 // The game master's half of the card, in folds: the numbers the table uses, the actions with what
 // each one rolls, then the printed d20 stat block, the rumor table and the tip. Reading parts start shut.
 function CreatureGmCard({ c, accent }) {
@@ -809,6 +843,11 @@ function CreatureGmCard({ c, accent }) {
   const t = c.table || {};
   const mult = num(t.will_multiplier);
   const rumors = Array.isArray(c.rumors) ? c.rumors : [];
+  const tmpl = c.template || {};
+  const entries = Array.isArray(tmpl.entries) ? tmpl.entries : [];
+  // A card with no fight numbers (Human) skips "At the table"; a card with no printed d20 block skips that fold.
+  const hasTable = [t.vitality, t.attack_skill, t.defense_skill, t.strength_skill, t.will_skill, t.stealth_skill, t.awareness_skill].some(v => v != null);
+  const hasPrinted = !!(c.armor_text || c.hit_points_text || (Array.isArray(c.abilities) && c.abilities.length > 0));
 
   const statRow = (name, value) => (value ? (
     <div style={{ fontSize: 13, color: T.slate700, padding: "3px 0" }}><span style={{ fontWeight: 700, color: T.slate900 }}>{name}</span> {value}</div>
@@ -837,6 +876,7 @@ function CreatureGmCard({ c, accent }) {
   return (
     <>
       {/* The character-scale numbers the table uses (rule creature_conversion). Difficulties come from rpg_difficulty. */}
+      {hasTable && (
       <div style={{ ...card, marginBottom: 12, background: T.blueLt, borderColor: T.blue }}>
         <div style={label}>At the table</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginTop: 8 }}>
@@ -851,7 +891,11 @@ function CreatureGmCard({ c, accent }) {
           {Number(c.legendary_per_round) > 0 && <TableNumber big={num(c.legendary_per_round)} small="Legendary actions a round" />}
         </div>
       </div>
+      )}
 
+      {(entries.length > 0 || tmpl.parent_key || !hasTable) && <CardRecipe tmpl={tmpl} entries={entries} />}
+
+      {actions.length > 0 && (
       <Fold title="Actions and nature" open>
         {group("Actions", ofKind("action"))}
         {group("Bonus actions", ofKind("bonus_action"))}
@@ -860,7 +904,9 @@ function CreatureGmCard({ c, accent }) {
         {group(c.lair_title ? `Lair actions (${c.lair_title})` : "Lair actions", ofKind("lair"), c.lair_intro)}
         {group("Nature", ofKind("trait"))}
       </Fold>
+      )}
 
+      {hasPrinted && (
       <Fold title="Printed stat block (the d20 numbers, for reading)">
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{c.card_title || c.name}</div>
         {c.type_line && <div style={{ fontSize: 13, fontStyle: "italic", color: T.slate600 }}>{c.type_line}</div>}
@@ -887,6 +933,7 @@ function CreatureGmCard({ c, accent }) {
         {statRow("Languages", c.languages)}
         {statRow("Challenge Rating", c.challenge_text)}
       </Fold>
+      )}
 
       {rumors.length > 0 && (
         <Fold title="Player rumor table">
