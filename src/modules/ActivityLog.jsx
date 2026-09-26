@@ -1584,8 +1584,10 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   const undoButton = (r) => (
     <button style={{ ...btnGhost, color: T.blue, marginRight: 6 }} disabled={busyId === r.id} onClick={() => act(() => supabase.rpc("rp_spot_check_undo", { p_kind: kindOf(r), p_id: r.id }), r.id)}>Undo</button>
   );
+  // The Checked view shows each household whole, like To check (Peter 2026-09-26). A record that has been
+  // checked, on any day, gets the checked buttons; everything else in the household reads as it does on To check.
   const rowActions = (r) => {
-    if (view === "checked") return (
+    if (view === "checked" && r.outcome) return (
       <>
         {r.outcome === "verified" && editButton(r)}
         {undoButton(r)}
@@ -1598,7 +1600,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
       </span>
     ) : (
       <>
-        {flags.find(f => f.id === r.id) && (
+        {view === "tocheck" && flags.find(f => f.id === r.id) && (
           <button style={{ ...btnGhost, color: T.amber, marginRight: 6 }} disabled={busyId === r.id}
                   onClick={() => { setMsg(""); setConverting(flags.find(f => f.id === r.id)); }}>This was a cancelation</button>
         )}
@@ -1609,13 +1611,17 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
     );
   };
   // A spot-check note can be typed on anything still to check, and on anything already checked.
-  const canNote = (r) => view === "checked" || canCheck(r);
+  const canNote = (r) => (view === "checked" && !!r.outcome) || canCheck(r);
+  // Was this record checked in the day or week picked? The rest of its household is there for context.
+  const inPick = (r) => !!(pick && r.outcome && r.checked_on && r.checked_on >= pick.from && r.checked_on <= pick.to);
   // How and when a checked record was checked: "Verified 6:36 PM by Peter", "Removed 6:41 PM by Peter · could
-  // not verify". A week shows the day too.
+  // not verify". A week shows the day too, and a record checked outside the day or week picked shows its date.
   const checkedLine = (r) => {
+    if (!r.outcome) return <span style={{ color: T.slate400 }}>{canCheck(r) ? "Not checked" : "—"}</span>;
     const d = r.checked_at ? new Date(r.checked_at) : null;
+    const dayPart = !inPick(r) ? { weekday: "short", month: "numeric", day: "numeric" } : by === "week" ? { weekday: "short" } : {};
     const when = d && !isNaN(d)
-      ? d.toLocaleString("en-US", { timeZone: "America/Chicago", ...(by === "week" ? { weekday: "short" } : {}), hour: "numeric", minute: "2-digit" })
+      ? d.toLocaleString("en-US", { timeZone: "America/Chicago", ...dayPart, hour: "numeric", minute: "2-digit" })
       : "";
     const why = r.outcome === "removed" ? String(r.void_reason || "").replace(/^spot-check:\s*/i, "") : "";
     return (
@@ -1659,7 +1665,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
     else households.push({ key, label: r.customer_label, phone: r.phone_last4,
                            first: r.customer_first_name, initial: r.customer_last_initial, entries: [r] });
   });
-  households.forEach(h => { h.toCheck = h.entries.filter(canCheck).length; });
+  households.forEach(h => { h.toCheck = h.entries.filter(canCheck).length; h.checkedHere = h.entries.filter(inPick).length; });
 
   if (!isAdmin) return null;
   return (
@@ -1699,7 +1705,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
           {pick
             ? `${pick.v + pick.r} checked ${by === "week" ? "that week" : `on ${pick.name}`}: ${pick.v} verified, ${pick.r} removed. `
             : "Nothing checked in the last 90 days. "}
-          Undo sends a record back to the list to check. A removed record comes back and gets paid again.
+          Each household shows its whole file, like To check. Undo sends a record back to the list to check. A removed record comes back and gets paid again.
         </div>
       ) : (
       <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
@@ -1763,7 +1769,9 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                   {h.phone ? <span style={{ color: T.slate400, fontWeight: 400 }}> ·{h.phone}</span> : null}
                 </div>
                 {view === "checked" ? (
-                  <div style={{ fontSize: 12, color: T.slate500 }}>{h.entries.length} checked</div>
+                  <div style={{ fontSize: 12, color: T.slate500 }}>
+                    {h.entries.length} {h.entries.length === 1 ? "record" : "records"} on file · {h.checkedHere} checked {by === "week" ? "that week" : "that day"}{h.toCheck > 0 ? ` · ${h.toCheck} to check` : ""}
+                  </div>
                 ) : (
                   <div style={{ fontSize: 12, color: h.toCheck > 2 ? T.amber : T.slate500, fontWeight: h.toCheck > 2 ? 700 : 400 }}>
                     {h.entries.length} {h.entries.length === 1 ? "record" : "records"} on file · {h.toCheck} to check
@@ -1785,7 +1793,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                           : "no ECRM link"}
                       </div>
                       <div style={{ fontSize: 13, color: T.slate800, marginTop: 4 }}>{noteCell(r)}</div>
-                      {view === "checked" && <div style={{ fontSize: 12, marginTop: 4 }}>{checkedLine(r)}</div>}
+                      {view === "checked" && r.outcome && <div style={{ fontSize: 12, marginTop: 4 }}>{checkedLine(r)}</div>}
                       <div style={{ display: "flex", flexWrap: "wrap", rowGap: 6, alignItems: "center", marginTop: 6, fontSize: 13 }}>{rowActions(r)}</div>
                     </div>
                   ))}
