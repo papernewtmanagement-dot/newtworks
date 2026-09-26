@@ -890,7 +890,7 @@ function CreatureGmCard({ c, accent }) {
   // What the action does at the table: the skill it rolls, the stat the target defends with, and the note.
   const tableLine = (a) => (a.skill == null && !a.table_note ? null : (
     <div style={{ marginTop: 4 }}>
-      {a.skill != null && <div style={{ fontSize: 12, color: T.blue, fontWeight: 700 }}>Rolls {num(a.skill)} against {a.against_name || "the target"} × {mult}</div>}
+      {a.skill != null && <div style={{ fontSize: 12, color: T.blue, fontWeight: 700 }}>Rolls {a.skill_name ? `${a.skill_name} ` : ""}{num(a.skill)} against {a.against_name || "the target"} × {mult}</div>}
       {a.table_note && <div style={{ fontSize: 12, color: T.slate600, lineHeight: 1.5 }}>{a.table_note}</div>}
     </div>
   ));
@@ -1227,6 +1227,7 @@ function FormulaTable({ stats }) {
                         <td style={{ ...td, whiteSpace: "nowrap" }}>
                           <span style={{ fontWeight: 600, color: T.slate900 }}>{s.name}</span>
                           {s.abbr && <span style={{ color: T.slate500, fontSize: 11 }}> {s.abbr}</span>}
+                          {s.card_name && <span style={{ color: T.slate500, fontSize: 11 }}> · {s.card_name} only</span>}
                         </td>
                         <td style={{ ...td, color: T.slate700 }}>{howFigured(s)}</td>
                         <td style={{ ...td, textAlign: "center", color: T.green, fontWeight: 700 }}>{s.trainable ? "✓" : ""}</td>
