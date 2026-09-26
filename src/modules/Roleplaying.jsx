@@ -829,14 +829,14 @@ function TableNumber({ big, small }) {
 // How a character made from this card is rolled (rpg_creature_card -> template): the card above it, each blueprint
 // entry as a set number (a boss), a divider the trait rolls with (never under 1: ÷ 2 lands 1 to 50), and/or
 // experience: skill points spent up the same level ladder a player climbs, from wherever the roll lands (from_1 and
-// from_10 say where those points take a 1 and a 10).
+// from_top say where those points take a 1 and the top of the roll, start_top).
 const rollUp = (n, d) => Math.ceil(n / d);
 const pts = (n) => Number(n).toLocaleString("en-US");
 const chipText = (e) => {
   if (e.fixed != null) return `${num(e.fixed)}, set`;
   const parts = [];
   if (e.divisor != null) parts.push(`÷ ${Number(e.divisor)}, lands 1 to ${num(e.top)}`);
-  if (e.points != null) parts.push(`${pts(e.points)} points, lands ${num(e.from_1)} to ${num(e.from_10)}`);
+  if (e.points != null) parts.push(`${pts(e.points)} points, lands ${num(e.from_1)} to ${num(e.from_top ?? e.from_10)}`);
   return parts.join(" · ");
 };
 function CardRecipe({ tmpl, entries }) {
@@ -864,7 +864,7 @@ function CardRecipe({ tmpl, entries }) {
         {fixed && "A set number is the same every time, the way a boss is made. "}
         {fixed || divided ? "Every other trait" : "Every trait"} rolls a {die}-sided die, divided by {div} and rounded up: a {sample} makes {rollUp(sample, div)}, so it lands {rollUp(1, div)} to {rollUp(die, div)}.
         {divided && ` ${divided.name} rolls the same die divided by ${Number(divided.divisor)}: a ${sample} makes ${rollUp(sample, Number(divided.divisor))}, so it lands 1 to ${num(divided.top)}.`}
-        {own && ` ${own.name} then spends ${pts(own.points)} skill points up the level ladder, the way a player trains: a rolled 1 climbs to ${num(own.from_1)} and a rolled 10 to ${num(own.from_10)}.`}
+        {own && ` ${own.name} then grows: ${pts(own.points)} points of experience climb the same level ladder a player climbs, so a rolled 1 reaches ${num(own.from_1)} and a rolled ${num(own.start_top ?? 10)} reaches ${num(own.from_top ?? own.from_10)}.`}
       </div>
     </div>
   );
