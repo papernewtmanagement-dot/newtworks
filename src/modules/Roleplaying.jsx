@@ -61,6 +61,7 @@ const GROUPS = [
   ["strength", "Spirit"],
   ["mind", "Mind"],
   ["physical", "Body"],
+  ["derived", "Derived"],
   ["spiritual", "Spiritual Skills"],
   ["ability", "Character Abilities"],
   ["fighting", "Fighting"],
@@ -1309,7 +1310,7 @@ function FightList({ isParent, onOpen, hrefFor, onError }) {
 }
 
 // The outcome word the log leads with (rpg_outcome) and the color it wears.
-const OUTCOME_COLOR = { fail: T.red, miss: T.red, wild_miss: T.red, evaded: T.amber, blocked: T.blue, weak_hit: T.amber, hit: T.green, success: T.green, big_hit: T.green, critical: T.gold, info: T.slate900 };
+const OUTCOME_COLOR = { fail: T.red, miss: T.red, wild_miss: T.red, evaded: T.amber, blocked: T.blue, bounced: T.blue, weak_hit: T.amber, hit: T.green, success: T.green, big_hit: T.green, critical: T.gold, info: T.slate900 };
 // Physical energy is red, spiritual energy blue.
 const ENERGY_COLOR = { physical: T.red, spiritual: T.blue };
 function EnergyBar({ kind, pool, showNumbers }) {
