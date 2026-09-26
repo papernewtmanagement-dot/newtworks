@@ -55,9 +55,12 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 const PARENT_ROLES = ["owner", "admin"];
 const TABS = ["characters", "creatures", "rules", "play"];
 const TAB_LABELS = { characters: "Characters", creatures: "Creatures", rules: "Rules", play: "Play" };
+// The rolled traits sit in three groups, Spirit, Mind, Body, in that order (Peter 2026-09-26); together they are
+// "traits". The group keys stay as stored ("strength" is the nine fruits); only the headings changed.
 const GROUPS = [
-  ["strength", "Spiritual Traits"],
-  ["physical", "Physical Traits"],
+  ["strength", "Spirit"],
+  ["mind", "Mind"],
+  ["physical", "Body"],
   ["spiritual", "Spiritual Skills"],
   ["ability", "Character Abilities"],
   ["fighting", "Fighting"],
