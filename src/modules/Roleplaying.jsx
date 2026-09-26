@@ -804,15 +804,24 @@ function TableNumber({ big, small }) {
 }
 
 // How a character made from this card is rolled (rpg_creature_card -> template): the card above it, each blueprint
-// entry as a set number (a boss) or experience: skill points spent up the same level ladder a player climbs, from
-// wherever the standard roll lands (from_1 and from_10 say where those points take a 1 and a 10).
+// entry as a set number (a boss), a divider the trait rolls with (never under 1: ÷ 2 lands 1 to 50), and/or
+// experience: skill points spent up the same level ladder a player climbs, from wherever the roll lands (from_1 and
+// from_10 say where those points take a 1 and a 10).
 const rollUp = (n, d) => Math.ceil(n / d);
 const pts = (n) => Number(n).toLocaleString("en-US");
+const chipText = (e) => {
+  if (e.fixed != null) return `${num(e.fixed)}, set`;
+  const parts = [];
+  if (e.divisor != null) parts.push(`÷ ${Number(e.divisor)}, lands 1 to ${num(e.top)}`);
+  if (e.points != null) parts.push(`${pts(e.points)} points, lands ${num(e.from_1)} to ${num(e.from_10)}`);
+  return parts.join(" · ");
+};
 function CardRecipe({ tmpl, entries }) {
   const die = Number(tmpl.die) || 100;
   const div = Number(tmpl.divisor) || 10;
   const sample = Math.round(die * 0.47);
   const own = entries.find(e => e.points != null);
+  const divided = entries.find(e => e.divisor != null);
   const fixed = entries.some(e => e.fixed != null);
   const chip = { fontSize: 12, color: T.slate800, background: T.slate100, border: `1px solid ${T.slate200}`, borderRadius: 999, padding: "3px 10px", boxSizing: "border-box" };
   return (
@@ -823,14 +832,15 @@ function CardRecipe({ tmpl, entries }) {
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
           {entries.map(e => (
             <span key={e.key} style={chip}>
-              {e.name} {e.fixed != null ? `${num(e.fixed)}, set` : `${pts(e.points)} points, lands ${num(e.from_1)} to ${num(e.from_10)}`}{e.inherited && tmpl.parent_name ? ` (from ${tmpl.parent_name})` : ""}
+              {e.name} {chipText(e)}{e.inherited && tmpl.parent_name ? ` (from ${tmpl.parent_name})` : ""}
             </span>
           ))}
         </div>
       )}
       <div style={{ fontSize: 12, color: T.slate600, lineHeight: 1.5, marginTop: 8 }}>
         {fixed && "A set number is the same every time, the way a boss is made. "}
-        {fixed ? "Every other trait" : "Every trait"} rolls a {die}-sided die, divided by {div} and rounded up: a {sample} makes {rollUp(sample, div)}, so it lands {rollUp(1, div)} to {rollUp(die, div)}.
+        {fixed || divided ? "Every other trait" : "Every trait"} rolls a {die}-sided die, divided by {div} and rounded up: a {sample} makes {rollUp(sample, div)}, so it lands {rollUp(1, div)} to {rollUp(die, div)}.
+        {divided && ` ${divided.name} rolls the same die divided by ${Number(divided.divisor)}: a ${sample} makes ${rollUp(sample, Number(divided.divisor))}, so it lands 1 to ${num(divided.top)}.`}
         {own && ` ${own.name} then spends ${pts(own.points)} skill points up the level ladder, the way a player trains: a rolled 1 climbs to ${num(own.from_1)} and a rolled 10 to ${num(own.from_10)}.`}
       </div>
     </div>
