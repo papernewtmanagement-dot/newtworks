@@ -150,12 +150,22 @@ const btnPrimary = (disabled) => ({
 const btnGhost = { padding: "6px 10px", borderRadius: 6, border: `1px solid ${T.slate300}`, background: T.white, color: T.slate700, fontSize: 12, cursor: "pointer" };
 // The pill toggle: History's sub-tabs and the Spot-check's To check / Checked and Day / Week switches.
 // One look, used by all of them.
+// adminOnly = a pill only admins can see. It shows plum instead of cream, so an
+// admin can tell at a glance what the team doesn't see (Peter 2026-09-26).
+// Text stays at 4.5:1 contrast or better on both (WCAG 2.2, 1.4.3).
 const segWrap = { display: "inline-flex", gap: 2, padding: 3, borderRadius: 999, background: T.slate100 };
-const segTab = (on) => ({
+const segTab = (on, adminOnly = false) => ({
   flexShrink: 0, padding: "6px 14px", borderRadius: 999, fontSize: 12, fontWeight: 700, textDecoration: "none",
-  background: on ? T.white : "transparent", color: on ? T.slate900 : T.slate600,
+  background: adminOnly ? (on ? T.purple : T.purpleLt) : (on ? T.white : "transparent"),
+  color: adminOnly ? (on ? T.white : T.slate800) : (on ? T.slate900 : T.slate600),
   boxShadow: on ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
 });
+// A pill row with admin-only pills in it: drops them for everyone else and puts
+// them at the end for admins, otherwise in the order written (Peter 2026-09-26).
+const adminLast = (list, isAdmin) => [
+  ...list.filter(s => !s.adminOnly),
+  ...(isAdmin ? list.filter(s => s.adminOnly) : []),
+];
 const chip = (on) => ({
   padding: "8px 12px", borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: "pointer", userSelect: "none",
   border: `1px solid ${on ? T.blue : T.slate300}`, background: on ? T.blueLt : T.white, color: on ? T.blue : T.slate700,
@@ -4730,21 +4740,23 @@ function CustomerAccount({ token, values, sources, types, isOwner, roster, onLog
 // them, as everyone saw Changes. Each one's URL name is its kind key
 // (spot_check is Notes, not the Spot-check sub-tab). An old link to the
 // Changes group (htab=changes) opens Notes, which is where the group opened.
+// Peter 2026-09-26: History moved to the end of the everyone sub-tabs. It is
+// still where History opens. Admin-only sub-tabs show plum and sit last.
 // =====================================================================
 const KIND_SUBTABS = CHANGE_KINDS.map(k => k.key);
-const HISTORY_SUBTABS = ["history", ...KIND_SUBTABS, "spotcheck", "backfill"];
+const HISTORY_SUBTABS = [...KIND_SUBTABS, "history", "spotcheck", "backfill"];
 const MOVED_UNDER_HISTORY = ["changes", "spotcheck", "backfill"];
 function HistoryGroup({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, refreshKey, onChanged }) {
   const [sub, setSub, subHref] = useTabParam("htab", "history", [...HISTORY_SUBTABS, "changes"]);
   // Each kind's count for the week or list on screen, sent up by ChangesTab.
   const [kindCounts, setKindCounts] = useState({});
-  const subs = [
-    { id: "history", label: "History" },
+  const subs = adminLast([
     // who changed what and when (Peter 2026-09-10); teammates see their own entries (2026-09-21)
     ...CHANGE_KINDS.map(k => ({ id: k.key, label: k.label })),
-    ...(isAdmin ? [{ id: "spotcheck", label: "Spot-check" }] : []),  // monthly check of self-logged entries, owner and managers only (Peter 2026-09-16)
-    ...(isAdmin ? [{ id: "backfill", label: "Backfill" }] : []),  // gaps on older records: phone, marketing source, ECRM link (Peter 2026-09-17)
-  ];
+    { id: "history", label: "History" },
+    { id: "spotcheck", label: "Spot-check", adminOnly: true },  // monthly check of self-logged entries, owner and managers only (Peter 2026-09-16)
+    { id: "backfill", label: "Backfill", adminOnly: true },  // gaps on older records: phone, marketing source, ECRM link (Peter 2026-09-17)
+  ], isAdmin);
   const want = sub === "changes" ? KIND_SUBTABS[0] : sub;
   const cur = subs.some(s => s.id === want) ? want : "history";
   const onKind = KIND_SUBTABS.includes(cur);
@@ -4755,7 +4767,8 @@ function HistoryGroup({ values, sources, types, isOwner, isAdmin, myTeamId, rost
       <div style={{ display: "flex", maxWidth: "100%", overflowX: "auto", whiteSpace: "nowrap" }}>
         <div style={segWrap}>
           {subs.map(s => (
-            <TabLink key={s.id} href={subHref(s.id)} onSelect={() => setSub(s.id)} style={segTab(cur === s.id)}>{s.label}{onKind && kindCounts[s.id] != null ? ` (${kindCounts[s.id]})` : ""}</TabLink>
+            <TabLink key={s.id} href={subHref(s.id)} onSelect={() => setSub(s.id)} style={segTab(cur === s.id, s.adminOnly)}
+              title={s.adminOnly ? "Only admins see this" : undefined}>{s.label}{onKind && kindCounts[s.id] != null ? ` (${kindCounts[s.id]})` : ""}</TabLink>
           ))}
         </div>
       </div>
