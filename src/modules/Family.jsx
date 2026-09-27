@@ -945,8 +945,9 @@ function Celebration({ kid, title, onClose }) {
 }
 
 // ─── Money ────────────────────────────────────────────────────────────────
-// History is family_money_history(): the starting balance and every week's money, close-outs
-// included, with spending money after each week. The screen only lays it out (Peter 2026-09-26).
+// History is family_money_history(): every money line oldest to newest, tithe and investment
+// set-asides as their own lines, with spending money after each line. The screen only lays it
+// out (Peter 2026-09-26).
 function MoneyView({ kid, balance, isParent, today, onSaved, setErr, onClose }) {
   const [kind, setKind] = useState("payout");
   const [amount, setAmount] = useState("");
@@ -970,7 +971,7 @@ function MoneyView({ kid, balance, isParent, today, onSaved, setErr, onClose }) 
       if (!m.has(h.week_start)) m.set(h.week_start, []);
       m.get(h.week_start).push(h);
     }
-    return [...m.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
+    return [...m.entries()];
   }, [history]);
 
   const save = async () => {
@@ -1019,28 +1020,40 @@ function MoneyView({ kid, balance, isParent, today, onSaved, setErr, onClose }) 
         <Section title="History">
           {weeks.map(([ws, rows]) => {
             const thisWeek = ws === weekStartOf(today);
-            const lastPosted = [...rows].reverse().find(r => r.posted);
-            return (
-              <div key={ws} style={{ borderTop: `1px solid ${T.slate200}`, paddingTop: 10, marginTop: 10 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>
-                    Week of {shortDate(ws)}
-                    <span style={{ fontWeight: 500, color: T.slate500 }}> · {rows[0]?.closed ? "Closed out" : thisWeek ? "This week" : "Not closed out yet"}</span>
+            const now = rows.filter(r => r.posted), waiting = rows.filter(r => !r.posted);
+            const line = (r, balance) => {
+              const own = r.bucket === "spend" || r.kind === "tithe_set_aside" || r.kind === "invest_set_aside";
+              const v = own ? r.to_spend : r.amount;
+              return (
+                <div key={`${r.seq}|${r.sub}|${r.kind}|${r.ref_id || ""}`} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "6px 0", fontSize: 13, borderTop: `1px solid ${T.slate100}` }}>
+                  <div style={{ color: T.slate700 }}>
+                    {shortDate(r.event_date)} · {r.label}
+                    {!own && <span style={{ color: T.slate500 }}> ({r.bucket === "tithe" ? "tithe" : "investments"})</span>}
                   </div>
-                  {rows[0]?.closed && lastPosted && <div style={{ fontSize: 12, color: T.slate500 }}>Spending money after: <b style={{ color: Number(lastPosted.spend_after) < 0 ? T.red : T.slate900 }}>{money(lastPosted.spend_after)}</b></div>}
+                  <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                    <div style={{ color: Number(v) < 0 ? T.red : T.green, fontWeight: 600 }}>{money(v)}</div>
+                    {balance != null && <div style={{ fontSize: 11, color: T.slate500 }}>= {money(balance)}</div>}
+                  </div>
                 </div>
-                {rows.map(r => (
-                  <div key={`${r.seq}|${r.kind}|${r.ref_id || ""}`} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "6px 0", fontSize: 13, opacity: r.posted ? 1 : 0.6 }}>
-                    <div style={{ color: T.slate700 }}>
-                      {shortDate(r.event_date)} · {r.label}
-                      {r.is_income && (Number(r.tithe) > 0 || Number(r.invest) > 0) && (
-                        <div style={{ fontSize: 11, color: T.slate500 }}>{money(r.tithe)} to tithe · {money(r.invest)} to investments</div>
-                      )}
+              );
+            };
+            return (
+              <div key={ws} style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900, paddingBottom: 4 }}>
+                  Week of {shortDate(ws)}
+                  <span style={{ fontWeight: 500, color: T.slate500 }}> · {rows[0]?.closed ? "Closed out" : thisWeek ? "This week" : "Not closed out yet"}</span>
+                </div>
+                {now.map(r => line(r, r.spend_after))}
+                {waiting.length > 0 && (
+                  <div style={{ opacity: 0.65 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em", paddingTop: 6 }}>Waiting for close-out</div>
+                    {waiting.map(r => line(r, null))}
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "6px 0", fontSize: 13, fontWeight: 700, color: T.slate900, borderTop: `1px solid ${T.slate200}` }}>
+                      <span>Adds to spending money at close-out</span>
+                      <span style={{ color: Number(waiting[waiting.length - 1].waiting_after) < 0 ? T.red : T.green }}>{money(waiting[waiting.length - 1].waiting_after)}</span>
                     </div>
-                    <div style={{ color: Number(r.amount) < 0 ? T.red : T.green, fontWeight: 600, whiteSpace: "nowrap" }}>{money(r.amount)}</div>
                   </div>
-                ))}
-                {rows.some(r => !r.posted) && <div style={{ fontSize: 11, color: T.slate500 }}>Faded lines settle when this week is closed out.</div>}
+                )}
               </div>
             );
           })}
