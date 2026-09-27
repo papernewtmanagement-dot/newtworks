@@ -239,9 +239,18 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
   //       a reply on one of those threads - a resume a candidate sends back,
   //       for instance - and send it down this route to fail. The filename
   //       carries the marker on the real thing.
+  //
+  //       2026-09-26: the vendor's own download is named like
+  //       "Profile_Report_-_SF_Sales_(Likert)_825946.pdf" - no "CTS", no
+  //       "sales profile", underscores instead of spaces - and Marie sends the
+  //       reports under subjects like "Resumes/Profiles". Gamliela Tolbert's
+  //       report (emailed 2026-09-21) matched nothing, landed in
+  //       document_classifier_skips, and she sat at the interview gate for five
+  //       days. Separators are now [\s_-]* so the underscore names match, and
+  //       "profile report" on its own is recognised as the vendor's file name.
   { docType: "cts_profile",
     test: (i) => /\.pdf$/i.test(i.fileName) &&
-                 (/cts\s*profile|sales\s*profile(\s*report)?/i.test(filenameBase(i.fileName)) ||
+                 (/cts[\s_-]*profile|sales[\s_-]*profile|profile[\s_-]*report/i.test(filenameBase(i.fileName)) ||
                   /\bcts\b/i.test(i.subject)) },
 
   // .docx added 2026-09-19. Every resume route used to require .pdf, so a Word

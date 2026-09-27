@@ -1873,9 +1873,18 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
   //       a reply on one of those threads - a resume a candidate sends back,
   //       for instance - and send it down this route to fail. The filename
   //       carries the marker on the real thing.
+  //
+  //       2026-09-26: the vendor's own download is named like
+  //       "Profile_Report_-_SF_Sales_(Likert)_825946.pdf" - no "CTS", no
+  //       "sales profile", underscores instead of spaces - and Marie sends the
+  //       reports under subjects like "Resumes/Profiles". Gamliela Tolbert's
+  //       report (emailed 2026-09-21) matched nothing, landed in
+  //       document_classifier_skips, and she sat at the interview gate for five
+  //       days. Separators are now [\s_-]* so the underscore names match, and
+  //       "profile report" on its own is recognised as the vendor's file name.
   { docType: "cts_profile",
     test: (i) => /\.pdf$/i.test(i.fileName) &&
-                 (/cts\s*profile|sales\s*profile(\s*report)?/i.test(filenameBase(i.fileName)) ||
+                 (/cts[\s_-]*profile|sales[\s_-]*profile|profile[\s_-]*report/i.test(filenameBase(i.fileName)) ||
                   /\bcts\b/i.test(i.subject)) },
 
   // .docx added 2026-09-19. Every resume route used to require .pdf, so a Word
@@ -11262,8 +11271,9 @@ If a value genuinely is not in the text, use null for it. Never guess a score.`;
 
 /**
  * Candidate name straight out of the report header, before the LLM runs.
- * Two shapes, in order of trust:
+ * Three shapes, in order of trust:
  *   "Sales Profile Report for <Name> Jul, 14 2026"
+ *   "Sales Profile Report Sep, 19 2026 for <Name>"  (date first, added 2026-09-26)
  *   filename "CTS Profile - <Name> - 20260714.pdf"
  * Used to cross-check whatever the LLM says the name is, so a hallucinated
  * name cannot quietly attach a report to the wrong person.
@@ -11273,6 +11283,15 @@ export function ctsNameFromReport(text: string, fileName: string): string | null
     /Sales Profile Report for\s+([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*){0,3})\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i,
   );
   if (m) return m[1].trim();
+
+  // Date printed BEFORE the name: "Sales Profile Report ... Sep, 19 2026 for
+  // Gamliela Tolbert Score SF Sales (Likert)". Some PDF text readers lay the
+  // vendor header out in this order. Name words must start with a capital, and
+  // the first word of the form's next line ends the name.
+  const d = text.match(
+    /Sales Profile Report[\s\S]{0,60}?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?,?\s+\d{1,2},?\s+\d{4}\s+for\s+((?:(?!Score\b|Learning\b|Supplemental\b|The\b)[A-Z][A-Za-z'.\-]*[ \t]*){1,4})/,
+  );
+  if (d) return d[1].trim();
 
   const f = ctsFileBase(fileName).match(
     /^(?:CTS\s*Profile|Sales\s*Profile(?:\s*Report)?)\s*-\s*(.+?)\s*-\s*\d{6,8}/i,
