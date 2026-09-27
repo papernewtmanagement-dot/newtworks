@@ -351,8 +351,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [policies, setPolicies] = useState([]);      // [{id, line, type, status, premium, vehicles, isNewLine}]
   const [activePolicy, setActivePolicy] = useState(null);   // id of the policy pill being edited
   const [scores, setScores] = useState({});                 // scorecard parts scored on this entry (blank = didn't come up)
-  const [recTurned, setRecTurned] = useState(false);
-  const [recUrl, setRecUrl] = useState("");
   const [ecrm, setEcrm] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -413,7 +411,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           site: d.review_platform || "" }]);
       } else if (d.kind === "scorecard") {
         setScores(Object.fromEntries(Object.entries(d.scores || {}).filter(([, v]) => v != null)));
-        setRecTurned(!!d.recording_turned_in); setRecUrl(d.recording_url || "");
       }
     })();
     return () => { alive = false; };
@@ -717,7 +714,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       } else {
         fn = "rp_edit_scorecard";
         changes = { customer_first_name: first.trim(), ...(phoneOk ? { phone_last4: phone } : {}), scorecard_date: date,
-          notes: note.trim(), recording_turned_in: !!recTurned, recording_url: recTurned ? (recUrl || "") : "",
+          notes: note.trim(),
           ...Object.fromEntries(CARD_PARTS.map(pt => [pt.key, scores[pt.key] == null ? null : Number(scores[pt.key])])) };
       }
       const { data, error } = await supabase.rpc(fn, { p_id: editRec.id, p_changes: changes });
@@ -754,7 +751,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           replaced_sale_product_id: replaces.length ? oldOnFile(replaces[0]).sale_product_id : null,
         } : null,
         cancelation: hasCxl ? { items: canceled.map(p => ({ ...row(p), ...money(p), ...matched(p) })) } : null,
-        scorecard: hasCard ? { ...scores, recording_turned_in: !!recTurned, recording_url: recTurned ? (recUrl || null) : null } : null,
+        scorecard: hasCard ? { ...scores } : null,
       };
       const { data, error } = await supabase.rpc("rp_log_entry", { p_payload: payload });
       if (error) { setErr(errText(error)); return; }
@@ -1195,14 +1192,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </div>
             ))}
           </div>
-          {hasCard && (
-            <div style={{ ...wrapRow, alignItems: "center", marginTop: 8 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: T.slate700 }}>
-                <input type="checkbox" checked={recTurned} onChange={e => setRecTurned(e.target.checked)} /> Recording turned in
-              </label>
-              {recTurned && <div style={field(220)}><input style={inputBase} value={recUrl} onChange={e => setRecUrl(e.target.value)} placeholder="recording link" /></div>}
-            </div>
-          )}
         </div>
         )}
 
