@@ -39,7 +39,7 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //   rpg_needed(skill, difficulty)            what a roll needs; the calculator asks the same function a roll does
 //   rpg_difficulty(skill, can_act)           the difficulty a defender presents: their skill × 2 when they can act (skill and will)
 //   rpg_session_list() / rpg_session_state(id)   the fights, and one fight in one read (players: creatures without numbers)
-//   rpg_session_new / rpg_session_add      set up a fight; Agility places each one in the turn order (no manual moves)
+//   rpg_session_new / rpg_session_add      set up a fight; a creature is made fresh from its card; Agility sets the turn order
 //   rpg_session_next_turn(id)                starts the fight or passes the turn: effects clear by rule, energy regains,
 //                                            other creatures roll a die for a legendary action
 //   rpg_act(actor, targets, stat, action, against, difficulty, roll, effect)   one move through rpg_roll: an attack
@@ -1250,7 +1250,6 @@ function FormulaTable({ stats }) {
 // has no partitions on this project, so writes there fail quietly. A 10-second re-read covers a lost nudge.
 // Same pattern as the trivia night.
 
-const CREATURE_SKILLS = [["attack", "Attack"], ["defense", "Defense"], ["strength", "Strength"], ["will", "Will"], ["stealth", "Stealth"], ["awareness", "Awareness"], ["agility", "Agility"]];
 const ACTION_GROUPS = [["action", "Actions"], ["bonus_action", "Bonus actions"], ["reaction", "Reactions"], ["legendary", "Legendary actions"], ["lair", "Lair actions"]];
 const fightStatus = (s) => (s?.status === "setup" ? "Setting up" : s?.status === "ended" ? "Over" : `Round ${s?.round || 1}`);
 const isDown = (p) => (p?.vitality_left != null ? Number(p.vitality_left) <= 0 : Number(p?.vitality_share) <= 0);
@@ -1649,9 +1648,10 @@ function ManualCreatureTurn({ actor, parts, defs, s, busy, run }) {
   const beatsOf = (a) => (a.kind === "action" || a.kind === "bonus_action" ? Number(a.beats) || 0 : 0);
   const actions = (Array.isArray(actor.actions) ? actor.actions : []).filter(a => kinds.includes(a.kind) && a.usable !== false);
   const others = parts.filter(p => p.id !== actor.id);
-  const sk = actor.skills || {};
+  const skills = Array.isArray(actor.skills) ? actor.skills : [];
   const [picked, setPicked] = useState([]);
-  const [skill, setSkill] = useState("strength");
+  const [skill, setSkill] = useState("");
+  const sk = skills.some(x => x.key === skill) ? skill : (skills[0]?.key || "");
   const [against, setAgainst] = useState("ST");
   const targetIds = picked.filter(x => others.some(o => o.id === x));
   const toggle = (pid) => setPicked(targetIds.includes(pid) ? targetIds.filter(x => x !== pid) : [...targetIds, pid]);
@@ -1708,15 +1708,20 @@ function ManualCreatureTurn({ actor, parts, defs, s, busy, run }) {
       <div>
         <div style={label}>Roll one of its skills</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 4 }}>
-          <select style={input} value={skill} onChange={e => setSkill(e.target.value)}>
-            {CREATURE_SKILLS.filter(([k]) => sk[k] != null).map(([k, n]) => <option key={k} value={k}>{n} {sk[k]}</option>)}
+          <select style={input} value={sk} onChange={e => setSkill(e.target.value)}>
+            <optgroup label="Its own">
+              {skills.filter(x => x.own).map(x => <option key={x.key} value={x.key}>{x.name} {num(x.value)}</option>)}
+            </optgroup>
+            <optgroup label="Everyone's">
+              {skills.filter(x => !x.own).map(x => <option key={x.key} value={x.key}>{x.name} {num(x.value)}</option>)}
+            </optgroup>
           </select>
           <span style={{ fontSize: 13, color: T.slate600 }}>against their</span>
           <select style={input} value={against} onChange={e => setAgainst(e.target.value)}>
             {againstOpts.map(d => <option key={d.key} value={d.key}>{d.name}</option>)}
           </select>
-          <button type="button" style={btn("primary", true)} disabled={busy || targetIds.length === 0}
-            onClick={() => act({ p_actor_id: actor.id, p_target_ids: targetIds, p_stat_key: skill, p_against: against })}>Roll</button>
+          <button type="button" style={btn("primary", true)} disabled={busy || !sk || targetIds.length === 0}
+            onClick={() => act({ p_actor_id: actor.id, p_target_ids: targetIds, p_stat_key: sk, p_against: against })}>Roll</button>
         </div>
       </div>
     </div>
