@@ -491,6 +491,19 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
         </div>
       </div>
 
+      {/* Titles held: last week's champion carries the trophy all this week (Peter 2026-09-27
+          -- a standing badge here, not just the one-time day-done popup, so it's visible any
+          time the page is open, not only right after a kid finishes a full day). */}
+      {[burpee?.champion_title, burpee?.chore_title, burpee?.water_title].filter(Boolean).length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: -4 }}>
+          {[burpee?.champion_title, burpee?.chore_title, burpee?.water_title].filter(Boolean).map(t => (
+            <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, color: T.slate900, background: T.goldLt, border: `1px solid ${T.gold}`, borderRadius: 999, padding: "4px 10px" }}>
+              🏆 {t}
+            </span>
+          ))}
+        </div>
+      )}
+
       {day === today && <TimersRow key={kid.id} kid={kid} isParent={isParent} onStopped={onTimerStopped} />}
 
       <SchoolCard kid={kid} day={day} today={today} isParent={isParent} />
@@ -1024,7 +1037,7 @@ function ChampionsAnnouncement({ recap, onClose }) {
   const cats = [
     { key: "burpee", label: "Burpee points", fmt: (n) => `${n} pt${n === 1 ? "" : "s"}` },
     { key: "chores", label: "Chores done", fmt: (n) => `${n}%` },
-    { key: "water", label: "Water", fmt: (n) => `${n}%` },
+    { key: "water", label: "Super Soaker", fmt: (n) => `${n}%` },
   ];
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.92)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box", overflowY: "auto" }}>
