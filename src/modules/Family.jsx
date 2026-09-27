@@ -252,9 +252,8 @@ export default function Family({ userRole }) {
 
   // Weekly titles reveal: checks whether a title can now be confirmed for a given week --
   // family_burpee_winners/family_chore_winners only return a row once every kid's Friday chores
-  // for that week are actually resolved (Peter 2026-09-27: as soon as the last relevant chore of
-  // the week is acted on, not the next calendar day). family_settings.champs_announced_week
-  // tracks the last week shown, so it appears once per household, whoever triggers it first.
+  // for that week are actually resolved. family_settings.champs_announced_week tracks the last
+  // week shown, so it appears once per household, whoever triggers it first.
   const maybeAnnounceChamps = async (weekStart) => {
     if (!settings) return;
     if (settings.champs_announced_week && settings.champs_announced_week >= weekStart) return;
@@ -264,13 +263,18 @@ export default function Family({ userRole }) {
     if (rows.some(r => r.is_champion)) setChampsShow({ weekStart, rows });
   };
 
-  // Catch-up check on load/each day: covers the case where nobody had the app open at the
-  // moment the week actually resolved.
+  // Catch-up check on load/each day (Peter 2026-09-27: NOT on every checkoff -- it was popping
+  // back up after every single chore tap once the current week's title became confirmable,
+  // since a check ran after every board change. This runs once whenever the page is opened or
+  // the day rolls over instead: still same-day as soon as someone has the app open, but not tied
+  // to any one tap). Covers last week (in case nobody had the app open when it resolved) and the
+  // still-open current week (in case it resolves mid-day today).
   useEffect(() => {
     let live = true;
     (async () => {
       if (!settings || !live) return;
       await maybeAnnounceChamps(addDays(weekStartOf(today), -7));
+      await maybeAnnounceChamps(weekStartOf(today));
     })();
     return () => { live = false; };
   }, [settings, today]);
@@ -312,7 +316,6 @@ export default function Family({ userRole }) {
     if (!wasDone && todayDone(rows) && kid) setCelebrate(kid);
     refreshTodo();
     load();
-    maybeAnnounceChamps(weekStartOf(today));
     loadChampsBox();
     const x = await supabase.rpc("family_extras_available", { p_date: day });
     if (!x.error) setExtras(x.data || []);
