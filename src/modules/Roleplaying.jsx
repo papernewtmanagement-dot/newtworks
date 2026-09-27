@@ -1434,7 +1434,7 @@ function ParticipantRow({ p, i, isParent, ended, busy, open, onToggle, run, chil
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ width: 10, height: 10, borderRadius: 5, background: p.color || T.slate400, flexShrink: 0 }} />
           <span style={{ fontWeight: p.is_current ? 800 : 600, color: T.slate900 }}>{p.name}</span>
-          {down ? <span style={pill(T.red, T.redLt)}>Down</span> : (
+          {down ? <span style={pill(T.red, T.redLt)}>{p.out || "Down"}{p.revival ? ` · rises round ${p.revival.rises_round}` : ""}</span> : (
             <>
               <div style={{ flex: "0 1 140px", minWidth: 60, height: 8, background: T.slate100, borderRadius: 4, overflow: "hidden" }}>
                 <div style={{ width: `${Math.max(0, Math.min(1, share)) * 100}%`, height: "100%", background: share > 0.5 ? T.green : share > 0.2 ? T.amber : T.red }} />
@@ -1444,7 +1444,7 @@ function ParticipantRow({ p, i, isParent, ended, busy, open, onToggle, run, chil
           )}
           <EnergyBar kind="physical" pool={p.energy?.physical} showNumbers={isParent} />
           <EnergyBar kind="spiritual" pool={p.energy?.spiritual} showNumbers={isParent} />
-          {effects.map(e => <span key={e.name} style={pill(T.amber, T.amberLt)} title={e.source ? `From ${e.source}` : undefined}>{e.name}</span>)}
+          {effects.filter(e => e.name !== p.out).map(e => <span key={e.name} style={pill(T.amber, T.amberLt)} title={e.source ? `From ${e.source}` : undefined}>{e.name}</span>)}
           {isParent && !ended && (
             <button type="button" onClick={onToggle} title="Damage, heal, or take out"
               style={{ background: "none", border: "none", color: T.slate400, cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "0 4px" }}>…</button>
@@ -1471,7 +1471,10 @@ function ParticipantRow({ p, i, isParent, ended, busy, open, onToggle, run, chil
 // after the attack the controls give way to what happened. Every roll takes a die rolled by hand, or blank for the site's.
 function CharacterActions({ actor, parts, s, busy, run, onEnd, last }) {
   const weapons = Array.isArray(actor.weapons) ? actor.weapons : [];
-  const targets = parts.filter(p => p.id !== actor.id);
+  // A creature at 0 (Dead, or Sunk under its card's revival rule) cannot be attacked; a Sunk one can only be reached
+  // by the roll its card names (rpg_session_state -> revival).
+  const targets = parts.filter(p => p.id !== actor.id && !p.out);
+  const waiting = parts.filter(p => p.revival);
   const [weapon, setWeapon] = useState("");
   const [target, setTarget] = useState("");
   const [die, setDie] = useState("");
@@ -1530,6 +1533,16 @@ function CharacterActions({ actor, parts, s, busy, run, onEnd, last }) {
             onClick={() => act({ p_actor_id: actor.id, p_target_ids: [t], p_stat_key: w, p_roll: dv })}>{canPay ? "Attack" : "Too tired"}</button>
         </div>
       ) : null}
+      {!cannot && !check && !pendingExtra && waiting.map(o => (
+        <div key={o.id} style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div style={{ fontSize: 13, color: T.slate800, flex: "1 1 100%" }}>
+            {o.name} is {o.revival.name} and rises in round {o.revival.rises_round}. {o.revival.skill_name} against its {o.revival.against_name} ends it for good.
+          </div>
+          <DieBox value={die} onChange={setDie} />
+          <button type="button" style={btn("primary")} disabled={busy || badDie}
+            onClick={() => act({ p_actor_id: actor.id, p_target_ids: [o.id], p_stat_key: o.revival.skill_key, p_against: o.revival.against, p_roll: dv })}>Roll {o.revival.skill_name}</button>
+        </div>
+      ))}
       {!cannot && !check && !pendingExtra && fresh && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button type="button" style={btn("soft", true)} disabled={busy} onClick={() => act({ p_actor_id: actor.id, p_stat_key: "REST" })}>Rest</button>
