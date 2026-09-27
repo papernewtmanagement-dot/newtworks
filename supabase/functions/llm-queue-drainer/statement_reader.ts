@@ -361,6 +361,32 @@ export function resignFromTrailingMinus(text: string, txns: ReaderTxn[]): { chan
   return { changed, unresolved, txns: out };
 }
 
+// Opening and closing balances read straight from the text, as a second
+// opinion to the model's. Added 2026-09-26: on the original Chase 26-09 text the
+// model returned no opening balance and took "Previous Balance $6,739.41" as the
+// payments total, although the summary prints plainly "Previous Balance
+// $6,739.41 ... New Balance $3,989.42". The caller only uses these figures when
+// the transaction lines tie to them to the cent, so a wrong label match cannot
+// get through.
+const BAL_FIG = String.raw`(-?\$?\s?\d{1,3}(?:,\d{3})*\.\d{2}-?)`;
+
+function balFigure(text: string, label: string): number | null {
+  const m = new RegExp(`${label}\\s*[:=+]?\\s*${BAL_FIG}`, "i").exec(text);
+  if (!m) return null;
+  const t = m[1].trim();
+  const neg = t.startsWith("-") || t.endsWith("-");
+  const v = Number(t.replace(/[^\d.]/g, ""));
+  return Number.isFinite(v) ? (neg ? -v : v) : null;
+}
+
+export function balancesFromText(text: string): { open: number | null; close: number | null } {
+  const onDate = String.raw`(?:\s+on\s+[A-Z][a-z]{2,8}\.?\s+\d{1,2}(?:,\s*\d{4})?)?`;
+  return {
+    open: balFigure(text, `(?:Previous Balance|Beginning Balance${onDate})`),
+    close: balFigure(text, `(?:New Balance|Ending Balance${onDate})`),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 4. PERIOD CHECK
 // ---------------------------------------------------------------------------
@@ -404,8 +430,10 @@ export const INVESTMENT_SUMMARY_PROMPT = `You read the account summary of ONE in
 account) from a brokerage statement. The statement may list several accounts;
 use ONLY the account whose number ends in the digits given on the first line.
 
-Use the figures for THIS PERIOD only, never Year-to-Date.
-A "-" printed in place of a number means 0.
+Use the figures for THIS PERIOD only, never Year-to-Date. Each summary line
+prints two figures side by side: This Period first, then Year-to-Date.
+A "-" printed in place of a number means 0: "Additions - 8,750.00" means
+nothing was added this period (8,750.00 is the year so far).
 
 Output exactly these six lines and nothing else, pipe-delimited:
 PERIOD|<start YYYY-MM-DD>|<end YYYY-MM-DD>
@@ -437,6 +465,52 @@ export type InvestmentSummary = {
   growth: number | null;
   close: number | null;
 };
+
+// Reads the summary straight from the text, no model call. Tried FIRST.
+//
+// Added 2026-09-26 after the first live test: the model took the Year-to-Date
+// column for this month's additions (the report prints "Additions - 8,750.00",
+// where "-" is THIS PERIOD and 8,750.00 is the year so far). The tie check
+// refused it, correctly, but a statement laid out in two columns is better read
+// by position: the first figure after each label is this period, and a lone "-"
+// followed by a space means zero. Only the section for this account's number is
+// searched, so the other account bundled in the report cannot be picked up.
+// If anything is missing or the figures do not tie, the model is asked instead.
+const INV_FIGURE = String.raw`(-(?=\s)|-?\$?\d[\d,]*\.\d{2}|\(\$?\d[\d,]*\.\d{2}\))`;
+
+function invFigure(section: string, label: string): number | null {
+  const m = new RegExp(`${label}\\s*\\*?\\s*${INV_FIGURE}`, "i").exec(section);
+  if (!m) return null;
+  const t = m[1];
+  if (t === "-") return 0;
+  const neg = t.startsWith("-") || t.startsWith("(");
+  const v = Number(t.replace(/[()$,\-]/g, ""));
+  return Number.isFinite(v) ? (neg ? -v : v) : null;
+}
+
+export function investmentSummaryFromText(text: string, last4: string | null): InvestmentSummary {
+  const out: InvestmentSummary = { period: null, open: null, added: null, taken: null, growth: null, close: null };
+  const pm = /([A-Z][a-z]+ \d{1,2}, \d{4})\s*-\s*([A-Z][a-z]+ \d{1,2}, \d{4})/.exec(text);
+  if (pm) {
+    const toIso = (s: string) => {
+      const d = new Date(`${s} 12:00:00 UTC`);
+      return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+    };
+    const s = toIso(pm[1]), e = toIso(pm[2]);
+    if (s && e) out.period = { start: s, end: e };
+  }
+  if (!last4) return out;
+  const anchor = new RegExp(`${last4}[^\\n]{0,160}?Account Summary`, "i").exec(text);
+  if (!anchor) return out;
+  const from = anchor.index ?? 0;
+  const section = text.slice(from, from + 1500);
+  out.open = invFigure(section, "Beginning Account Value");
+  out.close = invFigure(section, "Ending Account Value");
+  out.added = invFigure(section, "Additions") ?? 0;
+  out.taken = invFigure(section, "Subtractions") ?? 0;
+  out.growth = invFigure(section, "Change in Investment Value");
+  return out;
+}
 
 export function parseInvestmentSummary(raw: string): InvestmentSummary {
   const out: InvestmentSummary = { period: null, open: null, added: null, taken: null, growth: null, close: null };

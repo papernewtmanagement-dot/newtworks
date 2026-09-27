@@ -39,8 +39,10 @@ import {
   checkStatementPeriod,
   INVESTMENT_SUMMARY_PROMPT,
   investmentWindow,
+  investmentSummaryFromText,
   parseInvestmentSummary,
   investmentSummaryToLines,
+  balancesFromText,
   type ReaderTxn,
 } from "./statement_reader.ts";
 
@@ -180,11 +182,15 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
 
   const read = acct.account_kind === "investment"
     ? await readInvestmentStatement(item.user_content, acct.account_number_last4 ?? null,
-        [acct.institution, acct.account_name].filter(Boolean).join(" "), groqKey)
+        (acct.institution && !String(acct.account_name ?? "").includes(acct.institution)
+          ? `${acct.institution} ${acct.account_name ?? ""}` : String(acct.account_name ?? "")).trim(), groqKey)
     : await readBankOrCardStatement(item.user_content, acct.account_kind, groqKey);
   if (!read.ok) return { ok: false, error: read.error };
 
-  const { period, openingBalance, closingBalance, accountLast4, txns, controlNote } = read;
+  const { period, openingBalance, closingBalance, txns, controlNote } = read;
+  // The account's own last four win over what the model read off the page
+  // (a September test read 0353 as "5353").
+  const accountLast4 = acct.account_number_last4 ?? read.accountLast4;
   const periodProblem = checkStatementPeriod(period, txns, new Date().toISOString().slice(0, 10));
   if (periodProblem) return { ok: false, error: periodProblem };
 
@@ -275,6 +281,20 @@ type StatementRead =
 async function readInvestmentStatement(
   rawText: string, last4: string | null, label: string, groqKey: string,
 ): Promise<StatementRead> {
+  // Read by position first; the model is only asked when that does not tie.
+  const fromText = investmentSummaryFromText(rawText, last4);
+  const textLines = investmentSummaryToLines(fromText, label || "Investment account");
+  if (textLines.ok && fromText.period) {
+    return {
+      ok: true,
+      period: fromText.period,
+      openingBalance: fromText.open,
+      closingBalance: fromText.close,
+      accountLast4: last4,
+      txns: textLines.txns,
+      controlNote: `${textLines.note} (read from the statement text)`,
+    };
+  }
   const window = investmentWindow(rawText, last4);
   const userContent = `ACCOUNT NUMBER ENDS IN: ${last4 ?? "unknown"}\n\n${window}`;
   const maxTokens = fitMaxTokens(INVESTMENT_SUMMARY_PROMPT, userContent, 1500, 600);
@@ -323,88 +343,101 @@ async function readBankOrCardStatement(rawText: string, accountKind: string, gro
   const json = parseCompactStatement(llm.raw);
   if (!json) return { ok: false, error: `compact parse produced no transactions. Head: ${llm.raw.slice(0, 200)}` };
 
-  // CONTROL CHECK. The statement's own Account Summary totals (or, failing
-  // those, its opening and closing balances) are independent of how any single
-  // line was signed, so they catch a flipped sign and its size. When they do not
-  // agree, the text-driven repairs are tried one at a time and a repair is kept
-  // ONLY if the totals then tie exactly. Otherwise the parse goes on unchanged
-  // and the writer's reconciliation guard holds it — a partial guess on money is
-  // worse than a clean stop.
-  //
-  //   1. card refunds misread as charges (the statement's credits blocks)
-  //   2. deposit-account withdrawals misread as deposits (trailing minus)
+  // CONTROL CHECK. Two independent checks on the lines the model read:
+  //   balances  opening + lines = closing, to the cent. Opening and closing
+  //             come from the model AND, as a second opinion, straight from the
+  //             statement text (balancesFromText); a pair is used only if the
+  //             lines tie to it exactly.
+  //   totals    the Account Summary totals of charges and of payments/credits.
+  // A tie on balances is what the statement writer requires, so it decides.
+  // When nothing ties, the text-driven sign repairs are tried one at a time and
+  // a repair is kept ONLY if the lines then tie (balances, or failing those the
+  // totals). Otherwise the parse goes on unchanged and the writer holds it — a
+  // partial guess on money is worse than a clean stop.
+  //   repair 1  card refunds misread as charges (the statement's credits blocks)
+  //   repair 2  deposit-account withdrawals misread as deposits (trailing minus)
   let controlNote = "";
+  let openingBalance: number | null = typeof json.opening_balance === "number" ? json.opening_balance : null;
+  let closingBalance: number | null = typeof json.closing_balance === "number" ? json.closing_balance : null;
   {
     const sumOf = (ts: ReaderTxn[]) => ({
       charges: ts.filter((t) => t.amount < 0).reduce((a, t) => a + Math.abs(t.amount), 0),
       credits: ts.filter((t) => t.amount > 0).reduce((a, t) => a + t.amount, 0),
     });
-    const haveDeclared = json.declared_charges !== null || json.declared_credits !== null;
-    const open = json.opening_balance;
-    const close = json.closing_balance;
-    const haveBalances = typeof open === "number" && typeof close === "number";
     // Card balances are amounts owed: money in lowers them. Deposit and
     // investment balances rise with money in.
     const dir = accountKind === "credit" ? -1 : 1;
-    const measure = (ts: ReaderTxn[]): number => {
-      if (haveDeclared) {
-        const s = sumOf(ts);
-        return Math.round((Math.abs(s.charges - (json.declared_charges ?? s.charges))
-          + Math.abs(s.credits - (json.declared_credits ?? s.credits))) * 100) / 100;
+    const fromText = balancesFromText(statementText);
+    const pairs: { open: number; close: number; label: string }[] = [];
+    const addPair = (o: number | null, c: number | null, label: string) => {
+      if (typeof o === "number" && typeof c === "number" && !pairs.some((p) => p.open === o && p.close === c)) {
+        pairs.push({ open: o, close: c, label });
       }
-      const net = ts.reduce((a, t) => a + t.amount, 0);
-      return Math.round(Math.abs(open! + dir * net - close!) * 100) / 100;
     };
+    addPair(openingBalance, closingBalance, "the balances the model read");
+    addPair(openingBalance ?? fromText.open, closingBalance ?? fromText.close, "the balances, gaps filled from the statement text");
+    addPair(fromText.open, fromText.close, "the balances printed in the statement text");
+    const tiedPair = (ts: ReaderTxn[]) => {
+      const net = ts.reduce((a, t) => a + t.amount, 0);
+      return pairs.find((p) => Math.abs(p.open + dir * net - p.close) <= 0.01) ?? null;
+    };
+    const haveDeclared = json.declared_charges !== null || json.declared_credits !== null;
+    const offDeclared = (ts: ReaderTxn[]) => {
+      const s = sumOf(ts);
+      return Math.round((Math.abs(s.charges - (json.declared_charges ?? s.charges))
+        + Math.abs(s.credits - (json.declared_credits ?? s.credits))) * 100) / 100;
+    };
+    const ties = (ts: ReaderTxn[]) => pairs.length > 0 ? tiedPair(ts) !== null : (haveDeclared && offDeclared(ts) <= 0.01);
 
-    if (haveDeclared || haveBalances) {
-      const control = haveDeclared ? "Account Summary totals" : "opening/closing balance";
-      const before = sumOf(json.transactions);
-      const offBefore = measure(json.transactions);
-      console.log(`[drainer] control inputs: declared_charges=${json.declared_charges ?? "n/a"} `
-        + `declared_credits=${json.declared_credits ?? "n/a"} parsed_charges=${before.charges.toFixed(2)} `
-        + `parsed_credits=${before.credits.toFixed(2)} open=${open ?? "n/a"} close=${close ?? "n/a"} `
-        + `control=${control} gap=${offBefore.toFixed(2)}`);
+    const before = sumOf(json.transactions);
+    console.log(`[drainer] control inputs: declared_charges=${json.declared_charges ?? "n/a"} `
+      + `declared_credits=${json.declared_credits ?? "n/a"} parsed_charges=${before.charges.toFixed(2)} `
+      + `parsed_credits=${before.credits.toFixed(2)} model_open=${openingBalance ?? "n/a"} model_close=${closingBalance ?? "n/a"} `
+      + `text_open=${fromText.open ?? "n/a"} text_close=${fromText.close ?? "n/a"}`);
 
-      if (offBefore > 0.01) {
-        const repairs: { name: string; run: () => { count: number; txns: ReaderTxn[] } }[] = [
-          {
-            name: "refunds misread as charges, fixed from the statement's credits block(s)",
-            run: () => { const r = reclassifyCreditsFromText(statementText, json.transactions); return { count: r.flipped, txns: r.txns }; },
-          },
-          {
-            name: "money in/out misread, fixed from the trailing minus the bank prints on withdrawals",
-            run: () => { const r = resignFromTrailingMinus(statementText, json.transactions); return { count: r.changed, txns: r.txns }; },
-          },
-        ];
-        const tried: string[] = [];
-        let fixed = false;
-        for (const rep of repairs) {
-          const r = rep.run();
-          const offAfter = measure(r.txns);
-          tried.push(`${r.count} line(s) changed, still off by $${offAfter.toFixed(2)}`);
-          if (r.count > 0 && offAfter <= 0.01) {
-            const after = sumOf(r.txns);
-            json.transactions = r.txns;
-            controlNote = `control check (${control}) was off by $${offBefore.toFixed(2)}; repaired ${r.count} `
-              + `line(s): ${rep.name}; charges ${after.charges.toFixed(2)} and credits `
-              + `${after.credits.toFixed(2)} now tie exactly`;
-            fixed = true;
-            break;
-          }
+    if (pairs.length === 0 && !haveDeclared) {
+      controlNote = "no balances or summary totals could be read, so nothing to check against";
+    } else if (ties(json.transactions)) {
+      const p = tiedPair(json.transactions);
+      controlNote = p
+        ? `lines tie to ${p.label}: ${p.open} -> ${p.close}`
+        : `lines tie to the Account Summary totals: charges ${before.charges.toFixed(2)}, credits ${before.credits.toFixed(2)}`;
+    } else {
+      const repairs: { name: string; run: () => { count: number; txns: ReaderTxn[] } }[] = [
+        {
+          name: "refunds misread as charges, fixed from the statement's credits block(s)",
+          run: () => { const r = reclassifyCreditsFromText(statementText, json.transactions); return { count: r.flipped, txns: r.txns }; },
+        },
+        {
+          name: "money in/out misread, fixed from the trailing minus the bank prints on withdrawals",
+          run: () => { const r = resignFromTrailingMinus(statementText, json.transactions); return { count: r.changed, txns: r.txns }; },
+        },
+      ];
+      const tried: string[] = [];
+      let fixed = false;
+      for (const rep of repairs) {
+        const r = rep.run();
+        tried.push(`${r.count} line(s) changed`);
+        if (r.count > 0 && ties(r.txns)) {
+          json.transactions = r.txns;
+          const p = tiedPair(r.txns);
+          controlNote = `repaired ${r.count} line(s): ${rep.name}; lines now tie to `
+            + (p ? `${p.label}: ${p.open} -> ${p.close}` : "the Account Summary totals");
+          fixed = true;
+          break;
         }
-        if (!fixed) {
-          controlNote = `control check (${control}) DISAGREES by $${offBefore.toFixed(2)}: parsed charges `
-            + `${before.charges.toFixed(2)} vs declared ${json.declared_charges ?? "n/a"}, parsed credits `
-            + `${before.credits.toFixed(2)} vs declared ${json.declared_credits ?? "n/a"}. Repairs tried: `
-            + `${tried.join("; ")} — none applied.`;
-          console.warn(`[drainer] ${controlNote}`);
-        } else {
-          console.log(`[drainer] ${controlNote}`);
-        }
-      } else {
-        controlNote = `control check (${control}) ties: charges ${before.charges.toFixed(2)}, credits ${before.credits.toFixed(2)}`;
+      }
+      if (!fixed) {
+        controlNote = `lines DO NOT tie: parsed charges ${before.charges.toFixed(2)} vs declared `
+          + `${json.declared_charges ?? "n/a"}, parsed credits ${before.credits.toFixed(2)} vs declared `
+          + `${json.declared_credits ?? "n/a"}, balances tried ${pairs.map((p) => `${p.open}->${p.close}`).join(", ") || "none"}. `
+          + `Repairs tried: ${tried.join("; ")} — none applied.`;
       }
     }
+    // Whichever balance pair the lines tie to is the one written.
+    const p = tiedPair(json.transactions);
+    if (p) { openingBalance = p.open; closingBalance = p.close; }
+    console.log(`[drainer] ${controlNote}`);
   }
 
   const period = json.statement_period;
@@ -412,8 +445,8 @@ async function readBankOrCardStatement(rawText: string, accountKind: string, gro
   return {
     ok: true,
     period,
-    openingBalance: typeof json.opening_balance === "number" ? json.opening_balance : null,
-    closingBalance: typeof json.closing_balance === "number" ? json.closing_balance : null,
+    openingBalance,
+    closingBalance,
     accountLast4: json.account_last4 ?? null,
     txns: json.transactions,
     controlNote: prepared.removed > 0
