@@ -1195,6 +1195,10 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
 
   // Step 2: try the direct Groq call (if key is present), unless the caller
   // routes this purpose to the queue's reader only.
+  // What the direct call actually said. Carried into the failure below so a
+  // caller sees "Groq HTTP 429: ..." instead of a bare "failed" (2026-09-26:
+  // 14 CTS reads failed with nothing to say why).
+  let directError: string | null = groqKey ? null : "no groq_api_key setting";
   if (groqKey && !opts.queueOnly) {
     const llm = await callGroqDirect({
       apiKey: groqKey,
@@ -1210,10 +1214,12 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
       try {
         return { ok: true, json: JSON.parse(cleaned), raw: cleaned };
       } catch (_e) {
+        directError = `model returned non-JSON content: ${cleaned.slice(0, 160)}`;
         // LLM returned non-JSON content. Fall through to queue with the raw
         // content recorded as user_content so workbench can salvage it later.
       }
     }
+    if (!llm.ok) directError = llm.error;
     // Any failure path falls through to the queue below.
   }
 
@@ -1229,7 +1235,7 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
     return {
       ok: false,
       queued: false,
-      error: "Groq direct call failed; queue skipped at caller's request",
+      error: `Groq direct call failed (${directError ?? "unknown"}); queue skipped at caller's request`,
     };
   }
 
