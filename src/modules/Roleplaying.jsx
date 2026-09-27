@@ -15,9 +15,10 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 // a creature's names, haunts and lore once a parent taps Show to players.
 // Step 4: Rules tab — the manual text verbatim (rpg_rules), every formula spelled out the
 // same way the sheet does it, a needed-roll calculator, and the level-cost table.
-// Step 5: Play tab, fights without a map. The game master sets up a fight, everyone takes turns by
+// Step 5: Play tab, fights. The game master sets up a fight, everyone takes turns by
 // Agility, players attack and roll checks on their character's turn, the game master rolls the
-// creatures' card actions, and every screen follows along live. Maps land in step 6.
+// creatures' card actions, and every screen follows along live. Step 6: the fight board, where everyone
+// stands, moving by beats across squares with movement penalties, and a reach in squares for every roll.
 // Every number comes from the database, one saved function per job:
 //   rpg_character_list()                     the character cards
 //   rpg_sheet(id, difficulty)                every stat, what a roll needs at that difficulty
@@ -47,7 +48,12 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //                                            REST / DEFEND, or the check a rule demands; every move costs beats and energy
 //   rpg_act_extra(roll, die)                 the extra die a hand-rolled critical asked for
 //   rpg_session_auto_turn(id)                the site plays a creature's turn: best ready moves by rpg_action_score
-//                                            while beats and energy remain, then passes
+//                                            while beats and energy remain, walking toward a character when none is
+//                                            in reach, then passes
+//   rpg_act_square(actor, x, y, action)      a move on the board: a walk paid in beats (rpg_move_per_beat squares a
+//                                            beat; a square costs 1 + its movement penalty), or a card action aimed
+//                                            at a square (Rootstep, Briar Shift)
+//   rpg_place / rpg_place_start / rpg_set_square / rpg_set_board   the game master sets up the board
 //   rpg_creatures.image_path                 a picture in the private rpg-images bucket (parents upload)
 //   rpg_session_set_status / rpg_session_adjust_vitality / rpg_session_remove / rpg_session_end   game master changes
 // A character's details, coins and items change through rpg_character_update and rpg_item_add / _set_equipped /
@@ -1301,6 +1307,7 @@ function FightView({ id, isParent, defs, onBack, backHref, onError }) {
   const [last, setLast] = useState(null);
   const [adding, setAdding] = useState(false);
   const [openRow, setOpenRow] = useState(null);
+  const [pending, setPending] = useState(null);
 
   const pull = useCallback(async () => {
     const { data, error } = await supabase.rpc("rpg_session_state", { p_session_id: id });
@@ -1365,6 +1372,8 @@ function FightView({ id, isParent, defs, onBack, backHref, onError }) {
 
       {isParent && !ended && (adding || setup) && <AddToFight st={st} id={id} busy={busy} run={run} startOpen />}
 
+      <FightGrid st={st} isParent={isParent} actor={actor} ended={ended} busy={busy} run={run} pending={pending} onPending={setPending} />
+
       <div style={card}>
         {parts.length === 0 && <div style={{ fontSize: 13, color: T.slate500 }}>No one is in this fight yet.</div>}
         {parts.map((p, i) => (
@@ -1374,13 +1383,133 @@ function FightView({ id, isParent, defs, onBack, backHref, onError }) {
               <CharacterActions key={p.id} actor={p} parts={parts} s={s} busy={busy} run={run} onEnd={endTurn} last={lastFor(p)} />
             )}
             {actor && actor.id === p.id && p.kind === "creature" && (
-              <CreatureActions key={p.id} actor={p} parts={parts} defs={defs} s={s} sessionId={id} busy={busy} run={run} onEnd={endTurn} last={lastFor(p)} />
+              <CreatureActions key={p.id} actor={p} parts={parts} defs={defs} s={s} sessionId={id} busy={busy} run={run} onEnd={endTurn} last={lastFor(p)} onPending={setPending} />
             )}
           </ParticipantRow>
         ))}
       </div>
 
       <FightLog events={events} />
+    </div>
+  );
+}
+// The fight board, built from rpg_session_state: squares shaded by their movement penalty (the number sits in the
+// corner), everyone on their square. On the turn of someone you act for, the squares they can still reach this turn
+// are ringed, with the beats each costs; tap one to move there (rpg_act_square). A card action aimed at a square
+// (Briar Shift) waits here for its square. The game master places fighters, paints movement penalties and sets the
+// board's size.
+function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }) {
+  const s = st?.session || {};
+  const w = Number(s.grid_w) || 12;
+  const h = Number(s.grid_h) || 12;
+  const terrain = s.terrain && typeof s.terrain === "object" ? s.terrain : {};
+  const parts = Array.isArray(st?.participants) ? st.participants : [];
+  const moves = Array.isArray(st?.moves) ? st.moves : [];
+  const [mode, setMode] = useState("move");
+  const [who, setWho] = useState("");
+  const [pen, setPen] = useState(2);
+  const [size, setSize] = useState(null);
+  const placed = parts.filter(p => p.pos_x != null);
+  if (ended || (!isParent && placed.length === 0)) return null;
+  const sq = (x, y) => `${String.fromCharCode(64 + x)}${y}`;
+  const at = {};
+  placed.forEach(p => { at[`${p.pos_x},${p.pos_y}`] = p; });
+  const moveAt = {};
+  if (actor && !pending && mode === "move") moves.forEach(m => { moveAt[`${m.x},${m.y}`] = m; });
+  const pick = parts.some(p => p.id === who) ? who : ((parts.find(p => p.pos_x == null) || parts[0])?.id || "");
+  const sw = size || { w, h };
+  const click = (x, y) => {
+    if (busy) return;
+    if (pending) {
+      run("rpg_act_square", { p_actor_id: pending.actorId, p_x: x, p_y: y, p_action_id: pending.actionId }, pending.actorId).then(r => { if (r) onPending(null); });
+      return;
+    }
+    if (isParent && mode === "place") { if (pick) run("rpg_place", { p_participant_id: pick, p_x: x, p_y: y }); return; }
+    if (isParent && mode === "ground") { run("rpg_set_square", { p_session_id: s.id, p_x: x, p_y: y, p_penalty: pen }); return; }
+    if (moveAt[`${x},${y}`]) run("rpg_act_square", { p_actor_id: actor.id, p_x: x, p_y: y }, actor.id);
+  };
+  const axis = { fontSize: 10, color: T.slate500, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" };
+  const cells = [<div key="corner" />];
+  for (let x = 1; x <= w; x++) cells.push(<div key={`c${x}`} style={axis}>{String.fromCharCode(64 + x)}</div>);
+  for (let y = 1; y <= h; y++) {
+    cells.push(<div key={`r${y}`} style={axis}>{y}</div>);
+    for (let x = 1; x <= w; x++) {
+      const k = `${x},${y}`;
+      const p = at[k];
+      const m = moveAt[k];
+      const n = Number(terrain[k]) || 0;
+      const title = `${sq(x, y)}${n ? ` · movement penalty ${n}` : ""}${p ? ` · ${p.name}${p.out ? ` (${p.out})` : ""}` : ""}${m ? ` · costs ${m.cost}, ${m.beats} ${Number(m.beats) === 1 ? "beat" : "beats"}` : ""}`;
+      const live = pending || (isParent && mode !== "move") || m;
+      cells.push(
+        <button key={k} type="button" title={title} onClick={() => click(x, y)}
+          style={{ aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, position: "relative", borderRadius: 3, fontFamily: "inherit",
+                   border: m ? `2px solid ${T.blue}` : `1px solid ${T.slate200}`, cursor: live ? "pointer" : "default",
+                   background: n > 0 ? `hsl(75, 28%, ${92 - n * 6}%)` : T.slate50,
+                   display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {n > 0 && <span style={{ position: "absolute", top: 0, left: 2, fontSize: 8, lineHeight: 1.2, color: n >= 6 ? T.white : T.slate600 }}>{n}</span>}
+          {p ? (
+            <span style={{ width: "76%", height: "76%", borderRadius: "50%", background: p.color || T.slate400, opacity: p.out ? 0.35 : 1,
+                           color: T.white, fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
+                           boxShadow: p.is_current ? `0 0 0 2px ${T.slate900}` : "none" }}>{String(p.name || "?").slice(0, 1).toUpperCase()}</span>
+          ) : m ? (
+            <span style={{ fontSize: 9, fontWeight: 800, color: T.blue }}>{m.beats}</span>
+          ) : null}
+        </button>
+      );
+    }
+  }
+  const off = parts.filter(p => p.pos_x == null);
+  return (
+    <div style={{ ...card, display: "grid", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div style={label}>Board</div>
+        {pending ? (
+          <>
+            <div style={{ fontSize: 12, color: T.slate800, fontWeight: 600 }}>Tap a square for {pending.name}.</div>
+            <button type="button" style={btn("soft", true)} onClick={() => onPending(null)}>Cancel</button>
+          </>
+        ) : actor && mode === "move" && moves.length > 0 ? (
+          <div style={{ fontSize: 12, color: T.slate600 }}>
+            {actor.name} moves {actor.move_per_beat} {Number(actor.move_per_beat) === 1 ? "square" : "squares"} a beat. Tap a ringed square; the number is the beats it takes.
+          </div>
+        ) : null}
+      </div>
+      {isParent && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {[["move", "Move"], ["place", "Place"], ["ground", "Ground"]].map(([k, t]) => (
+            <button key={k} type="button" style={btn(mode === k ? "primary" : "soft", true)} onClick={() => setMode(k)}>{t}</button>
+          ))}
+          {mode === "place" && (
+            <>
+              <select style={input} value={pick} onChange={e => setWho(e.target.value)}>
+                {parts.map(p => <option key={p.id} value={p.id}>{p.name}{p.pos_x != null ? ` · ${sq(p.pos_x, p.pos_y)}` : " · off the board"}</option>)}
+              </select>
+              <button type="button" style={btn("soft", true)} disabled={busy || !pick} onClick={() => run("rpg_place", { p_participant_id: pick })}>Take off the board</button>
+              <button type="button" style={btn("soft", true)} disabled={busy || off.length === 0} onClick={() => run("rpg_place_start", { p_session_id: s.id })}>Place everyone</button>
+            </>
+          )}
+          {mode === "ground" && (
+            <>
+              <span style={{ fontSize: 12, color: T.slate600 }}>Movement penalty</span>
+              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(v => (
+                <button key={v} type="button" style={{ ...btn(pen === v ? "primary" : "soft", true), minWidth: 30 }} onClick={() => setPen(v)}>{v}</button>
+              ))}
+              <span style={{ fontSize: 12, color: T.slate600 }}>Size</span>
+              <input style={{ ...input, width: 48, textAlign: "center" }} inputMode="numeric" value={sw.w} onChange={e => setSize({ ...sw, w: e.target.value })} />
+              <span style={{ fontSize: 12, color: T.slate600 }}>×</span>
+              <input style={{ ...input, width: 48, textAlign: "center" }} inputMode="numeric" value={sw.h} onChange={e => setSize({ ...sw, h: e.target.value })} />
+              <button type="button" style={btn("soft", true)} disabled={busy || !size}
+                onClick={() => run("rpg_set_board", { p_session_id: s.id, p_w: Math.round(Number(sw.w)), p_h: Math.round(Number(sw.h)) }).then(r => { if (r) setSize(null); })}>Set size</button>
+            </>
+          )}
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: `16px repeat(${w}, minmax(0, 1fr))`, gap: 1, width: "100%", maxWidth: 36 * w + 16, userSelect: "none" }}>
+        {cells}
+      </div>
+      {isParent && off.length > 0 && (
+        <div style={{ fontSize: 12, color: T.slate600 }}>Off the board, so always in reach: {off.map(p => p.name).join(", ")}.</div>
+      )}
     </div>
   );
 }
@@ -1556,7 +1685,7 @@ function CharacterActions({ actor, parts, s, busy, run, onEnd, last }) {
 }
 
 // A creature's turn. The site plays it by default; the game master can roll it by hand instead.
-function CreatureActions({ actor, parts, defs, s, sessionId, busy, run, onEnd, last }) {
+function CreatureActions({ actor, parts, defs, s, sessionId, busy, run, onEnd, last, onPending }) {
   const [manual, setManual] = useState(false);
   const cannot = !actor.can_act_now;
   return (
@@ -1569,7 +1698,7 @@ function CreatureActions({ actor, parts, defs, s, sessionId, busy, run, onEnd, l
           <button type="button" style={btn("soft")} disabled={busy} onClick={() => setManual(true)}>Roll it myself</button>
         </div>
       ) : (
-        <ManualCreatureTurn actor={actor} parts={parts} defs={defs} s={s} busy={busy} run={run} />
+        <ManualCreatureTurn actor={actor} parts={parts} defs={defs} s={s} busy={busy} run={run} onPending={onPending} />
       )}
       {Array.isArray(last) && last.length > 0 && <ResultCard results={last} />}
       {(manual || cannot) && <div><button type="button" style={btn("soft", true)} disabled={busy} onClick={onEnd}>End turn</button></div>}
@@ -1577,12 +1706,13 @@ function CreatureActions({ actor, parts, defs, s, sessionId, busy, run, onEnd, l
   );
 }
 
-// The creature's card as buttons: pick who it aims at, then one row per action with what it rolls.
-function ManualCreatureTurn({ actor, parts, defs, s, busy, run }) {
+// The creature's card as buttons: pick who it aims at, then one row per action with what it rolls. An action aimed at
+// a square (Briar Shift) asks for its square on the board.
+function ManualCreatureTurn({ actor, parts, defs, s, busy, run, onPending }) {
   const kinds = ["action", "bonus_action", "reaction", "lair"];
   const left = (Number(s.beats_per_turn) || 2) - (Number(s.turn_beats) || 0);
   const beatsOf = (a) => (a.kind === "action" || a.kind === "bonus_action" ? Number(a.beats) || 0 : 0);
-  const actions = (Array.isArray(actor.actions) ? actor.actions : []).filter(a => kinds.includes(a.kind) && a.usable !== false);
+  const actions = (Array.isArray(actor.actions) ? actor.actions : []).filter(a => kinds.includes(a.kind));
   const others = parts.filter(p => p.id !== actor.id);
   const skills = Array.isArray(actor.skills) ? actor.skills : [];
   const [picked, setPicked] = useState([]);
@@ -1622,6 +1752,9 @@ function ManualCreatureTurn({ actor, parts, defs, s, busy, run }) {
                     <span style={{ fontSize: 12, fontWeight: 600, color: T.amber }}>Too tired</span>
                   ) : beatsOf(a) > left ? (
                     <span style={{ fontSize: 12, fontWeight: 600, color: T.slate500 }}>Not enough beats left</span>
+                  ) : a.square ? (
+                    <button type="button" style={btn("primary", true)} disabled={busy}
+                      onClick={() => onPending({ actorId: actor.id, actionId: a.id, name: a.name })}>Pick a square</button>
                   ) : (
                     <button type="button" style={btn("primary", true)} disabled={busy || (rolls && targetIds.length === 0)}
                       onClick={() => act(rolls ? { p_actor_id: actor.id, p_target_ids: targetIds, p_action_id: a.id } : { p_actor_id: actor.id, p_action_id: a.id })}>
