@@ -394,6 +394,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           premium: x.premium == null ? "" : String(x.premium),
           vehicles: x.vehicle_count == null ? "" : String(x.vehicle_count),
           isNewLine: x.is_new_line !== false, addedToExisting: !!x.added_to_existing, autopay: !!x.autopay,
+          insured: x.insured_name || "",
           issuedPremium: x.issued_premium == null ? "" : String(x.issued_premium),
           issuedDate: x.issued_date || "",
         })));
@@ -418,7 +419,10 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
 
   // Which parts of the form belong to the record being edited. Logging shows them all.
   const showActivityBlock = !isEdit || editRec.kind === "activity";
-  const showPolicyBlock   = !isEdit || editRec.kind === "sale" || editRec.kind === "quote" || editRec.kind === "cancelation";
+  // Peter 2026-09-26: an activity being edited can gain a quote, or turn into one (a Policy Change that was
+  // really a quote). Only Quoted is offered there; take the activity off and the quote takes its place.
+  const quoteOnly = isEdit && editRec.kind === "activity";
+  const showPolicyBlock   = !isEdit || quoteOnly || editRec.kind === "sale" || editRec.kind === "quote" || editRec.kind === "cancelation";
   const showBottomRow     = !isEdit || editRec.kind !== "scorecard";
   const showCardBlock     = !isEdit || editRec.kind === "scorecard";
 
@@ -486,7 +490,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const addPolicy = (line) => {
     if (!line) return;
     const id = newPolicyId();
-    setPolicies(list => [...list, { id, line, type: "", status: "", premium: "", vehicles: "1", isNewLine: true, addedToExisting: false }]);
+    setPolicies(list => [...list, { id, line, type: "", status: quoteOnly ? "quoted" : "", premium: "", vehicles: "1", isNewLine: true, addedToExisting: false, insured: "" }]);
     setActivePolicy(id);
   };
   const editPolicy = (id, patch) => setPolicies(list => list.map(p => p.id === id ? { ...p, ...patch } : p));
@@ -633,6 +637,15 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     if (k === "cancelation" && policies.length !== 1) gate.push("A cancelation is one policy. Log a second one separately.");
     if (k === "sale" && sold.some(p => p.premium === "" || !(Number(p.premium) >= 0))) gate.push("Every sold policy needs a premium.");
     sharedGate(k === "sale" && editRec.entry_source === "historical_backfill").forEach(m => gate.push(m));
+    // An activity can gain a quote here, and a quote can take the activity's place.
+    const addQuote = k === "activity" && quoted.length > 0;
+    if (k === "activity" && activities.length === 0 && !addQuote) gate.push("Nothing left to save. Use Delete to remove the record.");
+    if (addQuote) {
+      if (!phoneOk) gate.push("Customer phone, last four digits.");
+      if (!relationship) gate.push("Pick the relationship for the quote.");
+      if (!source) gate.push("Pick the marketing source for the quote.");
+      if (quoted.some(p => needsType(p.line) && !p.type)) gate.push("Each Auto or Fire policy needs its type.");
+    }
     if (gate.length) { setErr(gate.join(" ")); return; }
     setBusy(true);
     try {
@@ -648,6 +661,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
             vehicle_count: hasCars(p.line, p.type) ? Number(p.vehicles) : null,
             added_to_existing: p.line === "auto" && !!p.addedToExisting,
             is_new_line: !!p.isNewLine, autopay: !!p.autopay,
+            insured_name: p.line === "life" ? ((p.insured || "").trim() || null) : null,
             issued_premium: p.issuedPremium === "" || p.issuedPremium == null ? null : Number(p.issuedPremium),
             issued_date: p.issuedDate || null })) };
       } else if (k === "quote") {
@@ -665,6 +679,24 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           vehicle_count: hasCars(one.line, one.type) && one.vehicles !== "" ? Number(one.vehicles) : null,
           note: note.trim() };
       } else if (k === "activity") {
+        if (addQuote) {
+          // Logged the way the entry page logs a quote, for the same person, day and household.
+          const q = await supabase.rpc("rp_log_entry", { p_payload: {
+            customer_first: first.trim(), customer_last_initial: initial.trim(), customer_kind: custKind, phone_last4: phone,
+            occurred_on: date, ecrm_url: ecrm.trim() || null, note: note.trim() || null, team_member_id: editRec.team_member_id,
+            relationship_type: relationship, marketing_source: source,
+            sourced_by_team_member_id: isReferral && sourcedBy ? sourcedBy : null,
+            quote: { items: quoted.map(p => ({ line_of_business: p.line, product_type: p.type || null })) } } });
+          if (q.error) { setErr(errText(q.error)); return; }
+          if (!q.data?.ok) { setErr(errText(q.data)); return; }
+        }
+        if (activities.length === 0) {
+          const d = await supabase.rpc("rp_delete_record", { p_kind: "activity", p_id: editRec.id, p_reason: "changed to a quote" });
+          if (d.error) { setErr(`The quote is logged, but the activity is still on file: ${errText(d.error)}`); return; }
+          onLogged?.();
+          onCloseEdit?.("Saved. The activity is a quote now.");
+          return;
+        }
         const a = activities[0] || {};
         fn = "rp_edit_activity";
         const isSave = a.key === "cancelation_saved";
@@ -686,7 +718,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       onLogged?.();
       onCloseEdit?.(data?.moved_from_historical
         ? "Saved. That record left the historical load and sits in the production log now."
-        : "Saved.");
+        : addQuote ? "Saved. The quote is logged too." : "Saved.");
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
   };
 
@@ -708,7 +740,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         activity: hasActivity ? { items: activityItems } : null,
         quote: hasQuote ? { items: quoted.map(row) } : null,
         sale: hasSale ? {
-          products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, added_to_existing: p.line === "auto" && !!p.addedToExisting, is_new_line: householdFresh ? true : !!p.isNewLine, autopay: !!p.autopay })),
+          products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, added_to_existing: p.line === "auto" && !!p.addedToExisting, is_new_line: householdFresh ? true : !!p.isNewLine, autopay: !!p.autopay,
+            insured_name: p.line === "life" ? ((p.insured || "").trim() || null) : null })),
           on_file_answer: flagged.length ? (replaces.length ? "replaces" : flagged.some(p => onFileAnswer[p.id] === "added") ? "added" : "different") : null,
           replaced_sale_product_id: replaces.length ? oldOnFile(replaces[0]).sale_product_id : null,
         } : null,
@@ -994,7 +1027,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
                 <label style={labelStyle}>What happened</label>
                 <select style={inputBase} value={active.status} onChange={e => setStatus(active, e.target.value)}>
                   <option value="">Pick one</option>
-                  {statuses.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
+                  {(quoteOnly ? statuses.filter(st => st.key === "quoted") : statuses).map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
                 </select>
               </div>
               {needsMoney(active) && (
@@ -1019,6 +1052,15 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
                     <option value="new">A new policy</option>
                     <option value="added">Added to one they had</option>
                   </select>
+                </div>
+              )}
+              {isSold(active) && active.line === "life" && (
+                // Peter 2026-09-26: a life policy on the same insured within 60 days of the last one does not
+                // count, so the insured is recorded. Left blank, it is the customer.
+                <div style={field(170)}>
+                  <label style={labelStyle}>Insured <span style={hintStyle}>(if not the customer)</span></label>
+                  <input style={inputBase} value={active.insured || ""} placeholder={nameOk ? householdLabel : "First name, last initial"}
+                         onChange={e => editPolicy(active.id, { insured: e.target.value })} />
                 </div>
               )}
               {isEdit && isSold(active) && (
@@ -1067,7 +1109,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </div>
             );
           })}
-          {!isEdit && hasQuote && dupQuotes.length > 0 && (
+          {(!isEdit || quoteOnly) && hasQuote && dupQuotes.length > 0 && (
             <div style={{ padding: "8px 12px", borderRadius: 8, background: T.amberLt, color: T.amber, fontSize: 13, fontWeight: 600, marginTop: 10 }}>
               {preview} was already quoted this week ({dupQuotes.map(d => `${(roster || []).find(t => t.id === d.team_member_id)?.first_name || "someone"} on ${fmtDate(d.quote_date)}`).join(", ")}). It still logs; the same household counts once for HH quotes.
             </div>
