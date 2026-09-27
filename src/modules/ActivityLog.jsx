@@ -154,6 +154,9 @@ const btnGhost = { padding: "6px 10px", borderRadius: 6, border: `1px solid ${T.
 // admin can tell at a glance what the team doesn't see (Peter 2026-09-26).
 // Text stays at 4.5:1 contrast or better on both (WCAG 2.2, 1.4.3).
 const segWrap = { display: "inline-flex", gap: 2, padding: 3, borderRadius: 999, background: T.slate100 };
+// The admin-only pills sit at the end of the track in a plum stretch of their own, so the bar behind them
+// is their color instead of grey (Peter 2026-09-26).
+const segAdminPart = { display: "inline-flex", gap: 2, margin: "-3px -3px -3px 0", padding: 3, borderRadius: "0 999px 999px 0", background: T.purpleLt };
 const segTab = (on, adminOnly = false) => ({
   flexShrink: 0, padding: "6px 14px", borderRadius: 999, fontSize: 12, fontWeight: 700, textDecoration: "none",
   background: adminOnly ? (on ? T.purple : T.purpleLt) : (on ? T.white : "transparent"),
@@ -576,7 +579,12 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const needsMoney = (p) => isSold(p) || p.status === "canceled";
   const showDate = dateOpen || date !== today;
   const oldOnFile = (p) => onFile.filter(x => x.line_of_business === p.line && !x.already_canceled).sort((a, b) => (a.submitted_date < b.submitted_date ? 1 : -1))[0] || null;
-  const flagged = isEdit ? [] : sold.filter(p => oldOnFile(p));   // a record being edited would match itself
+  // Peter 2026-09-26: a household holds one PLUP and one PAP. A new one replaces the older one of the same
+  // type on its own when it is logged (rp_replace_one_per_household), so it is not asked about.
+  const onePerHousehold = (p) => !!(types[p.line] || []).find(t => t.type_key === p.type)?.one_per_household;
+  const sameTypeOnFile = (p) => onFile.find(x => x.line_of_business === p.line && x.product_type === p.type && !x.already_canceled) || null;
+  const autoReplaced = isEdit ? [] : sold.filter(p => onePerHousehold(p) && sameTypeOnFile(p));
+  const flagged = isEdit ? [] : sold.filter(p => oldOnFile(p) && !autoReplaced.includes(p));   // a record being edited would match itself
   const replaces = flagged.filter(p => onFileAnswer[p.id] === "replaces");
   const showSuggest = suggestOpen && suggest.length > 0 && !(suggest.length === 1 && suggest[0].customer_first_name === first.trim() && (suggest[0].customer_last_initial || "") === initial.trim().toUpperCase());
 
@@ -1109,6 +1117,14 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </div>
             );
           })}
+          {autoReplaced.map(p => {
+            const r = sameTypeOnFile(p);
+            return (
+              <div key={p.id} style={{ padding: "8px 12px", borderRadius: 8, background: T.amberLt, color: T.amber, fontSize: 13, fontWeight: 600, marginTop: 10 }}>
+                {preview} already has {typeLabel(types, p.line, p.type)} on file, sold {fmtDate(r.submitted_date)}. A household has one, so logging this cancels the old one as a replacement.
+              </div>
+            );
+          })}
           {(!isEdit || quoteOnly) && hasQuote && dupQuotes.length > 0 && (
             <div style={{ padding: "8px 12px", borderRadius: 8, background: T.amberLt, color: T.amber, fontSize: 13, fontWeight: 600, marginTop: 10 }}>
               {preview} was already quoted this week ({dupQuotes.map(d => `${(roster || []).find(t => t.id === d.team_member_id)?.first_name || "someone"} on ${fmtDate(d.quote_date)}`).join(", ")}). It still logs; the same household counts once for HH quotes.
@@ -1493,6 +1509,9 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   const [converting, setConverting] = useState(null);  // the flagged entry being turned into a cancelation
   const [msg, setMsg] = useState("");
   const [notes, setNotes] = useState({});        // spot-check notes he is typing, by entry
+  // Policy Changes whose note says something came off, but not clearly a vehicle, with an added auto for the
+  // same household within 30 days. Peter says swap or not (rp_vehicle_swap_review, 2026-09-26).
+  const [swaps, setSwaps] = useState([]);
   // Two views (Peter 2026-09-26): what is still to check, and what has already been checked, a day or a week
   // at a time, with the same buttons plus Undo. The view, Day or Week, and the day or week picked all live in
   // the URL, so a refresh stays put.
@@ -1528,13 +1547,16 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
     if (!isAdmin || !week || view !== "tocheck") return undefined;
     let alive = true;
     (async () => {
-      const [sample, cancels] = await Promise.all([
+      const [sample, cancels, sw] = await Promise.all([
         supabase.rpc("rp_spot_check_sample", { p_week_end: week, p_limit: 10 }),
         supabase.rpc("rp_cancel_word_review", { p_week_end: week }),
+        supabase.rpc("rp_vehicle_swap_review"),
       ]);
       if (!alive) return;
       if (sample.error) { setErr(errText(sample.error)); return; }
       if (cancels.error) { setErr(errText(cancels.error)); return; }
+      if (sw.error) { setErr(errText(sw.error)); return; }
+      setSwaps(Array.isArray(sw.data) ? sw.data : []);
       const list = Array.isArray(sample.data) ? sample.data : [];
       setRows(list);
       setRemaining(list.length ? Number(list[0].remaining) : 0);
@@ -1612,7 +1634,10 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   // A sale carries a premium where an entry carries points.
   const worth = (r) => (kindOf(r) === "sale" ? fmtMoney(r.premium) : fmtPts(r.points));
   // The buttons, each written once. The Checked view uses the same ones, with Undo where Verified was.
-  const editButton = (r) => (
+  // A credit a sale or cancelation wrote on its own (autopay, multiline) is changed through that record, which
+  // sits in the same household, so it has no Edit of its own.
+  const canEdit = (r) => r.entry_source !== "sales_log" && r.entry_source !== "cancelation_log";
+  const editButton = (r) => !canEdit(r) ? null : (
     <button style={{ ...btnGhost, marginRight: 6 }} disabled={busyId === r.id} onClick={() => setEditing({ kind: kindOf(r), id: r.id })}>Edit</button>
   );
   const verifyButton = (r) => (
@@ -1753,6 +1778,37 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
       <div style={{ fontSize: 12, color: T.slate500, marginBottom: 12 }}>
         Ten households from the week, with their whole file: this week's entries and sales, plus prior weeks, backfill, and the credits a sale wrote on its own. Only the rows still open to checking have buttons. Clear a household and the next one takes its place, so the list refills until the week is done. A verified entry never comes back unless it gets changed. Open the ECRM link, check the notes, tap Verified. {housesLeft > 10 ? `${housesLeft} households still unchecked this week, ${remaining} entries in all.` : housesLeft > 0 ? `${housesLeft} households left this week.` : "Nothing left to check this week."}
       </div>
+      )}
+      {view === "tocheck" && swaps.length > 0 && (
+        <div style={{ border: `1px solid ${T.amber}`, background: "#fffbeb", borderRadius: 10, padding: 12, marginBottom: 14 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>
+            {swaps.length === 1 ? "A Policy Change might be a vehicle swap" : `${swaps.length} Policy Changes might be vehicle swaps`}
+          </div>
+          <div style={{ fontSize: 12, color: T.slate600, marginBottom: 6 }}>
+            The note says something came off, and the household added an auto within 30 days. Swap turns the added auto into a replacement Policy Change.
+          </div>
+          {swaps.map(w => (
+            <div key={`${w.removal_id}-${w.product_id}`} style={{ padding: "10px 0", borderTop: `1px solid ${T.slate100}` }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>
+                <CustomerName label={w.customer_label} phone4={w.phone_last4} />
+                {w.phone_last4 ? <span style={{ color: T.slate400, fontWeight: 400 }}> ·{w.phone_last4}</span> : null}
+              </div>
+              <div style={{ fontSize: 13, color: T.slate800, marginTop: 2 }}>
+                Policy Change {fmtDate(w.removal_on)}, {w.removal_by || "—"}: “{w.removal_note || ""}”
+              </div>
+              <div style={{ fontSize: 13, color: T.slate800, marginTop: 2 }}>
+                Added {w.sale_label} {fmtDate(w.sold_on)}, {w.sold_by || "—"}: {fmtMoney(w.premium)}{Number(w.vehicle_count) > 1 ? `, ${w.vehicle_count} cars` : ""}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 6 }}>
+                {w.ecrm_url && <a href={w.ecrm_url} target="ecrm" rel="noreferrer" style={{ color: T.blue, fontSize: 13, marginRight: 6 }}>ECRM</a>}
+                <button style={{ ...btnGhost, color: T.green }} disabled={busyId === w.removal_id}
+                        onClick={() => act(() => supabase.rpc("rp_vehicle_swap_decide", { p_removal_id: w.removal_id, p_product_id: w.product_id, p_swap: true }), w.removal_id)}>Swap</button>
+                <button style={btnGhost} disabled={busyId === w.removal_id}
+                        onClick={() => act(() => supabase.rpc("rp_vehicle_swap_decide", { p_removal_id: w.removal_id, p_product_id: w.product_id, p_swap: false }), w.removal_id)}>Not a swap</button>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
       {flagsAbove.length > 0 && (
         <div style={{ border: `1px solid ${T.amber}`, background: "#fffbeb", borderRadius: 10, padding: 12, marginBottom: 14 }}>
@@ -4812,14 +4868,16 @@ function HistoryGroup({ values, sources, types, isOwner, isAdmin, myTeamId, rost
   const onKind = KIND_SUBTABS.includes(cur);
   // A sub-tab this person can't open falls back to History, and so does the URL.
   useEffect(() => { if (sub !== cur) setSub(cur); }, [sub, cur, setSub]);
+  const subTab = (s) => (
+    <TabLink key={s.id} href={subHref(s.id)} onSelect={() => setSub(s.id)} style={segTab(cur === s.id, s.adminOnly)}
+      title={s.adminOnly ? "Only admins see this" : undefined}>{s.label}{onKind && kindCounts[s.id] != null ? ` (${kindCounts[s.id]})` : ""}</TabLink>
+  );
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <div style={{ display: "flex", maxWidth: "100%", overflowX: "auto", whiteSpace: "nowrap" }}>
         <div style={segWrap}>
-          {subs.map(s => (
-            <TabLink key={s.id} href={subHref(s.id)} onSelect={() => setSub(s.id)} style={segTab(cur === s.id, s.adminOnly)}
-              title={s.adminOnly ? "Only admins see this" : undefined}>{s.label}{onKind && kindCounts[s.id] != null ? ` (${kindCounts[s.id]})` : ""}</TabLink>
-          ))}
+          {subs.filter(s => !s.adminOnly).map(subTab)}
+          {subs.some(s => s.adminOnly) && <span style={segAdminPart}>{subs.filter(s => s.adminOnly).map(subTab)}</span>}
         </div>
       </div>
       {cur === "history" && <HistoryTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin}
@@ -4875,7 +4933,7 @@ export default function ActivityLog({ userRole, userId }) {
       const [v, s, pt, r, me] = await Promise.all([
         supabase.from("retention_point_values").select("activity_key, label, points, category, requires_note, requires_ecrm, requires_platform, sort_order, description").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("sales_marketing_sources").select("source_key, label, sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
-        supabase.from("product_types").select("line_of_business, type_key, label, sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
+        supabase.from("product_types").select("line_of_business, type_key, label, sort_order, one_per_household").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("team_directory").select("id, first_name, role_category, is_admin_backoffice, is_test_user, archived_at, category, is_active").eq("agency_id", AGENCY_ID).order("first_name"),
         supabase.rpc("current_team_member_id"),
       ]);
