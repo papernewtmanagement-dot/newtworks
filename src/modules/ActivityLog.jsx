@@ -1053,12 +1053,12 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
                 </div>
               )}
               {isSold(active) && active.line === "auto" && (
-                <div style={field(190)}>
+                <div style={field(150)}>
                   <label style={labelStyle}>Auto policy</label>
                   <select style={inputBase} value={active.addedToExisting ? "added" : "new"}
                           onChange={e => editPolicy(active.id, { addedToExisting: e.target.value === "added" })}>
-                    <option value="new">A new policy</option>
-                    <option value="added">Added to one they had</option>
+                    <option value="new">New Policy</option>
+                    <option value="added">Added to Policy</option>
                   </select>
                 </div>
               )}
@@ -2741,8 +2741,8 @@ function EditRecord({ kind, row, sources, types, roster, isOwner, onClose, onSav
                 <select value={p.added_to_existing ? "added" : "new"}
                         onChange={e => setProd(i, "added_to_existing", e.target.value === "added")}
                         style={{ ...smallInput, width: "100%", padding: "9px 10px" }}>
-                  <option value="new">A new policy</option>
-                  <option value="added">Added to one they had</option>
+                  <option value="new">New Policy</option>
+                  <option value="added">Added to Policy</option>
                 </select>
               </div>
             )}
