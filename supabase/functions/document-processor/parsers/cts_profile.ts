@@ -376,7 +376,10 @@ export async function parseCtsProfile(input: CtsParseInput): Promise<CtsParseRes
     userContent: input.reportText.slice(0, 40000),
     documentId: input.documentId,
     purpose: "cts_profile_extract",
-    maxTokens: 2500,
+    // gpt-oss spends part of this on reasoning before it writes the JSON. At
+    // 2500 Heather Jackman's read (2026-09-26) was cut off mid-object twice.
+    // fitMaxTokens trims this to what the 8,000-token request cap leaves.
+    maxTokens: 4200,
     // The manual form is the fallback, so a parked queue row would be a second
     // path nobody drains.
     skipQueueOnFailure: true,
