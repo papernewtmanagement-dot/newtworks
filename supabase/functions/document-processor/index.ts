@@ -2614,7 +2614,8 @@ async function processComposioProbeMode(ctx: RunCtx, body: any): Promise<any> {
 // is already there. Recording a result only sends an interview invite for a
 // candidate waiting at the gate (status 'assessed'); anyone else is just filed.
 //
-// Body: { agency_id, shared_secret, mode: "cts_drive", drive_file_ids: string[] }
+// Body: { agency_id, shared_secret, mode: "cts_drive", drive_file_ids: string[],
+//         pause_ms?: number }  — send at most 5 ids per call at the default pause.
 interface CtsDriveOutcome {
   driveFileId: string;
   fileName: string;
@@ -2634,7 +2635,12 @@ async function processCtsDriveMode(
     return { considered: ids.length, outcomes: ids.map((id) => ({ driveFileId: id, fileName: "", status: "error", error: "no Drive account connected" })) };
   }
 
-  for (const fileId of ids) {
+  // Groq caps tokens per minute, and one CTS read uses most of a minute's
+  // allowance: eight back to back on 2026-09-26 got one through. Space them
+  // out. 20s default keeps five files inside one run's time limit.
+  const pauseMs = Math.min(Math.max(Number(body?.pause_ms ?? 20000) || 0, 0), 60000);
+  for (const [i, fileId] of ids.entries()) {
+    if (i > 0 && pauseMs > 0) await new Promise((r) => setTimeout(r, pauseMs));
     const meta = await callComposio({
       apiKey: ctx.composioApiKey, userId: ctx.composioUserId,
       connectedAccountId: ctx.driveAccountId,
