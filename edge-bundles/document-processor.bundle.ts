@@ -1082,6 +1082,11 @@ export interface ParseLLMOpts {
   // proved undrainable: nothing recorded which weekly_cpr_team_detail row it
   // belonged to, and the source email had already been archived.
   targetRef?: Record<string, unknown>;
+  // When true, skip the direct call entirely and queue the job for
+  // llm-queue-drainer. For purposes whose ONLY reader is the drainer — bank,
+  // card and investment statements since 2026-09-26, so every statement gets
+  // the same fine-print trimming, sign repairs and checks.
+  queueOnly?: boolean;
 }
 
 export type ParseLLMResult =
@@ -1188,8 +1193,9 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
   // Step 1: load the Groq API key for this agency
   const groqKey = await getSetting(opts.agencyId, "groq_api_key");
 
-  // Step 2: try the direct Groq call (if key is present)
-  if (groqKey) {
+  // Step 2: try the direct Groq call (if key is present), unless the caller
+  // routes this purpose to the queue's reader only.
+  if (groqKey && !opts.queueOnly) {
     const llm = await callGroqDirect({
       apiKey: groqKey,
       model,
@@ -2140,6 +2146,15 @@ export async function parseBankStatement(opts: {
     documentId: opts.documentId,
     purpose: "parse_bank_statement",
     maxTokens: 8000,
+    // ONE statement reader (2026-09-26): llm-queue-drainer reads every bank,
+    // card and investment statement with its own compact prompt, fine-print
+    // trimming, sign repairs, period check and health-savings summary. Reading
+    // small statements here with the JSON prompt below meant two readers with
+    // different rules, and none of those fixes applied on this path. The JSON
+    // prompt is still stored on the queue row for the record; the drainer does
+    // not use it. With queueOnly set, the parse-and-return code after this call
+    // is not reached; the result always comes back as queued.
+    queueOnly: true,
   });
 
   if (!result.ok) {

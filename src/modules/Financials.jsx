@@ -140,6 +140,7 @@ function useFinancialsData(entity) {
           growthBudgetRes, growthCeilingRes,
           bookLatestRes, bookYearStartRes, s11Res,
           childrenRes, allEntitiesRes,
+          stmtIssuesRes,
         ] = await Promise.all([
           // Phase 3 (entity hierarchy) — P&L uses one-line consolidation:
           //   OWN-ONLY drives incomeLines / expenseLines for this entity.
@@ -174,12 +175,12 @@ function useFinancialsData(entity) {
             // contract (statement_balances.source/notes are not exposed by v_bank_balances
             // per Phase 5 spec, which forbids adding columns to accommodate the frontend) —
             // dropped from select and downstream reads; flagged for Peter's call.
-            .select("business_entity_id, account_name, account_kind, current_balance:current_balance_derived, last_statement_closing_balance, institution, account_type, account_number_last4, needs_review, is_overdue, last_statement_period_end, statement_close_day, next_statement_expected"),
+            .select("account_id, business_entity_id, account_name, account_kind, current_balance:current_balance_derived, last_statement_closing_balance, institution, account_type, account_number_last4, needs_review, is_overdue, last_statement_period_end, statement_close_day, next_statement_expected"),
 
           // Credit — pull the full render surface CreditSection expects: institution, last4, limit, rate, payment schedule, and last4-gap flag.
           supabase.from("v_card_balances")
             // finrebuild 2026-08-08: same remap as v_bank_balances above.
-            .select("business_entity_id, account_name, current_balance:current_balance_derived, last_statement_closing_balance, institution, account_type, account_number_last4, alternate_last4s, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, is_overdue, last_statement_period_end, statement_close_day, next_statement_expected"),
+            .select("account_id, business_entity_id, account_name, current_balance:current_balance_derived, last_statement_closing_balance, institution, account_type, account_number_last4, alternate_last4s, credit_limit, interest_rate, minimum_payment, payment_due_day, needs_review, needs_last4, is_overdue, last_statement_period_end, statement_close_day, next_statement_expected"),
 
 
           // Payroll runs (header) — whole Financials module is PaperNewt-scoped
@@ -231,7 +232,21 @@ function useFinancialsData(entity) {
           supabase.from("business_entities")
             .select("id, name, entity_type, parent_entity_id")
             .eq("agency_id", AGENCY_ID),
+
+          // Statements missing, unread or waiting to be read, per account
+          // (2026-09-26). Same definition the Alvi reminder and is_overdue use:
+          // public.statement_issues().
+          supabase.from("v_statement_issues")
+            .select("account_id, issue, period_start, period_end, due_date, file_name, detail")
+            .order("period_end", { ascending: true }),
         ]);
+
+        const stmtIssuesByAccount = {};
+        for (const si of (Array.isArray(stmtIssuesRes?.data) ? stmtIssuesRes.data : [])) {
+          if (!si?.account_id) continue;
+          if (!stmtIssuesByAccount[si.account_id]) stmtIssuesByAccount[si.account_id] = [];
+          stmtIssuesByAccount[si.account_id].push(si);
+        }
 
         // Own-only rows feed the P&L line display (incomeLines / expenseLines).
         // Full-consolidation rows feed Overview KPIs, monthly chart, and Grand
@@ -478,6 +493,7 @@ function useFinancialsData(entity) {
           stmtCloseDay:    c.statement_close_day || null,
           nextStmtExpected: c.next_statement_expected || null,   // forward-looking projection; red via stmtOverdue when passed
           stmtOverdue:     c.is_overdue === true,
+          stmtIssues:      stmtIssuesByAccount[c.account_id] || [],
         }));
 
         // Goals feed pace computation
@@ -650,6 +666,7 @@ function useFinancialsData(entity) {
             stmtCloseDay:    b.statement_close_day || null,
             nextStmtExpected: b.next_statement_expected || null,   // forward-looking projection; red via stmtOverdue when passed
             stmtOverdue:     b.is_overdue === true,
+            stmtIssues:      stmtIssuesByAccount[b.account_id] || [],
           })),
           creditAccounts,
           payroll,
@@ -2856,6 +2873,24 @@ const PayrollRunDrilldown = ({ drill }) => {
 // (BFS order from currentEntityId → root, direct children, grandchildren).
 // Per-card entity tag preserved so a card scans on its own even when
 // screenshotted / copied out of its group.
+// Statements missing, unread or waiting to be read for one account, one short
+// line each (2026-09-26). Red = missing (Alvi is reminded the day after it is
+// due), amber = the file came in but has not been read yet.
+const StatementIssues = ({ issues }) => {
+  const list = Array.isArray(issues) ? issues : [];
+  if (list.length === 0) return null;
+  return (
+    <div style={{ margin: "2px 0 6px", display: "flex", flexDirection: "column", gap: 2 }}>
+      {list.map((s, i) => (
+        <div key={`${s?.issue || "x"}-${s?.period_end || s?.file_name || i}`}
+          style={{ fontSize: 10, lineHeight: 1.35, fontWeight: 600, color: s?.issue === "missing" ? T.red : T.amber }}>
+          {s?.detail || ""}
+        </div>
+      ))}
+    </div>
+  );
+};
+
 const BankSection = ({ data }) => {
   const allBankAccounts = Array.isArray(data?.bankAccounts) ? data.bankAccounts : [];
   const ctx = data?.entityContext || {};
@@ -2898,6 +2933,7 @@ const BankSection = ({ data }) => {
         <div style={{ fontSize: 10, color: T.slate500, marginBottom: 6, letterSpacing: "0.02em" }}>
           {[a.institution, a.last4 ? `••${a.last4}` : null].filter(Boolean).join(" · ") || <span style={{ color: T.amber }}>Add institution / last 4</span>}
         </div>
+        <StatementIssues issues={a.stmtIssues} />
         {entName && (
           <div style={{ marginBottom: 6 }}>
             <span style={{
@@ -3113,6 +3149,7 @@ const CreditSection = ({ data }) => {
               </span>
             ) : null}
           </div>
+          <StatementIssues issues={a.stmtIssues} />
         </div>
         <div style={{ minWidth: 105, flex: "0 1 auto" }}>
           <div style={{ fontSize: 9, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em" }}>Last Stmt</div>

@@ -104,6 +104,15 @@ export async function parseBankStatement(opts: {
     documentId: opts.documentId,
     purpose: "parse_bank_statement",
     maxTokens: 8000,
+    // ONE statement reader (2026-09-26): llm-queue-drainer reads every bank,
+    // card and investment statement with its own compact prompt, fine-print
+    // trimming, sign repairs, period check and health-savings summary. Reading
+    // small statements here with the JSON prompt below meant two readers with
+    // different rules, and none of those fixes applied on this path. The JSON
+    // prompt is still stored on the queue row for the record; the drainer does
+    // not use it. With queueOnly set, the parse-and-return code after this call
+    // is not reached; the result always comes back as queued.
+    queueOnly: true,
   });
 
   if (!result.ok) {

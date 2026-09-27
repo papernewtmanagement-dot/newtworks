@@ -319,6 +319,24 @@ async function requireOwnerOrManager(
   req: Request,
   agencyId: string,
 ): Promise<Response | null> {
+  return requireCallerRole(req, agencyId, ADMIN_ROLES);
+}
+
+// Owner only. Terminations use this. Peter 2026-09-25: "A termination should
+// only come from me through the website."
+async function requireOwner(
+  req: Request,
+  agencyId: string,
+): Promise<Response | null> {
+  return requireCallerRole(req, agencyId, ["owner"]);
+}
+
+// The one caller check. The wrappers above only choose which roles pass.
+async function requireCallerRole(
+  req: Request,
+  agencyId: string,
+  roles: string[],
+): Promise<Response | null> {
   const token = (req.headers.get("Authorization") || "").replace("Bearer ", "").trim();
   if (!token) return corsJson({ ok: false, error: "missing session token" }, 401);
 
@@ -341,7 +359,7 @@ async function requireOwnerOrManager(
     .eq("auth_user_id", who.user.id)
     .maybeSingle();
   if (rowErr) return corsJson({ ok: false, error: "could not verify caller" }, 500);
-  if (!row || row.agency_id !== agencyId || !ADMIN_ROLES.includes(row.role as string)) {
+  if (!row || row.agency_id !== agencyId || !roles.includes(row.role as string)) {
     return corsJson({ ok: false, error: "not permitted" }, 403);
   }
   return null;
@@ -746,6 +764,497 @@ async function closeWatcherTask(opts: {
   return { ok: true, closed: data === true, error: null };
 }
 
+// ==================== llm-queue-drainer/statement_reader.ts ====================
+// =========================================================================
+// llm-queue-drainer/statement_reader.ts
+// =========================================================================
+// THE statement reader's text handling, prompts and checks. Pure functions:
+// no database, no network — so they can be run against real statement text
+// before a deploy.
+//
+// Since 2026-09-26 every bank, card and investment statement is read here.
+// document-processor no longer reads statements itself; it queues them, and
+// llm-queue-drainer reads them with these helpers. Peter's ruling: the reader
+// fixes what it can on its own — fine print trimmed, flipped signs corrected,
+// health savings statements summarised — instead of a person hand-editing the
+// queued text. Before this date each of those was fixed by hand in the queue.
+//
+// What lives here:
+//   prepareStatementText      trim fine print so the statement fits one pass
+//   BANK_STATEMENT_PROMPT_COMPACT / parseCompactStatement
+//   reclassifyCreditsFromText card refunds misread as charges
+//   resignFromTrailingMinus   deposit accounts whose withdrawals print "123.45-"
+//   checkStatementPeriod      catches a "next closing date" read as the period
+//   investment summary        health savings: money added, growth/loss, balance
+// =========================================================================
+
+
+type ReaderTxn = { date: string; payee: string; memo: string; amount: number };
+
+// ---------------------------------------------------------------------------
+// 1. TRIMMING
+// ---------------------------------------------------------------------------
+
+// Known issuer fine-print blocks, cut between two markers.
+//
+// AMEX 26-08 is 16,806 characters, of which roughly 8,700 are the same notices
+// printed on every statement. None of it contains a transaction, and it was
+// consuming about 2,175 tokens of a hard 8,000-token request budget on every
+// call — budget the model then did not have left for its answer.
+//
+// SAFETY: a span is only cut when it holds almost no date-shaped text. Every
+// transaction line carries a date, so a block with fewer than three of them
+// cannot be hiding the detail.
+const STATEMENT_BOILERPLATE_SPANS: { start: RegExp; end: RegExp }[] = [
+  { start: /Late Payment Warning:/i, end: /Account Summary/i },
+  { start: /Change of Address, phone number, email/i, end: /Payments and Credits Summary/i },
+  // Capital One: ~8,900 chars of interest explanation and billing rights.
+  { start: /How can I Avoid Paying Interest Charges/i, end: /Payments, Credits and Adjustments/i },
+  // Chase: ~7,100 chars of payment/interest legalese before the activity table.
+  { start: /You can pay down balances faster/i, end: /ACCOUNT ACTIVITY/i },
+];
+
+function trimKnownSpans(text: string): { text: string; removed: number } {
+  const dateish = /\d{2}\/\d{2}\/\d{2}\b/g;
+  let out = text;
+  let removed = 0;
+  for (const { start, end } of STATEMENT_BOILERPLATE_SPANS) {
+    const s = start.exec(out);
+    if (!s) continue;
+    const rest = out.slice(s.index);
+    const e = end.exec(rest);
+    if (!e || e.index <= s[0].length) continue;
+    const span = rest.slice(0, e.index);
+    if (span.length < 300) continue;
+    const dateHits = (span.match(dateish) ?? []).length;
+    if (dateHits >= 3) continue;
+    out = out.slice(0, s.index) + " " + out.slice(s.index + span.length);
+    removed += span.length;
+  }
+  return { text: out, removed };
+}
+
+// Generic fine-print trimmer, added 2026-09-26. Works on ANY issuer, including
+// ones nobody has written a span for yet.
+//
+// Every figure the reader needs is a dollar amount or sits next to one or next
+// to a date: transaction lines, the account summary, the period header. Legal
+// notices are long runs of prose with neither. So: find every money amount and
+// every date, and cut any stretch of 900+ characters that contains none,
+// keeping 200 characters on each side so a heading next to an amount
+// ("Other Withdrawals", "Payments and Credits") survives.
+//
+// By construction it never removes an amount or a date. Measured on the real
+// September 2026 statements before shipping (all amounts preserved in every
+// case): agency card 15,134 -> 8,035 chars (it had failed three times with an
+// empty answer), personal checking 11,448 -> 3,676, AMEX 18,230 -> 10,805,
+// Chase 11,948 -> 4,579, US Bank Income 11,541 -> 3,729.
+const MONEY_TOKEN = /(?<![\d.,])\$?\s?\d{1,3}(?:,\d{3})*\.\d{2}-?(?![\d%])/g;
+const DATE_TOKEN =
+  /\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}\b/g;
+const PROSE_MIN_GAP = 900;
+const PROSE_KEEP = 200;
+
+function trimLongProse(text: string): { text: string; removed: number } {
+  const marks: [number, number][] = [];
+  for (const re of [MONEY_TOKEN, DATE_TOKEN]) {
+    for (const m of text.matchAll(re)) marks.push([m.index ?? 0, (m.index ?? 0) + m[0].length]);
+  }
+  marks.sort((a, b) => a[0] - b[0]);
+  const cuts: [number, number][] = [];
+  let prevEnd = 0;
+  for (const [s, e] of [...marks, [text.length, text.length] as [number, number]]) {
+    if (s - prevEnd >= PROSE_MIN_GAP) cuts.push([prevEnd + PROSE_KEEP, s - PROSE_KEEP]);
+    prevEnd = Math.max(prevEnd, e);
+  }
+  let out = "";
+  let cursor = 0;
+  let removed = 0;
+  for (const [a, b] of cuts) {
+    out += text.slice(cursor, a) + " … ";
+    removed += b - a;
+    cursor = b;
+  }
+  out += text.slice(cursor);
+  return { text: out, removed };
+}
+
+function prepareStatementText(raw: string): { text: string; removed: number } {
+  const a = trimKnownSpans(raw);
+  const b = trimLongProse(a.text);
+  return { text: b.text, removed: a.removed + b.removed };
+}
+
+// ---------------------------------------------------------------------------
+// 2. BANK AND CARD STATEMENTS — prompt and parser
+// ---------------------------------------------------------------------------
+
+const BANK_STATEMENT_PROMPT_COMPACT = `You are a parser for U.S. bank and credit card statements. You will be given the
+text of one statement covering a single account. Long legal notices have been
+cut out and replaced with "…".
+
+Output PLAIN TEXT LINES ONLY. No JSON, no prose, no markdown, no code fences.
+Emit exactly these line types, pipe-delimited, in this order:
+
+PERIOD|<start YYYY-MM-DD>|<end YYYY-MM-DD>
+  The period THIS statement covers. It is REQUIRED and is printed differently by
+  each issuer: "Opening/Closing Date 07/23/26 - 08/22/26" (Chase), "Jul 29, 2026 -
+  Aug 28, 2026" next to the card name (Capital One), a "Statement Period" line
+  (US Bank), "Closing Date 09/14/26" with "Days in Billing Period: 31" (AMEX:
+  the period starts the day after the previous closing, so 31 days back).
+  NEVER use a "Next Closing Date" or a payment due date — those are in the
+  future. The end of the period is on or just after the last transaction.
+  A two-digit year is 20xx.
+LAST4|<last 4 digits of the account, or NULL>
+OPEN|<opening/beginning/previous balance as a number, or NULL>
+  REQUIRED whenever the statement prints it. Chase and Capital One label it
+  "Previous Balance", US Bank "Beginning Balance on <date>".
+CLOSE|<closing/ending/new balance as a number, or NULL>
+SUMCHARGES|<Account Summary total of new charges + fees + interest, or NULL>
+SUMCREDITS|<Account Summary total of payments + credits, POSITIVE, or NULL>
+TXN|<YYYY-MM-DD>|<KIND>|<payee>|<memo>|<amount>
+...one TXN line per transaction...
+
+KIND is exactly one letter classifying which part of the statement the line came
+from. Decide this BEFORE you decide the sign:
+  P = purchase / charge / fee / interest charged / withdrawal   -> amount NEGATIVE
+  Y = payment made toward the account balance                  -> amount POSITIVE
+  C = refund, credit, deposit, or interest paid to the account -> amount POSITIVE
+  O = none of the above (use only if genuinely unclear)
+
+SECTIONS ARE THE AUTHORITY ON KIND. Track which heading you are under
+("Payments", "Credits", "New Charges", "Deposits", "Withdrawals", "Fees") and
+take KIND from it, NEVER from the merchant name: an AMAZON.COM line under
+"Credits" is C, while AMAZON.COM under "New Charges" is P.
+
+Rules:
+- Emit PERIOD, LAST4, OPEN, CLOSE, SUMCHARGES and SUMCREDITS exactly once each,
+  before any TXN line.
+- SUMCHARGES and SUMCREDITS come from the "Account Summary" block. Copy them as
+  printed — never add them up from the transaction lines. Add every summary line
+  that belongs on the same side:
+    SUMCHARGES = "New Charges" + "Fees" + "Interest Charged" (AMEX, Chase), or
+      "Transactions"/"Purchases" + "Cash Advances"/"Advances" + "Fees Charged" +
+      "Interest Charged" (Capital One, US Bank cards), or "Other Withdrawals" +
+      "Checks Paid" + "Card Withdrawals" (US Bank deposit accounts).
+    SUMCREDITS = "Payments/Credits" (AMEX, Chase), or "Payments" + "Other
+      Credits" (Capital One, US Bank cards), or "Deposits / Credits" (US Bank
+      deposit accounts).
+  Report both as POSITIVE numbers. Emit NULL only when there is no summary.
+- Emit one TXN line for EVERY transaction line printed on the statement. Do not
+  summarise, sample, or stop early. A dropped line breaks the books.
+- Report a credit card's balance as a POSITIVE number (the amount owed).
+- A per-cardmember subtotal ("Total for Account ...") is NOT a transaction.
+- US Bank prints money OUT with a TRAILING minus ("$ 50.00-") and money IN with
+  no sign. The printed minus is the authority, never the wording.
+- A minus sign printed INSIDE a payments or credits section does not make the
+  line a charge ("- $8.99" under Capital One credits is C, POSITIVE).
+- date MUST be the TRANSACTION date, never the posting date.
+- Skip beginning-balance, ending-balance and "Total" lines, and daily balance
+  lists ("Balance Summary").
+- Combine a multi-line description into one payee/memo pair. Append the bank's
+  own notation ("CR", "AUTOPAY", "RETURNED PAYMENT") to memo.
+- If memo would be empty, leave it empty: TXN|2026-07-04|P|COSTCO||-84.12
+- Never put a "|" inside payee or memo.
+- Repeated identical lines (same date, payee, amount) are separate transactions:
+  emit one TXN line for EACH. Never merge them.
+- ISO dates only. Amounts as bare numbers: no currency symbols, no thousands
+  separators, no parentheses. Leading minus for money out.`;
+
+type ParsedStatement = {
+  statement_period: { start: string; end: string } | null;
+  account_last4: string | null;
+  opening_balance: number | null;
+  closing_balance: number | null;
+  declared_charges: number | null;
+  declared_credits: number | null;
+  transactions: ReaderTxn[];
+};
+
+function num(s: string): number | null {
+  const t = (s ?? "").trim();
+  if (!t || t.toUpperCase() === "NULL") return null;
+  const v = Number(t.replace(/[$,]/g, ""));
+  return Number.isFinite(v) ? v : null;
+}
+
+// Returns null when no transactions were recovered.
+function parseCompactStatement(raw: string): ParsedStatement | null {
+  let period: { start: string; end: string } | null = null;
+  let last4: string | null = null;
+  let open: number | null = null;
+  let close: number | null = null;
+  let declCharges: number | null = null;
+  let declCredits: number | null = null;
+  const txns: ReaderTxn[] = [];
+
+  for (const line of stripFences(raw).split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    const parts = t.split("|");
+    const tag = (parts[0] ?? "").trim().toUpperCase();
+
+    if (tag === "PERIOD" && parts.length >= 3) {
+      const s = parts[1].trim(), e = parts[2].trim();
+      if (s && e && s.toUpperCase() !== "NULL" && e.toUpperCase() !== "NULL") period = { start: s, end: e };
+    } else if (tag === "LAST4" && parts.length >= 2) {
+      const v = parts[1].trim();
+      last4 = (!v || v.toUpperCase() === "NULL") ? null : v;
+    } else if (tag === "OPEN" && parts.length >= 2) {
+      open = num(parts[1]);
+    } else if (tag === "CLOSE" && parts.length >= 2) {
+      close = num(parts[1]);
+    } else if (tag === "SUMCHARGES" && parts.length >= 2) {
+      const v = num(parts[1]);
+      declCharges = v === null ? null : Math.abs(v);
+    } else if (tag === "SUMCREDITS" && parts.length >= 2) {
+      const v = num(parts[1]);
+      declCredits = v === null ? null : Math.abs(v);
+    } else if (tag === "TXN" && parts.length >= 6) {
+      // amount is ALWAYS last and date ALWAYS first, so a stray "|" in the memo
+      // folds back into the memo instead of shifting the amount.
+      const date = parts[1].trim();
+      const kind = (parts[2] ?? "").trim().toUpperCase().charAt(0);
+      const rawAmt = num(parts[parts.length - 1]);
+      const payee = parts[3].trim();
+      const memo = parts.slice(4, parts.length - 1).join(" ").trim();
+      if (!date || rawAmt === null || !payee) continue;
+      // KIND is authoritative over the typed minus sign. "O" keeps the model's sign.
+      const mag = Math.abs(rawAmt);
+      let amount: number;
+      if (kind === "P") amount = -mag;
+      else if (kind === "Y" || kind === "C") amount = mag;
+      else amount = rawAmt;
+      txns.push({ date, payee, memo, amount });
+    }
+  }
+
+  if (txns.length === 0) return null;
+  return {
+    statement_period: period,
+    account_last4: last4,
+    opening_balance: open,
+    closing_balance: close,
+    declared_charges: declCharges,
+    declared_credits: declCredits,
+    transactions: txns,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 3. SIGN REPAIRS — each is kept ONLY if the statement's own totals then tie
+// ---------------------------------------------------------------------------
+
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function amountPattern(amount: number): string {
+  const [whole, cents] = Math.abs(amount).toFixed(2).split(".");
+  return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",?")}\\.${cents}`;
+}
+
+// Card refunds misread as charges. A refund from a merchant you also buy from
+// looks like a purchase by name; the statement's credits block knows better.
+// Scans EVERY credits block (Capital One repeats the heading per cardmember).
+function reclassifyCreditsFromText(statementText: string, txns: ReaderTxn[]): { flipped: number; txns: ReaderTxn[] } {
+  const headingRe =
+    /Payments,\s*Credits\s*and\s*Adjustments|Payments\s+and\s+Other\s+Credits|Credits\s+Amount|^[ \t]*Credits[ \t]*$/gim;
+  const endRe =
+    /Transactions\b|New Charges|Total New Charges|Fees\s+Amount|Fees Charged|Interest Charged|Cash Advances|Purchases\s+Amount/i;
+
+  const spans: string[] = [];
+  for (const m of statementText.matchAll(headingRe)) {
+    const from = (m.index ?? 0) + m[0].length;
+    const rest = statementText.slice(from, from + 4000);
+    const e = endRe.exec(rest);
+    spans.push(e ? rest.slice(0, e.index) : rest);
+  }
+  if (spans.length === 0) return { flipped: 0, txns };
+  const span = spans.join("\n");
+
+  let flipped = 0;
+  const out = txns.map((t) => {
+    if (t.amount >= 0) return t;
+    const day = String(Number(t.date.slice(8, 10)));
+    const mon = MONTH_ABBR[Number(t.date.slice(5, 7)) - 1];
+    const dayPat = `(?:\\b0?${day}\\/|${mon}\\s+0?${day}\\b)`;
+    const near = new RegExp(`${dayPat}[^|\\n]{0,140}?\\$?${amountPattern(t.amount)}`);
+    if (near.test(span)) {
+      flipped += 1;
+      return { ...t, amount: Math.abs(t.amount) };
+    }
+    return t;
+  });
+  return { flipped, txns: out };
+}
+
+// Deposit accounts that print money OUT with a trailing minus ("1,000.00-").
+// Added 2026-09-26 after US Bank Personal Checking 26-09 came out $2,231.66
+// short: the PDF text put half the withdrawals after two pages of disclosures,
+// away from their "Other Withdrawals" heading, and the model signed $5,596.42 of
+// them as deposits. The printed trailing minus is the bank's own answer, so read
+// it from the text: find each line by its date and amount, with no other date
+// in between (so one line can never borrow the next line's sign), and take the
+// sign printed right after the amount. A line whose matches disagree (the same
+// date and amount printed both ways) is left alone.
+// Tested before shipping on that statement with EVERY sign deliberately flipped:
+// all 17 lines came back correct, including a $1,000.00 transfer in on Sep 16
+// and a $1,000.00 Venmo payment out on Sep 17.
+const ANY_DATE_PAT =
+  "(?:\\b\\d{1,2}\\/\\d{1,2}\\b|\\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?\\s+\\d{1,2}\\b)";
+
+function resignFromTrailingMinus(text: string, txns: ReaderTxn[]): { changed: number; unresolved: number; txns: ReaderTxn[] } {
+  const trailing = (text.match(/\d\.\d{2}-(?!\d)/g) ?? []).length;
+  if (trailing < 2) return { changed: 0, unresolved: txns.length, txns };
+  let changed = 0;
+  let unresolved = 0;
+  const out = txns.map((t) => {
+    const month = Number(t.date.slice(5, 7));
+    const day = String(Number(t.date.slice(8, 10)));
+    const mon = MONTH_ABBR[month - 1];
+    if (!mon) { unresolved++; return t; }
+    const dayPat = `(?:\\b0?${month}\\/0?${day}\\b|\\b${mon}[a-z]*\\.?\\s+0?${day}\\b)`;
+    const re = new RegExp(
+      `${dayPat}(?:(?!${ANY_DATE_PAT})[\\s\\S]){0,240}?(?<![\\d.,])\\$?\\s?${amountPattern(t.amount)}(-?)(?![\\d.])`,
+      "g",
+    );
+    const signs = new Set<number>();
+    for (const m of text.matchAll(re)) signs.add(m[1] === "-" ? -1 : 1);
+    if (signs.size !== 1) { unresolved++; return t; }
+    const amount = [...signs][0] * Math.abs(t.amount);
+    if (amount !== t.amount) changed++;
+    return { ...t, amount };
+  });
+  return { changed, unresolved, txns: out };
+}
+
+// ---------------------------------------------------------------------------
+// 4. PERIOD CHECK
+// ---------------------------------------------------------------------------
+
+// AMEX Discretionary 26-09 was stored as Sep 14 - Oct 15 2026: the model took
+// "Next Closing Date 10/15/26" as the end of the period. The balances tied, so
+// nothing else noticed, and the account showed a statement from the future.
+// A period that ends after today, starts after it ends, or ends well past the
+// last transaction is refused so the item retries instead of writing bad dates.
+function checkStatementPeriod(
+  period: { start: string; end: string },
+  txns: ReaderTxn[],
+  todayIso: string,
+): string | null {
+  const iso = /^\d{4}-\d{2}-\d{2}$/;
+  if (!iso.test(period.start) || !iso.test(period.end)) return `period is not in YYYY-MM-DD form (${period.start} to ${period.end})`;
+  if (period.start > period.end) return `period starts after it ends (${period.start} to ${period.end})`;
+  if (period.end > todayIso) return `period ends in the future (${period.end}) — a "next closing date" was probably read as the period`;
+  const dates = txns.map((t) => t.date).filter((d) => iso.test(d)).sort();
+  if (dates.length) {
+    const lastTxn = dates[dates.length - 1];
+    const gapDays = (Date.parse(period.end) - Date.parse(lastTxn)) / 86400000;
+    if (gapDays > 10) return `period ends ${period.end}, ${Math.round(gapDays)} days after the last transaction (${lastTxn}) — period looks misread`;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// 5. INVESTMENT ACCOUNTS (health savings) — summary only
+// ---------------------------------------------------------------------------
+
+// Peter's ruling 2026-09-26: a health savings statement is read for three
+// things only — money added, growth or loss, and the current balance. The
+// holdings, trades, dividend reinvestments and cash-flow tables are not read.
+// The Fidelity report also bundles a second, unrelated brokerage account, so
+// the reader looks only at the section for this account's number.
+//
+// Money taken out is read too, but only so the balance still ties: a
+// withdrawal must never be booked as an investment loss.
+const INVESTMENT_SUMMARY_PROMPT = `You read the account summary of ONE investment account (a health savings
+account) from a brokerage statement. The statement may list several accounts;
+use ONLY the account whose number ends in the digits given on the first line.
+
+Use the figures for THIS PERIOD only, never Year-to-Date.
+A "-" printed in place of a number means 0.
+
+Output exactly these six lines and nothing else, pipe-delimited:
+PERIOD|<start YYYY-MM-DD>|<end YYYY-MM-DD>
+OPEN|<Beginning Account Value for this period>
+ADDED|<money added this period: Additions / Contributions / deposits, positive>
+TAKEN|<money taken out this period: Subtractions / Distributions / withdrawals / fees, positive>
+GROWTH|<Change in Investment Value this period, negative for a loss>
+CLOSE|<Ending Account Value for this period>
+
+Bare numbers only: no dollar signs, no commas.`;
+
+// The account's own summary sits a few pages in. Hand the model a window that
+// starts at this account's number and includes its summary, not the whole
+// 29,000-character report.
+function investmentWindow(text: string, last4: string | null): string {
+  if (last4) {
+    const re = new RegExp(`${last4}[^\\n]{0,160}?Account Summary`, "i");
+    const m = re.exec(text);
+    if (m) return text.slice(Math.max(0, (m.index ?? 0) - 400), (m.index ?? 0) + 2600);
+  }
+  return prepareStatementText(text).text.slice(0, 9000);
+}
+
+type InvestmentSummary = {
+  period: { start: string; end: string } | null;
+  open: number | null;
+  added: number | null;
+  taken: number | null;
+  growth: number | null;
+  close: number | null;
+};
+
+function parseInvestmentSummary(raw: string): InvestmentSummary {
+  const out: InvestmentSummary = { period: null, open: null, added: null, taken: null, growth: null, close: null };
+  for (const line of stripFences(raw).split("\n")) {
+    const parts = line.trim().split("|");
+    const tag = (parts[0] ?? "").trim().toUpperCase();
+    if (tag === "PERIOD" && parts.length >= 3) {
+      const s = parts[1].trim(), e = parts[2].trim();
+      if (s && e && s.toUpperCase() !== "NULL" && e.toUpperCase() !== "NULL") out.period = { start: s, end: e };
+    } else if (tag === "OPEN") out.open = num(parts[1] ?? "");
+    else if (tag === "ADDED") out.added = num(parts[1] ?? "");
+    else if (tag === "TAKEN") out.taken = num(parts[1] ?? "");
+    else if (tag === "GROWTH") out.growth = num(parts[1] ?? "");
+    else if (tag === "CLOSE") out.close = num(parts[1] ?? "");
+  }
+  return out;
+}
+
+// Turns the summary into at most three statement lines dated at period end.
+// Refuses (returns an error) unless opening + added - taken + growth = closing
+// to the cent, so a misread figure can never reach the books.
+function investmentSummaryToLines(
+  s: InvestmentSummary,
+  label: string,
+): { ok: true; txns: ReaderTxn[]; note: string } | { ok: false; error: string } {
+  if (!s.period) return { ok: false, error: "investment summary: no statement period" };
+  if (s.open === null || s.close === null) return { ok: false, error: "investment summary: beginning or ending value missing" };
+  const added = Math.abs(s.added ?? 0);
+  const taken = Math.abs(s.taken ?? 0);
+  const growth = s.growth ?? Math.round((s.close - s.open - added + taken) * 100) / 100;
+  const gap = Math.round((s.open + added - taken + growth - s.close) * 100) / 100;
+  if (Math.abs(gap) > 0.01) {
+    return {
+      ok: false,
+      error: `investment summary does not tie: ${s.open} + ${added} added - ${taken} taken + ${growth} growth `
+        + `= ${(s.open + added - taken + growth).toFixed(2)}, statement says ${s.close}`,
+    };
+  }
+  const memo = `${label} ${s.period.start} to ${s.period.end}`;
+  const txns: ReaderTxn[] = [];
+  if (added > 0) txns.push({ date: s.period.end, payee: "Money added", memo, amount: added });
+  if (taken > 0) txns.push({ date: s.period.end, payee: "Money taken out", memo, amount: -taken });
+  if (Math.abs(growth) > 0.004) {
+    txns.push({ date: s.period.end, payee: growth >= 0 ? "Investment growth" : "Investment loss", memo, amount: growth });
+  }
+  return {
+    ok: true,
+    txns,
+    note: `investment summary ties: ${s.open} + ${added} added - ${taken} taken + ${growth} growth = ${s.close}`,
+  };
+}
+
 // ==================== llm-queue-drainer/index.ts ====================
 // llm-queue-drainer edge function
 //
@@ -764,7 +1273,14 @@ async function closeWatcherTask(opts: {
 //   3. Purpose-specific write path
 //   4. Mark queue item succeeded (or bump attempts on failure; 429 = don't burn)
 //
+// Bank, card and investment statements: since 2026-09-26 this is the ONLY
+// statement reader. document-processor queues every statement rather than
+// reading it, so the fine-print trimming, sign repairs, period check and the
+// health-savings summary in ./statement_reader.ts apply to all of them.
+//
 // Invocation: POST { agency_id, shared_secret, [max_items=10, dry_run=false] }
+//             POST { ..., dry_run: true, queue_ids: [...] } re-reads named rows
+//             without writing anything (testing the reader on real statements).
 
 
 // llama-3.3-70b-versatile (12,000 TPM) is decommissioned by Groq 2026-08-16.
@@ -821,318 +1337,8 @@ function fitMaxTokens(systemPrompt: string, userContent: string, ceiling: number
   return Math.max(floor, Math.min(ceiling, available));
 }
 
-// Strips legal boilerplate from statement text before it is sent to the model.
-//
-// AMEX 26-08 is 16,806 characters, of which roughly 8,700 are the same notices
-// printed on every statement: change-of-address instructions, autopay promo,
-// payment terms, how the average daily balance is computed, foreign currency
-// charges, and the billing-rights notice. None of it contains a transaction,
-// and it was consuming about 2,175 tokens of a hard 8,000-token request budget
-// on every call — budget the model then did not have left for its answer. This
-// is what made truncation a coin flip: the thinking and the answer were fighting
-// over what little remained.
-//
-// SAFETY: a span is only cut when it holds almost no date-shaped text. Every
-// transaction line carries a MM/DD/YY date, so a block with fewer than three of
-// them cannot be hiding the detail. If a statement is ever laid out differently
-// the guard declines to cut, and the only cost is the budget we had before.
-const STATEMENT_BOILERPLATE_SPANS: { start: RegExp; end: RegExp }[] = [
-  { start: /Late Payment Warning:/i, end: /Account Summary/i },
-  { start: /Change of Address, phone number, email/i, end: /Payments and Credits Summary/i },
-  // Capital One: the reverse-side legal block (interest explanation, billing
-  // rights, dispute process) runs ~8,900 chars between these two markers on the
-  // Quicksilver statement and carries no transaction detail. Capital One Personal
-  // 26-08 sent 15,850 chars, of which 8,929 were this block; the model returned an
-  // EMPTY answer three times before it was trimmed to 6,922 and parsed.
-  { start: /How can I Avoid Paying Interest Charges/i, end: /Payments, Credits and Adjustments/i },
-  // Chase: same shape, ~7,100 chars of payment/interest legalese sitting between
-  // the remittance stub and the transaction table. Chase CC 26-08 sent 12,404
-  // chars and failed three times with a missing statement period; trimmed to 5,316.
-  { start: /You can pay down balances faster/i, end: /ACCOUNT ACTIVITY/i },
-];
-
-function trimStatementBoilerplate(text: string): { text: string; removed: number } {
-  const dateish = /\d{2}\/\d{2}\/\d{2}\b/g;
-  let out = text;
-  let removed = 0;
-
-  for (const { start, end } of STATEMENT_BOILERPLATE_SPANS) {
-    const s = start.exec(out);
-    if (!s) continue;
-    const rest = out.slice(s.index);
-    const e = end.exec(rest);
-    if (!e || e.index <= s[0].length) continue;
-
-    const span = rest.slice(0, e.index);
-    if (span.length < 300) continue;
-    const dateHits = (span.match(dateish) ?? []).length;
-    if (dateHits >= 3) continue; // might contain real detail — leave it alone
-
-    out = out.slice(0, s.index) + " " + out.slice(s.index + span.length);
-    removed += span.length;
-  }
-  return { text: out, removed };
-}
-
-// Compact statement prompt used by drainBankStatementItem. See the long note at
-// its call site for why this exists instead of the queued JSON prompt.
-const BANK_STATEMENT_PROMPT_COMPACT = `You are a parser for U.S. bank and credit card statements. You will be given the
-text of one statement covering a single account.
-
-Output PLAIN TEXT LINES ONLY. No JSON, no prose, no markdown, no code fences.
-Emit exactly these line types, pipe-delimited, in this order:
-
-PERIOD|<start YYYY-MM-DD>|<end YYYY-MM-DD>
-  The period is REQUIRED and is printed differently by each issuer: "Opening/Closing
-  Date 07/23/26 - 08/22/26" (Chase), "Jul 29, 2026 - Aug 28, 2026" next to the card
-  name (Capital One), a "Statement Period" line (US Bank). A two-digit year is 20xx.
-  Chase CC 26-08 died three times on a missing PERIOD line while the dates sat in
-  plain sight — if you can see any pair of dates bounding the statement, emit them.
-LAST4|<last 4 digits of the account, or NULL>
-OPEN|<opening/beginning/previous balance as a number, or NULL>
-  REQUIRED whenever the statement prints it, and it almost always does. Chase and
-  Capital One label it "Previous Balance", US Bank "Beginning Balance on <date>".
-  Chase CC 26-08 was held out of the books with opening=null while "Previous
-  Balance $5,058.72" sat in its own Account Summary block. Emit NULL only when the
-  figure is genuinely not printed anywhere on the statement.
-CLOSE|<closing/ending/new balance as a number, or NULL>
-SUMCHARGES|<Account Summary total of new charges + fees + interest, or NULL>
-SUMCREDITS|<Account Summary total of payments + credits, POSITIVE, or NULL>
-TXN|<YYYY-MM-DD>|<KIND>|<payee>|<memo>|<amount>
-TXN|<YYYY-MM-DD>|<KIND>|<payee>|<memo>|<amount>
-...one TXN line per transaction...
-
-KIND is exactly one letter classifying which part of the statement the line came
-from. Decide this BEFORE you decide the sign — it is what keeps the sign right:
-  P = purchase / charge / fee / interest charged   -> amount NEGATIVE
-  Y = payment made toward the account balance      -> amount POSITIVE
-  C = merchant refund, return, rebate, or credit   -> amount POSITIVE
-  O = none of the above (use only if genuinely unclear)
-
-SECTIONS ARE THE AUTHORITY ON KIND. Statements group lines under headings such as
-"Payments", "Credits", "New Charges", "Fees", "Interest Charged". Track which
-heading you are under and take KIND from it, NEVER from the merchant name: an
-AMAZON.COM line under "Credits" is C, while AMAZON.COM under "New Charges" is P.
-A refund from a merchant you also buy from is the most common thing got wrong.
-
-Rules:
-- Emit PERIOD, LAST4, OPEN, CLOSE, SUMCHARGES and SUMCREDITS exactly once each,
-  before any TXN line.
-- SUMCHARGES and SUMCREDITS come from the "Account Summary" block, which prints
-  authoritative totals. Copy those figures as printed — never add them up from
-  the transaction lines, because a total derived from those lines cannot check
-  those lines.
-- ISSUERS LABEL THE SUMMARY LINES DIFFERENTLY AND OFTEN SPLIT ONE SIDE ACROSS
-  SEVERAL LINES. Add every summary line that belongs on the same side:
-    SUMCHARGES = "New Charges" + "Fees" + "Interest Charged" (AMEX, Chase), or
-      "Transactions" + "Cash Advances" + "Fees Charged" + "Interest Charged"
-      (Capital One).
-    SUMCREDITS = "Payments/Credits" (AMEX, Chase), or
-      "Payments" + "Other Credits" (Capital One).
-  Report both as POSITIVE numbers. A leading minus on a summary credit line is
-  a display convention, not a sign. Emit NULL only when the statement prints no
-  Account Summary at all. Capital One 26-08 sat out of the books for two days
-  because this instruction named a single "Payments/Credits" figure, Capital One
-  prints two separate lines, and NULL came back — which quietly switched off the
-  one check that would have caught the misread refund described below.
-- Emit one TXN line for EVERY transaction line printed on the statement. Do not
-  summarise, sample, or stop early. Completeness matters more than anything else
-  here: a dropped line breaks the books.
-- Balances come from the account summary section. Credit card statements may
-  call them "Previous Balance" and "New Balance". Report a credit card's
-  outstanding balance as a POSITIVE number (the amount owed).
-- A per-cardmember credit subtotal in a summary block is a SUMMARY figure, not a
-  transaction. Never emit one as a TXN line.
-- amount: NEGATIVE for money out, POSITIVE for money in, per KIND above.
-- DEPOSIT ACCOUNTS (checking, savings, money market) are not credit cards. A line
-  reading "Interest Paid" on one of these is the bank paying interest INTO the
-  account: KIND C, amount POSITIVE. It is NOT "interest charged". US Bank prints
-  money OUT with a TRAILING minus ("$ 50.00-") and money IN with no sign at all,
-  so the printed minus is the authority, never the wording. Tithe Tax 26-08 and
-  Kids Profit Disc 26-08 were both held out of the books because one "Interest
-  Paid" line was signed negative, and a flipped sign throws the reconciliation by
-  DOUBLE the amount, which is why the gap never matches any line on the page.
-- A minus sign printed INSIDE a payments or credits section does not make the line
-  a charge. Capital One prints refunds under "Payments, Credits and Adjustments"
-  as "- $8.99": that is KIND C, amount POSITIVE. The section heading wins over the
-  sign every time.
-- date MUST be the TRANSACTION date — the date the purchase or payment actually
-  occurred. If a line prints both a transaction date and a separate posting
-  date, use the transaction date, never the posting date.
-- Skip beginning-balance, ending-balance and "Total" summary lines. They belong
-  in OPEN/CLOSE, not as TXN lines. Skip non-transactional informational lines.
-- Combine a multi-line transaction description into the single payee/memo pair.
-- If the statement prints its own notation for what kind of line this is
-  (for example "CR MERCHANDISE/SERVICE RETURN", "CASH BACK REWARD", "AUTOPAY",
-  "RETURNED PAYMENT"), APPEND that exact notation to memo. Never drop it — it is
-  the bank's own explanation of why a line is a credit, and losing it forces
-  someone to re-open the PDF later.
-- If memo would be empty, leave it empty: TXN|2026-07-04|P|COSTCO||-84.12
-- Never put a "|" character inside payee or memo. Replace any with a space.
-- If the statement prints multiple lines with the SAME date, payee and amount,
-  emit one TXN line for EACH printed line. NEVER merge, collapse or deduplicate
-  repeated identical lines — repeated small identical charges (game stores, app
-  stores, subscriptions) are real separate transactions and every printed line
-  must appear in the output.
-- ISO dates only. Amounts as bare numbers: no currency symbols, no thousands
-  separators, no parentheses. Use a leading minus for money out.`;
-
-// Parses the compact line format above into the same shape the rest of
-// drainBankStatementItem already expects, so nothing downstream changes.
-// Returns null when no transactions were recovered.
-function parseCompactStatement(raw: string): {
-  statement_period: { start: string; end: string } | null;
-  account_last4: string | null;
-  opening_balance: number | null;
-  closing_balance: number | null;
-  declared_charges: number | null;
-  declared_credits: number | null;
-  transactions: { date: string; payee: string; memo: string; amount: number }[];
-} | null {
-  const num = (s: string): number | null => {
-    const t = (s ?? "").trim();
-    if (!t || t.toUpperCase() === "NULL") return null;
-    const v = Number(t.replace(/[$,]/g, ""));
-    return Number.isFinite(v) ? v : null;
-  };
-
-  let period: { start: string; end: string } | null = null;
-  let last4: string | null = null;
-  let open: number | null = null;
-  let close: number | null = null;
-  let declCharges: number | null = null;
-  let declCredits: number | null = null;
-  const txns: { date: string; payee: string; memo: string; amount: number }[] = [];
-
-  for (const line of stripFences(raw).split("\n")) {
-    const t = line.trim();
-    if (!t) continue;
-    const parts = t.split("|");
-    const tag = (parts[0] ?? "").trim().toUpperCase();
-
-    if (tag === "PERIOD" && parts.length >= 3) {
-      const s = parts[1].trim(), e = parts[2].trim();
-      if (s && e && s.toUpperCase() !== "NULL" && e.toUpperCase() !== "NULL") period = { start: s, end: e };
-    } else if (tag === "LAST4" && parts.length >= 2) {
-      const v = parts[1].trim();
-      last4 = (!v || v.toUpperCase() === "NULL") ? null : v;
-    } else if (tag === "OPEN" && parts.length >= 2) {
-      open = num(parts[1]);
-    } else if (tag === "CLOSE" && parts.length >= 2) {
-      close = num(parts[1]);
-    } else if (tag === "SUMCHARGES" && parts.length >= 2) {
-      const v = num(parts[1]);
-      declCharges = v === null ? null : Math.abs(v);
-    } else if (tag === "SUMCREDITS" && parts.length >= 2) {
-      const v = num(parts[1]);
-      declCredits = v === null ? null : Math.abs(v);
-    } else if (tag === "TXN" && parts.length >= 6) {
-      // amount is ALWAYS last and date ALWAYS first, so a stray "|" that slipped
-      // into the memo despite the instruction gets folded back into the memo
-      // rather than shifting the amount out of position.
-      const date = parts[1].trim();
-      const kind = (parts[2] ?? "").trim().toUpperCase().charAt(0);
-      const rawAmt = num(parts[parts.length - 1]);
-      const payee = parts[3].trim();
-      const memo = parts.slice(4, parts.length - 1).join(" ").trim();
-      if (!date || rawAmt === null || !payee) continue;
-
-      // KIND is authoritative over the minus sign the model typed. It classifies
-      // the statement SECTION, which is a much easier judgement than the sign
-      // convention, and it is the whole reason KIND is asked for: on AMEX 26-08
-      // an Amazon RETURN was written with a purchase's minus sign, which put the
-      // statement out by twice the line. Deriving the sign from the section
-      // removes that failure mode. "O" is left exactly as the model signed it —
-      // an unclassified line is one for a human to look at, not to coerce.
-      const mag = Math.abs(rawAmt);
-      let amount: number;
-      if (kind === "P") amount = -mag;
-      else if (kind === "Y" || kind === "C") amount = mag;
-      else amount = rawAmt;
-
-      txns.push({ date, payee, memo, amount });
-    }
-  }
-
-  if (txns.length === 0) return null;
-  return {
-    statement_period: period,
-    account_last4: last4,
-    opening_balance: open,
-    closing_balance: close,
-    declared_charges: declCharges,
-    declared_credits: declCredits,
-    transactions: txns,
-  };
-}
-
-// Deterministic sign repair, driven by the statement text rather than the model.
-//
-// The failure this exists for: a refund from a merchant you also buy from is
-// indistinguishable from a purchase by name alone. On AMEX 26-08 three
-// AMAZON.COM lines dated 08/14 sat under the "Credits" heading and were read as
-// charges, putting the books out by twice their value. The model cannot be
-// relied on to track headings, but the TEXT knows — so find the credits block
-// and let it decide.
-//
-// Self-validating: the caller only keeps the result if it makes the statement's
-// own Account Summary totals tie. If it does not, the flips are discarded and
-// the statement is held, so a bad guess can never reach the books.
-const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-function reclassifyCreditsFromText(
-  statementText: string,
-  txns: { date: string; payee: string; memo: string; amount: number }[],
-): { flipped: number; txns: typeof txns } {
-  // EVERY credits block, not just the first, and under every heading an issuer
-  // uses for one. Capital One writes "Payments, Credits and Adjustments" and
-  // repeats it ONCE PER CARDMEMBER. On 26-08 the primary card's two credits sat
-  // under the first heading and a single $8.99 HEB refund sat alone under the
-  // second; the old single-block scan started at a /Credits\s+Amount/ pattern
-  // that Capital One never prints, so it found nothing at all and the refund
-  // stayed signed as a charge. A flipped sign throws the reconciliation by
-  // double the line, which is where that statement's $17.98 came from.
-  const headingRe =
-    /Payments,\s*Credits\s*and\s*Adjustments|Payments\s+and\s+Other\s+Credits|Credits\s+Amount|^[ \t]*Credits[ \t]*$/gim;
-  const endRe =
-    /Transactions\b|New Charges|Total New Charges|Fees\s+Amount|Fees Charged|Interest Charged|Cash Advances|Purchases\s+Amount/i;
-
-  const spans: string[] = [];
-  for (const m of statementText.matchAll(headingRe)) {
-    const from = (m.index ?? 0) + m[0].length;
-    const rest = statementText.slice(from, from + 4000);
-    const e = endRe.exec(rest);
-    spans.push(e ? rest.slice(0, e.index) : rest);
-  }
-  if (spans.length === 0) return { flipped: 0, txns };
-  // Joined on newlines so the proximity match below cannot run out of the tail
-  // of one block and into the head of the next.
-  const span = spans.join("\n");
-
-  let flipped = 0;
-  const out = txns.map((t) => {
-    if (t.amount >= 0) return t;              // already a credit or payment
-    // Match the amount as printed, with or without a thousands separator. The
-    // old pattern claimed to do this and did not: it compared "1896.74" against
-    // a statement printing "1,896.74", so no payment line could ever match.
-    const [whole, cents] = Math.abs(t.amount).toFixed(2).split(".");
-    const amtPat = `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",?")}\\.${cents}`;
-    // Require the line's own date nearby so an identical amount elsewhere in
-    // the block cannot claim it. Two printed shapes: AMEX and Chase use
-    // "08/14", Capital One uses "Jul 31". The old slash-only day pattern could
-    // not match a Capital One line under any circumstances.
-    const day = String(Number(t.date.slice(8, 10)));
-    const mon = MONTH_ABBR[Number(t.date.slice(5, 7)) - 1];
-    const dayPat = `(?:\\b0?${day}\\/|${mon}\\s+0?${day}\\b)`;
-    const near = new RegExp(`${dayPat}[^|\\n]{0,140}?\\$?${amtPat}`);
-    if (near.test(span)) {
-      flipped += 1;
-      return { ...t, amount: Math.abs(t.amount) };
-    }
-    return t;
-  });
-  return { flipped, txns: out };
-}
+// Statement text handling, prompts, sign repairs and checks live in
+// ./statement_reader.ts (pure functions, testable against real statements).
 
 async function callGroq(
   apiKey: string,
@@ -1176,169 +1382,14 @@ interface DrainResult {
   note?: string;
 }
 
+// Which reader runs depends on the account, so the account is resolved FIRST
+// (moved ahead of the model call 2026-09-26; it used to be looked up after).
+//   investment accounts (health savings) -> summary only: money added,
+//                                           growth or loss, balance
+//   bank and card accounts               -> every transaction line
+// Every statement comes through here: since 2026-09-26 document-processor
+// queues statements instead of reading them itself, so there is one reader.
 async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: boolean): Promise<DrainResult> {
-  // 1. Call Groq (force higher-TPM model for bank statements — see rate limit note above).
-  //
-  // Output cap raised 4000 -> 8000 on 2026-08-04. A busy card statement is 50-65
-  // transactions, and at 4000 the JSON came back cut off mid-string: AMEX
-  // Discretionary 26-04 failed three times with "Unterminated string in JSON at
-  // position 10658" and was then dead, because a parse failure burns the attempt
-  // counter. Rate limiting does NOT burn it (429 is treated as transient and
-  // retried on the next tick), so trading a little more TPM pressure for no
-  // truncation is strictly the better failure mode: a throttled item drains
-  // later, a truncated item never drains at all.
-  //
-  // MEASURED, 2026-08-19, this exact statement (prompt ~5.5k tokens, ~2.2k left):
-  //   low  + compressed prompt -> 51 txns, tie off by one credit group
-  //   low  + verbose prompt    -> 35 txns, lines dropped, tie worse
-  //   medium + either          -> EMPTY answer; thinking ate the whole budget
-  // "low" is the only setting that fits. Do not raise it without first cutting
-  // the prompt or the statement text down, or the answer disappears entirely.
-  // THINKING BUDGET, added 2026-08-19. The raise above was necessary but not
-  // sufficient, because openai/gpt-oss-120b is a REASONING model and Groq bills
-  // its hidden thinking against max_tokens. AMEX Discretionary 26-08 died the
-  // same way 26-04 had: max_tokens computed to 2623, yet the visible answer
-  // stopped after ~365 tokens (1459 chars, mid-string) — roughly 2250 tokens had
-  // gone to thinking before a single transaction was written. Raising the cap
-  // cannot outrun that; the thinking scales with the budget you hand it.
-  // Statement parsing is mechanical transcription, so thinking buys nothing:
-  // reasoning_effort "low" hands essentially the whole budget to the answer.
-  //
-  // ANSWER SIZE, same date. Capping the thinking was still not enough: the
-  // retry produced 6931 chars and hit the wall again. The reason is the queued
-  // prompt asks for pretty-printed JSON carrying "raw_line" (a verbatim echo of
-  // the source line) and "section" for EVERY transaction — so the answer copies
-  // the statement back out at roughly double size. Neither field is stored:
-  // the statements table has no column for either, and the cleanTxns loop below
-  // reads only date/payee/memo/amount. They were pure cost.
-  //
-  // So this path sends its OWN prompt instead of item.system_prompt, asking for
-  // one compact line per transaction and only the four fields that get stored.
-  // Every rule that affects STORED data is carried over verbatim in intent:
-  // transaction date over posting date, the bank's own notation appended to
-  // memo, repeated identical lines never merged, summary lines skipped, money
-  // out negative. Roughly 17 tokens per transaction instead of ~90, which puts
-  // a 60-transaction statement at about a third of the available budget.
-  //
-  // The drainer already overrides the queued MODEL (BANK_STATEMENT_MODEL), so
-  // overriding the queued PROMPT follows the same precedent. document-processor's
-  // synchronous path is untouched and still uses its own JSON prompt.
-  const trimmed = trimStatementBoilerplate(item.user_content);
-  const statementText = trimmed.text;
-  if (trimmed.removed > 0) {
-    console.log(`[drainer] trimmed ${trimmed.removed} chars of statement boilerplate `
-      + `(${item.user_content.length} -> ${statementText.length})`);
-  }
-  const bankMaxTokens = fitMaxTokens(BANK_STATEMENT_PROMPT_COMPACT, statementText, 6000, 1200);
-  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, BANK_STATEMENT_PROMPT_COMPACT, statementText, bankMaxTokens, "low");
-  if (!llm.ok) return { ok: false, error: llm.error };
-
-  // 2. Check truncation FIRST — a cut-off answer is a budget problem, and
-  // calling it "JSON parse failed" sent three sessions looking at the wrong
-  // layer. Name it plainly so the next failure is diagnosable.
-  if (llm.finishReason === "length") {
-    return {
-      ok: false,
-      error: `answer truncated: ran out of budget at max_tokens=${bankMaxTokens} `
-        + `(prompt ~${Math.ceil((BANK_STATEMENT_PROMPT_COMPACT.length + statementText.length) / 4)} tokens, `
-        + `${llm.raw.length} chars returned). Statement is too long for one pass — split it or shrink the prompt.`,
-    };
-  }
-  const json = parseCompactStatement(llm.raw);
-  if (!json) {
-    return { ok: false, error: `compact parse produced no transactions. Head: ${llm.raw.slice(0, 200)}` };
-  }
-
-  // CONTROL-TOTAL CHECK. The Account Summary block states what the charges and
-  // the payments/credits add up to. Those figures are independent of how the
-  // model classified any individual line, which makes them the one reliable
-  // way to catch a sign misclassification — and to locate it, since the gap
-  // equals the value of the mis-signed lines.
-  //
-  // When they do not agree, try the text-driven repair and keep it ONLY if the
-  // totals then tie exactly. Anything less and the parse is left as-is for the
-  // reconciliation guard to hold, because a partial guess on money is worse
-  // than a clean stop.
-  //
-  // TWO controls, not one. The Account Summary totals are the better check and
-  // are used whenever the parse produced them. When it did not — an issuer whose
-  // summary this parser cannot read — the opening and closing balances are the
-  // fallback, because a statement that balances end to end cannot contain a
-  // flipped sign. Before 2026-09-02 there was only the first control, so a
-  // statement with no readable summary got NO check at all and simply went to
-  // the reconciliation guard to be held: silent, and indistinguishable from a
-  // parse that had nothing wrong with it.
-  let controlNote = "";
-  {
-    const sumOf = (ts: typeof json.transactions) => ({
-      charges: ts.filter((t) => t.amount < 0).reduce((a, t) => a + Math.abs(t.amount), 0),
-      credits: ts.filter((t) => t.amount > 0).reduce((a, t) => a + t.amount, 0),
-    });
-    const off = (s: { charges: number; credits: number }) =>
-      Math.abs(s.charges - (json.declared_charges ?? s.charges))
-      + Math.abs(s.credits - (json.declared_credits ?? s.credits));
-
-    const haveDeclared = json.declared_charges !== null || json.declared_credits !== null;
-    const open = json.opening_balance;
-    const close = json.closing_balance;
-    const haveBalances = typeof open === "number" && typeof close === "number";
-
-    // Card balances fall as credits land and deposit balances rise, and the
-    // account kind is not looked up until further down, so accept whichever
-    // direction closes. The repair is only ever kept when the gap goes to zero,
-    // so the looser test cannot let a wrong answer through.
-    const measure = (ts: typeof json.transactions): number => {
-      if (haveDeclared) return Math.round(off(sumOf(ts)) * 100) / 100;
-      const net = ts.reduce((a, t) => a + t.amount, 0);
-      const gap = Math.min(Math.abs(open! - net - close!), Math.abs(open! + net - close!));
-      return Math.round(gap * 100) / 100;
-    };
-
-    if (haveDeclared || haveBalances) {
-      const control = haveDeclared ? "Account Summary totals" : "opening/closing balance";
-      const before = sumOf(json.transactions);
-      const offBefore = measure(json.transactions);
-
-      console.log(`[drainer] control inputs: declared_charges=${json.declared_charges ?? "n/a"} `
-        + `declared_credits=${json.declared_credits ?? "n/a"} parsed_charges=${before.charges.toFixed(2)} `
-        + `parsed_credits=${before.credits.toFixed(2)} open=${open ?? "n/a"} close=${close ?? "n/a"} `
-        + `control=${control} gap=${offBefore.toFixed(2)}`);
-
-      if (offBefore > 0.01) {
-        const rc = reclassifyCreditsFromText(statementText, json.transactions);
-        const offAfter = measure(rc.txns);
-        if (rc.flipped > 0 && offAfter <= 0.01) {
-          const after = sumOf(rc.txns);
-          json.transactions = rc.txns;
-          controlNote = `control check (${control}) was off by $${offBefore.toFixed(2)}; repaired `
-            + `${rc.flipped} line(s) misread as charges using the statement's own credits `
-            + `block(s); charges ${after.charges.toFixed(2)} and credits ${after.credits.toFixed(2)} `
-            + `now tie exactly`;
-          console.log(`[drainer] ${controlNote}`);
-        } else {
-          controlNote = `control check (${control}) DISAGREES by $${offBefore.toFixed(2)}: parsed charges `
-            + `${before.charges.toFixed(2)} vs declared ${json.declared_charges ?? "n/a"}, parsed credits `
-            + `${before.credits.toFixed(2)} vs declared ${json.declared_credits ?? "n/a"}. `
-            + `Text repair flipped ${rc.flipped} line(s), still off by $${offAfter.toFixed(2)} — not applied.`;
-          console.warn(`[drainer] ${controlNote}`);
-        }
-      } else {
-        controlNote = `control check (${control}) ties: charges ${before.charges.toFixed(2)}, `
-          + `credits ${before.credits.toFixed(2)}`;
-      }
-    }
-  }
-
-  const period = json?.statement_period;
-  if (!period?.start || !period?.end) {
-    return { ok: false, error: "missing statement_period.start/.end in LLM response" };
-  }
-  const openingBalance = typeof json?.opening_balance === "number" ? json.opening_balance : null;
-  const closingBalance = typeof json?.closing_balance === "number" ? json.closing_balance : null;
-  const accountLast4 = json?.account_last4 ?? null;
-  const rawTxns: any[] = Array.isArray(json?.transactions) ? json.transactions : [];
-
-  // 3. Look up document → source_account_code
   if (!item.document_id) return { ok: false, error: "queue item has no document_id" };
   const { data: doc } = await sb
     .from("documents")
@@ -1348,7 +1399,6 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   if (!doc) return { ok: false, error: "document not found" };
   if (!doc.source_account_code) return { ok: false, error: "document.source_account_code missing" };
 
-  // Look up chart_of_accounts row for this account_code + agency
   const { data: coa } = await sb
     .from("chart_of_accounts")
     .select("id, account_type, business_entity_id, account_name")
@@ -1358,50 +1408,45 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   if (!coa) return { ok: false, error: `chart_of_accounts row not found for account_code=${doc.source_account_code}` };
 
   // accounts replaces the old bank_accounts/credit_accounts pair (finance
-  // rebuild, 2026-08-07). account_kind ('bank' | 'credit') is a column on
-  // the row now — read it directly rather than inferring from
-  // chart_of_accounts.account_type, same as document-processor does.
+  // rebuild, 2026-08-07). account_kind is 'bank' | 'credit' | 'investment'.
   const { data: acct } = await sb
     .from("accounts")
-    .select("id, business_entity_id, account_kind")
+    .select("id, business_entity_id, account_kind, account_number_last4, account_name, institution")
     .eq("agency_id", doc.agency_id)
     .eq("chart_account_id", coa.id)
     .maybeSingle();
   if (!acct) return { ok: false, error: `accounts row not found for chart_account_id=${coa.id} (account_code=${doc.source_account_code})` };
 
+  const read = acct.account_kind === "investment"
+    ? await readInvestmentStatement(item.user_content, acct.account_number_last4 ?? null,
+        [acct.institution, acct.account_name].filter(Boolean).join(" "), groqKey)
+    : await readBankOrCardStatement(item.user_content, acct.account_kind, groqKey);
+  if (!read.ok) return { ok: false, error: read.error };
+
+  const { period, openingBalance, closingBalance, accountLast4, txns, controlNote } = read;
+  const periodProblem = checkStatementPeriod(period, txns, new Date().toISOString().slice(0, 10));
+  if (periodProblem) return { ok: false, error: periodProblem };
+
   if (dryRun) {
     return {
       ok: true,
       statementBalance: { period, openingBalance, closingBalance, accountLast4 },
-      transactionsInserted: rawTxns.length,
+      transactionsInserted: txns.length,
       docId: doc.id,
       note: controlNote || "control check: nothing to report",
     };
   }
 
-  // 4+5. Shared statement writer — duplicate-ingest guard, reconciliation
-  // guard, statement_balances upsert, and the occurrence-counted statements
-  // loop all live in _shared/statement_writer.ts (one copy for this path and
-  // document-processor's handleBankStatement).
+  // Shared statement writer — duplicate-ingest guard, reconciliation guard,
+  // statement_balances upsert and the occurrence-counted statements loop all
+  // live in _shared/statement_writer.ts.
   //
   // Held outcomes are TERMINAL for the queue item: the writer has already
   // stamped the document (held_reconciliation_mismatch / duplicate_ingest)
-  // and emitted the alert. Retrying a non-tying parse at temperature 0.1
-  // just burns tokens repeating the same output; the alert + document status
-  // are the review channel. Insert errors stay ok:false so the R2 rule holds
-  // (retry, no "processed" stamp, fail after 3 attempts).
-  const cleanTxns: { date: string; payee: string; memo: string; signedAmount: number }[] = [];
-  for (const t of rawTxns) {
-    if (!t || typeof t.amount !== "number" || !t.date) continue;
-    const payee = String(t.payee ?? "").trim();
-    if (!payee) continue;
-    cleanTxns.push({
-      date: String(t.date),
-      payee,
-      memo: String(t.memo ?? "").trim(),
-      signedAmount: t.amount,
-    });
-  }
+  // and emitted the alert. Insert errors stay ok:false so the item retries.
+  const cleanTxns = txns
+    .filter((t) => t && typeof t.amount === "number" && t.date && String(t.payee ?? "").trim())
+    .map((t) => ({ date: String(t.date), payee: String(t.payee).trim(), memo: String(t.memo ?? "").trim(), signedAmount: t.amount }));
 
   const w = await writeParsedStatement({
     agencyId: doc.agency_id,
@@ -1422,9 +1467,6 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
 
   if (!w.ok) {
     if (w.held === "reconciliation_mismatch") {
-      // Without this the control-note only ever reached the console, so two
-      // separate runs on Capital One 26-08 left no record of whether the
-      // Account Summary check had even been able to run.
       return {
         ok: true,
         note: `held_reconciliation_mismatch: ${w.reason}${controlNote ? ` | ${controlNote}` : ""}`,
@@ -1438,8 +1480,6 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
     return { ok: false, error: w.error, transactionsInserted: w.inserted, docId: doc.id };
   }
 
-  // 6. Mark doc processed — only reached when every transaction insert
-  // succeeded (or the parsed list was empty).
   await sb.from("documents").update({
     processing_status: "processed",
     processed_at: new Date().toISOString(),
@@ -1454,6 +1494,170 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
     transactionsInserted: w.inserted,
     docId: doc.id,
     note: controlNote || undefined,
+  };
+}
+
+type StatementRead =
+  | {
+      ok: true;
+      period: { start: string; end: string };
+      openingBalance: number | null;
+      closingBalance: number | null;
+      accountLast4: string | null;
+      txns: ReaderTxn[];
+      controlNote: string;
+    }
+  | { ok: false; error: string };
+
+// Health savings and other investment accounts: summary only (Peter,
+// 2026-09-26). Three figures and the balance, checked to the cent.
+async function readInvestmentStatement(
+  rawText: string, last4: string | null, label: string, groqKey: string,
+): Promise<StatementRead> {
+  const window = investmentWindow(rawText, last4);
+  const userContent = `ACCOUNT NUMBER ENDS IN: ${last4 ?? "unknown"}\n\n${window}`;
+  const maxTokens = fitMaxTokens(INVESTMENT_SUMMARY_PROMPT, userContent, 1500, 600);
+  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, INVESTMENT_SUMMARY_PROMPT, userContent, maxTokens, "low");
+  if (!llm.ok) return { ok: false, error: llm.error ?? "groq failed" };
+  const s = parseInvestmentSummary(llm.raw);
+  const lines = investmentSummaryToLines(s, label || "Investment account");
+  if (!lines.ok) return { ok: false, error: `${lines.error}. Answer head: ${llm.raw.slice(0, 200)}` };
+  return {
+    ok: true,
+    period: s.period!,
+    openingBalance: s.open,
+    closingBalance: s.close,
+    accountLast4: last4,
+    txns: lines.txns,
+    controlNote: lines.note,
+  };
+}
+
+// Bank and card statements: every transaction line, then the control checks.
+//
+// Why this path sends its OWN compact prompt instead of item.system_prompt,
+// and why reasoning_effort is "low" (measured 2026-08-19 on AMEX 26-08):
+// openai/gpt-oss-120b bills hidden thinking against max_tokens, so "medium"
+// returned an EMPTY answer and a verbose prompt dropped lines. One compact line
+// per transaction is ~17 tokens instead of ~90.
+async function readBankOrCardStatement(rawText: string, accountKind: string, groqKey: string): Promise<StatementRead> {
+  const prepared = prepareStatementText(rawText);
+  const statementText = prepared.text;
+  if (prepared.removed > 0) {
+    console.log(`[drainer] trimmed ${prepared.removed} chars of fine print (${rawText.length} -> ${statementText.length})`);
+  }
+  const bankMaxTokens = fitMaxTokens(BANK_STATEMENT_PROMPT_COMPACT, statementText, 6000, 1200);
+  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, BANK_STATEMENT_PROMPT_COMPACT, statementText, bankMaxTokens, "low");
+  if (!llm.ok) return { ok: false, error: llm.error ?? "groq failed" };
+
+  // A cut-off answer is a budget problem; name it plainly.
+  if (llm.finishReason === "length") {
+    return {
+      ok: false,
+      error: `answer truncated: ran out of budget at max_tokens=${bankMaxTokens} `
+        + `(prompt ~${Math.ceil((BANK_STATEMENT_PROMPT_COMPACT.length + statementText.length) / 4)} tokens, `
+        + `${llm.raw.length} chars returned).`,
+    };
+  }
+  const json = parseCompactStatement(llm.raw);
+  if (!json) return { ok: false, error: `compact parse produced no transactions. Head: ${llm.raw.slice(0, 200)}` };
+
+  // CONTROL CHECK. The statement's own Account Summary totals (or, failing
+  // those, its opening and closing balances) are independent of how any single
+  // line was signed, so they catch a flipped sign and its size. When they do not
+  // agree, the text-driven repairs are tried one at a time and a repair is kept
+  // ONLY if the totals then tie exactly. Otherwise the parse goes on unchanged
+  // and the writer's reconciliation guard holds it — a partial guess on money is
+  // worse than a clean stop.
+  //
+  //   1. card refunds misread as charges (the statement's credits blocks)
+  //   2. deposit-account withdrawals misread as deposits (trailing minus)
+  let controlNote = "";
+  {
+    const sumOf = (ts: ReaderTxn[]) => ({
+      charges: ts.filter((t) => t.amount < 0).reduce((a, t) => a + Math.abs(t.amount), 0),
+      credits: ts.filter((t) => t.amount > 0).reduce((a, t) => a + t.amount, 0),
+    });
+    const haveDeclared = json.declared_charges !== null || json.declared_credits !== null;
+    const open = json.opening_balance;
+    const close = json.closing_balance;
+    const haveBalances = typeof open === "number" && typeof close === "number";
+    // Card balances are amounts owed: money in lowers them. Deposit and
+    // investment balances rise with money in.
+    const dir = accountKind === "credit" ? -1 : 1;
+    const measure = (ts: ReaderTxn[]): number => {
+      if (haveDeclared) {
+        const s = sumOf(ts);
+        return Math.round((Math.abs(s.charges - (json.declared_charges ?? s.charges))
+          + Math.abs(s.credits - (json.declared_credits ?? s.credits))) * 100) / 100;
+      }
+      const net = ts.reduce((a, t) => a + t.amount, 0);
+      return Math.round(Math.abs(open! + dir * net - close!) * 100) / 100;
+    };
+
+    if (haveDeclared || haveBalances) {
+      const control = haveDeclared ? "Account Summary totals" : "opening/closing balance";
+      const before = sumOf(json.transactions);
+      const offBefore = measure(json.transactions);
+      console.log(`[drainer] control inputs: declared_charges=${json.declared_charges ?? "n/a"} `
+        + `declared_credits=${json.declared_credits ?? "n/a"} parsed_charges=${before.charges.toFixed(2)} `
+        + `parsed_credits=${before.credits.toFixed(2)} open=${open ?? "n/a"} close=${close ?? "n/a"} `
+        + `control=${control} gap=${offBefore.toFixed(2)}`);
+
+      if (offBefore > 0.01) {
+        const repairs: { name: string; run: () => { count: number; txns: ReaderTxn[] } }[] = [
+          {
+            name: "refunds misread as charges, fixed from the statement's credits block(s)",
+            run: () => { const r = reclassifyCreditsFromText(statementText, json.transactions); return { count: r.flipped, txns: r.txns }; },
+          },
+          {
+            name: "money in/out misread, fixed from the trailing minus the bank prints on withdrawals",
+            run: () => { const r = resignFromTrailingMinus(statementText, json.transactions); return { count: r.changed, txns: r.txns }; },
+          },
+        ];
+        const tried: string[] = [];
+        let fixed = false;
+        for (const rep of repairs) {
+          const r = rep.run();
+          const offAfter = measure(r.txns);
+          tried.push(`${r.count} line(s) changed, still off by $${offAfter.toFixed(2)}`);
+          if (r.count > 0 && offAfter <= 0.01) {
+            const after = sumOf(r.txns);
+            json.transactions = r.txns;
+            controlNote = `control check (${control}) was off by $${offBefore.toFixed(2)}; repaired ${r.count} `
+              + `line(s): ${rep.name}; charges ${after.charges.toFixed(2)} and credits `
+              + `${after.credits.toFixed(2)} now tie exactly`;
+            fixed = true;
+            break;
+          }
+        }
+        if (!fixed) {
+          controlNote = `control check (${control}) DISAGREES by $${offBefore.toFixed(2)}: parsed charges `
+            + `${before.charges.toFixed(2)} vs declared ${json.declared_charges ?? "n/a"}, parsed credits `
+            + `${before.credits.toFixed(2)} vs declared ${json.declared_credits ?? "n/a"}. Repairs tried: `
+            + `${tried.join("; ")} — none applied.`;
+          console.warn(`[drainer] ${controlNote}`);
+        } else {
+          console.log(`[drainer] ${controlNote}`);
+        }
+      } else {
+        controlNote = `control check (${control}) ties: charges ${before.charges.toFixed(2)}, credits ${before.credits.toFixed(2)}`;
+      }
+    }
+  }
+
+  const period = json.statement_period;
+  if (!period?.start || !period?.end) return { ok: false, error: "missing statement period in the answer" };
+  return {
+    ok: true,
+    period,
+    openingBalance: typeof json.opening_balance === "number" ? json.opening_balance : null,
+    closingBalance: typeof json.closing_balance === "number" ? json.closing_balance : null,
+    accountLast4: json.account_last4 ?? null,
+    txns: json.transactions,
+    controlNote: prepared.removed > 0
+      ? `${controlNote}${controlNote ? " | " : ""}fine print trimmed: ${rawText.length} -> ${statementText.length} chars`
+      : controlNote,
   };
 }
 
@@ -1673,6 +1877,34 @@ Deno.serve(async (req) => {
 
   const maxItems = Math.min(Math.max(parseInt(body?.max_items ?? "10", 10) || 10, 1), 50);
   const dryRun = body?.dry_run === true;
+
+  // DRY-RUN BY ID (added 2026-09-26): re-read specific queue rows, whatever
+  // their status, and report what the reader WOULD write — nothing is written
+  // and nothing is claimed. Used to test the reader on real statements before
+  // trusting a change. Refused without dry_run, so it can never bypass the
+  // claim that stops two runs from writing the same statement.
+  const queueIds: string[] = Array.isArray(body?.queue_ids) ? body.queue_ids.map(String).slice(0, 10) : [];
+  if (queueIds.length > 0) {
+    if (!dryRun) return jsonResponse({ ok: false, error: "queue_ids is only allowed with dry_run: true" }, 400);
+    const { data: picked, error: pErr } = await sb
+      .from("llm_parse_queue")
+      .select("id, agency_id, document_id, purpose, system_prompt, user_content, model, attempts, target_ref")
+      .eq("agency_id", agencyId)
+      .in("id", queueIds)
+      .in("purpose", SUPPORTED_PURPOSES);
+    if (pErr) return jsonResponse({ ok: false, error: `queue read failed: ${pErr.message}` }, 500);
+    const results: any[] = [];
+    for (const item of (picked ?? []) as QueueItem[]) {
+      const r = item.purpose === "parse_bank_statement"
+        ? await drainBankStatementItem(item, groqKey, true)
+        : item.purpose === "careerplug_applicant_extract"
+          ? await drainCareerplugItem(item, groqKey, true)
+          : await drainWrapupOrganizeItem(item, groqKey, true);
+      results.push({ queue_id: item.id, ok: r.ok, error: r.error, note: r.note,
+        statement_balance: r.statementBalance, transactions: r.transactionsInserted });
+    }
+    return jsonResponse({ ok: true, dry_run: true, by_id: true, items: results });
+  }
 
   // Pull pending items for any supported purpose. Order by created_at so
   // oldest backlog drains first (fair-queue behavior across purposes).
