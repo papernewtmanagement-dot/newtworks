@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
+import { ROLE_LABELS } from "../lib/hiregaugeRoles.js";
 
 // The CTS Sales Profile panel.
 //
@@ -21,6 +22,16 @@ import { T } from "../lib/theme.js";
 // vendor's own labels, snake_cased, in the vendor's own order. Do not rename
 // one side without the other or the same report reads two different ways
 // depending on which path recorded it.
+//
+// 2026-09-26 (Peter): the panel is ONE closed line on the candidate page that
+// opens a side panel, so it no longer takes a whole open section. The line
+// shows the best-fit role from the sales profile. The side panel shows the fit
+// for every role on top of the recorded read, and holds the hand-entry form.
+// The fit comes from public.cts_role_fit(): the average of the task scores
+// ("sales competencies") each role uses, computed on demand from the stored
+// report, never stored. It is SEPARATE from the Newtworks assessment and never
+// feeds any assessment score, verdict or best-fit column. The vendor's
+// combined headline score is not stored at all (Peter, 2026-09-16).
 
 const PRIMARY_TRAITS = [
   ["deadline_motivation", "Deadline Motivation"],
@@ -119,8 +130,56 @@ function ScoreRow({ label, value }) {
   );
 }
 
+function FitByRole({ fit }) {
+  if (!fit) return null;
+  const title = { fontSize: 11, fontWeight: 700, color: T.slate700, marginBottom: 6 };
+  if (fit.usable === false) {
+    return (
+      <div>
+        <div style={title}>Fit by role</div>
+        <div style={{ fontSize: 12, color: T.red, background: T.redLt, padding: "8px 10px", borderRadius: 7, lineHeight: 1.5 }}>
+          {fit.reason} No fit is shown.
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div style={title}>Fit by role</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        {(fit.fits || []).map(({ role, fit: n }) => {
+          const best = role === fit.best_role;
+          return (
+            <div
+              key={role}
+              style={{
+                display: "flex", justifyContent: "space-between", padding: "5px 8px", borderRadius: 6,
+                background: best ? T.greenLt : "transparent", fontSize: 12.5,
+                fontWeight: best ? 700 : 500, color: T.slate800,
+              }}
+            >
+              <span>{ROLE_LABELS[role] || role}</span>
+              <span>{n ?? "—"}</span>
+            </div>
+          );
+        })}
+      </div>
+      {fit.check_in_interview && (
+        <div style={{ marginTop: 8, fontSize: 11.5, color: T.slate700, background: T.amberLt, padding: "7px 9px", borderRadius: 7, lineHeight: 1.5 }}>
+          The vendor's trust checks came back moderate or blank. Check these in the interview and with references.
+        </div>
+      )}
+      <div style={{ marginTop: 6, fontSize: 10.5, color: T.slate500, lineHeight: 1.5 }}>
+        Average of the task scores each role uses. From this profile only, separate from the assessment.
+      </div>
+    </div>
+  );
+}
+
 export default function CtsResultPanel({ candidateId, isPhone }) {
   const [row, setRow] = useState(null);
+  const [fit, setFit] = useState(null);
+  const [asideOpen, setAsideOpen] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -141,9 +200,28 @@ export default function CtsResultPanel({ candidateId, isPhone }) {
     if (error) { setLoadError(true); return; }
     setLoadError(false);
     setRow(data || null);
+    if (data?.cts_result) {
+      const { data: f, error: fe } = await supabase.rpc("cts_role_fit", { p_cts_result: data.cts_result });
+      setFit(fe ? null : (f || null));
+    } else {
+      setFit(null);
+    }
   }, [candidateId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Side panel: Escape closes it, and the page behind it stops scrolling.
+  useEffect(() => {
+    if (!asideOpen) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") setAsideOpen(false); };
+    window.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [asideOpen]);
 
   const setPart = (part, key, value) =>
     setForm((f) => ({ ...f, [part]: { ...f[part], [key]: value } }));
@@ -200,7 +278,7 @@ export default function CtsResultPanel({ candidateId, isPhone }) {
   const result = row?.cts_result || null;
   const cols = isPhone ? 2 : 3;
 
-  return (
+  const body = (
     <div>
       {loadError && (
         <div style={{ fontSize: 11.5, color: T.slate600 }}>
@@ -325,6 +403,8 @@ export default function CtsResultPanel({ candidateId, isPhone }) {
 
       {recorded && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <FitByRole fit={fit} />
+
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Chip label="CTS" value={result?.cts_score} />
             <Chip label="Ego drive" value={result?.ego_drive} />
@@ -378,5 +458,82 @@ export default function CtsResultPanel({ candidateId, isPhone }) {
         </div>
       )}
     </div>
+  );
+
+  // The one closed line on the candidate page.
+  let lineText;
+  let lineColor = T.slate800;
+  if (loadError) { lineText = "Could not load"; lineColor = T.slate500; }
+  else if (!row) { lineText = "Loading..."; lineColor = T.slate500; }
+  else if (recorded && fit?.usable === false) { lineText = "Not usable: vendor trust check"; lineColor = T.red; }
+  else if (recorded && fit?.best_role) { lineText = `Best fit: ${ROLE_LABELS[fit.best_role] || fit.best_role} ${fit.best_fit}`; }
+  else if (recorded) { lineText = "Recorded"; }
+  else if (row.cts_invite_sent_at) {
+    lineText = `Sent ${new Date(row.cts_invite_sent_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}, no result yet`;
+    lineColor = T.slate600;
+  }
+  else { lineText = "Not sent yet"; lineColor = T.slate600; }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setAsideOpen(true)}
+        aria-haspopup="dialog"
+        style={{
+          width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+          marginBottom: 20, padding: "11px 14px", background: T.white, border: `1px solid ${T.slate200}`,
+          borderRadius: 10, cursor: "pointer", textAlign: "left", font: "inherit",
+        }}
+      >
+        <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, color: T.slate600, flexShrink: 0 }}>
+          CTS Sales Profile
+        </span>
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: lineColor, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {lineText} <span aria-hidden="true" style={{ color: T.slate400 }}>&rsaquo;</span>
+        </span>
+      </button>
+
+      {asideOpen && (
+        <div
+          onClick={() => setAsideOpen(false)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15, 23, 42, 0.35)",
+            display: "flex", justifyContent: "flex-end",
+          }}
+        >
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-label="CTS Sales Profile"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: isPhone ? "100%" : 440, maxWidth: "100%", height: "100%", overflowY: "auto",
+              background: T.white, boxShadow: "-8px 0 24px rgba(15, 23, 42, 0.18)",
+              padding: isPhone ? 16 : 20, boxSizing: "border-box",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <div style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, color: T.slate700 }}>
+                CTS Sales Profile
+              </div>
+              <button
+                type="button"
+                onClick={() => setAsideOpen(false)}
+                aria-label="Close"
+                autoFocus
+                style={{
+                  border: "none", background: "transparent", fontSize: 22, lineHeight: 1,
+                  color: T.slate500, cursor: "pointer", padding: 4,
+                }}
+              >
+                &times;
+              </button>
+            </div>
+            {body}
+          </aside>
+        </div>
+      )}
+    </>
   );
 }

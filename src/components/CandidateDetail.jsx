@@ -6,6 +6,7 @@ import { STAGES, PIPELINE_STAGES, stageLabel } from "../lib/hiringStages.js";
 import OfferLetterModal from "./OfferLetterModal.jsx";
 import MeetGreetModal from "./MeetGreetModal.jsx";
 import CtsResultPanel from "./CtsResultPanel.jsx";
+import { ROLE_LABELS } from "../lib/hiregaugeRoles.js";
 import CopyButton from "./CopyButton.jsx";
 
 // ─── Constants ─────────────────────────────────────────────────────
@@ -130,17 +131,9 @@ const PROTOCOL_VALIDITY_BAND = (label) => {
 // against a generic sales-seat band was misleading. Role-aware judgment lives
 // in the Role Fit + Competencies sections on the right of the same expander.
 
-// Role display labels — shared between Results matrix, Assessment layer expansion,
-// and Competencies section. Keys are the seven canonical role fits.
-const ROLE_LABELS = {
-  sales_outbound:       "Sales - Outbound",
-  sales_inbound:        "Sales - Inbound",
-  sales_in_book:        "Sales - In-Book",
-  retention_reception:  "Retention - Reception",
-  retention_escalation: "Retention - Escalation",
-  retention_support:    "Retention - Support",
-  aspirant:             "Aspirant",
-};
+// Role display labels (ROLE_LABELS) — shared between Results matrix, Assessment
+// layer expansion, Competencies section and the CTS Sales Profile panel. They
+// live in src/lib/hiregaugeRoles.js since 2026-09-26 so the two can't drift.
 
 // Validity band — reliability higher-is-better.
 // Values are text: 'very_low' | 'low' | 'moderate' | 'high' | 'very_high'.
@@ -3003,10 +2996,10 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
           when the report arrives by email; the panel's form is the fallback for
           when that read refuses. Both go through record_cts_result(), which is
           the only writer of a result. Always rendered: an empty panel is how
-          Peter sees a result has not landed yet. */}
-      <Section title="CTS Sales Profile">
-        <CtsResultPanel candidateId={detail?.id} isPhone={isPhone} />
-      </Section>
+          Peter sees a result has not landed yet.
+          2026-09-26 (Peter): the panel renders itself as ONE closed line that
+          opens a side panel, instead of a whole open section. */}
+      <CtsResultPanel candidateId={detail?.id} isPhone={isPhone} />
 
       {detail?.notes && detail.notes.trim().length > 0 && (
         <Section title="Notes">
