@@ -76,6 +76,15 @@ const parseMoney = (s) => {
   return Number.isFinite(n) ? fromCents(cents(n)) : null;
 };
 const todayCentral = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+// A tablet that drops its connection mid-request reports "Load failed" (iPad) or "Failed to fetch"
+// even though the database answered. Reads ask once more before showing an error (Peter 2026-09-26).
+const dropped = (e) => !!e && /load failed|failed to fetch|network ?error/i.test(String(e.message || e));
+const readTwice = async (fn) => {
+  let r = await fn();
+  const bad = Array.isArray(r) ? r.some(x => dropped(x?.error)) : dropped(r?.error);
+  if (bad) { await new Promise(res => setTimeout(res, 800)); r = await fn(); }
+  return r;
+};
 const parseDate = (s) => { const [y, m, d] = String(s).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)); };
 const fmtDate = (dt) => dt.toISOString().slice(0, 10);
 const addDays = (s, n) => { const d = parseDate(s); d.setUTCDate(d.getUTCDate() + n); return fmtDate(d); };
@@ -176,7 +185,7 @@ export default function Family({ userRole }) {
     setErr(null);
     try {
       await supabase.rpc("family_sweep_missed");
-      const [k, c, cl, b, lg, s, ft, et, bw, fk] = await Promise.all([
+      const [k, c, cl, b, lg, s, ft, et, bw, fk] = await readTwice(() => Promise.all([
         supabase.from("family_kids").select("*").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("family_chores").select("*").eq("agency_id", AGENCY_ID).order("sort_order"),
         supabase.from("family_checklists").select("*").eq("agency_id", AGENCY_ID),
@@ -187,7 +196,7 @@ export default function Family({ userRole }) {
         supabase.from("family_expense_types").select("*").eq("agency_id", AGENCY_ID).order("sort_order").order("created_at"),
         supabase.rpc("family_burpee_week", { p_week_start: viewWeek }),
         supabase.rpc("family_fine_kids"),
-      ]);
+      ]));
       const firstErr = [k, c, cl, b, lg, s, ft, et, bw, fk].find(r => r?.error)?.error;
       if (firstErr) throw firstErr;
       setKids(k.data || []); setChores(c.data || []); setChecklists(cl.data || []);
@@ -204,11 +213,11 @@ export default function Family({ userRole }) {
 
   const loadBoard = useCallback(async () => {
     if (!kidId) { setBoard([]); return; }
-    const [b, x, f] = await Promise.all([
+    const [b, x, f] = await readTwice(() => Promise.all([
       supabase.rpc("family_week_board", { p_kid_id: kidId, p_week_start: viewWeek }),
       supabase.rpc("family_extras_available", { p_date: day }),
       supabase.rpc("family_fact_of_day", { p_date: day }),
-    ]);
+    ]));
     if (b.error || x.error) { setErr((b.error || x.error).message); return; }
     setBoard(Array.isArray(b.data) ? b.data : []);
     setExtras(Array.isArray(x.data) ? x.data : []);
@@ -958,7 +967,7 @@ function MoneyView({ kid, balance, isParent, today, onSaved, setErr, onClose }) 
 
   useEffect(() => {
     let live = true;
-    supabase.rpc("family_money_history", { p_kid_id: kid.id, p_through_week: weekStartOf(today) }).then(({ data, error }) => {
+    readTwice(() => supabase.rpc("family_money_history", { p_kid_id: kid.id, p_through_week: weekStartOf(today) })).then(({ data, error }) => {
       if (!live) return;
       if (error) { setErr(error.message); return; }
       setHistory(Array.isArray(data) ? data : []);
