@@ -11753,6 +11753,11 @@ interface AttachmentInput {
   // row instead of inserting a second one. See retryableDocumentId().
   retryDocumentId?: string | null;
   retryCount?: number;
+
+  // CTS only: the candidate this report belongs to, named by a person. Used
+  // when the name printed on the report does not match the record exactly
+  // (e.g. "Tracey LaCroix" vs "Tracey M. Lacroix"). Skips the name match.
+  ctsCandidateId?: string | null;
 }
 
 // Statuses that mean a documents row is finished, deliberately parked, or owned
@@ -13721,7 +13726,9 @@ async function processOneAttachment(
           break;
         }
 
-        const match = await matchCtsCandidate(ctx.agencyId, name);
+        const match = att.ctsCandidateId
+          ? { candidateId: att.ctsCandidateId, matchCount: 1 }
+          : await matchCtsCandidate(ctx.agencyId, name);
         if (!match.candidateId) {
           const why = match.matchCount === 0
             ? `"${name}" matches no candidate record`
@@ -14222,7 +14229,9 @@ async function processComposioProbeMode(ctx: RunCtx, body: any): Promise<any> {
 // candidate waiting at the gate (status 'assessed'); anyone else is just filed.
 //
 // Body: { agency_id, shared_secret, mode: "cts_drive", drive_file_ids: string[],
-//         pause_ms?: number }  — send at most 5 ids per call at the default pause.
+//         pause_ms?: number, candidate_ids?: { [driveFileId]: candidateId } }
+// Send at most 5 ids per call at the default pause. candidate_ids names the
+// candidate by hand for a report whose printed name does not match the record.
 interface CtsDriveOutcome {
   driveFileId: string;
   fileName: string;
@@ -14293,6 +14302,7 @@ async function processCtsDriveMode(
       receivedAt: m?.modifiedTime ?? new Date().toISOString(),
       fileName, mimeType: "application/pdf",
       attachmentId: null, bytesB64, parentArchive: "Drive",
+      ctsCandidateId: typeof body?.candidate_ids?.[fileId] === "string" ? body.candidate_ids[fileId] : null,
     };
     const results = await processOneAttachment(ctx, att, 1, "drive_cts");
     for (const r of results) {
