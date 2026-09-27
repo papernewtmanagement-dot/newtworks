@@ -367,7 +367,8 @@ async function readBankOrCardStatement(rawText: string, accountKind: string, gro
     // Card balances are amounts owed: money in lowers them. Deposit and
     // investment balances rise with money in.
     const dir = accountKind === "credit" ? -1 : 1;
-    const fromText = balancesFromText(statementText);
+    // Read from the untrimmed text, so no trimming can hide the summary.
+    const fromText = balancesFromText(rawText);
     const pairs: { open: number; close: number; label: string }[] = [];
     const addPair = (o: number | null, c: number | null, label: string) => {
       if (typeof o === "number" && typeof c === "number" && !pairs.some((p) => p.open === o && p.close === c)) {

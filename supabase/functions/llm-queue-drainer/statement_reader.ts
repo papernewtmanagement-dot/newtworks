@@ -62,6 +62,10 @@ function trimKnownSpans(text: string): { text: string; removed: number } {
     if (span.length < 300) continue;
     const dateHits = (span.match(dateish) ?? []).length;
     if (dateHits >= 3) continue;
+    // Never cut the account summary. On Chase the "Late Payment Warning" to
+    // "Account Summary" span holds "Previous Balance $6,739.41 ... Purchases",
+    // so cutting it hid the opening balance from the model (Chase 26-09).
+    if (/Previous Balance|Beginning Balance/i.test(span)) continue;
     out = out.slice(0, s.index) + " " + out.slice(s.index + span.length);
     removed += span.length;
   }

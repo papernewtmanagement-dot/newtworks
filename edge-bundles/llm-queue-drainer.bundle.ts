@@ -828,6 +828,10 @@ function trimKnownSpans(text: string): { text: string; removed: number } {
     if (span.length < 300) continue;
     const dateHits = (span.match(dateish) ?? []).length;
     if (dateHits >= 3) continue;
+    // Never cut the account summary. On Chase the "Late Payment Warning" to
+    // "Account Summary" span holds "Previous Balance $6,739.41 ... Purchases",
+    // so cutting it hid the opening balance from the model (Chase 26-09).
+    if (/Previous Balance|Beginning Balance/i.test(span)) continue;
     out = out.slice(0, s.index) + " " + out.slice(s.index + span.length);
     removed += span.length;
   }
@@ -1678,7 +1682,8 @@ async function readBankOrCardStatement(rawText: string, accountKind: string, gro
     // Card balances are amounts owed: money in lowers them. Deposit and
     // investment balances rise with money in.
     const dir = accountKind === "credit" ? -1 : 1;
-    const fromText = balancesFromText(statementText);
+    // Read from the untrimmed text, so no trimming can hide the summary.
+    const fromText = balancesFromText(rawText);
     const pairs: { open: number; close: number; label: string }[] = [];
     const addPair = (o: number | null, c: number | null, label: string) => {
       if (typeof o === "number" && typeof c === "number" && !pairs.some((p) => p.open === o && p.close === c)) {
