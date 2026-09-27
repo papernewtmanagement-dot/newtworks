@@ -48,6 +48,8 @@ const LEDGER_KINDS = [
   { kind: "adjustment",  bucket: "spend",  label: "Adjustment (+/−)", sign: 0 },
 ];
 const KIND_LABELS = { opening_balance: "Starting balance", fine: "Fine", expense: "Spent" };
+// The ledger kinds a kid adds from the bottom of the week page (AddCard).
+const ADD_KINDS = ["fine", "expense"];
 
 const STATUS = {
   claimed:     { icon: "✓", fg: T.blue,     label: "Done" },
@@ -287,8 +289,8 @@ export default function Family({ userRole }) {
           icons={new Map(chores.map(c => [c.id, c.icon]))} fact={fact}
           burpee={burpees.find(b => b.kid_id === kid.id)}
           hasBurpees={chores.some(c => c.kid_id === kid.id && c.is_burpees && (!c.active_to || c.active_to >= today))}
-          expenseTypes={expenseTypes} expenses={ledger.filter(l => l.kid_id === kid.id && l.kind === "expense" && l.entry_date >= viewWeek && l.entry_date <= addDays(viewWeek, 6))}
-          fineTypes={fineTypes} fineFits={fineFits} fines={ledger.filter(l => l.kid_id === kid.id && l.kind === "fine" && l.entry_date === day)}
+          expenseTypes={expenseTypes} fineTypes={fineTypes} fineFits={fineFits}
+          entries={ledger.filter(l => l.kid_id === kid.id && ADD_KINDS.includes(l.kind) && l.entry_date >= viewWeek && l.entry_date <= addDays(viewWeek, 6))}
           onLedgerChanged={load} onTimerStopped={() => afterChoreChange(todayDone(board))}
           day={day} today={today} weekStart={viewWeek} dateHref={dateHref} setDate={setDateParam}
           busy={busy} setStatus={setStatus} balance={bal} />
@@ -342,10 +344,9 @@ function KidPicker({ kids, kid, balances, kidHref, setKid }) {
 }
 
 // ─── Week grid ────────────────────────────────────────────────────────────
-function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpee, hasBurpees, expenseTypes, expenses, fineTypes, fineFits, fines, onLedgerChanged, onTimerStopped, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
+function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpee, hasBurpees, expenseTypes, fineTypes, fineFits, entries, onLedgerChanged, onTimerStopped, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
   const _vp = useViewport();
   const [openInfo, setOpenInfo] = useState(null);
-  const [pickId, setPickId] = useState("");
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
   const { groups, cells } = useMemo(() => {
@@ -373,11 +374,6 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
   }, [board, day, today, weekStart]);
 
   const activeW = isParent ? 150 : 100;
-  const pick = async () => {
-    if (!pickId) return;
-    await setStatus({ chore_id: pickId, day, occurrence_date: day }, "picked");
-    setPickId("");
-  };
   const canPick = (isParent ? day <= today : day === today) && day >= kid.tracking_start;
 
   const cellView = (r, d) => {
@@ -472,20 +468,8 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
       </div>
 
       {canPick && (
-        <div style={{ ...card, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700 }}>Earn more!</div>
-          <select value={pickId} onChange={e => setPickId(e.target.value)} style={{ ...input, flex: "1 1 200px" }}>
-            <option value="">Pick an extra chore…</option>
-            {(extras || []).map(x => <option key={x.chore_id} value={x.chore_id}>{x.title} · {money(x.pay)}</option>)}
-          </select>
-          <button style={btn("primary")} disabled={!pickId} onClick={pick}>Add</button>
-        </div>
-      )}
-      {canPick && (
-        <ExpenseCard kid={kid} day={day} isParent={isParent} expenseTypes={expenseTypes} expenses={expenses} onChanged={onLedgerChanged} />
-      )}
-      {canPick && (
-        <FineCard kid={kid} day={day} isParent={isParent} fineTypes={fineTypes} fineFits={fineFits} fines={fines} onChanged={onLedgerChanged} />
+        <AddCard kid={kid} day={day} isParent={isParent} extras={extras} expenseTypes={expenseTypes} fineTypes={fineTypes} fineFits={fineFits}
+          entries={entries} onPickExtra={(id) => setStatus({ chore_id: id, day, occurrence_date: day }, "picked")} onChanged={onLedgerChanged} />
       )}
       {day < kid.tracking_start && <div style={{ fontSize: 12, color: T.slate500 }}>Tracking for {kid.name} starts {shortDate(kid.tracking_start)}.</div>}
     </div>
@@ -1744,46 +1728,74 @@ function PriceList({ title, table, items, subFor, placeholder, addLabel, onSaved
   );
 }
 
-// A kid spent money. The hub or a parent picks it from the expense list, or picks
-// "Something else…" and types what it was and how much. It comes out of spending
-// money at the week close-out. Parents can take one back.
+// The bottom of a kid's week (Peter 2026-09-26): one Earn / Expense / Fine toggle, one
+// dropdown filled from that toggle, one Add button, and the week's fines and expenses listed
+// underneath.
+//   Earn     picks an extra chore; it shows up in the grid above like any picked extra.
+//   Expense  picks from the expense list, or "Something else…" to type what it was and how much.
+//   Fine     picks from the fine list (only fines that fit this kid). The fine stays picked,
+//            so tapping Add again gives another one.
+// Fines and expenses are family_ledger rows and settle at the week close-out. Parents can take one back.
+const ADD_MODES = [["earn", "Earn"], ["expense", "Expense"], ["fine", "Fine"]];
 const OTHER_EXPENSE = "other";
-function ExpenseCard({ kid, day, isParent, expenseTypes, expenses, onChanged }) {
-  const [typeId, setTypeId] = useState("");
+function AddCard({ kid, day, isParent, extras, expenseTypes, fineTypes, fineFits, entries, onPickExtra, onChanged }) {
+  const [mode, setMode] = useState("earn");
+  const [pickId, setPickId] = useState("");
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
-  const active = (expenseTypes || []).filter(x => x.is_active);
-  const custom = typeId === OTHER_EXPENSE || !active.length;
+
+  const expenseList = (expenseTypes || []).filter(x => x.is_active);
+  const fineList = (fineTypes || []).filter(f => f.is_active && fineFits(f.id, kid.id));
+  const options = mode === "earn"
+    ? (extras || []).map(x => ({ id: x.chore_id, label: `${x.title} · ${money(x.pay)}` }))
+    : (mode === "expense" ? expenseList : fineList).map(x => ({ id: x.id, label: `${x.name} · ${money(x.amount)}` }));
+  const custom = mode === "expense" && (pickId === OTHER_EXPENSE || !expenseList.length);
   const n = parseMoney(amount);
-  const ready = custom ? (name.trim() !== "" && n > 0) : active.some(x => x.id === typeId);
+  const ready = custom ? (name.trim() !== "" && n > 0) : options.some(o => o.id === pickId);
+  const placeholder = { earn: "Pick an extra chore…", expense: "Pick an expense…", fine: "Pick a fine…" }[mode];
+
+  const switchMode = (m) => { setMode(m); setPickId(""); setName(""); setAmount(""); setErr(null); };
+  const addLedger = (row) => supabase.from("family_ledger").insert({ agency_id: AGENCY_ID, kid_id: kid.id, bucket: "spend", entry_date: day, ...row });
+
   const add = async () => {
     if (!ready || saving) return;
-    const t = custom ? null : active.find(x => x.id === typeId);
     setSaving(true); setErr(null);
-    const { error } = await supabase.from("family_ledger").insert({
-      agency_id: AGENCY_ID, kid_id: kid.id, bucket: "spend", kind: "expense", expense_type_id: t ? t.id : null,
-      amount: t ? -Math.abs(Number(t.amount)) : -n, note: t ? t.name : name.trim(), entry_date: day,
-    });
+    let error = null;
+    if (mode === "earn") {
+      await onPickExtra(pickId);
+    } else if (mode === "expense") {
+      const t = custom ? null : expenseList.find(x => x.id === pickId);
+      ({ error } = await addLedger({ kind: "expense", expense_type_id: t ? t.id : null, amount: t ? -Math.abs(Number(t.amount)) : -n, note: t ? t.name : name.trim() }));
+    } else {
+      const t = fineList.find(f => f.id === pickId);
+      ({ error } = await addLedger({ kind: "fine", fine_type_id: t.id, amount: -Math.abs(Number(t.amount)), note: t.name }));
+    }
     setSaving(false);
     if (error) { setErr(error.message); return; }
-    setTypeId(""); setName(""); setAmount(""); onChanged();
+    if (mode !== "fine") { setPickId(""); setName(""); setAmount(""); }
+    if (mode !== "earn") onChanged();
   };
-  const remove = async (id) => {
-    const { error } = await supabase.from("family_ledger").delete().eq("id", id).eq("kind", "expense");
+  const remove = async (x) => {
+    const { error } = await supabase.from("family_ledger").delete().eq("id", x.id).eq("kind", x.kind);
     if (error) { setErr(error.message); return; }
     onChanged();
   };
+
   return (
     <div style={{ ...card, display: "grid", gap: 8 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700 }}>Spent something?</div>
-        {active.length > 0 && (
-          <select value={typeId} onChange={e => setTypeId(e.target.value)} style={{ ...input, flex: "1 1 200px" }}>
-            <option value="">Pick an expense…</option>
-            {active.map(x => <option key={x.id} value={x.id}>{x.name} · {money(x.amount)}</option>)}
-            <option value={OTHER_EXPENSE}>Something else…</option>
+        <div role="radiogroup" aria-label="What to add" style={{ display: "flex", gap: 4, flex: "0 0 auto" }}>
+          {ADD_MODES.map(([m, label]) => (
+            <button key={m} role="radio" aria-checked={mode === m} onClick={() => switchMode(m)} style={btn(mode === m ? "primary" : "soft")}>{label}</button>
+          ))}
+        </div>
+        {!(mode === "expense" && !expenseList.length) && (
+          <select value={pickId} onChange={e => setPickId(e.target.value)} disabled={!options.length && mode !== "expense"} style={{ ...input, flex: "1 1 200px" }}>
+            <option value="">{options.length || mode === "expense" ? placeholder : "Nothing to pick right now"}</option>
+            {options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+            {mode === "expense" && <option value={OTHER_EXPENSE}>Something else…</option>}
           </select>
         )}
         {custom && (
@@ -1794,65 +1806,15 @@ function ExpenseCard({ kid, day, isParent, expenseTypes, expenses, onChanged }) 
           <input value={amount} onChange={e => setAmount(e.target.value)} onKeyDown={e => { if (e.key === "Enter") add(); }}
             inputMode="decimal" placeholder="How much?" aria-label="How much?" style={{ ...input, flex: "1 1 90px", width: 90 }} />
         )}
-        <button style={btn("primary")} disabled={!ready || saving} onClick={add}>{custom && n > 0 ? `Add ${money(n)}` : "Add"}</button>
+        <button style={btn("primary")} disabled={!ready || saving} onClick={add}>Add</button>
       </div>
       {err && <div style={{ fontSize: 12, color: T.red }}>{err}</div>}
-      {(expenses || []).map(x => (
+      {(entries || []).map(x => (
         <div key={x.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, borderTop: `1px solid ${T.slate100}`, paddingTop: 6, fontSize: 13 }}>
-          <span style={{ color: T.slate700 }}>{shortDate(x.entry_date)} · {x.note}</span>
+          <span style={{ color: T.slate700 }}>{shortDate(x.entry_date)} · {x.note || KIND_LABELS[x.kind]}</span>
           <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontWeight: 600, color: T.slate700 }}>{money(x.amount)}</span>
-            {isParent && <button style={btn("soft", true)} onClick={() => remove(x.id)} title="Take it back">Undo</button>}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// A fine given from the kid's own page. The hub or a parent picks it from the fine list (only
-// fines that fit this kid show); it settles at the week close-out like any fine. The fine stays
-// picked, so tapping again gives another one. Shows that day's fines; parents can take one back.
-function FineCard({ kid, day, isParent, fineTypes, fineFits, fines, onChanged }) {
-  const [typeId, setTypeId] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState(null);
-  const options = (fineTypes || []).filter(f => f.is_active && fineFits(f.id, kid.id));
-  const t = options.find(f => f.id === typeId);
-  const give = async () => {
-    if (!t || saving) return;
-    setSaving(true); setErr(null);
-    const { error } = await supabase.from("family_ledger").insert({
-      agency_id: AGENCY_ID, kid_id: kid.id, bucket: "spend", kind: "fine", fine_type_id: t.id,
-      amount: -Math.abs(Number(t.amount)), note: t.name, entry_date: day,
-    });
-    setSaving(false);
-    if (error) { setErr(error.message); return; }
-    onChanged();
-  };
-  const remove = async (id) => {
-    const { error } = await supabase.from("family_ledger").delete().eq("id", id).eq("kind", "fine");
-    if (error) { setErr(error.message); return; }
-    onChanged();
-  };
-  if (!options.length && !(fines || []).length) return null;
-  return (
-    <div style={{ ...card, display: "grid", gap: 8 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: T.slate700 }}>Give a fine</div>
-        <select value={typeId} onChange={e => setTypeId(e.target.value)} style={{ ...input, flex: "1 1 200px" }}>
-          <option value="">Pick a fine…</option>
-          {options.map(f => <option key={f.id} value={f.id}>{f.name} · {money(f.amount)}</option>)}
-        </select>
-        <button style={btn("danger")} disabled={!t || saving} onClick={give}>Give fine</button>
-      </div>
-      {err && <div style={{ fontSize: 12, color: T.red }}>{err}</div>}
-      {(fines || []).map(x => (
-        <div key={x.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, borderTop: `1px solid ${T.slate100}`, paddingTop: 6, fontSize: 13 }}>
-          <span style={{ color: T.slate700 }}>{x.note || "Fine"}</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontWeight: 600, color: T.red }}>{money(x.amount)}</span>
-            {isParent && <button style={btn("soft", true)} onClick={() => remove(x.id)} title="Take this fine back">Undo</button>}
+            <span style={{ fontWeight: 600, color: x.kind === "fine" ? T.red : T.slate700 }}>{money(x.amount)}</span>
+            {isParent && <button style={btn("soft", true)} onClick={() => remove(x)} title="Take it back">Undo</button>}
           </span>
         </div>
       ))}
