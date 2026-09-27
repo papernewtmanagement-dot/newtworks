@@ -40,9 +40,11 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //   rpg_needed(skill, difficulty)            what a roll needs; the calculator asks the same function a roll does
 //   rpg_difficulty(skill, can_act)           the difficulty a defender presents: their skill × 2 when they can act (skill and will)
 //   rpg_session_list() / rpg_session_state(id)   the fights, and one fight in one read (players: creatures without numbers)
-//   rpg_session_new / rpg_session_add      set up a fight; a creature is made fresh from its card; Agility sets the turn order
-//   rpg_session_next_turn(id)                starts the fight or passes the turn: effects clear by rule, energy regains,
-//                                            other creatures roll a die for a legendary action
+//   rpg_session_new / rpg_session_add      set up a fight; a creature is made fresh from its card; the fight clock sets who goes when
+//   rpg_session_next_turn(id)                starts the fight or ends a turn on the fight clock: the turn's ticks (moving
+//                                            and acting: the bigger plus half the smaller) go on the one who took it and
+//                                            whoever is next on the clock goes; a round is 20 ticks (effects clear, energy
+//                                            regains); other creatures roll a die for a legendary action
 //   rpg_act(actor, targets, stat, action, against, difficulty, roll, effect)   one move through rpg_roll: an attack
 //                                            (land, block, hit gates; armor and shields take the blow), a card action,
 //                                            REST / DEFEND, or the check a rule demands; every move costs beats and energy
@@ -50,9 +52,9 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //   rpg_session_auto_turn(id)                the site plays a creature's turn: best ready moves by rpg_action_score
 //                                            while beats and energy remain, walking toward a character when none is
 //                                            in reach, then passes
-//   rpg_act_square(actor, x, y, action)      a move on the board: a walk paid in beats (rpg_move_per_beat squares a
-//                                            beat; a square costs 1 + its movement penalty), or a card action aimed
-//                                            at a square (Rootstep, Briar Shift)
+//   rpg_act_square(actor, x, y, action)      a move on the board: a walk that costs ticks by the mover's Speed (a square
+//                                            costs 1 + its movement penalty), or a card action aimed at a square
+//                                            (Rootstep, Briar Shift)
 //   rpg_place / rpg_place_start / rpg_set_square / rpg_set_board   the game master sets up the board
 //   rpg_creatures.image_path                 a picture in the private rpg-images bucket (parents upload)
 //   rpg_session_set_status / rpg_session_adjust_vitality / rpg_session_remove / rpg_session_end   game master changes
@@ -1438,7 +1440,7 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
       const p = at[k];
       const m = moveAt[k];
       const n = Number(terrain[k]) || 0;
-      const title = `${sq(x, y)}${n ? ` · movement penalty ${n}` : ""}${p ? ` · ${p.name}${p.out ? ` (${p.out})` : ""}` : ""}${m ? ` · costs ${m.cost}, ${m.beats} ${Number(m.beats) === 1 ? "beat" : "beats"}` : ""}`;
+      const title = `${sq(x, y)}${n ? ` · movement penalty ${n}` : ""}${p ? ` · ${p.name}${p.out ? ` (${p.out})` : ""}` : ""}${m ? ` · costs ${m.cost}, ${m.ticks} ticks` : ""}`;
       const live = pending || (isParent && mode !== "move") || m;
       cells.push(
         <button key={k} type="button" title={title} onClick={() => click(x, y)}
@@ -1452,7 +1454,7 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
                            color: T.white, fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
                            boxShadow: p.is_current ? `0 0 0 2px ${T.slate900}` : "none" }}>{String(p.name || "?").slice(0, 1).toUpperCase()}</span>
           ) : m ? (
-            <span style={{ fontSize: 9, fontWeight: 800, color: T.blue }}>{m.beats}</span>
+            <span style={{ fontSize: 9, fontWeight: 800, color: T.blue }}>{m.ticks}</span>
           ) : null}
         </button>
       );
@@ -1470,7 +1472,7 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
           </>
         ) : actor && mode === "move" && moves.length > 0 ? (
           <div style={{ fontSize: 12, color: T.slate600 }}>
-            {actor.name} moves {actor.move_per_beat} {Number(actor.move_per_beat) === 1 ? "square" : "squares"} a beat. Tap a ringed square; the number is the beats it takes.
+            Tap a ringed square to move {actor.name}; the number is the ticks it takes. A turn holds {s.round_ticks} ticks of moving.
           </div>
         ) : null}
       </div>
@@ -1563,6 +1565,7 @@ function ParticipantRow({ p, i, isParent, ended, busy, open, onToggle, run, chil
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ width: 10, height: 10, borderRadius: 5, background: p.color || T.slate400, flexShrink: 0 }} />
           <span style={{ fontWeight: p.is_current ? 800 : 600, color: T.slate900 }}>{p.name}</span>
+          {!p.is_current && !p.out && p.ticks_away != null && <span style={{ fontSize: 11, color: T.slate500, whiteSpace: "nowrap" }} title="Ticks until their turn on the fight clock">in {p.ticks_away}</span>}
           {down ? <span style={pill(T.red, T.redLt)}>{p.out || "Down"}{p.revival ? ` · rises round ${p.revival.rises_round}` : ""}</span> : (
             <>
               <div style={{ flex: "0 1 140px", minWidth: 60, height: 8, background: T.slate100, borderRadius: 4, overflow: "hidden" }}>
@@ -1611,12 +1614,9 @@ function CharacterActions({ actor, parts, s, busy, run, onEnd, last }) {
   const w = weapons.some(x => x.key === weapon) ? weapon : (weapons[0]?.key || "");
   const fallback = (targets.find(p => p.kind === "creature" && !isDown(p)) || targets[0])?.id || "";
   const t = targets.some(x => x.id === target) ? target : fallback;
-  const per = Number(s.beats_per_turn) || 2;
-  const left = per - (Number(s.turn_beats) || 0);
-  const weaponBeats = Number(weapons.find(x => x.key === w)?.beats) || 2;
   const wpn = weapons.find(x => x.key === w) || {};
   const canPay = Number(actor.energy?.[wpn.energy_type || "physical"]?.left ?? 0) >= (Number(wpn.energy_cost) || 0);
-  const fresh = (Number(s.turn_beats) || 0) === 0;
+  const acted = (Number(s.turn_action_ticks) || 0) > 0;
   const check = actor.pending_check || null;
   const pendingExtra = Array.isArray(last) ? last.find(r => r.extra_pending) : null;
   const dv = dieValue(die); const badDie = die !== "" && dv == null;
@@ -1643,12 +1643,12 @@ function CharacterActions({ actor, parts, s, busy, run, onEnd, last }) {
           <button type="button" style={btn("primary")} disabled={busy || badDie}
             onClick={() => act({ p_actor_id: actor.id, p_effect: check.name, p_roll: dv })}>Roll {check.stat_name}</button>
         </div>
-      ) : !cannot && left >= weaponBeats ? (
+      ) : !cannot && !acted ? (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
           <div>
             <div style={small}>Weapon</div>
             <select style={{ ...input, marginTop: 4 }} value={w} onChange={e => setWeapon(e.target.value)}>
-              {weapons.map(x => <option key={x.key} value={x.key}>{x.name} {num(x.value)}{Number(x.beats) === 1 ? " · quick" : ""} · {x.energy_cost} {x.energy_type}</option>)}
+              {weapons.map(x => <option key={x.key} value={x.key}>{x.name} {num(x.value)} · {x.ticks} ticks · {x.energy_cost} {x.energy_type}</option>)}
             </select>
           </div>
           <div>
@@ -1662,7 +1662,7 @@ function CharacterActions({ actor, parts, s, busy, run, onEnd, last }) {
             onClick={() => act({ p_actor_id: actor.id, p_target_ids: [t], p_stat_key: w, p_roll: dv })}>{canPay ? "Attack" : "Too tired"}</button>
         </div>
       ) : null}
-      {!cannot && !check && !pendingExtra && waiting.map(o => (
+      {!cannot && !check && !pendingExtra && !acted && waiting.map(o => (
         <div key={o.id} style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div style={{ fontSize: 13, color: T.slate800, flex: "1 1 100%" }}>
             {o.name} is {o.revival.name} and rises in round {o.revival.rises_round}. {o.revival.skill_name} against its {o.revival.against_name} ends it for good.
@@ -1672,13 +1672,14 @@ function CharacterActions({ actor, parts, s, busy, run, onEnd, last }) {
             onClick={() => act({ p_actor_id: actor.id, p_target_ids: [o.id], p_stat_key: o.revival.skill_key, p_against: o.revival.against, p_roll: dv })}>Roll {o.revival.skill_name}</button>
         </div>
       ))}
-      {!cannot && !check && !pendingExtra && fresh && (
+      {!cannot && !check && !pendingExtra && !acted && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button type="button" style={btn("soft", true)} disabled={busy} onClick={() => act({ p_actor_id: actor.id, p_stat_key: "REST" })}>Rest</button>
           <button type="button" style={btn("soft", true)} disabled={busy} onClick={() => act({ p_actor_id: actor.id, p_stat_key: "DEFEND" })}>Defend</button>
         </div>
       )}
       {Array.isArray(last) && last.length > 0 && <ResultCard results={last} />}
+      <TurnCost s={s} />
       <div><button type="button" style={btn("soft", true)} disabled={busy} onClick={onEnd}>End turn</button></div>
     </div>
   );
@@ -1701,6 +1702,7 @@ function CreatureActions({ actor, parts, defs, s, sessionId, busy, run, onEnd, l
         <ManualCreatureTurn actor={actor} parts={parts} defs={defs} s={s} busy={busy} run={run} onPending={onPending} />
       )}
       {Array.isArray(last) && last.length > 0 && <ResultCard results={last} />}
+      {manual && <TurnCost s={s} />}
       {(manual || cannot) && <div><button type="button" style={btn("soft", true)} disabled={busy} onClick={onEnd}>End turn</button></div>}
     </div>
   );
@@ -1710,8 +1712,9 @@ function CreatureActions({ actor, parts, defs, s, sessionId, busy, run, onEnd, l
 // a square (Briar Shift) asks for its square on the board.
 function ManualCreatureTurn({ actor, parts, defs, s, busy, run, onPending }) {
   const kinds = ["action", "bonus_action", "reaction", "lair"];
-  const left = (Number(s.beats_per_turn) || 2) - (Number(s.turn_beats) || 0);
-  const beatsOf = (a) => (a.kind === "action" || a.kind === "bonus_action" ? Number(a.beats) || 0 : 0);
+  // One action a turn: an action or bonus action is refused once the turn has one; lair actions are free.
+  const acted = (Number(s.turn_action_ticks) || 0) > 0;
+  const usesTurn = (a) => a.kind === "action" || a.kind === "bonus_action";
   const actions = (Array.isArray(actor.actions) ? actor.actions : []).filter(a => kinds.includes(a.kind));
   const others = parts.filter(p => p.id !== actor.id);
   const skills = Array.isArray(actor.skills) ? actor.skills : [];
@@ -1723,7 +1726,6 @@ function ManualCreatureTurn({ actor, parts, defs, s, busy, run, onPending }) {
   const toggle = (pid) => setPicked(targetIds.includes(pid) ? targetIds.filter(x => x !== pid) : [...targetIds, pid]);
   const againstOpts = (Array.isArray(defs) ? defs : []).filter(d => d.grp === "physical" || d.grp === "ability");
   const act = async (args) => { const r = await run("rpg_act", args, actor.id); if (r) setPicked([]); };
-  const fresh = (Number(s.turn_beats) || 0) === 0;
   return (
     <div style={{ display: "grid", gap: 10 }}>
       <div>
@@ -1739,7 +1741,7 @@ function ManualCreatureTurn({ actor, parts, defs, s, busy, run, onPending }) {
         if (list.length === 0) return null;
         return (
           <div key={kind}>
-            <div style={label}>{title}{kind === "action" ? ` · ${left} of ${Number(s.beats_per_turn) || 2} beats left` : ""}</div>
+            <div style={label}>{title}</div>
             {list.map(a => {
               const rolls = a.skill != null;
               return (
@@ -1750,8 +1752,8 @@ function ManualCreatureTurn({ actor, parts, defs, s, busy, run, onPending }) {
                   </div>
                   {a.ready === false ? (
                     <span style={{ fontSize: 12, fontWeight: 600, color: T.amber }}>Too tired</span>
-                  ) : beatsOf(a) > left ? (
-                    <span style={{ fontSize: 12, fontWeight: 600, color: T.slate500 }}>Not enough beats left</span>
+                  ) : usesTurn(a) && acted ? (
+                    <span style={{ fontSize: 12, fontWeight: 600, color: T.slate500 }}>Already acted this turn</span>
                   ) : a.square ? (
                     <button type="button" style={btn("primary", true)} disabled={busy}
                       onClick={() => onPending({ actorId: actor.id, actionId: a.id, name: a.name })}>Pick a square</button>
@@ -1767,7 +1769,7 @@ function ManualCreatureTurn({ actor, parts, defs, s, busy, run, onPending }) {
           </div>
         );
       })}
-      {fresh && (
+      {!acted && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button type="button" style={btn("soft", true)} disabled={busy} onClick={() => act({ p_actor_id: actor.id, p_stat_key: "REST" })}>Rest</button>
           <button type="button" style={btn("soft", true)} disabled={busy} onClick={() => act({ p_actor_id: actor.id, p_stat_key: "DEFEND" })}>Defend</button>
@@ -1794,6 +1796,16 @@ function ManualCreatureTurn({ actor, parts, defs, s, busy, run, onPending }) {
       </div>
     </div>
   );
+}
+
+// What this turn costs on the fight clock so far (rpg_session_state turn_cost, from rpg_turn_cost): moving and acting
+// together cost the bigger plus half the smaller. Ending a turn having done neither costs one beat of waiting.
+function TurnCost({ s }) {
+  const m = Number(s.turn_move_ticks) || 0;
+  const a = Number(s.turn_action_ticks) || 0;
+  if (!m && !a) return null;
+  const parts = [m ? `moved ${m} ticks` : null, a ? `acted ${a} ticks` : null].filter(Boolean).join(", ");
+  return <div style={{ fontSize: 12, color: T.slate600 }}>This turn: {parts}, so it costs {s.turn_cost} ticks on the clock.</div>;
 }
 
 function ResultCard({ results }) {
