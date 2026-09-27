@@ -945,7 +945,7 @@ function Celebration({ kid, title, onClose }) {
 }
 
 // ─── Money ────────────────────────────────────────────────────────────────
-// History is family_money_history(): every money line oldest to newest, tithe and investment
+// History is family_money_history(): every money line, shown newest first, tithe and investment
 // set-asides as their own lines, with spending money after each line. The screen only lays it
 // out (Peter 2026-09-26).
 function MoneyView({ kid, balance, isParent, today, onSaved, setErr, onClose }) {
@@ -971,7 +971,7 @@ function MoneyView({ kid, balance, isParent, today, onSaved, setErr, onClose }) 
       if (!m.has(h.week_start)) m.set(h.week_start, []);
       m.get(h.week_start).push(h);
     }
-    return [...m.entries()];
+    return [...m.entries()].reverse();
   }, [history]);
 
   const save = async () => {
@@ -1020,7 +1020,8 @@ function MoneyView({ kid, balance, isParent, today, onSaved, setErr, onClose }) 
         <Section title="History">
           {weeks.map(([ws, rows]) => {
             const thisWeek = ws === weekStartOf(today);
-            const now = rows.filter(r => r.posted), waiting = rows.filter(r => !r.posted);
+            // Newest first (Peter 2026-09-26); each line's balance is after that line.
+            const now = rows.filter(r => r.posted).reverse(), waiting = rows.filter(r => !r.posted).reverse();
             const line = (r, balance) => {
               const own = r.bucket === "spend" || r.kind === "tithe_set_aside" || r.kind === "invest_set_aside";
               const v = own ? r.to_spend : r.amount;
@@ -1043,17 +1044,17 @@ function MoneyView({ kid, balance, isParent, today, onSaved, setErr, onClose }) 
                   Week of {shortDate(ws)}
                   <span style={{ fontWeight: 500, color: T.slate500 }}> · {rows[0]?.closed ? "Closed out" : thisWeek ? "This week" : "Not closed out yet"}</span>
                 </div>
-                {now.map(r => line(r, r.spend_after))}
                 {waiting.length > 0 && (
                   <div style={{ opacity: 0.65 }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em", paddingTop: 6 }}>Waiting for close-out</div>
                     {waiting.map(r => line(r, null))}
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "6px 0", fontSize: 13, fontWeight: 700, color: T.slate900, borderTop: `1px solid ${T.slate200}` }}>
                       <span>Adds to spending money at close-out</span>
-                      <span style={{ color: Number(waiting[waiting.length - 1].waiting_after) < 0 ? T.red : T.green }}>{money(waiting[waiting.length - 1].waiting_after)}</span>
+                      <span style={{ color: Number(waiting[0].waiting_after) < 0 ? T.red : T.green }}>{money(waiting[0].waiting_after)}</span>
                     </div>
                   </div>
                 )}
+                {now.map(r => line(r, r.spend_after))}
               </div>
             );
           })}
