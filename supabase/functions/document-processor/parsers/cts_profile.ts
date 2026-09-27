@@ -162,7 +162,6 @@ Return ONLY this JSON object. No prose, no markdown fences.
 {
   "candidate_name": string,
   "report_date": "YYYY-MM-DD",
-  "cts_score": number,
   "ego_drive": number,
   "empathy": number,
   "reliability": "low"|"moderate"|"high",
@@ -441,7 +440,6 @@ export async function parseCtsProfile(input: CtsParseInput): Promise<CtsParseRes
   if (total) lssAccuracy.total = total;
 
   const payload: Record<string, unknown> = {
-    cts_score: ctsScore0to100(j.cts_score),
     ego_drive: ctsScore0to100(j.ego_drive),
     empathy: ctsScore0to100(j.empathy),
     reliability: ctsValidityFromHeader(input.reportText, "Reliability")

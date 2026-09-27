@@ -185,7 +185,7 @@ export default function CtsResultPanel({ candidateId, isPhone }) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [form, setForm] = useState({
-    cts_score: "", ego_drive: "", empathy: "",
+    ego_drive: "", empathy: "",
     reliability: "", response_distortion: "",
     traits: {}, comps: {}, acc: {}, speed: {}, acc_total: "",
   });
@@ -249,7 +249,6 @@ export default function CtsResultPanel({ candidateId, isPhone }) {
     if (total !== null) lss_accuracy.total = { candidate: total };
 
     const payload = {
-      cts_score: toNum(form.cts_score),
       ego_drive: toNum(form.ego_drive),
       empathy: toNum(form.empathy),
       reliability: form.reliability || null,

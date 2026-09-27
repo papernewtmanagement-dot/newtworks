@@ -2163,7 +2163,7 @@ async function processOneAttachment(
         // The interview invite fires off the trigger on cts_completed_at, not
         // from here, and the score is on the candidate page the moment it
         // lands — so a clean arrival needs no separate notice.
-        console.log(`[document-processor] CTS result ${action} for ${name}: score ${parsed.payload.cts_score ?? "n/a"}, ego drive ${parsed.payload.ego_drive ?? "n/a"}, empathy ${parsed.payload.empathy ?? "n/a"}.`);
+        console.log(`[document-processor] CTS result ${action} for ${name}: ego drive ${parsed.payload.ego_drive ?? "n/a"}, empathy ${parsed.payload.empathy ?? "n/a"}.`);
 
         results.push({
           documentId, fileName: att.fileName, fromEmail: att.fromEmail,
