@@ -222,7 +222,11 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
     account: {
       id: acct.id,
       businessEntityId: acct.business_entity_id,
-      accountKind: acct.account_kind,
+      // Investment accounts are written as "bank": same sign rule (money in is
+      // positive), it is how every earlier health savings month was stored, and
+      // the statements table accepts only bank or credit (first live run of the
+      // health savings summary was refused on exactly that, 2026-09-26).
+      accountKind: acct.account_kind === "investment" ? "bank" : acct.account_kind,
     },
     accountLast4,
     period: { start: period.start, end: period.end },
