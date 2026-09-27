@@ -10,10 +10,9 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 // Roleplaying.jsx — the family game module (below Inventory; hub login + admins).
 // Build plan: persistent_memory spec "Roleplaying module — build plan" (project roleplaying).
 // Step 2: Characters tab — roll a character, the interactive sheet, rolls, items and coins.
-// Step 3: Creatures tab — creature cards (Bramblemaw first). Parents see the whole card and
-// the character-scale numbers the table uses (attack, defense, vitality ... set by the game
-// master; the d20 stat block is kept as reading and flavor); players see a creature's names,
-// haunts and lore once a parent taps Show to players.
+// Step 3: Creatures tab — creature cards (Bramblemaw first). Parents see the whole card: how a
+// creature is made from it and what each action rolls from the creature's own sheet; players see
+// a creature's names, haunts and lore once a parent taps Show to players.
 // Step 4: Rules tab — the manual text verbatim (rpg_rules), every formula spelled out the
 // same way the sheet does it, a needed-roll calculator, and the level-cost table.
 // Step 5: Play tab, fights without a map. The game master sets up a fight, everyone takes turns by
@@ -599,7 +598,6 @@ function CardText({ text, style }) {
   if (!text) return null;
   return <div className="newtworks-handbook-body" style={{ fontSize: 13, lineHeight: 1.6, ...style }} dangerouslySetInnerHTML={{ __html: cardHtml(text) }} />;
 }
-const signed = (n) => { const v = Number(n) || 0; return v < 0 ? `−${Math.abs(v)}` : `+${v}`; };
 const tag = (tone) => ({
   fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap", flexShrink: 0, boxSizing: "border-box",
   background: tone === "on" ? T.greenLt : tone === "gold" ? T.goldLt : T.slate100,
@@ -655,7 +653,7 @@ function CreatureList({ isParent, onOpen, hrefFor, onError }) {
 // prompt to paste into ChatGPT; players just see the empty frame.
 const plainText = (t) => String(t || "").replace(/[*_`#>]/g, "").replace(/\s+/g, " ").trim();
 const imagePrompt = (c) => [
-  `Illustrate ${c.name}${c.type_line ? ` (${c.type_line})` : ""} for a family fantasy tabletop game.`,
+  `Illustrate ${c.name} for a family fantasy tabletop game.`,
   plainText(c.lore),
   c.haunts ? `Setting: ${plainText(c.haunts)}.` : "",
   "Painted storybook style, dramatic natural lighting, the creature centered and fully in frame, square image, no words or letters anywhere.",
@@ -870,7 +868,7 @@ function CardRecipe({ tmpl, entries }) {
 }
 
 // The game master's half of the card, in folds: how a creature is made from it, the actions with the skill
-// each one rolls from the creature's own sheet, then the printed d20 stat block, the rumor table and the tip.
+// each one rolls from the creature's own sheet, then the rumor table and the tip.
 // Reading parts start shut.
 function CreatureGmCard({ c, accent }) {
   const actions = Array.isArray(c.actions) ? c.actions : [];
@@ -879,12 +877,6 @@ function CreatureGmCard({ c, accent }) {
   const rumors = Array.isArray(c.rumors) ? c.rumors : [];
   const tmpl = c.template || {};
   const entries = Array.isArray(tmpl.entries) ? tmpl.entries : [];
-  // A card with no printed d20 block skips that fold.
-  const hasPrinted = !!(c.armor_text || c.hit_points_text || (Array.isArray(c.abilities) && c.abilities.length > 0));
-
-  const statRow = (name, value) => (value ? (
-    <div style={{ fontSize: 13, color: T.slate700, padding: "3px 0" }}><span style={{ fontWeight: 700, color: T.slate900 }}>{name}</span> {value}</div>
-  ) : null);
   // What the action does at the table: the skill it rolls from the creature's sheet, the stat the target defends
   // with, and the note.
   const tableLine = (a) => (!a.skill_key && !a.table_note ? null : (
@@ -919,35 +911,6 @@ function CreatureGmCard({ c, accent }) {
         {group(`Legendary actions (${num(c.legendary_per_round)} a round)`, ofKind("legendary"), c.legendary_intro)}
         {group(c.lair_title ? `Lair actions (${c.lair_title})` : "Lair actions", ofKind("lair"), c.lair_intro)}
         {group("Nature", ofKind("trait"))}
-      </Fold>
-      )}
-
-      {hasPrinted && (
-      <Fold title="Printed stat block (the d20 numbers, for reading)">
-        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{c.card_title || c.name}</div>
-        {c.type_line && <div style={{ fontSize: 13, fontStyle: "italic", color: T.slate600 }}>{c.type_line}</div>}
-        <div style={{ marginTop: 8 }}>
-          {statRow("Armor Class", c.armor_text)}
-          {statRow("Hit Points", c.hit_points_text)}
-          {statRow("Speed", c.speed_text)}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: 6, margin: "10px 0" }}>
-          {(Array.isArray(c.abilities) ? c.abilities : []).map(a => (
-            <div key={a.key} style={{ textAlign: "center", background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "6px 4px", boxSizing: "border-box" }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.slate500 }}>{a.label}</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{a.score} <span style={{ fontSize: 12, fontWeight: 600, color: T.slate500 }}>({signed(a.mod)})</span></div>
-            </div>
-          ))}
-        </div>
-        {statRow("Saving Throws", c.saving_throws_text)}
-        {statRow("Skills", c.skills_text)}
-        {statRow("Damage Vulnerabilities", c.damage_vulnerabilities)}
-        {statRow("Damage Resistances", c.damage_resistances)}
-        {statRow("Damage Immunities", c.damage_immunities)}
-        {statRow("Condition Immunities", c.condition_immunities)}
-        {statRow("Senses", c.senses)}
-        {statRow("Languages", c.languages)}
-        {statRow("Challenge Rating", c.challenge_text)}
       </Fold>
       )}
 
