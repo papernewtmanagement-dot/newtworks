@@ -370,7 +370,7 @@ export default function Family({ userRole }) {
       )}
       {celebrate && (
         <Celebration kid={celebrate}
-          titles={[burpees.find(b => b.kid_id === celebrate.id)?.champion_title, burpees.find(b => b.kid_id === celebrate.id)?.chore_title].filter(Boolean)}
+          titles={[burpees.find(b => b.kid_id === celebrate.id)?.champion_title, burpees.find(b => b.kid_id === celebrate.id)?.chore_title, burpees.find(b => b.kid_id === celebrate.id)?.water_title].filter(Boolean)}
           onClose={() => setCelebrate(null)} />
       )}
       {champsShow && !celebrate && <ChampionsAnnouncement recap={champsShow} onClose={ackChamps} />}
@@ -1018,12 +1018,13 @@ function Celebration({ kid, titles, onClose }) {
 
 // The weekly titles reveal: fires once per household, the day the previous week is over
 // (Peter 2026-09-27 -- not tied to any kid finishing a chore). Shows every kid's score in
-// both categories, not just the winner, so it's clear how everyone compared.
+// every category, not just the winner, so it's clear how everyone compared.
 function ChampionsAnnouncement({ recap, onClose }) {
   const _vp = useViewport();
   const cats = [
     { key: "burpee", label: "Burpee points", fmt: (n) => `${n} pt${n === 1 ? "" : "s"}` },
     { key: "chores", label: "Chores done", fmt: (n) => `${n}%` },
+    { key: "water", label: "Water", fmt: (n) => `${n}%` },
   ];
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.92)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box", overflowY: "auto" }}>
