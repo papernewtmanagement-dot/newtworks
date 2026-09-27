@@ -50,7 +50,8 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //                                            while beats and energy remain, then passes
 //   rpg_creatures.image_path                 a picture in the private rpg-images bucket (parents upload)
 //   rpg_session_set_status / rpg_session_adjust_vitality / rpg_session_remove / rpg_session_end   game master changes
-// Items and coins are plain rows the household edits directly (rpg_items, rpg_characters).
+// A character's details, coins and items change through rpg_character_update and rpg_item_add / _set_equipped /
+// _use / _delete; the kids' login cannot touch character rows directly. Only a parent deletes a character.
 // Show to players is a plain update on rpg_creatures (parents only, by row rules).
 // =========================================================================
 
@@ -295,7 +296,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     if (!coins || busy) return;
     setBusy(true);
     const patch = Object.fromEntries(COINS.map(([k]) => [k, Math.max(0, Math.round(Number(coins[k]) || 0))]));
-    const { error } = await supabase.from("rpg_characters").update(patch).eq("id", id);
+    const { error } = await supabase.rpc("rpg_character_update", { p_character_id: id, p_patch: patch });
     setBusy(false);
     if (error) onError(error.message);
     load(effDiff);
@@ -308,10 +309,10 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
   const saveEdit = async () => {
     if (!form.name?.trim() || busy) return;
     setBusy(true);
-    const { error } = await supabase.from("rpg_characters").update({
+    const { error } = await supabase.rpc("rpg_character_update", { p_character_id: id, p_patch: {
       name: form.name.trim(), kid_id: form.kid_id && form.kid_id !== "npc" ? form.kid_id : null,
       is_npc: form.kid_id === "npc", color: form.color || T.blue, notes: form.notes || null,
-    }).eq("id", id);
+    } });
     setBusy(false);
     if (error) onError(error.message);
     setEditing(false);
@@ -321,10 +322,9 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
   const addItem = async () => {
     if (!item.name.trim() || busy) return;
     setBusy(true);
-    const { error } = await supabase.from("rpg_items").insert({
-      agency_id: AGENCY_ID, character_id: id, name: item.name.trim(), stat_key: item.stat_key || null,
-      bonus: Math.round(Number(item.bonus) || 0), uses_left: item.uses_left === "" ? null : Math.max(0, Math.round(Number(item.uses_left) || 0)),
-      sort_order: (sheet?.items || []).length + 1,
+    const { error } = await supabase.rpc("rpg_item_add", {
+      p_character_id: id, p_name: item.name.trim(), p_stat_key: item.stat_key || null,
+      p_bonus: Math.round(Number(item.bonus) || 0), p_uses_left: item.uses_left === "" ? null : Math.max(0, Math.round(Number(item.uses_left) || 0)),
     });
     setBusy(false);
     if (error) onError(error.message);
@@ -332,19 +332,19 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     load(effDiff);
   };
   const toggleItem = async (it) => {
-    const { error } = await supabase.from("rpg_items").update({ equipped: !it.equipped }).eq("id", it.id);
+    const { error } = await supabase.rpc("rpg_item_set_equipped", { p_item_id: it.id, p_equipped: !it.equipped });
     if (error) onError(error.message);
     load(effDiff);
   };
   const useItem = async (it) => {
     if (it.uses_left == null || it.uses_left <= 0) return;
-    const { error } = await supabase.from("rpg_items").update({ uses_left: it.uses_left - 1 }).eq("id", it.id);
+    const { error } = await supabase.rpc("rpg_item_use", { p_item_id: it.id });
     if (error) onError(error.message);
     load(effDiff);
   };
   const deleteItem = async (it) => {
     if (!window.confirm(`Delete ${it.name}?`)) return;
-    const { error } = await supabase.from("rpg_items").delete().eq("id", it.id);
+    const { error } = await supabase.rpc("rpg_item_delete", { p_item_id: it.id });
     if (error) onError(error.message);
     load(effDiff);
   };
@@ -641,7 +641,6 @@ function CreatureList({ isParent, onOpen, hrefFor, onError }) {
               <div style={{ fontWeight: 700, fontSize: 15, color: T.slate900, minWidth: 0 }}>{r.name}</div>
               {isParent && <span style={tag(r.shown_to_players ? "on" : "off")}>{r.shown_to_players ? "Shown" : "Hidden"}</span>}
             </div>
-            {isParent && (r.attack_skill != null || r.defense_skill != null || r.vitality != null) && <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>Attack {num(r.attack_skill)} · Defense {num(r.defense_skill)} · Vitality {num(r.vitality)}</div>}
             {r.epigraph && <div style={{ fontSize: 12, color: T.slate600, fontStyle: "italic", marginTop: 6, lineHeight: 1.5 }}>{r.epigraph}</div>}
           </TabLink>
         ))}
@@ -870,27 +869,27 @@ function CardRecipe({ tmpl, entries }) {
   );
 }
 
-// The game master's half of the card, in folds: the numbers the table uses, the actions with what
-// each one rolls, then the printed d20 stat block, the rumor table and the tip. Reading parts start shut.
+// The game master's half of the card, in folds: how a creature is made from it, the actions with the skill
+// each one rolls from the creature's own sheet, then the printed d20 stat block, the rumor table and the tip.
+// Reading parts start shut.
 function CreatureGmCard({ c, accent }) {
   const actions = Array.isArray(c.actions) ? c.actions : [];
   const ofKind = (k) => actions.filter(a => a.kind === k);
-  const t = c.table || {};
-  const mult = num(t.will_multiplier);
+  const mult = num(c.opponent_multiplier);
   const rumors = Array.isArray(c.rumors) ? c.rumors : [];
   const tmpl = c.template || {};
   const entries = Array.isArray(tmpl.entries) ? tmpl.entries : [];
-  // A card with no fight numbers (Human) skips "At the table"; a card with no printed d20 block skips that fold.
-  const hasTable = [t.vitality, t.attack_skill, t.defense_skill, t.strength_skill, t.will_skill, t.stealth_skill, t.awareness_skill].some(v => v != null);
+  // A card with no printed d20 block skips that fold.
   const hasPrinted = !!(c.armor_text || c.hit_points_text || (Array.isArray(c.abilities) && c.abilities.length > 0));
 
   const statRow = (name, value) => (value ? (
     <div style={{ fontSize: 13, color: T.slate700, padding: "3px 0" }}><span style={{ fontWeight: 700, color: T.slate900 }}>{name}</span> {value}</div>
   ) : null);
-  // What the action does at the table: the skill it rolls, the stat the target defends with, and the note.
-  const tableLine = (a) => (a.skill == null && !a.table_note ? null : (
+  // What the action does at the table: the skill it rolls from the creature's sheet, the stat the target defends
+  // with, and the note.
+  const tableLine = (a) => (!a.skill_key && !a.table_note ? null : (
     <div style={{ marginTop: 4 }}>
-      {a.skill != null && <div style={{ fontSize: 12, color: T.blue, fontWeight: 700 }}>Rolls {a.skill_name ? `${a.skill_name} ` : ""}{num(a.skill)} against {a.against_name || "the target"} × {mult}</div>}
+      {a.skill_key && <div style={{ fontSize: 12, color: T.blue, fontWeight: 700 }}>Rolls its {a.skill_name || a.skill_key} against {a.against_name || "the target"} × {mult}</div>}
       {a.table_note && <div style={{ fontSize: 12, color: T.slate600, lineHeight: 1.5 }}>{a.table_note}</div>}
     </div>
   ));
@@ -910,25 +909,7 @@ function CreatureGmCard({ c, accent }) {
 
   return (
     <>
-      {/* The character-scale numbers the table uses (rule creature_conversion). Difficulties come from rpg_difficulty. */}
-      {hasTable && (
-      <div style={{ ...card, marginBottom: 12, background: T.blueLt, borderColor: T.blue }}>
-        <div style={label}>At the table</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginTop: 8 }}>
-          <TableNumber big={num(t.vitality)} small="Vitality" />
-          <TableNumber big={num(t.attack_skill)} small={`Attack · rolls against ${t.attacks_roll_against || "Evade Enemy"} × ${mult}`} />
-          <TableNumber big={num(t.difficulty_to_hit)} small={`Difficulty to hit it (defense ${num(t.defense_skill)} × ${mult})`} />
-          <TableNumber big={num(t.difficulty_to_hit_still)} small="Difficulty to hit it asleep or held" />
-          <TableNumber big={num(t.strength_skill)} small="Strength" />
-          <TableNumber big={num(t.will_skill)} small="Will · persuade or frighten it against this × 2" />
-          <TableNumber big={num(t.stealth_skill)} small="Stealth · spot it hidden against this × 2" />
-          <TableNumber big={num(t.awareness_skill)} small="Awareness · sneak past it against this × 2" />
-          {Number(c.legendary_per_round) > 0 && <TableNumber big={num(c.legendary_per_round)} small="Legendary actions a round" />}
-        </div>
-      </div>
-      )}
-
-      {(entries.length > 0 || tmpl.parent_key || !hasTable) && <CardRecipe tmpl={tmpl} entries={entries} />}
+      <CardRecipe tmpl={tmpl} entries={entries} />
 
       {actions.length > 0 && (
       <Fold title="Actions and nature" open>
