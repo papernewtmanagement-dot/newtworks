@@ -296,7 +296,7 @@ export default function Family({ userRole }) {
           busy={busy} setStatus={setStatus} balance={bal} />
       )}
       {activeTab === "money" && kid && (
-        <MoneyView kid={kid} balance={bal} isParent={isParent} ledger={ledger.filter(l => l.kid_id === kid.id)}
+        <MoneyView kid={kid} balance={bal} isParent={isParent} today={today}
           onSaved={() => { load(); refreshTodo(); }} setErr={setErr} onClose={(ws) => setClosing({ kid, ws })} />
       )}
       {activeTab === "school" && isParent && (
@@ -945,12 +945,33 @@ function Celebration({ kid, title, onClose }) {
 }
 
 // ─── Money ────────────────────────────────────────────────────────────────
-function MoneyView({ kid, balance, isParent, ledger, onSaved, setErr, onClose }) {
+// History is family_money_history(): the starting balance and every week's money, close-outs
+// included, with spending money after each week. The screen only lays it out (Peter 2026-09-26).
+function MoneyView({ kid, balance, isParent, today, onSaved, setErr, onClose }) {
   const [kind, setKind] = useState("payout");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [history, setHistory] = useState([]);
   const def = LEDGER_KINDS.find(k => k.kind === kind);
+
+  useEffect(() => {
+    let live = true;
+    supabase.rpc("family_money_history", { p_kid_id: kid.id, p_through_week: weekStartOf(today) }).then(({ data, error }) => {
+      if (!live) return;
+      if (error) { setErr(error.message); return; }
+      setHistory(Array.isArray(data) ? data : []);
+    });
+    return () => { live = false; };
+  }, [kid.id, today, balance, setErr]);
+  const weeks = useMemo(() => {
+    const m = new Map();
+    for (const h of history) {
+      if (!m.has(h.week_start)) m.set(h.week_start, []);
+      m.get(h.week_start).push(h);
+    }
+    return [...m.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  }, [history]);
 
   const save = async () => {
     const n = parseMoney(amount);
@@ -994,14 +1015,35 @@ function MoneyView({ kid, balance, isParent, ledger, onSaved, setErr, onClose })
         </Section>
       )}
 
-      {ledger.length > 0 && (
+      {weeks.length > 0 && (
         <Section title="History">
-          {ledger.map(l => (
-            <div key={l.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, borderTop: `1px solid ${T.slate100}`, padding: "8px 0", fontSize: 13 }}>
-              <div style={{ color: T.slate700 }}>{shortDate(l.entry_date)} · {LEDGER_KINDS.find(k => k.kind === l.kind)?.label || KIND_LABELS[l.kind] || l.kind}{l.note && l.note !== "Starting balance" ? ` · ${l.note}` : ""}</div>
-              <div style={{ color: Number(l.amount) < 0 ? T.red : T.green, fontWeight: 600 }}>{money(l.amount)}</div>
-            </div>
-          ))}
+          {weeks.map(([ws, rows]) => {
+            const thisWeek = ws === weekStartOf(today);
+            const lastPosted = [...rows].reverse().find(r => r.posted);
+            return (
+              <div key={ws} style={{ borderTop: `1px solid ${T.slate200}`, paddingTop: 10, marginTop: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>
+                    Week of {shortDate(ws)}
+                    <span style={{ fontWeight: 500, color: T.slate500 }}> · {rows[0]?.closed ? "Closed out" : thisWeek ? "This week" : "Not closed out yet"}</span>
+                  </div>
+                  {rows[0]?.closed && lastPosted && <div style={{ fontSize: 12, color: T.slate500 }}>Spending money after: <b style={{ color: Number(lastPosted.spend_after) < 0 ? T.red : T.slate900 }}>{money(lastPosted.spend_after)}</b></div>}
+                </div>
+                {rows.map(r => (
+                  <div key={`${r.seq}|${r.kind}|${r.ref_id || ""}`} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "6px 0", fontSize: 13, opacity: r.posted ? 1 : 0.6 }}>
+                    <div style={{ color: T.slate700 }}>
+                      {shortDate(r.event_date)} · {r.label}
+                      {r.is_income && (Number(r.tithe) > 0 || Number(r.invest) > 0) && (
+                        <div style={{ fontSize: 11, color: T.slate500 }}>{money(r.tithe)} to tithe · {money(r.invest)} to investments</div>
+                      )}
+                    </div>
+                    <div style={{ color: Number(r.amount) < 0 ? T.red : T.green, fontWeight: 600, whiteSpace: "nowrap" }}>{money(r.amount)}</div>
+                  </div>
+                ))}
+                {rows.some(r => !r.posted) && <div style={{ fontSize: 11, color: T.slate500 }}>Faded lines settle when this week is closed out.</div>}
+              </div>
+            );
+          })}
         </Section>
       )}
     </div>
