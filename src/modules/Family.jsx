@@ -239,19 +239,28 @@ export default function Family({ userRole }) {
   }, [kidId]);
   useEffect(() => { refreshTodo(); }, [refreshTodo]);
 
-  // Weekly titles reveal: fires once, as soon as the just-finished week is over (not tied to
-  // any kid finishing a chore). family_settings.champs_announced_week tracks the last week
-  // shown, so it appears once per household, whoever opens the app first.
-  useEffect(() => {
+  // Weekly titles reveal: checks whether a title can now be confirmed for a given week --
+  // family_burpee_winners/family_chore_winners only return a row once every kid's Friday chores
+  // for that week are actually resolved (Peter 2026-09-27: as soon as the last relevant chore of
+  // the week is acted on, not the next calendar day). family_settings.champs_announced_week
+  // tracks the last week shown, so it appears once per household, whoever triggers it first.
+  const maybeAnnounceChamps = async (weekStart) => {
     if (!settings) return;
-    const lastWeekStart = addDays(weekStartOf(today), -7);
-    if (settings.champs_announced_week && settings.champs_announced_week >= lastWeekStart) return;
+    if (settings.champs_announced_week && settings.champs_announced_week >= weekStart) return;
+    const { data, error } = await supabase.rpc("family_champs_recap", { p_week_start: weekStart });
+    if (error) return;
+    const rows = Array.isArray(data) ? data : [];
+    if (rows.some(r => r.is_champion)) setChampsShow({ weekStart, rows });
+  };
+
+  // Catch-up check on load/each day: covers the case where nobody had the app open at the
+  // moment the week actually resolved.
+  useEffect(() => {
     let live = true;
-    supabase.rpc("family_champs_recap", { p_week_start: lastWeekStart }).then(({ data, error }) => {
-      if (!live || error) return;
-      const rows = Array.isArray(data) ? data : [];
-      if (rows.some(r => r.is_champion)) setChampsShow({ weekStart: lastWeekStart, rows });
-    });
+    (async () => {
+      if (!settings || !live) return;
+      await maybeAnnounceChamps(addDays(weekStartOf(today), -7));
+    })();
     return () => { live = false; };
   }, [settings, today]);
 
@@ -266,7 +275,9 @@ export default function Family({ userRole }) {
   const todayDone = (rows) => dayDone(rows, today);
 
   // After anything that changes a chore (a tap, or a burpee run that checks off its set):
-  // reload the grid, and dance if that finished the day.
+  // reload the grid, and dance if that finished the day. This might also be the very last
+  // chore of the week for anyone still outstanding, so check whether a title just became
+  // confirmable for the CURRENT week (Peter 2026-09-27: right when it happens, not the next day).
   const afterChoreChange = async (wasDone) => {
     const { data } = await supabase.rpc("family_week_board", { p_kid_id: kidId, p_week_start: viewWeek });
     const rows = Array.isArray(data) ? data : board;
@@ -274,6 +285,7 @@ export default function Family({ userRole }) {
     if (!wasDone && todayDone(rows) && kid) setCelebrate(kid);
     refreshTodo();
     load();
+    maybeAnnounceChamps(weekStartOf(today));
     const x = await supabase.rpc("family_extras_available", { p_date: day });
     if (!x.error) setExtras(x.data || []);
   };
