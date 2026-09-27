@@ -32,8 +32,9 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //   rpg_adjust_vitality(id, delta)           damage taken (+) or healed (−)
 //   rpg_recent_rolls(id)                     the roll log
 //   rpg_creature_list()                      the creature cards (players: shown ones only)
-//   rpg_creature_card(id)                    one card; players get names, haunts and lore only. The game master also
-//                                            gets how one is made (template: the parent card, ranges, fixed numbers)
+//   rpg_creature_card(id)                    one card, built only from its record; players get names, haunts and lore
+//                                            only. The game master also gets how one is made (template) and each
+//                                            action's line (rpg_action_text, the same line the fight screen shows)
 //   rpg_rules_page()                         the Rules tab in one read: rules, formulas, level costs
 //   rpg_needed(skill, difficulty)            what a roll needs; the calculator asks the same function a roll does
 //   rpg_difficulty(skill, can_act)           the difficulty a defender presents: their skill × 2 when they can act (skill and will)
@@ -826,23 +827,16 @@ function TableNumber({ big, small }) {
 // How a character made from this card is rolled (rpg_creature_card -> template): the card above it, each blueprint
 // entry as a set number (a boss), a divider the trait rolls with (never under 1: ÷ 2 lands 1 to 50), and/or
 // experience: skill points spent up the same level ladder a player climbs, from wherever the roll lands (from_1 and
-// from_top say where those points take a 1 and the top of the roll, start_top).
-const rollUp = (n, d) => Math.ceil(n / d);
+// from_top say where those points take a roll of 1 and a roll at the top).
 const pts = (n) => Number(n).toLocaleString("en-US");
 const chipText = (e) => {
   if (e.fixed != null) return `${num(e.fixed)}, set`;
   const parts = [];
   if (e.divisor != null) parts.push(`÷ ${Number(e.divisor)}, lands 1 to ${num(e.top)}`);
-  if (e.points != null) parts.push(`${pts(e.points)} points, lands ${num(e.from_1)} to ${num(e.from_top ?? e.from_10)}`);
+  if (e.points != null) parts.push(`${pts(e.points)} points, lands ${num(e.from_1)} to ${num(e.from_top)}`);
   return parts.join(" · ");
 };
 function CardRecipe({ tmpl, entries }) {
-  const die = Number(tmpl.die) || 100;
-  const div = Number(tmpl.divisor) || 10;
-  const sample = Math.round(die * 0.47);
-  const own = entries.find(e => e.points != null);
-  const divided = entries.find(e => e.divisor != null);
-  const fixed = entries.some(e => e.fixed != null);
   const chip = { fontSize: 12, color: T.slate800, background: T.slate100, border: `1px solid ${T.slate200}`, borderRadius: 999, padding: "3px 10px", boxSizing: "border-box" };
   return (
     <div style={{ ...card, marginBottom: 12 }}>
@@ -857,34 +851,19 @@ function CardRecipe({ tmpl, entries }) {
           ))}
         </div>
       )}
-      <div style={{ fontSize: 12, color: T.slate600, lineHeight: 1.5, marginTop: 8 }}>
-        {fixed && "A set number is the same every time, the way a boss is made. "}
-        {fixed || divided ? "Every other trait" : "Every trait"} rolls a {die}-sided die, divided by {div} and rounded up: a {sample} makes {rollUp(sample, div)}, so it lands {rollUp(1, div)} to {rollUp(die, div)}.
-        {divided && ` ${divided.name} rolls the same die divided by ${Number(divided.divisor)}: a ${sample} makes ${rollUp(sample, Number(divided.divisor))}, so it lands 1 to ${num(divided.top)}.`}
-        {own && ` ${own.name} then grows: ${pts(own.points)} points of experience climb the same level ladder a player climbs, so a rolled 1 reaches ${num(own.from_1)} and a rolled ${num(own.start_top ?? 10)} reaches ${num(own.from_top ?? own.from_10)}.`}
-      </div>
     </div>
   );
 }
 
-// The game master's half of the card, in folds: how a creature is made from it, the actions with the skill
-// each one rolls from the creature's own sheet, then the rumor table and the tip.
+// The game master's half of the card, in folds: how a creature is made from it, the actions with the line
+// rpg_action_text writes from each one's record, then the rumor table and the tip. Nothing here is composed by the page.
 // Reading parts start shut.
 function CreatureGmCard({ c, accent }) {
   const actions = Array.isArray(c.actions) ? c.actions : [];
   const ofKind = (k) => actions.filter(a => a.kind === k);
-  const mult = num(c.opponent_multiplier);
   const rumors = Array.isArray(c.rumors) ? c.rumors : [];
   const tmpl = c.template || {};
   const entries = Array.isArray(tmpl.entries) ? tmpl.entries : [];
-  // What the action does at the table: the skill it rolls from the creature's sheet, the stat the target defends
-  // with, and the note.
-  const tableLine = (a) => (!a.skill_key && !a.table_note ? null : (
-    <div style={{ marginTop: 4 }}>
-      {a.skill_key && <div style={{ fontSize: 12, color: T.blue, fontWeight: 700 }}>Rolls its {a.skill_name || a.skill_key} against {a.against_name || "the target"} × {mult}</div>}
-      {a.table_note && <div style={{ fontSize: 12, color: T.slate600, lineHeight: 1.5 }}>{a.table_note}</div>}
-    </div>
-  ));
   const group = (title, list, intro) => (list.length === 0 ? null : (
     <div style={{ marginBottom: 10 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900, borderBottom: `2px solid ${accent}`, paddingBottom: 4 }}>{title}</div>
@@ -893,7 +872,7 @@ function CreatureGmCard({ c, accent }) {
         <div key={a.id} style={{ padding: "8px 0", borderTop: `1px solid ${T.slate100}` }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900, marginBottom: 2 }}>{a.heading || a.name}</div>
           <CardText text={a.description} />
-          {tableLine(a)}
+          {a.line && <div style={{ fontSize: 12, color: T.blue, fontWeight: 600, lineHeight: 1.5, marginTop: 4 }}>{a.line}</div>}
         </div>
       ))}
     </div>
@@ -1601,7 +1580,6 @@ function ManualCreatureTurn({ actor, parts, defs, s, busy, run }) {
   const toggle = (pid) => setPicked(targetIds.includes(pid) ? targetIds.filter(x => x !== pid) : [...targetIds, pid]);
   const againstOpts = (Array.isArray(defs) ? defs : []).filter(d => d.grp === "physical" || d.grp === "ability");
   const act = async (args) => { const r = await run("rpg_act", args, actor.id); if (r) setPicked([]); };
-  const describe = (a) => `${beatsOf(a) ? `${beatsOf(a)} ${beatsOf(a) === 1 ? "beat" : "beats"} · ` : ""}${a.energy_cost} ${a.energy_type} · ${a.skill == null ? "no roll" : `${num(a.skill)} against ${a.against_name || a.against}${a.deals_damage ? ", does damage" : ""}${a.effect ? ` → ${a.effect}` : ""}`}`;
   const fresh = (Number(s.turn_beats) || 0) === 0;
   return (
     <div style={{ display: "grid", gap: 10 }}>
@@ -1625,7 +1603,7 @@ function ManualCreatureTurn({ actor, parts, defs, s, busy, run }) {
                 <div key={a.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 0", borderTop: `1px solid ${T.slate100}` }}>
                   <div style={{ flex: "1 1 160px", minWidth: 0 }}>
                     <div style={{ fontWeight: 600, color: T.slate900 }}>{a.name}</div>
-                    <div style={{ fontSize: 12, color: T.slate600 }}>{describe(a)}</div>
+                    <div style={{ fontSize: 12, color: T.slate600 }}>{a.line}</div>
                   </div>
                   {a.ready === false ? (
                     <span style={{ fontSize: 12, fontWeight: 600, color: T.amber }}>Too tired</span>
