@@ -25,6 +25,8 @@ const DECLINE_REASON_LABEL = {
   resume_score:          "Auto-declined on resume score",
   assessment_score:      "Auto-declined on assessment score",
   bounced_undeliverable: "Email address dead — could not reach them",
+  assessment_not_taken:  "Never finished the assessment",
+  interview_not_booked:  "Never booked the interview",
 };
 
 // Seven of the nine old CTS traits, and every lss_* column, were dropped from

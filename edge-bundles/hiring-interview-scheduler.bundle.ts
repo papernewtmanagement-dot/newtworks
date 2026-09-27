@@ -190,6 +190,24 @@ async function requireOwnerOrManager(
   req: Request,
   agencyId: string,
 ): Promise<Response | null> {
+  return requireCallerRole(req, agencyId, ADMIN_ROLES);
+}
+
+// Owner only. Terminations use this. Peter 2026-09-25: "A termination should
+// only come from me through the website."
+async function requireOwner(
+  req: Request,
+  agencyId: string,
+): Promise<Response | null> {
+  return requireCallerRole(req, agencyId, ["owner"]);
+}
+
+// The one caller check. The wrappers above only choose which roles pass.
+async function requireCallerRole(
+  req: Request,
+  agencyId: string,
+  roles: string[],
+): Promise<Response | null> {
   const token = (req.headers.get("Authorization") || "").replace("Bearer ", "").trim();
   if (!token) return corsJson({ ok: false, error: "missing session token" }, 401);
 
@@ -212,7 +230,7 @@ async function requireOwnerOrManager(
     .eq("auth_user_id", who.user.id)
     .maybeSingle();
   if (rowErr) return corsJson({ ok: false, error: "could not verify caller" }, 500);
-  if (!row || row.agency_id !== agencyId || !ADMIN_ROLES.includes(row.role as string)) {
+  if (!row || row.agency_id !== agencyId || !roles.includes(row.role as string)) {
     return corsJson({ ok: false, error: "not permitted" }, 403);
   }
   return null;
@@ -1829,13 +1847,79 @@ async function sendReminders(agencyId: string): Promise<Response> {
   }
 
   const earlier = await offerEarlierTimes(agencyId);
+  const unbooked = await followUpUnbooked(agencyId, gmailCreds, now);
   const sent = results.filter((r) => r.action === "sent").length;
   const bumps = earlier.offered.length;
+  const nudges = unbooked.filter((r) => r.action === "booking_reminder_sent").length;
+  const closed = unbooked.filter((r) => r.action === "closed_not_booked").length;
   return jsonResponse({
-    ok: true, today: todayKey, scanned: (rows ?? []).length, sent, results, earlier_offers: earlier,
-    records_processed: sent + bumps,
-    output_summary: `${sent} reminder(s), ${bumps} earlier-time offer(s), ${(rows ?? []).length} upcoming`,
+    ok: true, today: todayKey, scanned: (rows ?? []).length, sent, results, earlier_offers: earlier, unbooked,
+    records_processed: sent + bumps + nudges + closed,
+    output_summary: `${sent} reminder(s), ${bumps} earlier-time offer(s), ${(rows ?? []).length} upcoming, ${nudges} booking nudge(s), ${closed} closed never booked`,
   });
+}
+
+// -------------------------------------------------------------------------
+// Unbooked interview invites (Peter 2026-09-27)
+// -------------------------------------------------------------------------
+// Someone sent the booking link who never picks a time used to sit in
+// Interview forever. Same shape as the assessment and sales-profile nudges:
+// reminder 1 a day after the link, reminder 2 a day after that, then stop.
+// When the 7-day link expires still unbooked, they are closed as
+// interview_not_booked; the decline-notice trigger sends the standard letter.
+// Runs inside the 7 AM send_reminders run.
+async function followUpUnbooked(agencyId: string, gmailCreds: any, now: Date): Promise<any[]> {
+  const out: any[] = [];
+  const { data: rows, error } = await sb
+    .from("hiring_candidates")
+    .select("id, first_name, candidate_name, email, interview_invite_token, interview_invite_sent_at, interview_booking_expires_at, interview_booking_reminder_1_sent_at, interview_booking_reminder_2_sent_at")
+    .eq("agency_id", agencyId)
+    .eq("status", "interview")
+    .eq("is_test_candidate", false)
+    .is("decision_at", null)
+    .is("interview_booked_at", null)
+    .not("interview_invite_token", "is", null)
+    .limit(100);
+  if (error) return [{ action: "unbooked_query_failed", error: error.message }];
+
+  const dayMs = 24 * 3600 * 1000;
+  for (const c of rows ?? []) {
+    const expires = c.interview_booking_expires_at ? new Date(c.interview_booking_expires_at) : null;
+    if (expires && expires.getTime() < now.getTime()) {
+      const { error: updErr } = await sb.from("hiring_candidates").update({
+        status: "declined",
+        decline_reason: "interview_not_booked",
+        final_decision: "no_hire",
+        decision_at: now.toISOString(),
+        decision_notes: `Closed automatically: booking link sent ${String(c.interview_invite_sent_at ?? "").slice(0, 10)}, two reminders, never booked; link expired ${expires.toISOString().slice(0, 10)}.`,
+      }).eq("id", c.id);
+      out.push({ id: c.id, name: c.candidate_name, action: updErr ? "close_failed" : "closed_not_booked", error: updErr?.message });
+      continue;
+    }
+    if (!c.email || !gmailCreds.ok) continue;
+    const sentAt = c.interview_invite_sent_at ? new Date(c.interview_invite_sent_at).getTime() : null;
+    const r1 = c.interview_booking_reminder_1_sent_at ? new Date(c.interview_booking_reminder_1_sent_at).getTime() : null;
+    let n: 1 | 2 | null = null;
+    if (!r1 && sentAt && now.getTime() - sentAt >= dayMs) n = 1;
+    else if (r1 && !c.interview_booking_reminder_2_sent_at && now.getTime() - r1 >= dayMs) n = 2;
+    if (!n) continue;
+
+    const firstName = c.first_name || (c.candidate_name || "").split(" ")[0] || "there";
+    const bookingUrl = `${BOOKING_BASE_URL}/${c.interview_invite_token}`;
+    const letter = await renderEmail(agencyId, "interview_booking_reminder", {
+      first_name: escHtml(firstName),
+      booking_url: escHtml(bookingUrl),
+      expires: escHtml(expires ? formatChicago(expires.toISOString()) : "in a few days"),
+    });
+    const sendRes = await sendGmail({ creds: gmailCreds.creds, to: c.email, subject: letter.subject, html: letter.html });
+    if (!sendRes.ok) { out.push({ id: c.id, name: c.candidate_name, action: "booking_reminder_failed", n, error: sendRes.error }); continue; }
+    const stamp = n === 1
+      ? { interview_booking_reminder_1_sent_at: now.toISOString() }
+      : { interview_booking_reminder_2_sent_at: now.toISOString() };
+    await sb.from("hiring_candidates").update(stamp).eq("id", c.id);
+    out.push({ id: c.id, name: c.candidate_name, action: "booking_reminder_sent", n });
+  }
+  return out;
 }
 
 // -------------------------------------------------------------------------

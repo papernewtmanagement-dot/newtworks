@@ -566,6 +566,8 @@ const DECLINE_REASON_LABEL = {
   resume_score:          "Auto: resume score",
   assessment_score:      "Auto: assessment score",
   bounced_undeliverable: "Email bounced",
+  assessment_not_taken:  "No assessment",
+  interview_not_booked:  "Never booked",
 };
 
 const trim = (s, n) => {
