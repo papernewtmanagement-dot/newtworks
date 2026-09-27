@@ -387,7 +387,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       setNote(d.note || "");
       setSuggest([]); setSuggestOpen(false); setOk(""); setErr(""); setAttempted(false); setLast(null);
       setActivities([]); setPolicies([]); setActivePolicy(null); setScores({});
-      setRecTurned(false); setRecUrl(""); setOnFileAnswer({});
+      setOnFileAnswer({});
       if (d.kind === "sale" || d.kind === "quote") {
         setPolicies((d.products || []).map(x => ({
           id: newPolicyId(), dbId: x.id, line: x.line_of_business, type: x.product_type || "",
@@ -618,7 +618,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     setSuggest([]);
     setRelationship(""); setSource(""); setSourcedBy("");
     setActivities([]);
-    setPolicies([]); setActivePolicy(null); setScores({}); setRecTurned(false); setRecUrl(""); setEcrm(""); setNote(""); setOnFileAnswer({});
+    setPolicies([]); setActivePolicy(null); setScores({}); setEcrm(""); setNote(""); setOnFileAnswer({});
     setAttempted(false);
   };
 
