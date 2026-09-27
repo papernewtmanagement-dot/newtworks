@@ -14205,6 +14205,94 @@ async function processComposioProbeMode(ctx: RunCtx, body: any): Promise<any> {
   return out;
 }
 
+// ---- mode: cts_drive -------------------------------------------------------
+// Loads CTS Sales Profile reports that are already sitting in Drive onto the
+// candidate they belong to, through the same parser and matcher Gmail intake
+// uses. Added 2026-09-26 for the 17 named reports saved to Team/Profiles on
+// 2026-09-16, which never came through email so nothing had read them.
+//
+// The file is not copied again: the document row points at the Drive file that
+// is already there. Recording a result only sends an interview invite for a
+// candidate waiting at the gate (status 'assessed'); anyone else is just filed.
+//
+// Body: { agency_id, shared_secret, mode: "cts_drive", drive_file_ids: string[] }
+interface CtsDriveOutcome {
+  driveFileId: string;
+  fileName: string;
+  status: string;
+  documentId?: string;
+  error?: string;
+}
+
+async function processCtsDriveMode(
+  ctx: RunCtx, body: any,
+): Promise<{ considered: number; outcomes: CtsDriveOutcome[] }> {
+  const ids: string[] = Array.isArray(body?.drive_file_ids)
+    ? body.drive_file_ids.filter((x: unknown) => typeof x === "string").slice(0, 25)
+    : [];
+  const outcomes: CtsDriveOutcome[] = [];
+  if (!ctx.driveAccountId) {
+    return { considered: ids.length, outcomes: ids.map((id) => ({ driveFileId: id, fileName: "", status: "error", error: "no Drive account connected" })) };
+  }
+
+  for (const fileId of ids) {
+    const meta = await callComposio({
+      apiKey: ctx.composioApiKey, userId: ctx.composioUserId,
+      connectedAccountId: ctx.driveAccountId,
+      toolSlug: "GOOGLEDRIVE_GET_FILE_METADATA",
+      toolArguments: { fileId, fields: "id,name,mimeType,modifiedTime" },
+    });
+    const m = meta.ok ? (meta.data?.data ?? meta.data ?? {}) : {};
+    const fileName: string = m?.name ?? `${fileId}.pdf`;
+
+    const dl = await callComposio({
+      apiKey: ctx.composioApiKey, userId: ctx.composioUserId,
+      connectedAccountId: ctx.driveAccountId,
+      toolSlug: "GOOGLEDRIVE_DOWNLOAD_FILE",
+      toolArguments: { fileId },
+    });
+    const d = dl.ok ? (dl.data?.data ?? dl.data ?? {}) : {};
+    const s3url: string | null =
+      d?.downloaded_file_content?.s3url ?? d?.file?.s3url ?? d?.s3url ?? null;
+    if (!s3url) {
+      outcomes.push({ driveFileId: fileId, fileName, status: "error", error: dl.ok ? "Drive returned no download link" : String(dl.error).slice(0, 300) });
+      continue;
+    }
+
+    let bytesB64: string;
+    try {
+      const { res: r, timedOut } = await fetchWithTimeout(s3url, {}, S3_FETCH_TIMEOUT_MS, "s3_download", "cts drive download");
+      if (!r || !r.ok) {
+        outcomes.push({ driveFileId: fileId, fileName, status: "error", error: timedOut ? "download timed out" : `download failed${r ? ` HTTP ${r.status}` : ""}` });
+        continue;
+      }
+      const buf = new Uint8Array(await r.arrayBuffer());
+      let bin = "";
+      const CHUNK = 0x8000;
+      for (let i = 0; i < buf.length; i += CHUNK) bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+      bytesB64 = btoa(bin);
+    } catch (e) {
+      outcomes.push({ driveFileId: fileId, fileName, status: "error", error: `download threw: ${e instanceof Error ? e.message : String(e)}` });
+      continue;
+    }
+
+    const att: AttachmentInput = {
+      messageId: "", threadId: "", fromEmail: "drive", subject: "CTS",
+      receivedAt: m?.modifiedTime ?? new Date().toISOString(),
+      fileName, mimeType: "application/pdf",
+      attachmentId: null, bytesB64, parentArchive: "Drive",
+    };
+    const results = await processOneAttachment(ctx, att, 1, "drive_cts");
+    for (const r of results) {
+      if (r.documentId) {
+        await sb.from("documents").update({ drive_file_id: fileId }).eq("id", r.documentId).is("drive_file_id", null);
+      }
+      outcomes.push({ driveFileId: fileId, fileName, status: r.status, documentId: r.documentId || undefined, error: r.error });
+    }
+  }
+  return { considered: ids.length, outcomes };
+}
+
 // ---- Main handler ----------------------------------------------------------
 
 async function run(req: Request): Promise<Response> {
@@ -14296,6 +14384,16 @@ async function run(req: Request): Promise<Response> {
     const startedAt = new Date().toISOString();
     const result = await processDriveBackfillMode(bfCtx, body);
     return jsonResponse({ ok: true, mode: "drive_backfill", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
+  if (mode === "cts_drive") {
+    // CTS reports already in Drive, loaded onto their candidates.
+    const cdCtx: RunCtx = {
+      agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId,
+      ...driveFolders,
+    };
+    const startedAt = new Date().toISOString();
+    const result = await processCtsDriveMode(cdCtx, body);
+    return jsonResponse({ ok: true, mode: "cts_drive", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
   if (mode === "composio_probe") {
     // Read-only capability check. See the note on the function above.

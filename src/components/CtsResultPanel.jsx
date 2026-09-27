@@ -318,7 +318,6 @@ export default function CtsResultPanel({ candidateId, isPhone }) {
           </div>
 
           <Grid cols={cols}>
-            <NumField label="CTS score" value={form.cts_score} onChange={(v) => setForm((f) => ({ ...f, cts_score: v }))} />
             <NumField label="Ego drive" value={form.ego_drive} onChange={(v) => setForm((f) => ({ ...f, ego_drive: v }))} />
             <NumField label="Empathy" value={form.empathy} onChange={(v) => setForm((f) => ({ ...f, empathy: v }))} />
             <div>
@@ -406,7 +405,6 @@ export default function CtsResultPanel({ candidateId, isPhone }) {
           <FitByRole fit={fit} />
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Chip label="CTS" value={result?.cts_score} />
             <Chip label="Ego drive" value={result?.ego_drive} />
             <Chip label="Empathy" value={result?.empathy} />
             <Chip label="Reliability" value={result?.reliability} />
