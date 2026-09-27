@@ -38,6 +38,9 @@ const TAB_LABELS = { week: "Week", money: "Money", school: "School", fines: "Fin
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const PARTS = [["morning", "Morning"], ["afternoon", "Afternoon"], ["evening", "Evening"], ["anytime", "Any Time"]];
+// The winners box drops in at the top of these three groups (Peter 2026-09-27: "to start the
+// day, the afternoon, and the evening") -- not Weekly/Extra, which aren't tied to a time of day.
+const WINNERS_PARTS = ["morning", "afternoon", "evening"];
 const DONE_STATES = ["claimed", "verified", "excused", "carried"];
 // A kid's day is done when every chore that day, extras aside, is done, checked,
 // excused or carried. The one rule: the day-done dance and the day headers both use it.
@@ -142,6 +145,13 @@ const everyFields = (v, today) => {
 };
 const card = { background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 14, boxSizing: "border-box" };
 const input = { border: `1px solid ${T.slate200}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", background: T.white, color: T.slate900 };
+// The three weekly titles, in the one place both the reveal popup and the always-on winners
+// box read from (Peter 2026-09-27: one list, not a copy in each spot).
+const CHAMPS_CATS = [
+  { key: "burpee", label: "Burpee points", fmt: (n) => `${n} pt${n === 1 ? "" : "s"}` },
+  { key: "chores", label: "Chores done", fmt: (n) => `${n}%` },
+  { key: "water", label: "Super Soaker", fmt: (n) => `${n}%` },
+];
 
 export default function Family({ userRole }) {
   const isParent = PARENT_ROLES.includes(userRole);
@@ -169,6 +179,7 @@ export default function Family({ userRole }) {
   const [busy, setBusy] = useState(null);
   const [celebrate, setCelebrate] = useState(null);
   const [champsShow, setChampsShow] = useState(null); // { weekStart, rows } for the reveal modal
+  const [champsBox, setChampsBox] = useState(null); // { last, current } rows for the always-on winners box
   const [closing, setClosing] = useState(null);
   const [mathKid, setMathKid] = useState(null);
   const [mathCount, setMathCount] = useState(0);
@@ -264,6 +275,22 @@ export default function Family({ userRole }) {
     return () => { live = false; };
   }, [settings, today]);
 
+  // Winners box (Peter 2026-09-27): last week's confirmed titles next to whoever's leading the
+  // still-open current week, reusing the same family_champs_recap() the reveal already calls --
+  // for the current week that function just returns live standings, since is_champion only
+  // flips true once the week resolves.
+  const loadChampsBox = useCallback(async () => {
+    const lastWeek = addDays(weekStartOf(today), -7);
+    const thisWeek = weekStartOf(today);
+    const [last, current] = await Promise.all([
+      supabase.rpc("family_champs_recap", { p_week_start: lastWeek }),
+      supabase.rpc("family_champs_recap", { p_week_start: thisWeek }),
+    ]);
+    if (last.error || current.error) return;
+    setChampsBox({ last: Array.isArray(last.data) ? last.data : [], current: Array.isArray(current.data) ? current.data : [] });
+  }, [today]);
+  useEffect(() => { loadChampsBox(); }, [loadChampsBox]);
+
   const ackChamps = async () => {
     if (!champsShow) return;
     const ws = champsShow.weekStart;
@@ -286,6 +313,7 @@ export default function Family({ userRole }) {
     refreshTodo();
     load();
     maybeAnnounceChamps(weekStartOf(today));
+    loadChampsBox();
     const x = await supabase.rpc("family_extras_available", { p_date: day });
     if (!x.error) setExtras(x.data || []);
   };
@@ -344,7 +372,7 @@ export default function Family({ userRole }) {
           entries={ledger.filter(l => l.kid_id === kid.id && ADD_KINDS.includes(l.kind) && l.entry_date >= viewWeek && l.entry_date <= addDays(viewWeek, 6))}
           onLedgerChanged={load} onTimerStopped={() => afterChoreChange(todayDone(board))}
           day={day} today={today} weekStart={viewWeek} dateHref={dateHref} setDate={setDateParam}
-          busy={busy} setStatus={setStatus} balance={bal} />
+          busy={busy} setStatus={setStatus} balance={bal} champsBox={champsBox} />
       )}
       {activeTab === "money" && kid && (
         <MoneyView kid={kid} balance={bal} isParent={isParent} today={today}
@@ -400,7 +428,7 @@ function KidPicker({ kids, kid, balances, kidHref, setKid }) {
 }
 
 // ─── Week grid ────────────────────────────────────────────────────────────
-function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpee, hasBurpees, expenseTypes, fineTypes, fineFits, entries, onLedgerChanged, onTimerStopped, day, today, weekStart, dateHref, setDate, busy, setStatus, balance }) {
+function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpee, hasBurpees, expenseTypes, fineTypes, fineFits, entries, onLedgerChanged, onTimerStopped, day, today, weekStart, dateHref, setDate, busy, setStatus, balance, champsBox }) {
   const _vp = useViewport();
   const [openInfo, setOpenInfo] = useState(null);
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -431,6 +459,9 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
 
   const activeW = isParent ? 150 : 100;
   const canPick = (isParent ? day <= today : day === today) && day >= kid.tracking_start;
+  // The winners box only makes sense on the live, still-open week -- a past week's "leaders"
+  // would just be its already-final, already-badged result.
+  const isCurrentWeek = weekStart === weekStartOf(today);
 
   // Trophies through the week, not just at the end (Peter 2026-09-27): a running streak of
   // perfect days (dayDone -- every chore done, checked, excused or carried, nothing missed),
@@ -543,10 +574,17 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
             </tr>
           </thead>
           <tbody>
-            {groups.map(g => (
-              <GroupRows key={g.key} g={g} days={days} day={day} cells={cells} icons={icons} cellView={cellView} checklists={checklists}
-                openInfo={openInfo} setOpenInfo={setOpenInfo} isPhone={_vp.isPhone} />
-            ))}
+            {groups.flatMap(g => {
+              const rows = [];
+              if (isCurrentWeek && champsBox && WINNERS_PARTS.includes(g.key)) {
+                rows.push(<WinnersRow key={`winners-${g.key}`} champsBox={champsBox} isPhone={_vp.isPhone} />);
+              }
+              rows.push(
+                <GroupRows key={g.key} g={g} days={days} day={day} cells={cells} icons={icons} cellView={cellView} checklists={checklists}
+                  openInfo={openInfo} setOpenInfo={setOpenInfo} isPhone={_vp.isPhone} />
+              );
+              return rows;
+            })}
           </tbody>
         </table>
       </div>
@@ -557,6 +595,48 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
       )}
       {day < kid.tracking_start && <div style={{ fontSize: 12, color: T.slate500 }}>Tracking for {kid.name} starts {shortDate(kid.tracking_start)}.</div>}
     </div>
+  );
+}
+
+// Dropped into the Morning/Afternoon/Evening groups on the live week (Peter 2026-09-27): last
+// week's confirmed champion on the left, whoever's leading the still-open current week on the
+// right -- so the standings are visible at each point in the day, not just in the one-time
+// reveal popup or the trophy badges (which only show once a title is actually confirmed).
+function WinnersRow({ champsBox, isPhone }) {
+  const byCat = (rows, key) => (rows || []).filter(r => r.category === key);
+  const leaderOf = (rows) => {
+    const scored = rows.filter(r => Number(r.score) > 0);
+    if (!scored.length) return null;
+    const best = Math.max(...scored.map(r => Number(r.score)));
+    return { names: scored.filter(r => Number(r.score) === best).map(r => r.kid_name).join(" & "), score: best };
+  };
+  const col = (title, tone, children) => (
+    <div style={{ ...card, margin: 0, padding: 10, background: tone.bg, borderColor: tone.border }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{title}</div>
+      <div style={{ display: "grid", gap: 3 }}>{children}</div>
+    </div>
+  );
+  const line = (label, value) => (
+    <div key={label} style={{ fontSize: 12, color: T.slate900, display: "flex", justifyContent: "space-between", gap: 6 }}>
+      <span style={{ color: T.slate500 }}>{label}</span>
+      <span style={{ fontWeight: 600, textAlign: "right" }}>{value}</span>
+    </div>
+  );
+  return (
+    <tr>
+      <td colSpan={8} style={{ padding: "8px 10px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: isPhone ? "1fr" : "1fr 1fr", gap: 8 }}>
+          {col("Last week's winners", { bg: T.slate50, border: T.slate200 }, CHAMPS_CATS.map(c => {
+            const champ = byCat(champsBox.last, c.key).find(r => r.is_champion);
+            return line(c.label, champ ? `${champ.kid_name} — ${champ.title}` : "—");
+          }))}
+          {col("This week so far", { bg: T.goldLt, border: T.gold }, CHAMPS_CATS.map(c => {
+            const lead = leaderOf(byCat(champsBox.current, c.key));
+            return line(c.label, lead ? `${lead.names} (${c.fmt(lead.score)})` : "—");
+          }))}
+        </div>
+      </td>
+    </tr>
   );
 }
 
@@ -1034,11 +1114,7 @@ function Celebration({ kid, titles, onClose }) {
 // every category, not just the winner, so it's clear how everyone compared.
 function ChampionsAnnouncement({ recap, onClose }) {
   const _vp = useViewport();
-  const cats = [
-    { key: "burpee", label: "Burpee points", fmt: (n) => `${n} pt${n === 1 ? "" : "s"}` },
-    { key: "chores", label: "Chores done", fmt: (n) => `${n}%` },
-    { key: "water", label: "Super Soaker", fmt: (n) => `${n}%` },
-  ];
+  const cats = CHAMPS_CATS;
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.92)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box", overflowY: "auto" }}>
       <DayDoneStyles />
