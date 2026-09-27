@@ -19,8 +19,13 @@ import { DayDoneStyles, DoneDancerStyles, Confetti, Dancer, DoneDancer, CritterI
 //   family_math_done()       marks that math done so the close-out skips it
 //   family_balances()        spending / tithe / investments per kid
 //   family_timer_list/start/stop/cancel/continue()  the timers row (shower fine, burpee run)
-//   family_burpee_week()     burpee points, best time, and last week's champion title
+//   family_burpee_week()     burpee points, best time, and last week's burpee + chore titles
+//   family_champs_recap()    full leaderboard for both weekly titles, for the reveal
+//   family_champs_ack()      marks a week's reveal seen (family_settings.champs_announced_week)
 //   family_school_day/step() a day's lessons and checking them off one step at a time
+// Weekly titles (Peter 2026-09-27): the reveal fires once, the day the previous week is over,
+// not whenever the champion happens to finish a chore. The champion's day-done celebration
+// still carries the trophy all the following week (unchanged) -- that's a bonus, not the reveal.
 // This screen never works out a fine, a balance, a due date, a set-aside or a point.
 // The close-out adds and subtracts the numbers it is given; that is the lesson.
 // Family login (role "family"): Done, Missed and extra chores only. Week, Money.
@@ -163,6 +168,7 @@ export default function Family({ userRole }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);
   const [celebrate, setCelebrate] = useState(null);
+  const [champsShow, setChampsShow] = useState(null); // { weekStart, rows } for the reveal modal
   const [closing, setClosing] = useState(null);
   const [mathKid, setMathKid] = useState(null);
   const [mathCount, setMathCount] = useState(0);
@@ -232,6 +238,30 @@ export default function Family({ userRole }) {
     setMathCount(Array.isArray(data?.events) ? data.events.length : 0);
   }, [kidId]);
   useEffect(() => { refreshTodo(); }, [refreshTodo]);
+
+  // Weekly titles reveal: fires once, as soon as the just-finished week is over (not tied to
+  // any kid finishing a chore). family_settings.champs_announced_week tracks the last week
+  // shown, so it appears once per household, whoever opens the app first.
+  useEffect(() => {
+    if (!settings) return;
+    const lastWeekStart = addDays(weekStartOf(today), -7);
+    if (settings.champs_announced_week && settings.champs_announced_week >= lastWeekStart) return;
+    let live = true;
+    supabase.rpc("family_champs_recap", { p_week_start: lastWeekStart }).then(({ data, error }) => {
+      if (!live || error) return;
+      const rows = Array.isArray(data) ? data : [];
+      if (rows.some(r => r.is_champion)) setChampsShow({ weekStart: lastWeekStart, rows });
+    });
+    return () => { live = false; };
+  }, [settings, today]);
+
+  const ackChamps = async () => {
+    if (!champsShow) return;
+    const ws = champsShow.weekStart;
+    setChampsShow(null);
+    setSettings(s => (s ? { ...s, champs_announced_week: ws } : s));
+    await supabase.rpc("family_champs_ack", { p_week_start: ws });
+  };
 
   const todayDone = (rows) => dayDone(rows, today);
 
@@ -326,7 +356,12 @@ export default function Family({ userRole }) {
         <IncomeMath kid={mathKid} isParent={isParent} setErr={setErr}
           onDone={() => { setMathKid(null); refreshTodo(); load(); }} onCancel={() => { setMathKid(null); refreshTodo(); }} />
       )}
-      {celebrate && <Celebration kid={celebrate} title={burpees.find(b => b.kid_id === celebrate.id)?.champion_title} onClose={() => setCelebrate(null)} />}
+      {celebrate && (
+        <Celebration kid={celebrate}
+          titles={[burpees.find(b => b.kid_id === celebrate.id)?.champion_title, burpees.find(b => b.kid_id === celebrate.id)?.chore_title].filter(Boolean)}
+          onClose={() => setCelebrate(null)} />
+      )}
+      {champsShow && !celebrate && <ChampionsAnnouncement recap={champsShow} onClose={ackChamps} />}
     </div>
   );
 }
@@ -385,6 +420,20 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
   const activeW = isParent ? 150 : 100;
   const canPick = (isParent ? day <= today : day === today) && day >= kid.tracking_start;
 
+  // Trophies through the week, not just at the end (Peter 2026-09-27): a running streak of
+  // perfect days (dayDone -- every chore done, checked, excused or carried, nothing missed),
+  // counted back from today (or the week's last tracked day) to the first break.
+  const streak = useMemo(() => {
+    const end = today < weekStart ? null : (today > addDays(weekStart, 6) ? addDays(weekStart, 6) : today);
+    if (!end) return 0;
+    let n = 0;
+    for (let d = end; d >= weekStart; d = addDays(d, -1)) {
+      if (!dayDone(board, d)) break;
+      n++;
+    }
+    return n;
+  }, [board, today, weekStart]);
+
   const cellView = (r, d) => {
     const c = cells.get(rowKey(r))?.get(d);
     if (!c) return <span style={{ color: T.slate200 }}>·</span>;
@@ -426,6 +475,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
           <Stat label="Spent this week" value={money(balance?.week_spent)} tone={Number(balance?.week_spent) < 0 ? "red" : null} />
           <Stat label="Could earn" value={money(balance?.week_possible)} />
           {(hasBurpees || Number(burpee?.points) > 0) && <Stat label="Burpee points" value={Number(burpee?.points) || 0} />}
+          {streak >= 2 && <Stat label="Perfect-day streak" value={`🔥 ${streak}`} />}
         </div>
       </div>
 
@@ -916,11 +966,12 @@ function SchoolWeek({ kids, weekStart, today, dateHref, setDate, setErr }) {
   );
 }
 
-// The day-done dance. Last week's burpee champion dances all this week under a
-// trophy, with their title (family_burpee_week's champion_title).
-function Celebration({ kid, title, onClose }) {
+// The day-done dance. Last week's burpee and/or chore champion dances all this week under a
+// trophy, with their title(s) (family_burpee_week's champion_title / chore_title).
+function Celebration({ kid, titles, onClose }) {
   const _vp = useViewport();
   const size = _vp.isPhone ? 76 : 120;
+  const hasTitle = (titles || []).length > 0;
   // Now and then a guest drops into the dance: every guest dancer gets its
   // own roll, about one day in three. The guests come from the dancers table,
   // so the roll waits until the table has been read.
@@ -935,11 +986,11 @@ function Celebration({ kid, title, onClose }) {
       <DayDoneStyles />
       <Confetti />
       <div style={{ fontSize: _vp.isPhone ? 26 : 34, fontWeight: 800, color: T.slate900, textAlign: "center" }}>{kid.name}'s day is done!</div>
-      {title && (
-        <div style={{ fontSize: _vp.isPhone ? 22 : 28, fontWeight: 800, color: T.gold, textAlign: "center", animation: "nwPop 700ms ease-out both" }}>🏆 {title}</div>
-      )}
+      {(titles || []).map(t => (
+        <div key={t} style={{ fontSize: _vp.isPhone ? 22 : 28, fontWeight: 800, color: T.gold, textAlign: "center", animation: "nwPop 700ms ease-out both" }}>🏆 {t}</div>
+      ))}
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "center", alignItems: "flex-end" }}>
-        {troupe.map((w, i) => (i === 0 && title
+        {troupe.map((w, i) => (i === 0 && hasTitle
           ? (
             <div key={w + i} style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
               <span className="nw-up" aria-hidden="true" style={{ display: "inline-block", fontSize: Math.round(size * 0.34), lineHeight: 1 }}>🏆</span>
@@ -949,6 +1000,44 @@ function Celebration({ kid, title, onClose }) {
           : <Dancer key={w + i} which={w} size={size} delay={i * 120} />))}
       </div>
       <button style={btn("primary")} onClick={onClose}>Yay!</button>
+    </div>
+  );
+}
+
+// The weekly titles reveal: fires once per household, the day the previous week is over
+// (Peter 2026-09-27 -- not tied to any kid finishing a chore). Shows every kid's score in
+// both categories, not just the winner, so it's clear how everyone compared.
+function ChampionsAnnouncement({ recap, onClose }) {
+  const _vp = useViewport();
+  const cats = [
+    { key: "burpee", label: "Burpee points", fmt: (n) => `${n} pt${n === 1 ? "" : "s"}` },
+    { key: "chores", label: "Chores done", fmt: (n) => `${n}%` },
+  ];
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.92)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box", overflowY: "auto" }}>
+      <DayDoneStyles />
+      <Confetti />
+      <div onClick={(e) => e.stopPropagation()} style={{ ...card, maxWidth: 460, width: "100%", display: "grid", gap: 14 }}>
+        <div style={{ fontSize: _vp.isPhone ? 22 : 26, fontWeight: 800, color: T.slate900, textAlign: "center" }}>Last week's champions!</div>
+        {cats.map(({ key, label, fmt }) => {
+          const rows = (recap.rows || []).filter(r => r.category === key).sort((a, b) => Number(b.score) - Number(a.score));
+          if (!rows.length) return null;
+          return (
+            <div key={key}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{label}</div>
+              <div style={{ display: "grid", gap: 4 }}>
+                {rows.map(r => (
+                  <div key={r.kid_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", borderRadius: 8, background: r.is_champion ? T.goldLt : T.slate50, fontWeight: r.is_champion ? 700 : 500 }}>
+                    <span>{r.is_champion ? "🏆 " : ""}{r.kid_name}{r.is_champion ? ` — ${r.title}` : ""}</span>
+                    <span>{fmt(Number(r.score))}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+        <button style={btn("primary")} onClick={onClose}>Nice!</button>
+      </div>
     </div>
   );
 }
