@@ -379,7 +379,7 @@ function WeekGrid({ kid, board, checklists, extras, isParent, icons, fact, burpe
   const cellView = (r, d) => {
     const c = cells.get(rowKey(r))?.get(d);
     if (!c) return <span style={{ color: T.slate200 }}>·</span>;
-    const anyDay = r.frequency === "weekly" && r.due_dow == null && day >= weekStart && day <= addDays(weekStart, 6);
+    const anyDay = r.frequency === "weekly" && r.due_dow == null && !c.overdue_days && day >= weekStart && day <= addDays(weekStart, 6);
     const active = c.can_act && (d === day || anyDay);
     const st = c.status ? STATUS[c.status] : null;
     if (!active) {
@@ -494,6 +494,8 @@ function GroupRows({ g, days, day, cells, icons, cellView, checklists, openInfo,
         const sub = r.is_burpees ? (owed != null ? `${owed} to do` : "10 per year of age")
           : r.frequency === "weekly" ? (r.due_dow == null ? "Any day this week" : `Due ${DAY_FULL[r.due_dow]}`)
           : Number(r.pay) > 0 ? money(r.pay) : "Expected, no pay";
+        // A weekly chore not done on its due day comes back each day after (family_overdue_from).
+        const late = cells.get(rk)?.get(day)?.overdue_days;
         return (
           <FragmentRow key={rk}>
             <tr style={{ borderTop: `1px solid ${T.slate100}` }}>
@@ -507,6 +509,7 @@ function GroupRows({ g, days, day, cells, icons, cellView, checklists, openInfo,
                   {list && <InfoDot open={open} onClick={() => setOpenInfo(open ? null : rk)} title="How to do it" />}
                 </div>
                 <div style={{ fontSize: 11, color: T.slate500 }}>{r.frequency === "weekly" && Number(r.pay) > 0 ? `${money(r.pay)} · ` : ""}{sub}</div>
+                {late > 0 && <div style={{ fontSize: 11, fontWeight: 700, color: T.red }}>{late} {late === 1 ? "day" : "days"} overdue</div>}
               </td>
               {days.map(d => (
                 <td key={d} style={{ textAlign: "center", padding: "4px", background: d === day ? T.blueLt : "transparent", fontSize: 15 }}>{cellView(r, d)}</td>
