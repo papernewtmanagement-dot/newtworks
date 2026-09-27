@@ -91,23 +91,39 @@ export type CtsParseResult = CtsParseOk | CtsParseFail;
 const SYSTEM_PROMPT_CTS_PROFILE = `You read one CTS Sales Profile report and return its scores as JSON.
 
 The text you are given came out of a laid-out PDF, so values and labels are
-interleaved out of reading order. Two specific layout facts:
+often separated or run together out of reading order. The same report can
+come out in either of two layouts, so work out which one you have before
+reading any score.
 
-1. In the "Primary Traits" block each score appears immediately BEFORE the
-   label of the NEXT trait. So in
-   "Deadline Motivation ? 81Recognition Drive ? 92Assertiveness ?"
-   Deadline Motivation is 81 and Recognition Drive is 92.
-   There are exactly nine traits, always in this order:
+1. The "Primary Traits" block has exactly nine traits, always in this order:
    Deadline Motivation, Recognition Drive, Assertiveness, Independent Spirit,
    Analytical, Compassion, Self-Promotion, Belief in Others, Optimism.
+   Layout A: each score runs into the NEXT trait's label, so in
+     "Deadline Motivation ? 81Recognition Drive ? 92Assertiveness ?"
+     Deadline Motivation is 81 and Recognition Drive is 92.
+   Layout B: the nine labels are printed together with no numbers
+     ("Deadline Motivation ? Recognition Drive ? ... Optimism ?") and the nine
+     scores appear somewhere else as ONE run of nine numbers in the same order,
+     usually right after the coaching-hours figure. So in
+     "8 - 12HRS/MONTH 9 73 52 31 94 32 100 77 78"
+     Deadline Motivation is 9, Recognition Drive 73, Assertiveness 52,
+     Independent Spirit 31, Analytical 94, Compassion 32, Self-Promotion 100,
+     Belief in Others 77, Optimism 78. The "8 - 12" is coaching hours, not a
+     trait score.
 
-2. In the "Sales Competencies" block each score appears immediately AFTER its
-   own label, run together with the description that follows it. There are
-   exactly nine competencies, always in this order:
+2. The "Sales Competencies" block has exactly nine competencies, always in
+   this order:
    Maintains High Activity, Handles Rejection, Prospects in Community,
    Dials / Cold Calls, Listens / Discovers Needs, Presents Solutions,
-   Gets Decisions / Handles Objections / Referrals, Receives Coaching,
-   Positively Influences Team.
+   Gets Decisions / Handles Objections / Referrals (newer reports print it as
+   "Handles Objections, Gets Decisions / Referrals / Reviews"),
+   Receives Coaching, Positively Influences Team (sometimes misspelled
+   "Posivitely").
+   Layout A: each score appears right AFTER its own label, run together with
+   the description that follows it.
+   Layout B: the scores appear as ONE run of nine numbers in the same order,
+   usually at the very end just before the copyright line, e.g.
+   "35 68 60 68 52 70 71 46 78 (c) 2024 SalesManage Solutions."
 
 The Reliability and Response Distortion results are each a single word - low,
 moderate or high. The report prints them in a gutter beside the paragraph
@@ -125,9 +141,21 @@ The word that opens each bullet ("Low Reliability indicates",
 "Moderate Reliability suggests", "High Response Distortion Indicates") is
 part of the explanation and is never the result.
 
+In Layout B the two words usually sit right after their index names near
+the top of the report, e.g. "Response Distortion Low Score 41moderate
+Coaching Reliability High": Response Distortion is low, Reliability is high.
+A word glued to the overall score ("Score 41moderate") belongs to that score
+and is never a validity result.
+
 The LSS tables have three numbers per row in this column order:
 ideal minimum, ideal maximum, candidate. Accuracy rows are counts. Speed rows
-are seconds.
+are seconds. In Layout B the table numbers come out as one run in row order:
+accuracy math, verbal, problem solving (three each), then the total (ideal
+minimum such as "25+", then the candidate's total), then speed math, verbal,
+problem solving (three each). So
+"10 11 10 8 10 12 7 9 9 25+ 31 32 50 36 20 52 30 17 77 29" means math
+accuracy 10-11 ideal, candidate 10 ... total ideal 25, candidate 31 ... problem
+solving speed 17-77 ideal, candidate 29.
 
 Return ONLY this JSON object. No prose, no markdown fences.
 
@@ -253,6 +281,49 @@ export function ctsValidityFromText(text: string, index: "Reliability" | "Respon
   return m ? m[1].toLowerCase() : null;
 }
 
+/**
+ * Validity word printed right after its index name, the way Layout B reports
+ * put it near the top: "Response Distortion Low ... Reliability High"
+ * (Gamliela Tolbert's report, 2026-09-26). The explanation bullets never match
+ * this - they read "Low Reliability indicates", word BEFORE the name - so this
+ * only fires on the real result. Checked BEFORE the model's answer because it
+ * is an exact label-and-word read, and "Score 41moderate" sitting between the
+ * two is exactly the kind of decoy a model can grab.
+ */
+export function ctsValidityFromHeader(text: string, index: "Reliability" | "Response Distortion"): string | null {
+  const name = index === "Reliability" ? "Reliability" : "Response\\s+Distortion";
+  const m = text.match(new RegExp(`\\b${name}\\s+(Low|Moderate|High)\\b`, "i"));
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * Layout B prints all nine scores of a block as one run of nine numbers
+ * (see the prompt). When that run is in the text it is used to CROSS-CHECK the
+ * model's read - never as the read itself. A read that disagrees with the
+ * report's own run is refused, so a mis-assigned score cannot reach a
+ * candidate. No run found (Layout A) means no check.
+ */
+export function ctsScoreRun(text: string, block: "traits" | "competencies"): number[] | null {
+  const run = "((?:\\d{1,3}\\s+){8}\\d{1,3})(?!\\s*\\d)";
+  const re = block === "traits"
+    ? new RegExp(`HRS\\s*/\\s*MONTH\\s*${run}`, "i")
+    : new RegExp(`${run}\\s*(?:\\u00a9|\\(c\\))\\s*\\d{4}\\s*SalesManage`, "i");
+  const m = text.match(re);
+  if (!m) return null;
+  const nums = m[1].trim().split(/\s+/).map(Number);
+  return nums.length === 9 && nums.every((n) => Number.isInteger(n) && n >= 0 && n <= 100) ? nums : null;
+}
+
+function ctsRunMismatch(
+  text: string, block: "traits" | "competencies",
+  keys: readonly string[], got: Record<string, number | null>,
+): string | null {
+  const run = ctsScoreRun(text, block);
+  if (!run) return null;
+  if (keys.every((k, i) => got[k] === run[i])) return null;
+  return `${block} read ${keys.map((k) => got[k] ?? "-").join(" ")} does not match the report's own run ${run.join(" ")}`;
+}
+
 function ctsValidityWord(v: unknown): string | null {
   const s = String(v ?? "").trim().toLowerCase();
   return CTS_VALIDITY_WORDS.includes(s) ? s : null;
@@ -333,6 +404,15 @@ export async function parseCtsProfile(input: CtsParseInput): Promise<CtsParseRes
     };
   }
 
+  // Layout B cross-check (2026-09-26): when the report prints a block's nine
+  // scores as one run, the model's read has to match that run exactly.
+  const mismatch =
+    ctsRunMismatch(input.reportText, "traits", CTS_PRIMARY_TRAITS, traits.values) ??
+    ctsRunMismatch(input.reportText, "competencies", CTS_SALES_COMPETENCIES, comps.values);
+  if (mismatch) {
+    return { ok: false, candidateName: headerName, error: mismatch };
+  }
+
   // The LLM's name has to agree with the name printed in the header. A
   // disagreement means the read drifted, and attaching a profile to the wrong
   // candidate is the one mistake worth refusing the whole document over.
@@ -361,9 +441,11 @@ export async function parseCtsProfile(input: CtsParseInput): Promise<CtsParseRes
     cts_score: ctsScore0to100(j.cts_score),
     ego_drive: ctsScore0to100(j.ego_drive),
     empathy: ctsScore0to100(j.empathy),
-    reliability: ctsValidityWord(j.reliability)
+    reliability: ctsValidityFromHeader(input.reportText, "Reliability")
+      ?? ctsValidityWord(j.reliability)
       ?? ctsValidityFromText(input.reportText, "Reliability"),
-    response_distortion: ctsValidityWord(j.response_distortion)
+    response_distortion: ctsValidityFromHeader(input.reportText, "Response Distortion")
+      ?? ctsValidityWord(j.response_distortion)
       ?? ctsValidityFromText(input.reportText, "Response Distortion"),
     primary_traits: traits.values,
     sales_competencies: comps.values,
