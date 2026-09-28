@@ -280,14 +280,16 @@ export default function Family({ userRole }) {
     if (rows) setChampsShow(rows);
   };
 
-  // Fires once whenever the page is opened or the day rolls over.
+  // Fires once per page load and again after the day rolls over -- NOT on every checkoff. settings
+  // gets a brand-new object every time load() runs, and afterChoreChange calls load() after every
+  // single chore tap, so gating this on settings alone re-fires it on every tap (Peter 2026-09-27:
+  // this is why it kept popping up). The ref is what actually limits it to once per day.
+  const champsShownForRef = useRef(null);
   useEffect(() => {
-    let live = true;
-    (async () => {
-      if (!settings || !live) return;
-      await showChampsBox();
-    })();
-    return () => { live = false; };
+    if (!settings) return;
+    if (champsShownForRef.current === today) return;
+    champsShownForRef.current = today;
+    showChampsBox();
   }, [settings, today]);
 
   const ackChamps = () => setChampsShow(null);
