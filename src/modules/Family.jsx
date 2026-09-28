@@ -20,12 +20,17 @@ import { DayDoneStyles, DoneDancerStyles, Confetti, Dancer, DoneDancer, CritterI
 //   family_balances()        spending / tithe / investments per kid
 //   family_timer_list/start/stop/cancel/continue()  the timers row (shower fine, burpee run)
 //   family_burpee_week()     burpee points, best time, and last week's burpee + chore titles
-//   family_champs_recap()    full leaderboard for both weekly titles, for the reveal
-//   family_champs_ack()      marks a week's reveal seen (family_settings.champs_announced_week)
+//   family_champs_recap()    full leaderboard for both weekly titles -- live scores for an open
+//                            week, is_champion once it's resolved -- for the standings box
+//   family_champs_ack()      marks a week's title seen (family_settings.champs_announced_week);
+//                            no longer called from here (Peter 2026-09-27: the standings box is
+//                            live and pops up repeatedly by design, not a once-per-week reveal)
 //   family_school_day/step() a day's lessons and checking them off one step at a time
-// Weekly titles (Peter 2026-09-27): the reveal fires once, the day the previous week is over,
-// not whenever the champion happens to finish a chore. The champion's day-done celebration
-// still carries the trophy all the following week (unchanged) -- that's a bonus, not the reveal.
+// Weekly titles standings box (Peter 2026-09-27): last week's confirmed winner next to who's
+// leading the still-open current week, per category. Pops up on page load and whenever the
+// Morning, Afternoon or Evening group finishes its last chore for the day -- done or not. The
+// champion's day-done celebration still carries the trophy all the following week (unchanged)
+// -- that's a separate, standing badge, not this box.
 // This screen never works out a fine, a balance, a due date, a set-aside or a point.
 // The close-out adds and subtracts the numbers it is given; that is the lesson.
 // Family login (role "family"): Done, Missed and extra chores only. Week, Money.
@@ -44,6 +49,16 @@ const DONE_STATES = ["claimed", "verified", "excused", "carried"];
 const dayDone = (rows, d) => {
   const mine = (rows || []).filter(r => r.day === d && r.frequency !== "extra");
   return mine.length > 0 && mine.every(r => DONE_STATES.includes(r.status));
+};
+// A chore is "marked off" once it has any final status at all -- done or not (Peter 2026-09-27:
+// "regardless of checking it or marking it as not done"). Different set than DONE_STATES above,
+// which only counts the outcomes that make a day "done" for the streak/dance -- this one is for
+// noticing when a Morning/Afternoon/Evening group has nothing left open in it, whatever the calls
+// came out as.
+const RESOLVED_STATES = ["claimed", "verified", "missed", "false_claim", "excused", "carried"];
+const partResolved = (rows, d, part) => {
+  const mine = (rows || []).filter(r => r.day === d && r.frequency === "daily" && (r.part_of_day || "anytime") === part);
+  return mine.length > 0 && mine.every(r => RESOLVED_STATES.includes(r.status));
 };
 const LEDGER_KINDS = [
   { kind: "payout",      bucket: "spend",  label: "Paid out cash",    sign: -1 },
@@ -175,7 +190,7 @@ export default function Family({ userRole }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);
   const [celebrate, setCelebrate] = useState(null);
-  const [champsShow, setChampsShow] = useState(null); // { weekStart, rows } for the reveal modal
+  const [champsShow, setChampsShow] = useState(null); // { last, current } category rows for the standings box
   const [closing, setClosing] = useState(null);
   const [mathKid, setMathKid] = useState(null);
   const [mathCount, setMathCount] = useState(0);
@@ -246,56 +261,55 @@ export default function Family({ userRole }) {
   }, [kidId]);
   useEffect(() => { refreshTodo(); }, [refreshTodo]);
 
-  // Weekly titles reveal: checks whether a title can now be confirmed for a given week --
-  // family_burpee_winners/family_chore_winners only return a row once every kid's Friday chores
-  // for that week are actually resolved. family_settings.champs_announced_week tracks the last
-  // week shown, so it appears once per household, whoever triggers it first.
-  const maybeAnnounceChamps = async (weekStart) => {
-    if (!settings) return;
-    if (settings.champs_announced_week && settings.champs_announced_week >= weekStart) return;
-    const { data, error } = await supabase.rpc("family_champs_recap", { p_week_start: weekStart });
-    if (error) return;
-    const rows = Array.isArray(data) ? data : [];
-    if (rows.some(r => r.is_champion)) setChampsShow({ weekStart, rows });
+  // Standings box (Peter 2026-09-27): last week's confirmed winner next to whoever's leading the
+  // still-open current week, per category -- family_champs_recap() already returns live scores
+  // for a week that hasn't resolved yet (is_champion just stays false until it does), so the
+  // same call covers both columns. Pops up when the screen loads and again whenever a
+  // Morning/Afternoon/Evening group finishes off its last chore (see afterChoreChange below) --
+  // Peter didn't ask for it to be muted after that, so it isn't.
+  const fetchChampsRows = async () => {
+    const [last, current] = await Promise.all([
+      supabase.rpc("family_champs_recap", { p_week_start: addDays(weekStartOf(today), -7) }),
+      supabase.rpc("family_champs_recap", { p_week_start: weekStartOf(today) }),
+    ]);
+    if (last.error || current.error) return null;
+    return { last: Array.isArray(last.data) ? last.data : [], current: Array.isArray(current.data) ? current.data : [] };
+  };
+  const showChampsBox = async () => {
+    const rows = await fetchChampsRows();
+    if (rows) setChampsShow(rows);
   };
 
-  // Catch-up check on load/each day (Peter 2026-09-27: NOT on every checkoff -- it was popping
-  // back up after every single chore tap once the current week's title became confirmable,
-  // since a check ran after every board change. This runs once whenever the page is opened or
-  // the day rolls over instead: still same-day as soon as someone has the app open, but not tied
-  // to any one tap). Covers last week (in case nobody had the app open when it resolved) and the
-  // still-open current week (in case it resolves mid-day today).
+  // Fires once whenever the page is opened or the day rolls over.
   useEffect(() => {
     let live = true;
     (async () => {
       if (!settings || !live) return;
-      await maybeAnnounceChamps(addDays(weekStartOf(today), -7));
-      await maybeAnnounceChamps(weekStartOf(today));
+      await showChampsBox();
     })();
     return () => { live = false; };
   }, [settings, today]);
 
-  const ackChamps = async () => {
-    if (!champsShow) return;
-    const ws = champsShow.weekStart;
-    setChampsShow(null);
-    setSettings(s => (s ? { ...s, champs_announced_week: ws } : s));
-    await supabase.rpc("family_champs_ack", { p_week_start: ws });
-  };
+  const ackChamps = () => setChampsShow(null);
 
   const todayDone = (rows) => dayDone(rows, today);
 
   // After anything that changes a chore (a tap, or a burpee run that checks off its set):
-  // reload the grid, and dance if that finished the day. This might also be the very last
-  // chore of the week for anyone still outstanding, so check whether a title just became
-  // confirmable for the CURRENT week (Peter 2026-09-27: right when it happens, not the next day).
-  const afterChoreChange = async (wasDone) => {
+  // reload the grid, and dance if that finished the day. This might also just have marked off
+  // the last outstanding chore in the Morning, Afternoon or Evening group for the day it happened
+  // on -- done or not -- in which case the standings box pops up right then (Peter 2026-09-27).
+  const afterChoreChange = async (wasDone, changedDay) => {
+    const beforeRows = board;
     const { data } = await supabase.rpc("family_week_board", { p_kid_id: kidId, p_week_start: viewWeek });
     const rows = Array.isArray(data) ? data : board;
     setBoard(rows);
     if (!wasDone && todayDone(rows) && kid) setCelebrate(kid);
     refreshTodo();
     load();
+    const d = changedDay || day;
+    if (["morning", "afternoon", "evening"].some(part => !partResolved(beforeRows, d, part) && partResolved(rows, d, part))) {
+      showChampsBox();
+    }
     const x = await supabase.rpc("family_extras_available", { p_date: day });
     if (!x.error) setExtras(x.data || []);
   };
@@ -309,7 +323,7 @@ export default function Family({ userRole }) {
     });
     setBusy(null);
     if (error) { setErr(error.message); return; }
-    await afterChoreChange(wasDone);
+    await afterChoreChange(wasDone, row.day);
   };
 
   if (loading) return <div style={{ padding: _pad, color: T.slate500, fontSize: 13 }}>Loading…</div>;
@@ -1039,31 +1053,54 @@ function Celebration({ kid, titles, onClose }) {
   );
 }
 
-// The weekly titles reveal: fires once per household, the day the previous week is over
-// (Peter 2026-09-27 -- not tied to any kid finishing a chore). Shows every kid's score in
-// every category, not just the winner, so it's clear how everyone compared.
+// The standings box (Peter 2026-09-27): last week's confirmed winner on the left, whoever's
+// leading the still-open current week on the right, per category. Shows every kid's score in
+// each column, not just the leader, so it's clear how everyone compared -- the leader is just
+// the highlighted row.
 function ChampionsAnnouncement({ recap, onClose }) {
   const _vp = useViewport();
   const cats = CHAMPS_CATS;
+  const column = (weekRows, key, fmt, confirmedOnly) => {
+    const rows = (weekRows || []).filter(r => r.category === key).sort((a, b) => Number(b.score) - Number(a.score));
+    if (!rows.length) return null;
+    const top = Math.max(...rows.map(r => Number(r.score)));
+    return (
+      <div style={{ display: "grid", gap: 3 }}>
+        {rows.map(r => {
+          const lead = confirmedOnly ? r.is_champion : (top > 0 && Number(r.score) === top);
+          return (
+            <div key={r.kid_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 8px", borderRadius: 8, background: lead ? T.goldLt : T.slate50, fontWeight: lead ? 700 : 500, fontSize: 13 }}>
+              <span>{lead ? "🏆 " : ""}{r.kid_name}{confirmedOnly && r.is_champion ? ` — ${r.title}` : ""}</span>
+              <span>{fmt(Number(r.score))}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+  const empty = <div style={{ fontSize: 12, color: T.slate400, padding: "4px 8px" }}>Nothing yet</div>;
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.92)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, boxSizing: "border-box", overflowY: "auto" }}>
       <DayDoneStyles />
       <Confetti />
-      <div onClick={(e) => e.stopPropagation()} style={{ ...card, maxWidth: 460, width: "100%", display: "grid", gap: 14 }}>
-        <div style={{ fontSize: _vp.isPhone ? 22 : 26, fontWeight: 800, color: T.slate900, textAlign: "center" }}>Last week's champions!</div>
+      <div onClick={(e) => e.stopPropagation()} style={{ ...card, maxWidth: 620, width: "100%", display: "grid", gap: 14 }}>
+        <div style={{ fontSize: _vp.isPhone ? 22 : 26, fontWeight: 800, color: T.slate900, textAlign: "center" }}>Standings</div>
         {cats.map(({ key, label, fmt }) => {
-          const rows = (recap.rows || []).filter(r => r.category === key).sort((a, b) => Number(b.score) - Number(a.score));
-          if (!rows.length) return null;
+          const left = column(recap.last, key, fmt, true);
+          const right = column(recap.current, key, fmt, false);
+          if (!left && !right) return null;
           return (
             <div key={key}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{label}</div>
-              <div style={{ display: "grid", gap: 4 }}>
-                {rows.map(r => (
-                  <div key={r.kid_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", borderRadius: 8, background: r.is_champion ? T.goldLt : T.slate50, fontWeight: r.is_champion ? 700 : 500 }}>
-                    <span>{r.is_champion ? "🏆 " : ""}{r.kid_name}{r.is_champion ? ` — ${r.title}` : ""}</span>
-                    <span>{fmt(Number(r.score))}</span>
-                  </div>
-                ))}
+              <div style={{ fontSize: 12, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>{label}</div>
+              <div style={{ display: "grid", gridTemplateColumns: _vp.isPhone ? "1fr" : "1fr 1fr", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: T.slate400, marginBottom: 3 }}>Last week's winner</div>
+                  {left || empty}
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: T.slate400, marginBottom: 3 }}>On pace this week</div>
+                  {right || empty}
+                </div>
               </div>
             </div>
           );
