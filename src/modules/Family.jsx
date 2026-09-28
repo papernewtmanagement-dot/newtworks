@@ -95,6 +95,8 @@ const parseMoney = (s) => {
   const n = Number(t);
   return Number.isFinite(n) ? fromCents(cents(n)) : null;
 };
+// A chore's steps as typed: one per line, blank lines dropped.
+const stepLines = (s) => String(s ?? "").split("\n").map(x => x.trim()).filter(Boolean);
 const todayCentral = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
 // A tablet that drops its connection mid-request reports "Load failed" (iPad) or "Failed to fetch"
 // even though the database answered. Reads ask once more before showing an error (Peter 2026-09-26).
@@ -616,7 +618,7 @@ function GroupRows({ g, days, day, cells, icons, cellView, checklists, openInfo,
                     {r.group_label && <span style={{ fontSize: 10, color: T.slate500, marginRight: 4 }}>{r.group_label}</span>}
                     {r.title}
                   </span>
-                  {list && <InfoDot open={open} onClick={() => setOpenInfo(open ? null : rk)} title="How to do it" />}
+                  {list?.items?.length > 0 && <InfoDot open={open} onClick={() => setOpenInfo(open ? null : rk)} title="How to do it" />}
                 </div>
                 <div style={{ fontSize: 11, color: T.slate500 }}>{r.frequency === "weekly" && Number(r.pay) > 0 ? `${money(r.pay)} · ` : ""}{sub}</div>
                 {late > 0 && <div style={{ fontSize: 11, fontWeight: 700, color: T.red }}>{late} {late === 1 ? "day" : "days"} overdue</div>}
@@ -1609,8 +1611,64 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
   const [draft, setDraft] = useState({});
   const [adding, setAdding] = useState(null);
   const [addingExtra, setAddingExtra] = useState(null);
-  const current = (k) => chores.filter(c => c.kid_id === k.id && c.frequency !== "extra" && (!c.active_to || c.active_to >= today));
-  const extras = chores.filter(c => c.frequency === "extra" && (!c.active_to || c.active_to >= today));
+  const [stepsFor, setStepsFor] = useState(null); // id of the chore whose steps are open for typing
+  const live = (c) => !c.active_to || c.active_to >= today;
+  const current = (k) => chores.filter(c => c.kid_id === k.id && c.frequency !== "extra" && live(c));
+  const extras = chores.filter(c => c.frequency === "extra" && live(c));
+
+  // A chore's steps live in its family_checklists row -- the numbered "How to do it" list the
+  // kids see under it (Peter 2026-09-28: type the steps right on the chore, instead of picking
+  // from a list of names that just look like the chores). Saving edits the list the chore already
+  // uses, in place. It never moves the chore to a different list or unhooks it, even when the
+  // steps are cleared: a fine tied to a chore (Dish not washed) finds its kids through that link.
+  const stepsOf = (c) => checklists.find(cl => cl.id === c.checklist_id)?.items || [];
+  const sharedWith = (c) => !c.checklist_id ? [] : chores
+    .filter(o => o.id !== c.id && o.checklist_id === c.checklist_id && live(o) && (!o.kid_id || kids.some(k => k.id === o.kid_id)))
+    .map(o => `${o.title} (${o.kid_id ? kids.find(k => k.id === o.kid_id).name : "extra"})`);
+  const newList = async (name, items) => {
+    const { data, error } = await supabase.from("family_checklists").insert({ agency_id: AGENCY_ID, name, items }).select("id").single();
+    if (error) { setErr(error.message); return undefined; }
+    return data.id;
+  };
+  const saveSteps = async (c, text) => {
+    const items = stepLines(text);
+    if (c.checklist_id) {
+      const { error } = await supabase.from("family_checklists").update({ items }).eq("id", c.checklist_id);
+      if (error) { setErr(error.message); return; }
+    } else if (items.length) {
+      const id = await newList(c.title, items);
+      if (!id) return;
+      const { error } = await supabase.from("family_chores").update({ checklist_id: id }).eq("id", c.id);
+      if (error) { setErr(error.message); return; }
+    }
+    setStepsFor(null);
+    onSaved();
+  };
+  // A new chore's steps: the copied chore's list when the steps were left just as copied (so it
+  // shares that list, and any fine tied to it), a new list when typed or changed, none if blank.
+  const listForNew = async (title, steps, sameAs) => {
+    const items = stepLines(steps);
+    if (!items.length) return null;
+    const same = checklists.find(cl => cl.id === sameAs);
+    if (same && (same.items || []).join("\n") === items.join("\n")) return same.id;
+    return newList(title, items);
+  };
+  const stepsLink = (c) => {
+    const n = stepsOf(c).length;
+    return (
+      <button onClick={() => setStepsFor(stepsFor === c.id ? null : c.id)}
+        style={{ border: "none", background: "transparent", color: T.blue, fontSize: 12, fontWeight: 600, padding: "4px 0 0", cursor: "pointer", fontFamily: "inherit" }}>
+        {n ? `Steps (${n})` : "+ Add steps"}
+      </button>
+    );
+  };
+  const stepsRow = (c, cols) => stepsFor === c.id && (
+    <tr>
+      <td colSpan={cols} style={{ padding: "0 4px 10px" }}>
+        <StepsEditor items={stepsOf(c)} sharedWith={sharedWith(c)} onSave={(text) => saveSteps(c, text)} onCancel={() => setStepsFor(null)} />
+      </td>
+    </tr>
+  );
 
   const saveChore = async (c) => {
     const d = draft[c.id]; if (!d) return;
@@ -1637,22 +1695,26 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
   };
   const addChore = async () => {
     const a = adding; if (!a?.title) return;
+    const checklist_id = await listForNew(a.title, a.steps, a.same_as);
+    if (checklist_id === undefined) return;
     const { error } = await supabase.from("family_chores").insert({
       agency_id: AGENCY_ID, kid_id: a.kid_id, title: a.title, frequency: a.frequency,
       part_of_day: a.frequency === "daily" ? a.part_of_day : null, pay: Number(a.pay) || 0,
       due_dow: a.frequency === "weekly" && a.due_dow !== "" && a.due_dow != null ? Number(a.due_dow) : null,
       ...(a.frequency === "weekly" ? everyFields(a.every || "1", today) : {}),
-      checklist_id: a.checklist_id || null, sort_order: 99, active_from: today,
+      checklist_id, sort_order: 99, active_from: today,
     });
     if (error) { setErr(error.message); return; }
     setAdding(null); onSaved();
   };
   const addExtra = async () => {
     const a = addingExtra; if (!a?.title) return;
+    const checklist_id = await listForNew(a.title, a.steps, a.same_as);
+    if (checklist_id === undefined) return;
     const { error } = await supabase.from("family_chores").insert({
       agency_id: AGENCY_ID, kid_id: null, title: a.title, frequency: "extra", pay: Number(a.pay) || 0,
       repeat_days: repeatValue(a.repeat_days),
-      checklist_id: a.checklist_id || null, sort_order: 99, active_from: today,
+      checklist_id, sort_order: 99, active_from: today,
     });
     if (error) { setErr(error.message); return; }
     setAddingExtra(null); onSaved();
@@ -1701,8 +1763,9 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
             <thead><tr><th style={th}>Chore</th><th style={th}>Price</th><th style={th}>Comes back</th><th /></tr></thead>
             <tbody>
               {extras.map(c => (
-                <tr key={c.id} style={{ borderTop: `1px solid ${T.slate100}` }}>
-                  <td style={{ ...td, minWidth: 180 }}>{cellIn(c, "title", c.title, "100%")}</td>
+                <FragmentRow key={c.id}>
+                <tr style={{ borderTop: `1px solid ${T.slate100}` }}>
+                  <td style={{ ...td, minWidth: 180 }}>{cellIn(c, "title", c.title, "100%")}{stepsLink(c)}</td>
                   <td style={td}>{cellIn(c, "pay", c.pay)}</td>
                   <td style={td}>
                     <select value={draft[c.id]?.repeat_days ?? (c.repeat_days == null ? "" : String(c.repeat_days))} style={{ ...input, padding: "5px 6px" }}
@@ -1716,6 +1779,8 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
                     <button style={btn()} onClick={() => removeChore(c)} aria-label="Remove">✕</button>
                   </td>
                 </tr>
+                {stepsRow(c, 4)}
+                </FragmentRow>
               ))}
             </tbody>
           </table>
@@ -1727,17 +1792,14 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
             <select value={addingExtra.repeat_days} onChange={e => setAddingExtra({ ...addingExtra, repeat_days: e.target.value })} style={input}>
               {REPEAT_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
-            <select value={addingExtra.checklist_id || ""} onChange={e => setAddingExtra({ ...addingExtra, checklist_id: e.target.value || null })} style={input}>
-              <option value="">No instructions</option>
-              {checklists.map(cl => <option key={cl.id} value={cl.id}>{cl.name}</option>)}
-            </select>
+            <NewSteps value={addingExtra} checklists={checklists} onChange={(v) => setAddingExtra({ ...addingExtra, ...v })} />
             <div style={{ display: "flex", gap: 6 }}>
               <button style={btn("primary")} onClick={addExtra} disabled={!addingExtra.title}>Add</button>
               <button style={btn()} onClick={() => setAddingExtra(null)}>Cancel</button>
             </div>
           </div>
         ) : (
-          <button style={{ ...btn(), marginTop: 10 }} onClick={() => setAddingExtra({ title: "", pay: "", repeat_days: "", checklist_id: null })}>+ Add extra chore</button>
+          <button style={{ ...btn(), marginTop: 10 }} onClick={() => setAddingExtra({ title: "", pay: "", repeat_days: "", steps: "", same_as: null })}>+ Add extra chore</button>
         )}
       </Section>
 
@@ -1763,8 +1825,9 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
                   const d = draft[c.id] || {};
                   const ev = everyChoice(c, today);
                   return (
-                    <tr key={c.id} style={{ borderTop: `1px solid ${T.slate100}` }}>
-                      <td style={{ ...td, minWidth: 170 }}>{cellIn(c, "title", c.title, "100%")}</td>
+                    <FragmentRow key={c.id}>
+                    <tr style={{ borderTop: `1px solid ${T.slate100}` }}>
+                      <td style={{ ...td, minWidth: 170 }}>{cellIn(c, "title", c.title, "100%")}{stepsLink(c)}</td>
                       <td style={{ ...td, color: T.slate500, whiteSpace: "nowrap" }}>
                         {c.frequency === "daily" ? (PARTS.find(p => p[0] === (c.part_of_day || "anytime"))?.[1] || "Daily") : (
                           <select value={d.due_dow ?? (c.due_dow ?? "")} onChange={e => setDraft(x => ({ ...x, [c.id]: { ...(x[c.id] || {}), due_dow: e.target.value } }))} style={{ ...input, padding: "5px 6px" }}>
@@ -1790,6 +1853,8 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
                         <button style={btn()} onClick={() => removeChore(c)} aria-label="Remove">✕</button>
                       </td>
                     </tr>
+                    {stepsRow(c, 5)}
+                    </FragmentRow>
                   );
                 })}
               </tbody>
@@ -1815,20 +1880,55 @@ function SetupView({ kids, chores, checklists, settings, today, onSaved, setErr 
                 </select>
               )}
               <input value={adding.pay} onChange={e => setAdding({ ...adding, pay: e.target.value })} inputMode="decimal" placeholder="Pay" style={input} />
-              <select value={adding.checklist_id || ""} onChange={e => setAdding({ ...adding, checklist_id: e.target.value || null })} style={input}>
-                <option value="">No instructions</option>
-                {checklists.map(cl => <option key={cl.id} value={cl.id}>{cl.name}</option>)}
-              </select>
+              <NewSteps value={adding} checklists={checklists} onChange={(v) => setAdding({ ...adding, ...v })} />
               <div style={{ display: "flex", gap: 6 }}>
                 <button style={btn("primary")} onClick={addChore} disabled={!adding.title}>Add</button>
                 <button style={btn()} onClick={() => setAdding(null)}>Cancel</button>
               </div>
             </div>
           ) : (
-            <button style={{ ...btn(), marginTop: 10 }} onClick={() => setAdding({ kid_id: k.id, title: "", frequency: "daily", part_of_day: "morning", pay: "", due_dow: "", checklist_id: null })}>+ Add chore</button>
+            <button style={{ ...btn(), marginTop: 10 }} onClick={() => setAdding({ kid_id: k.id, title: "", frequency: "daily", part_of_day: "morning", pay: "", due_dow: "", steps: "", same_as: null })}>+ Add chore</button>
           )}
         </Section>
       ))}
+    </div>
+  );
+}
+
+// Typing an existing chore's steps, one per line. When other chores use the same steps (every
+// "Vacuum ..." chore shares one list), it names them, since saving changes those too.
+function StepsEditor({ items, sharedWith, onSave, onCancel }) {
+  const [text, setText] = useState((items || []).join("\n"));
+  const [saving, setSaving] = useState(false);
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      <textarea autoFocus value={text} onChange={e => setText(e.target.value)} rows={Math.max(4, stepLines(text).length + 1)}
+        placeholder="One step per line" style={{ ...input, width: "100%", resize: "vertical", lineHeight: 1.5 }} />
+      {sharedWith.length > 0 && (
+        <div style={{ fontSize: 12, color: T.slate500 }}>Same steps as {sharedWith.join(", ")}. Saving changes those too.</div>
+      )}
+      <div style={{ display: "flex", gap: 6 }}>
+        <button style={btn("primary")} disabled={saving} onClick={async () => { setSaving(true); await onSave(text); setSaving(false); }}>Save steps</button>
+        <button style={btn()} onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// Steps for a chore being added: typed fresh, or copied from another chore's steps to start from.
+function NewSteps({ value, checklists, onChange }) {
+  const lists = (checklists || []).filter(cl => (cl.items || []).length).sort((a, b) => a.name.localeCompare(b.name));
+  return (
+    <div style={{ gridColumn: "1 / -1", display: "grid", gap: 6 }}>
+      <textarea value={value.steps || ""} onChange={e => onChange({ steps: e.target.value })} rows={3}
+        placeholder="Steps, one per line (optional)" style={{ ...input, width: "100%", resize: "vertical", lineHeight: 1.5 }} />
+      {lists.length > 0 && (
+        <select value="" style={{ ...input, color: T.slate500 }}
+          onChange={e => { const cl = lists.find(x => x.id === e.target.value); if (cl) onChange({ steps: cl.items.join("\n"), same_as: cl.id }); }}>
+          <option value="">Copy steps from another chore…</option>
+          {lists.map(cl => <option key={cl.id} value={cl.id}>{cl.name}</option>)}
+        </select>
+      )}
     </div>
   );
 }
