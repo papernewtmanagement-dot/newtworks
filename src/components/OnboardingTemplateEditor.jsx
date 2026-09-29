@@ -816,14 +816,20 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
 
   // Arrows renumber the whole column so a duplicated sort_order cannot
   // quietly freeze a step in place.
-  const move = useCallback(async (row, dir) => {
+  // shown = the siblings on screen. A week section shows only some of the
+  // column, so the swap is with the neighbour the person can see; the whole
+  // column is still renumbered so sort orders stay clean.
+  const move = useCallback(async (row, dir, shown) => {
     setMoveErr("");
     const sibs = visibleRows
       .filter(r => r.phase === row.phase && (r.track || null) === (row.track || null))
       .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    const view = Array.isArray(shown) && shown.length ? shown : sibs;
+    const vi = view.findIndex(s => s.id === row.id);
+    const other = view[vi + dir];
     const i = sibs.findIndex(s => s.id === row.id);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= sibs.length) return;
+    const j = other ? sibs.findIndex(s => s.id === other.id) : -1;
+    if (vi < 0 || i < 0 || j < 0) return;
     const next = sibs.slice();
     next[i] = sibs[j];
     next[j] = sibs[i];
@@ -910,9 +916,9 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
             {canEdit && sibs.length > 1 && (
               <span style={{ display: "flex", gap: 2 }} onClick={(e) => e.stopPropagation()}>
                 <button style={arrow} title="Move up" disabled={idx <= 0}
-                  onClick={() => move(r, -1)}>↑</button>
+                  onClick={() => move(r, -1, sibs)}>↑</button>
                 <button style={arrow} title="Move down" disabled={idx < 0 || idx >= sibs.length - 1}
-                  onClick={() => move(r, 1)}>↓</button>
+                  onClick={() => move(r, 1, sibs)}>↓</button>
               </span>
             )}
           </div>
@@ -1024,15 +1030,45 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
       {phaseList.map(ph => {
         const phRows = visibleRows.filter(r => r.phase === ph);
         const label = phaseMeta(ph);
-        const banners = phRows.filter(r => r.full_width);
-        const rest = phRows.filter(r => !r.full_width);
-        const cols = trackColumns(rest);
         // Folded unless opened, or unless a subcard in it is being edited.
         const open = phOpen[ph] ?? (!!editingRow && editingRow.phase === ph);
-        const gridStyle = {
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-          gap: cols ? 12 : 10, alignItems: cols ? "stretch" : "start",
+        // A multi-week card whose weeks carry different subcards shows one
+        // section per week, matching the one card per week a plan gets.
+        // A subcard with no week sits in every week's section.
+        const wks = weeksOf(ph);
+        const forWeek = (r) => Array.isArray(r.weeks) && r.weeks.length > 0;
+        const split = wks.length > 1 && phRows.some(forWeek);
+        const sections = split
+          ? wks.map(w => ({ week: w, rows: phRows.filter(r => !forWeek(r) || r.weeks.includes(w)) }))
+          : [{ week: null, rows: phRows }];
+        const renderSection = (secRows) => {
+          const banners = secRows.filter(r => r.full_width);
+          const rest = secRows.filter(r => !r.full_width);
+          const cols = trackColumns(rest);
+          const gridStyle = {
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            gap: cols ? 12 : 10, alignItems: cols ? "stretch" : "start",
+          };
+          return (
+            <>
+              {banners.length > 0 && (
+                <div style={bannerStyle}>{banners.map(r => renderRow(r, banners))}</div>
+              )}
+              {cols ? (
+                <div style={gridStyle}>
+                  {cols.map((c, ci) => (
+                    <div key={c.name || "_"} style={columnStyle(ci)}>
+                      {c.name && <div style={trackHeadStyle}>{c.name}</div>}
+                      {c.steps.map(r => renderRow(r, c.steps))}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={gridStyle}>{rest.map(r => renderRow(r, rest))}</div>
+              )}
+            </>
+          );
         };
         return (
           <Card key={ph} style={{ marginBottom: 12, padding: vp.isPhone ? "14px 12px" : "16px 18px" }}>
@@ -1065,27 +1101,22 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
 
             {open && (
               <>
-                {label.weeksLong > 1 && (
+                {label.weeksLong > 1 && !split && (
                   <div style={{ fontSize: 11, color: T.slate500, marginBottom: 10, lineHeight: 1.5 }}>
                     On a plan this becomes one card per week, each with these subcards. A subcard marked with a
                     week is only in that week; open a subcard and use Split by week to make one week different.
                   </div>
                 )}
-                {banners.length > 0 && (
-                  <div style={bannerStyle}>{banners.map(r => renderRow(r, banners))}</div>
-                )}
-                {cols ? (
-                  <div style={gridStyle}>
-                    {cols.map((c, ci) => (
-                      <div key={c.name || "_"} style={columnStyle(ci)}>
-                        {c.name && <div style={trackHeadStyle}>{c.name}</div>}
-                        {c.steps.map(r => renderRow(r, c.steps))}
-                      </div>
-                    ))}
-                  </div>
+                {sections.map(sec => sec.week == null ? (
+                  <div key="all">{renderSection(sec.rows)}</div>
                 ) : (
-                  <div style={gridStyle}>{rest.map(r => renderRow(r, rest))}</div>
-                )}
+                  <div key={sec.week} style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: T.slate800, margin: "4px 0 8px", paddingBottom: 4, borderBottom: `1px solid ${T.slate200}` }}>
+                      Week {sec.week}{(label.weekTitles || {})[String(sec.week)] ? `: ${label.weekTitles[String(sec.week)]}` : ""}
+                    </div>
+                    {renderSection(sec.rows)}
+                  </div>
+                ))}
                 {canEdit && <div style={{ marginTop: 10 }}>{addRow(ph)}</div>}
               </>
             )}

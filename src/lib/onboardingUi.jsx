@@ -11,7 +11,7 @@
 // =========================================================================
 
 import { useState, createContext, useContext } from "react";
-import { T } from "./theme.js";
+import { T, BAND } from "./theme.js";
 import { supabase } from "./supabase.js";
 import InfoDot from "../components/InfoDot.jsx";
 import TeamForms from "../components/TeamForms.jsx";
@@ -266,9 +266,10 @@ export function textToSubsteps(text) {
 // The training-curriculum cards added 2026-09-25 (keys start "cur_") are
 // tinted blue so they stand apart from the older Confluence week cards
 // while both sets sit side by side. One place decides it for the template
-// and for every plan.
+// and for every plan. T.blue is the sage primary, not a blue, so this uses
+// the real blue from the Great band.
 export const isNewCurriculum = (key) => typeof key === "string" && key.startsWith("cur_");
-export const newCurriculumCard = { background: T.blueLt, border: `1px solid ${T.blue}` };
+export const newCurriculumCard = { background: BAND.Great.fill, border: `1px solid ${BAND.Great.ink}` };
 
 export const bannerStyle = {
   display: "grid", gap: 10, marginBottom: 12, padding: 10, borderRadius: 10,
