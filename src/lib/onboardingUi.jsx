@@ -263,6 +263,13 @@ export function textToSubsteps(text) {
 // offer-stage columns both have to finish before the next milestone opens.
 // Goals and other full-width subcards: a highlighted band across the top of
 // a major card, above the columns.
+// The training-curriculum cards added 2026-09-25 (keys start "cur_") are
+// tinted blue so they stand apart from the older Confluence week cards
+// while both sets sit side by side. One place decides it for the template
+// and for every plan.
+export const isNewCurriculum = (key) => typeof key === "string" && key.startsWith("cur_");
+export const newCurriculumCard = { background: T.blueLt, border: `1px solid ${T.blue}` };
+
 export const bannerStyle = {
   display: "grid", gap: 10, marginBottom: 12, padding: 10, borderRadius: 10,
   gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", alignItems: "start",

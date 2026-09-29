@@ -24,6 +24,7 @@ import {
   CATEGORY_COLORS, CATEGORY_KEYS, STAGE_LABELS,
   subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText, GroupHead, ItemInfo,
   splitIndent, columnStyle, bannerStyle, weeksLabel, ORIENTATION_KIND,
+  isNewCurriculum, newCurriculumCard,
 } from "../lib/onboardingUi.jsx";
 import InfoDot from "./InfoDot.jsx";
 import OrientationPopup from "./OrientationPopup.jsx";
@@ -876,6 +877,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
           background: r.is_active ? T.white : T.slate50,
           opacity: r.is_active ? 1 : 0.72,
           cursor: canEdit ? "pointer" : "default",
+          ...(r.is_active && isNewCurriculum(r.template_key) ? newCurriculumCard : {}),
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>

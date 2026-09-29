@@ -33,6 +33,7 @@ import {
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
   subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo,
   splitIndent, columnStyle, bannerStyle, fmtDate, setStepDone, setSubstepDone, ORIENTATION_KIND,
+  isNewCurriculum, newCurriculumCard,
 } from "../lib/onboardingUi.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
 import OrientationPopup from "../components/OrientationPopup.jsx";
@@ -440,6 +441,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                     padding: "10px 12px", boxSizing: "border-box",
                     background: done ? T.slate50 : T.white,
                     opacity: locked ? 0.55 : 1,
+                    ...(!done && isNewCurriculum(step.template_key) ? newCurriculumCard : {}),
                   }}>
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 10, ...wrapLongText }}>
                       <button
