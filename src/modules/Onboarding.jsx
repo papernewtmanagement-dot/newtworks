@@ -31,12 +31,13 @@ import InfoDot from "../components/InfoDot.jsx";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
-  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo,
+  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo, asksForReply,
   splitIndent, columnStyle, bannerStyle, fmtDate, setStepDone, setSubstepDone, ORIENTATION_KIND,
   isNewCurriculum, newCurriculumCard,
 } from "../lib/onboardingUi.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
 import OrientationPopup from "../components/OrientationPopup.jsx";
+import ReplyPopup from "../components/ReplyPopup.jsx";
 import ReferenceCalls from "./ReferenceCalls.jsx";
 
 // ─── constants ─────────────────────────────────────
@@ -123,7 +124,7 @@ function useOnboardingData(userId, isAdmin) {
       if (plans.length) {
         const planIds = plans.map(p => p.id);
         const stepsRes = await supabase.from("team_onboarding_steps")
-          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, owner_kind, assigned_to, task_id, track, track_order, blocked_by, auto_source, auto_summary, unlock_rule, unlocks_on, widget, assign_role_category, week_no, full_width")
+          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, substep_answers, owner_kind, assigned_to, task_id, track, track_order, blocked_by, auto_source, auto_summary, unlock_rule, unlocks_on, widget, assign_role_category, week_no, full_width")
           .in("plan_id", planIds)
           .order("phase", { ascending: true })
           .order("sort_order", { ascending: true });
@@ -224,6 +225,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
   const [altOn, setAltOn] = useState({});
   const todayCT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
   const [openInstr, setOpenInstr] = useState(null);
+  const [replyFor, setReplyFor] = useState(null); // {step, label} while the reply pop-up is open
   const [editingNote, setEditingNote] = useState(null); // {stepId, text}
   const [savingId, setSavingId] = useState(null);
   const p = progress(steps);
@@ -349,6 +351,17 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
       </Card>
 
       <InstructionsModal item={openInstr} onClose={() => setOpenInstr(null)} />
+      {replyFor && (
+        <ReplyPopup
+          label={replyFor.label}
+          onClose={() => setReplyFor(null)}
+          onSave={async (text) => {
+            const e = await onToggleSubstep(replyFor.step, replyFor.label, text);
+            if (!e) setReplyFor(null);
+            return e;
+          }}
+        />
+      )}
       {orientation && (
         <OrientationPopup
           instruction={orientation}
@@ -603,11 +616,17 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                     // The Orientation line: only the owner ticks it, from its pop-up or here.
                                     const isOrientationLine = instr?.kind === ORIENTATION_KIND;
                                     const lineLocked = isOrientationLine && !isOwner;
+                                    // A line that asks for a reply opens a box when ticked; once
+                                    // ticked, the card shows the reply in place of the question.
+                                    const wantsReply = asksForReply(label);
+                                    const reply = wantsReply && sd ? (step.substep_answers || {})[label] : null;
                                     return (
                                       <ItemInfo key={ix} lines={itemInfo[label] || []} pathColor={T.teal} linkColor={T.blue}>
                                       <div style={{ display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0, paddingLeft: level * 18 }}>
                                       <button
-                                        onClick={byForm || lineLocked ? undefined : () => onToggleSubstep(step, label)}
+                                        onClick={byForm || lineLocked ? undefined
+                                          : (wantsReply && !sd) ? () => setReplyFor({ step, label })
+                                          : () => onToggleSubstep(step, label)}
                                         title={byForm ? "Ticks itself when the form is done"
                                           : lineLocked ? "Peter checks this off at orientation" : undefined}
                                         style={{
@@ -628,8 +647,11 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                         <span style={{
                                           fontSize: 12, lineHeight: 1.4,
                                           color: sd ? T.slate400 : T.slate700,
-                                          textDecoration: sd ? "line-through" : "none",
-                                        }}><LabelText text={shown} icon={icon} pathColor={sd ? T.slate400 : T.teal} linkColor={T.blue} /></span>
+                                          textDecoration: sd && !reply ? "line-through" : "none",
+                                          ...(reply ? { color: T.slate700, fontStyle: "italic", whiteSpace: "pre-wrap" } : {}),
+                                        }}>{reply
+                                          ? reply
+                                          : <LabelText text={shown} icon={icon} pathColor={sd ? T.slate400 : T.teal} linkColor={T.blue} />}</span>
                                       </button>
                                       {instr && !isOrientationLine && (
                                         <InfoDot title="Instructions" onClick={() => setOpenInstr(instr)} />
@@ -1173,13 +1195,16 @@ export default function Onboarding({ userRole, userId }) {
   };
 
   // Ticking the last sub-item completes the step; unticking any re-opens it.
-  const handleToggleSubstep = async (step, label) => {
-    if (formIdOf(label)) return; // follows the form, not a click
+  // A reply line (What's one takeaway?) passes what was typed as answer.
+  // Returns the error message, or null.
+  const handleToggleSubstep = async (step, label, answer = null) => {
+    if (formIdOf(label)) return null; // follows the form, not a click
     setActionError("");
     const cur = Array.isArray(step.substeps_done) ? step.substeps_done : [];
-    const { error: err } = await setSubstepDone(step, label, !cur.includes(label), userId);
-    if (err) { setActionError(err.message); return; }
+    const { error: err } = await setSubstepDone(step, label, !cur.includes(label), userId, answer);
+    if (err) { setActionError(err.message); return err.message; }
     await reload();
+    return null;
   };
 
   const handleUpdateStepNotes = async (stepId, notesText) => {

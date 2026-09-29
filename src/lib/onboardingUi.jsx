@@ -68,11 +68,20 @@ export async function setStepDone(stepId, done, userId) {
 
 // The one place a sub-item is ticked or unticked by hand. Ticking the last
 // one completes the card; unticking any reopens it. Returns { error }.
-export async function setSubstepDone(step, label, done, userId) {
+// A line that asks for a reply keeps what was typed in substep_answers;
+// unticking it clears the reply so a new one can be typed.
+export async function setSubstepDone(step, label, done, userId, answer = null) {
   const cur = Array.isArray(step.substeps_done) ? step.substeps_done : [];
   const next = done ? (cur.includes(label) ? cur : [...cur, label]) : cur.filter(l => l !== label);
   const allDone = subProgress(step.substeps, next).complete;
   const patch = { substeps_done: next };
+  const answers = step.substep_answers && typeof step.substep_answers === "object" ? step.substep_answers : {};
+  if (done && answer != null) {
+    patch.substep_answers = { ...answers, [label]: String(answer) };
+  } else if (!done && Object.prototype.hasOwnProperty.call(answers, label)) {
+    const { [label]: _gone, ...rest } = answers;
+    patch.substep_answers = rest;
+  }
   if (allDone && !step.completed_at) {
     patch.completed_at = new Date().toISOString();
     patch.completed_by = userId || null;
@@ -81,6 +90,13 @@ export async function setSubstepDone(step, label, done, userId) {
     patch.completed_by = null;
   }
   return supabase.from("team_onboarding_steps").update(patch).eq("id", step.id);
+}
+
+// A sub-item that asks the new hire to type a reply before it ticks
+// ("What's one takeaway?"). The one place that decides which lines do.
+export function asksForReply(label) {
+  const t = splitIndent(label).text.replace(/[\u2018\u2019]/g, "'").toLowerCase();
+  return t === "what's one takeaway?" || t === "what's one takeaway";
 }
 
 // ─── orientation ────────────────────────────────────
