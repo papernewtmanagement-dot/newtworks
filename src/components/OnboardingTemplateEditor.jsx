@@ -1027,23 +1027,21 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
         </Card>
       )}
 
-      {phaseList.map(ph => {
+      {phaseList.flatMap(ph => {
         const phRows = visibleRows.filter(r => r.phase === ph);
         const label = phaseMeta(ph);
-        // Folded unless opened, or unless a subcard in it is being edited.
-        const open = phOpen[ph] ?? (!!editingRow && editingRow.phase === ph);
-        // A multi-week card whose weeks carry different subcards shows one
-        // section per week, matching the one card per week a plan gets.
-        // A subcard with no week sits in every week's section.
+        // A multi-week card whose weeks carry different subcards becomes one
+        // card per week, the same as on a plan. A subcard with no week sits
+        // in every week's card.
         const wks = weeksOf(ph);
         const forWeek = (r) => Array.isArray(r.weeks) && r.weeks.length > 0;
         const split = wks.length > 1 && phRows.some(forWeek);
-        const sections = split
-          ? wks.map(w => ({ week: w, rows: phRows.filter(r => !forWeek(r) || r.weeks.includes(w)) }))
-          : [{ week: null, rows: phRows }];
-        const renderSection = (secRows) => {
-          const banners = secRows.filter(r => r.full_width);
-          const rest = secRows.filter(r => !r.full_width);
+        const cards = split
+          ? wks.map(w => ({ key: `${ph}|${w}`, week: w, rows: phRows.filter(r => !forWeek(r) || r.weeks.includes(w)) }))
+          : [{ key: String(ph), week: null, rows: phRows }];
+        const renderBody = (cardRows) => {
+          const banners = cardRows.filter(r => r.full_width);
+          const rest = cardRows.filter(r => !r.full_width);
           const cols = trackColumns(rest);
           const gridStyle = {
             display: "grid",
@@ -1070,58 +1068,59 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
             </>
           );
         };
-        return (
-          <Card key={ph} style={{ marginBottom: 12, padding: vp.isPhone ? "14px 12px" : "16px 18px" }}>
-            <div
-              role="button" tabIndex={0}
-              onClick={() => setPhOpen(o => ({ ...o, [ph]: !open }))}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setPhOpen(o => ({ ...o, [ph]: !open })); } }}
-              style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: open ? 10 : 0, flexWrap: "wrap", cursor: "pointer" }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, color: T.slate400, width: 10 }}>{open ? "▾" : "▸"}</span>
-                <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{label.name}</div>
-                {label.stage && STAGE_LABELS[label.stage] && (
-                  <Pill fg={STAGE_LABELS[label.stage].fg} bg={STAGE_LABELS[label.stage].bg}>
-                    {STAGE_LABELS[label.stage].label}
-                  </Pill>
-                )}
-                {open && label.blurb && <div style={{ fontSize: 11, color: T.slate500, flexBasis: "100%" }}>{label.blurb}</div>}
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ fontSize: 11, color: T.slate500 }}>
-                  {label.weeksLong > 1 ? `${label.weeksLong} weeks · ` : ""}{phRows.length} steps
+        return cards.map((card, ci) => {
+          const editingHere = !!editingRow && editingRow.phase === ph &&
+            (editingRow.id ? card.rows.some(r => r.id === editingRow.id) : ci === 0);
+          // Folded unless opened, or unless a subcard in it is being edited.
+          const open = phOpen[card.key] ?? editingHere;
+          const toggle = () => setPhOpen(o => ({ ...o, [card.key]: !open }));
+          const title = card.week == null
+            ? label.name
+            : `Week ${card.week}${(label.weekTitles || {})[String(card.week)] ? `: ${label.weekTitles[String(card.week)]}` : ""}`;
+          return (
+            <Card key={card.key} style={{ marginBottom: 12, padding: vp.isPhone ? "14px 12px" : "16px 18px" }}>
+              <div
+                role="button" tabIndex={0}
+                onClick={toggle}
+                onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); } }}
+                style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: open ? 10 : 0, flexWrap: "wrap", cursor: "pointer" }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: T.slate400, width: 10 }}>{open ? "▾" : "▸"}</span>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{title}</div>
+                  {label.stage && STAGE_LABELS[label.stage] && (
+                    <Pill fg={STAGE_LABELS[label.stage].fg} bg={STAGE_LABELS[label.stage].bg}>
+                      {STAGE_LABELS[label.stage].label}
+                    </Pill>
+                  )}
+                  {open && label.blurb && <div style={{ fontSize: 11, color: T.slate500, flexBasis: "100%" }}>{label.blurb}</div>}
                 </div>
-                {canEdit && (
-                  <Button variant="secondary" style={{ padding: "3px 10px", fontSize: 11 }}
-                    onClick={(e) => { e.stopPropagation(); setEditingPhase(ph); }}>Edit</Button>
-                )}
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ fontSize: 11, color: T.slate500 }}>
+                    {card.week == null && label.weeksLong > 1 ? `${label.weeksLong} weeks · ` : ""}{card.rows.length} steps
+                  </div>
+                  {canEdit && (
+                    <Button variant="secondary" style={{ padding: "3px 10px", fontSize: 11 }}
+                      onClick={(ev) => { ev.stopPropagation(); setEditingPhase(ph); }}>Edit</Button>
+                  )}
+                </div>
               </div>
-            </div>
 
-            {open && (
-              <>
-                {label.weeksLong > 1 && !split && (
-                  <div style={{ fontSize: 11, color: T.slate500, marginBottom: 10, lineHeight: 1.5 }}>
-                    On a plan this becomes one card per week, each with these subcards. A subcard marked with a
-                    week is only in that week; open a subcard and use Split by week to make one week different.
-                  </div>
-                )}
-                {sections.map(sec => sec.week == null ? (
-                  <div key="all">{renderSection(sec.rows)}</div>
-                ) : (
-                  <div key={sec.week} style={{ marginBottom: 14 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: T.slate800, margin: "4px 0 8px", paddingBottom: 4, borderBottom: `1px solid ${T.slate200}` }}>
-                      Week {sec.week}{(label.weekTitles || {})[String(sec.week)] ? `: ${label.weekTitles[String(sec.week)]}` : ""}
+              {open && (
+                <>
+                  {card.week == null && label.weeksLong > 1 && (
+                    <div style={{ fontSize: 11, color: T.slate500, marginBottom: 10, lineHeight: 1.5 }}>
+                      On a plan this becomes one card per week, each with these subcards. A subcard marked with a
+                      week is only in that week; open a subcard and use Split by week to make one week different.
                     </div>
-                    {renderSection(sec.rows)}
-                  </div>
-                ))}
-                {canEdit && <div style={{ marginTop: 10 }}>{addRow(ph)}</div>}
-              </>
-            )}
-          </Card>
-        );
+                  )}
+                  {renderBody(card.rows)}
+                  {canEdit && <div style={{ marginTop: 10 }}>{addRow(ph)}</div>}
+                </>
+              )}
+            </Card>
+          );
+        });
       })}
 
       {canEdit && editingRow && (
