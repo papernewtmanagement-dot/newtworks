@@ -66,17 +66,11 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 const PARENT_ROLES = ["owner", "admin"];
 const TABS = ["characters", "creatures", "rules", "play"];
 const TAB_LABELS = { characters: "Characters", creatures: "Creatures", rules: "Rules", play: "Play" };
-// The rolled traits sit in three groups, Spirit, Mind, Body, in that order (Peter 2026-09-26); together they are
-// "traits". The group keys stay as stored ("strength" is the nine fruits); only the headings changed.
-const GROUPS = [
-  ["strength", "Spirit"],
-  ["mind", "Mind"],
-  ["physical", "Body"],
-  ["derived", "Derived"],
-  ["spiritual", "Spiritual Skills"],
-  ["ability", "Character Abilities"],
-  ["fighting", "Fighting"],
-];
+// The sheet has five sections, in this order (Peter 2026-09-28): the rolled traits in Spirit, Mind and Body, the
+// numbers figured only from them in Derived, and every skill, ability and armor piece together in Skills. Each stat
+// carries its section from rpg_sheet (rpg_section), so the page never sorts stats by group itself. The hidden basics
+// (Swing arm, Grip, ...) are never rows; they show inside a skill's parents.
+const SECTIONS = ["Spirit", "Mind", "Body", "Derived", "Skills"];
 const COINS = [["platinum", "Platinum"], ["gold", "Gold"], ["silver", "Silver"], ["copper", "Copper"]];
 
 const card = { background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 14, boxSizing: "border-box" };
@@ -95,6 +89,40 @@ const needsText = (s) => `needs ${Math.ceil(Number(s?.needed) || 0)}+ · crit ${
 const resultText = (r) => (r === "C" ? "Critical!" : r === "Y" ? "Success" : "Fail");
 const resultColor = (r) => (r === "C" ? T.gold : r === "Y" ? T.green : T.red);
 const when = (iso) => { try { return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" }); } catch (_) { return ""; } };
+
+// The mix line under a calculated stat: blue Spirit from the left, amber Mind in the middle, red Body from the
+// right, each share what those parts actually contribute (rpg_sheet_mix). Karen's Sword: 47 / 11 / 42.
+const MIX_COLORS = { spirit: T.blue, mind: T.amber, body: T.red };
+function MixLine({ mix }) {
+  if (!mix) return null;
+  const s = Number(mix.spirit) || 0, m = Number(mix.mind) || 0, b = Number(mix.body) || 0;
+  return (
+    <div title={`Spirit ${s}% · Mind ${m}% · Body ${b}%`} style={{ display: "flex", height: 4, borderRadius: 2, overflow: "hidden", margin: "3px 0", background: T.slate100 }}>
+      {s > 0 && <div style={{ width: `${s}%`, background: MIX_COLORS.spirit }} />}
+      {m > 0 && <div style={{ width: `${m}%`, background: MIX_COLORS.mind }} />}
+      {b > 0 && <div style={{ width: `${b}%`, background: MIX_COLORS.body }} />}
+    </div>
+  );
+}
+// What a calculated stat is built from (rpg_stat_parents): the averaged parts, then the hidden basics added whole.
+const SECTION_COLORS = { Spirit: T.blue, Mind: T.amber, Body: T.red };
+function Parents({ stat }) {
+  const parents = Array.isArray(stat.parents) ? stat.parents : [];
+  if (!parents.length) return null;
+  const mix = stat.mix || {};
+  return (
+    <div style={{ marginTop: 6, fontSize: 12, color: T.slate700 }}>
+      <div style={{ color: T.slate500, marginBottom: 4 }}>{stat.formula_text}{mix.spirit != null && ` · Spirit ${mix.spirit}% · Mind ${mix.mind}% · Body ${mix.body}%`}</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px" }}>
+        {parents.map(p => (
+          <span key={`${p.plus ? "plus-" : ""}${p.key}`} style={{ color: SECTION_COLORS[p.section] || T.slate700, fontWeight: 600 }}>
+            {p.plus ? "+ " : ""}{p.name} {num(p.value)}{Number(p.weight) !== 1 ? ` ×${num(p.weight)}` : ""}{p.section === "Basic" ? " · basic" : ""}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function Roleplaying({ userRole }) {
   const isParent = PARENT_ROLES.includes(userRole);
@@ -242,8 +270,9 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
   const [coins, setCoins] = useState(null);
   const [hurt, setHurt] = useState("1");
   const [item, setItem] = useState({ name: "", stat_key: "", bonus: "1", uses_left: "" });
-  const [openGroups, setOpenGroups] = useState(() => Object.fromEntries(GROUPS.map(([g]) => [g, true])));
+  const [openGroups, setOpenGroups] = useState(() => Object.fromEntries(SECTIONS.map(g => [g, true])));
   const [busy, setBusy] = useState(false);
+  const [openStat, setOpenStat] = useState(null);          // the calculated stat whose parents are open
   const debounce = useRef(null);
 
   const load = useCallback(async (diff) => {
@@ -472,6 +501,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
               <div style={{ fontSize: 12, color: T.slate600 }}>
                 {chain.reduce((s, r) => s + (Number(r.points) || 0), 0) > 0 && `+${num(chain.reduce((s, r) => s + (Number(r.points) || 0), 0), 1)} skill points`}
                 {chain.some(r => Number(r.level_after) > Number(r.level_before)) && ` · ${chain[0].stat_name} is now ${Math.max(...chain.map(r => Number(r.level_after)))}`}
+                {chain.some(r => r.grew && Object.keys(r.grew).length > 0) && ` · ${chain.flatMap(r => Object.entries(r.grew || {})).map(([k, v]) => `${(defs.find(d => d.key === k) || {}).name || k} is now ${v}`).join(", ")}`}
               </div>
             </div>
             {last.extra_pending
@@ -481,49 +511,61 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
         </div>
       )}
 
-      {/* The sheet: every group, every stat, one Roll button each */}
-      {GROUPS.map(([g, title]) => {
-        const rowsOf = stats.filter(s => s.grp === g);
+      {/* The sheet: Spirit, Mind, Body, Derived, Skills (each stat's section comes from rpg_sheet). A calculated stat
+          carries its mix line and opens to show the parents it is built from; a rolled trait keeps its controls. */}
+      {SECTIONS.map(sec => {
+        const rowsOf = stats.filter(s => s.section === sec);
         if (!rowsOf.length) return null;
-        const open = openGroups[g];
+        const open = openGroups[sec];
         return (
-          <div key={g} style={{ ...card, marginBottom: 10, padding: 0 }}>
-            <button type="button" onClick={() => setOpenGroups(o => ({ ...o, [g]: !o[g] }))}
+          <div key={sec} style={{ ...card, marginBottom: 10, padding: 0 }}>
+            <button type="button" onClick={() => setOpenGroups(o => ({ ...o, [sec]: !o[sec] }))}
               style={{ ...btn("soft"), border: "none", width: "100%", textAlign: "left", display: "flex", justifyContent: "space-between", padding: "12px 14px", background: "transparent" }}>
-              <span style={{ ...label, color: T.slate700 }}>{title}</span>
+              <span style={{ ...label, color: T.slate700 }}>{sec}</span>
               <span style={{ fontSize: 12, color: T.slate500 }}>{open ? "hide" : `${rowsOf.length} shown`}</span>
             </button>
             {open && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))", gap: 0, borderTop: `1px solid ${T.slate100}` }}>
-                {rowsOf.map(s => (
-                  <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: `1px solid ${T.slate100}`, boxSizing: "border-box" }}>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={s.formula_text || ""}>{s.name}</div>
-                      <div style={{ fontSize: 11, color: T.slate500 }}>
-                        {needsText(s)}
-                        {s.pair_key && Number(s.evil) > 0 && ` · ${s.good_name} ${num(s.good)}, ${s.evil_name} ${num(s.evil)}`}
-                        {Number(s.item_bonus) !== 0 && ` · items +${num(s.item_bonus)}`}
-                        {Number(s.earned_levels) > 0 && ` · trained +${num(s.earned_levels)}`}
-                        {s.trainable && Number(s.next_level_cost) > 0 && ` · ${num(s.skill_points)}/${num(s.next_level_cost)} pts`}
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${sec === "Skills" ? 230 : 290}px, 1fr))`, gap: 0, borderTop: `1px solid ${T.slate100}` }}>
+                {rowsOf.map(s => {
+                  const calc = s.kind === "derived";
+                  const isOpen = calc && openStat === s.key;
+                  return (
+                    <div key={s.key} style={{ padding: "8px 12px", borderBottom: `1px solid ${T.slate100}`, boxSizing: "border-box", gridColumn: isOpen ? "1 / -1" : undefined }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          {calc
+                            ? <button type="button" onClick={() => setOpenStat(isOpen ? null : s.key)} title={isOpen ? "Hide what it is built from" : "See what it is built from"}
+                                style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: T.slate900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", textAlign: "left" }}>{s.name} <span style={{ color: T.slate500, fontWeight: 400 }}>{isOpen ? "▾" : "▸"}</span></button>
+                            : <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.name}</div>}
+                          {calc && <MixLine mix={s.mix} />}
+                          <div style={{ fontSize: 11, color: T.slate500 }}>
+                            {needsText(s)}
+                            {s.pair_key && Number(s.evil) > 0 && ` · ${s.good_name} ${num(s.good)}, ${s.evil_name} ${num(s.evil)}`}
+                            {Number(s.item_bonus) !== 0 && ` · items +${num(s.item_bonus)}`}
+                            {Number(s.earned_levels) > 0 && ` · trained +${num(s.earned_levels)}`}
+                            {s.trainable && Number(s.next_level_cost) > 0 && ` · ${num(s.skill_points)}/${num(s.next_level_cost)} pts`}
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, minWidth: 34, textAlign: "right" }}>{num(s.value)}</div>
+                        {isParent && !calc && (
+                          <button type="button" style={btn("soft", true)} title="Set by hand (special means)" onClick={() => setInput(s)}>Set</button>
+                        )}
+                        {isParent && !calc && (
+                          <select style={{ ...input, padding: "4px 6px", fontSize: 12 }} value="" title="An event moves the trait" aria-label="Event"
+                            onChange={e => { const v = e.target.value; if (!v) return; const [k, d] = v.split(":"); adjustTrait(k, Number(d)); }}>
+                            <option value="">Event…</option>
+                            <option value={`${s.key}:1`}>+1 {s.pair_key ? s.good_name : s.name}</option>
+                            <option value={`${s.key}:-1`}>−1 {s.pair_key ? s.good_name : s.name}</option>
+                            {s.pair_key && <option value={`${s.pair_key}:1`}>+1 {s.evil_name}</option>}
+                            {s.pair_key && <option value={`${s.pair_key}:-1`}>−1 {s.evil_name}</option>}
+                          </select>
+                        )}
+                        <button type="button" style={btn("primary", true)} disabled={!!rolling} onClick={() => roll(s)}>{rolling === s.key ? "…" : "Roll"}</button>
                       </div>
+                      {isOpen && <Parents stat={s} />}
                     </div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, minWidth: 34, textAlign: "right" }}>{num(s.value)}</div>
-                    {isParent && s.kind !== "derived" && (
-                      <button type="button" style={btn("soft", true)} title="Set by hand (special means)" onClick={() => setInput(s)}>Set</button>
-                    )}
-                    {isParent && s.kind !== "derived" && (
-                      <select style={{ ...input, padding: "4px 6px", fontSize: 12 }} value="" title="An event moves the trait" aria-label="Event"
-                        onChange={e => { const v = e.target.value; if (!v) return; const [k, d] = v.split(":"); adjustTrait(k, Number(d)); }}>
-                        <option value="">Event…</option>
-                        <option value={`${s.key}:1`}>+1 {s.pair_key ? s.good_name : s.name}</option>
-                        <option value={`${s.key}:-1`}>−1 {s.pair_key ? s.good_name : s.name}</option>
-                        {s.pair_key && <option value={`${s.pair_key}:1`}>+1 {s.evil_name}</option>}
-                        {s.pair_key && <option value={`${s.pair_key}:-1`}>−1 {s.evil_name}</option>}
-                      </select>
-                    )}
-                    <button type="button" style={btn("primary", true)} disabled={!!rolling} onClick={() => roll(s)}>{rolling === s.key ? "…" : "Roll"}</button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1126,13 +1168,14 @@ function LevelCostTable({ rows, multiplier }) {
 
 // Every stat on the sheet and how it is figured, in the sheet's groups and order.
 function FormulaTable({ stats }) {
-  const [openGroups, setOpenGroups] = useState(() => Object.fromEntries(GROUPS.map(([g]) => [g, true])));
+  const [openGroups, setOpenGroups] = useState(() => Object.fromEntries(SECTIONS.map(g => [g, true])));
   if (!stats.length) return null;
   return (
     <div>
       <div style={{ ...label, margin: "14px 0 8px" }}>How every number on the sheet is figured</div>
-      {GROUPS.map(([g, title]) => {
-        const rowsOf = stats.filter(s => s.grp === g);
+      {SECTIONS.map(sec => {
+        const g = sec, title = sec;
+        const rowsOf = stats.filter(s => s.section === sec);
         if (!rowsOf.length) return null;
         const open = openGroups[g];
         return (

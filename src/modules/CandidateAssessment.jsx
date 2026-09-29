@@ -484,9 +484,11 @@ export default function CandidateAssessment({ candidateId, token }) {
               fontSize: 15,
             }}
           >
-            You've been invited to complete a short assessment. It's a series of
-            short screens where you rank four statements by how much they sound like you, plus a few quick
-            problem-solving questions.
+            You've been invited to complete our assessment. Plan on about an
+            hour, in three parts: about 15 minutes of quick questions, about 30
+            minutes of short screens where you rank four statements by how much
+            they sound like you, and then a few written questions. You can stop
+            at any point and come back later — your progress is saved.
           </div>
           <div
             style={{
@@ -513,8 +515,8 @@ export default function CandidateAssessment({ candidateId, token }) {
             an honest read on how you naturally think and work. Your best guess
             is fine on any question. Each answer locks in when you tap Next —
             you can't go back to a previous question, so check your pick
-            before moving on. Plan on about an hour. You can refresh the
-            page and pick up where you left off.
+            before moving on. If you close the page, open the same link and
+            you'll pick up where you left off.
           </div>
           <div
             style={{
