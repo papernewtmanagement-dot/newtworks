@@ -25,7 +25,6 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //   rpg_new_character(name, kid, is_npc, card)   makes a character from a card (Human when none is named);
 //                                            the server rolls it from the card's blueprint
 //   rpg_reroll_character(id)                 fresh strengths (household: only before the first roll)
-//   rpg_set_input(id, key, value)            parents set a rolled stat by hand ("special means")
 //   rpg_adjust_trait(id, key, delta)         an event moves a trait (parents): a Spirit pair's growth pulls its other side
 //                                            down as much and cannot pass the root (Connection with God / Fascination with Evil)
 //   rpg_roll(id, stat, difficulty, label)    one d100 roll: result, skill points, level-ups
@@ -252,7 +251,7 @@ function CharacterList({ isParent, kids, onOpen, hrefFor, onError }) {
           </TabLink>
         ))}
       </div>
-      {isParent && rows.length > 0 && <div style={{ fontSize: 12, color: T.slate500, marginTop: 10 }}>Open a character to set strengths by hand, re-roll, or remove it.</div>}
+      {isParent && rows.length > 0 && <div style={{ fontSize: 12, color: T.slate500, marginTop: 10 }}>Open a character to re-roll it, enter an event, or remove it.</div>}
     </div>
   );
 }
@@ -386,13 +385,6 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     load(effDiff);
   };
 
-  const setInput = async (stat) => {
-    const v = window.prompt(`${stat.name}: set the rolled value (now ${stat.base})`, String(stat.base));
-    if (v == null || v === "") return;
-    const { error } = await supabase.rpc("rpg_set_input", { p_character_id: id, p_key: stat.key, p_value: Math.round(Number(v) || 0) });
-    if (error) onError(error.message);
-    load(effDiff);
-  };
   // An event at the table: +1 or -1 on a trait, on either side of a Spirit pair.
   const adjustTrait = async (key, delta) => {
     const { error } = await supabase.rpc("rpg_adjust_trait", { p_character_id: id, p_key: key, p_delta: delta });
@@ -547,9 +539,6 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
                           </div>
                         </div>
                         <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, minWidth: 34, textAlign: "right" }}>{num(s.value)}</div>
-                        {isParent && !calc && (
-                          <button type="button" style={btn("soft", true)} title="Set by hand (special means)" onClick={() => setInput(s)}>Set</button>
-                        )}
                         {isParent && !calc && (
                           <select style={{ ...input, padding: "4px 6px", fontSize: 12 }} value="" title="An event moves the trait" aria-label="Event"
                             onChange={e => { const v = e.target.value; if (!v) return; const [k, d] = v.split(":"); adjustTrait(k, Number(d)); }}>
