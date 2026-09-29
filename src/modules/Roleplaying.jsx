@@ -140,7 +140,7 @@ export default function Roleplaying({ userRole }) {
     (async () => {
       const [k, d] = await Promise.all([
         supabase.from("family_kids").select("id,name,sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
-        supabase.from("rpg_stat_definitions").select("key,name,abbr,grp,kind,trainable,sort_order").eq("agency_id", AGENCY_ID).order("sort_order"),
+        supabase.from("rpg_stat_definitions").select("key,name,abbr,grp,kind,trainable,sort_order,spirit_discipline,energy_cost,energy_type").eq("agency_id", AGENCY_ID).order("sort_order"),
       ]);
       if (!alive) return;
       if (k.error) setErr(k.error.message);
@@ -380,6 +380,12 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     if (error) onError(error.message);
     load(effDiff);
   };
+  // The shop at the table: the game master repairs an item in full, 1 silver a point of life, from the owner's coins (rpg_item_repair).
+  const repairItem = async (it) => {
+    const { error } = await supabase.rpc("rpg_item_repair", { p_item_id: it.id });
+    if (error) onError(error.message);
+    load(effDiff);
+  };
   const deleteItem = async (it) => {
     if (!window.confirm(`Delete ${it.name}?`)) return;
     const { error } = await supabase.rpc("rpg_item_delete", { p_item_id: it.id });
@@ -387,6 +393,13 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     load(effDiff);
   };
 
+  // The burden of sins and bad decisions: +1 or -1 by the game master (rpg_adjust_burden). It raises what Prayer and
+  // Bible Study need and lowers the Boots of the Gospel of Peace evade in a fight; a successful discipline works it off.
+  const adjustBurden = async (delta) => {
+    const { error } = await supabase.rpc("rpg_adjust_burden", { p_character_id: id, p_delta: delta });
+    if (error) onError(error.message);
+    load(effDiff);
+  };
   // An event at the table: +1 or -1 on a trait, on either side of a Spirit pair.
   const adjustTrait = async (key, delta) => {
     const { error } = await supabase.rpc("rpg_adjust_trait", { p_character_id: id, p_key: key, p_delta: delta });
@@ -471,6 +484,17 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
             <button type="button" style={btn("danger", true)} disabled={busy} onClick={() => adjustVitality(1)}>Hurt</button>
             <button type="button" style={btn("soft", true)} disabled={busy} onClick={() => adjustVitality(-1)}>Heal</button>
           </div>
+          {/* The spirit side: the burden (set by the game master) and the Shield of Faith's life, 3 × its value (rpg_shield_state) */}
+          <div style={{ display: "flex", gap: 6, marginTop: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12, color: T.slate600 }}>
+            <span>Burden <b style={{ color: Number(sheet.spiritual_burden) > 0 ? T.red : T.slate900 }}>{num(sheet.spiritual_burden)}</b></span>
+            {isParent && <button type="button" style={btn("soft", true)} disabled={busy} title="Sins and bad decisions weigh on Prayer, Bible Study and the Boots" onClick={() => adjustBurden(1)}>+1</button>}
+            {isParent && <button type="button" style={btn("soft", true)} disabled={busy || Number(sheet.spiritual_burden) <= 0} onClick={() => adjustBurden(-1)}>−1</button>}
+            {sheet.shield && (
+              <span title="Life 3 × Shield of Faith; it takes the strength of every spiritual attack it stops, and Prayer or Bible Study restore it">
+                · Shield of Faith <b style={{ color: sheet.shield.broken ? T.red : T.slate900 }}>{num(sheet.shield.left)} / {num(sheet.shield.life)}</b>{sheet.shield.broken ? " · broken" : ""}
+              </span>
+            )}
+          </div>
         </div>
         <div style={card}>
           <div style={label}>Difficulty for the next roll</div>
@@ -496,6 +520,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
                 {chain.reduce((s, r) => s + (Number(r.points) || 0), 0) > 0 && `+${num(chain.reduce((s, r) => s + (Number(r.points) || 0), 0), 1)} skill points`}
                 {chain.some(r => Number(r.level_after) > Number(r.level_before)) && ` · ${chain[0].stat_name} is now ${Math.max(...chain.map(r => Number(r.level_after)))}`}
                 {chain.some(r => r.grew && Object.keys(r.grew).length > 0) && ` · ${chain.flatMap(r => Object.entries(r.grew || {})).map(([k, v]) => `${(defs.find(d => d.key === k) || {}).name || k} is now ${v}`).join(", ")}`}
+                {chain.some(r => r.discipline && r.discipline.text) && ` · ${chain.map(r => r.discipline?.text).filter(Boolean).join(" ")}`}
               </div>
             </div>
             {last.extra_pending
@@ -585,6 +610,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
                   {!it.equipped && " · not equipped"}
                 </div>
               </div>
+              {isParent && Number(it.life_left) < Number(it.life) && <button type="button" style={btn("soft", true)} title="1 silver a point of life, from the owner's coins" onClick={() => repairItem(it)}>Repair · {num(Number(it.life) - Number(it.life_left))} silver</button>}
               {it.uses_left != null && it.uses_left > 0 && <button type="button" style={btn("soft", true)} onClick={() => useItem(it)}>Use</button>}
               <button type="button" style={btn("soft", true)} onClick={() => toggleItem(it)}>{it.equipped ? "Unequip" : "Equip"}</button>
               <button type="button" style={btn("danger", true)} onClick={() => deleteItem(it)}>✕</button>
@@ -1427,7 +1453,7 @@ function FightView({ id, isParent, defs, onBack, backHref, onError }) {
           <ParticipantRow key={p.id} p={p} i={i} isParent={isParent} ended={ended} busy={busy}
             open={openRow === p.id} onToggle={() => setOpenRow(openRow === p.id ? null : p.id)} run={run}>
             {actor && actor.id === p.id && p.kind === "character" && (
-              <CharacterActions key={p.id} actor={p} parts={parts} s={s} busy={busy} run={run} onEnd={endTurn} last={lastFor(p)} />
+              <CharacterActions key={p.id} actor={p} parts={parts} defs={defs} s={s} busy={busy} run={run} onEnd={endTurn} last={lastFor(p)} />
             )}
             {actor && actor.id === p.id && p.kind === "creature" && (
               <CreatureActions key={p.id} actor={p} parts={parts} defs={defs} s={s} sessionId={id} busy={busy} run={run} onEnd={endTurn} last={lastFor(p)} onPending={setPending} />
@@ -1646,8 +1672,10 @@ function ParticipantRow({ p, i, isParent, ended, busy, open, onToggle, run, chil
 
 // A character's turn. Any check a rule put on them comes first (Frightened → Courage against 8), then one attack;
 // after the attack the controls give way to what happened. Every roll takes a die rolled by hand, or blank for the site's.
-function CharacterActions({ actor, parts, s, busy, run, onEnd, last }) {
+function CharacterActions({ actor, parts, defs, s, busy, run, onEnd, last }) {
   const weapons = Array.isArray(actor.weapons) ? actor.weapons : [];
+  // Prayer and Bible Study in a fight: the turn's action, paid from spiritual energy (rpg_act); the burden raises what they need.
+  const disciplines = (Array.isArray(defs) ? defs : []).filter(d => d.spirit_discipline);
   // A creature at 0 (Dead, or Sunk under its card's revival rule) cannot be attacked; a Sunk one can only be reached
   // by the roll its card names (rpg_session_state -> revival).
   const targets = parts.filter(p => p.id !== actor.id && !p.out);
@@ -1721,6 +1749,14 @@ function CharacterActions({ actor, parts, s, busy, run, onEnd, last }) {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button type="button" style={btn("soft", true)} disabled={busy} onClick={() => act({ p_actor_id: actor.id, p_stat_key: "REST" })}>Rest</button>
           <button type="button" style={btn("soft", true)} disabled={busy} onClick={() => act({ p_actor_id: actor.id, p_stat_key: "DEFEND" })}>Defend</button>
+          {disciplines.map(d => {
+            const ok = Number(actor.energy?.[d.energy_type || "spiritual"]?.left ?? 0) >= (Number(d.energy_cost) || 0);
+            return (
+              <button key={d.key} type="button" style={btn("soft", true)} disabled={busy || badDie || !ok}
+                title={`${d.energy_cost} ${d.energy_type} energy and the turn's action; the burden raises what it needs`}
+                onClick={() => act({ p_actor_id: actor.id, p_stat_key: d.key, p_roll: dv })}>{ok ? d.name : `${d.name} · too tired`}</button>
+            );
+          })}
         </div>
       )}
       {Array.isArray(last) && last.length > 0 && <ResultCard results={last} />}
