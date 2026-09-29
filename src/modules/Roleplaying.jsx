@@ -268,7 +268,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
   const [form, setForm] = useState({});
   const [coins, setCoins] = useState(null);
   const [hurt, setHurt] = useState("1");
-  const [item, setItem] = useState({ name: "", stat_key: "", bonus: "1", uses_left: "" });
+  const [item, setItem] = useState({ card: "", name: "", stat_key: "", bonus: "1", uses_left: "" });
   const [openGroups, setOpenGroups] = useState(() => Object.fromEntries(SECTIONS.map(g => [g, true])));
   const [busy, setBusy] = useState(false);
   const [openStat, setOpenStat] = useState(null);          // the calculated stat whose parents are open
@@ -355,16 +355,18 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     load(effDiff);
   };
 
+  // Every item is made from an Object card (rpg_item_add → rpg_new_character): it rolls its own Toughness, Strength and
+  // Agility, so its life, its Integrity and its weight are its own. The card is required.
   const addItem = async () => {
-    if (!item.name.trim() || busy) return;
+    if (!item.name.trim() || !item.card || busy) return;
     setBusy(true);
     const { error } = await supabase.rpc("rpg_item_add", {
-      p_character_id: id, p_name: item.name.trim(), p_stat_key: item.stat_key || null,
+      p_character_id: id, p_card: item.card, p_name: item.name.trim(), p_stat_key: item.stat_key || null,
       p_bonus: Math.round(Number(item.bonus) || 0), p_uses_left: item.uses_left === "" ? null : Math.max(0, Math.round(Number(item.uses_left) || 0)),
     });
     setBusy(false);
     if (error) onError(error.message);
-    setItem({ name: "", stat_key: "", bonus: "1", uses_left: "" });
+    setItem({ card: "", name: "", stat_key: "", bonus: "1", uses_left: "" });
     load(effDiff);
   };
   const toggleItem = async (it) => {
@@ -569,7 +571,14 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
           {(sheet.items || []).map(it => (
             <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: `1px solid ${T.slate100}` }}>
               <div style={{ flex: 1, minWidth: 0, opacity: it.equipped ? 1 : 0.5 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: T.slate900 }}>{it.name}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: it.broken ? T.red : T.slate900 }}>{it.name}{it.broken ? " · broken" : ""}</div>
+                <div style={{ fontSize: 11, color: T.slate500 }}>
+                  {it.card}{it.worn ? ", worn" : ", held"}
+                  {it.weapon_name && `, swung with ${it.weapon_name}`}
+                  {` · life ${num(it.life_left)}/${num(it.life)}`}
+                  {Number(it.integrity) > 0 && ` · ${it.worn ? "absorbs" : "blocks"} ${num(it.integrity)}`}
+                  {Number(it.weight) > 0 && ` · weight ${num(it.weight)}`}
+                </div>
                 <div style={{ fontSize: 11, color: T.slate500 }}>
                   {it.stat_name ? `${Number(it.bonus) >= 0 ? "+" : ""}${it.bonus} ${it.stat_name}` : "no bonus"}
                   {it.uses_left != null && ` · ${it.uses_left} uses left`}
@@ -582,6 +591,10 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
             </div>
           ))}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 6, marginTop: 10 }}>
+            <select style={input} value={item.card} onChange={e => setItem(i => ({ ...i, card: e.target.value }))} title="What kind of thing it is: its card rolls its Toughness and sets its weight">
+              <option value="">What is it?</option>
+              {(sheet.object_cards || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
             <input style={{ ...input, gridColumn: isPhone ? "1 / -1" : "span 2" }} placeholder="Item name" value={item.name} onChange={e => setItem(i => ({ ...i, name: e.target.value }))} />
             <select style={input} value={item.stat_key} onChange={e => setItem(i => ({ ...i, stat_key: e.target.value }))}>
               <option value="">Boosts…</option>
@@ -589,7 +602,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
             </select>
             <input style={input} inputMode="numeric" placeholder="+" value={item.bonus} onChange={e => setItem(i => ({ ...i, bonus: e.target.value }))} title="Bonus" />
             <input style={input} inputMode="numeric" placeholder="Uses (blank = always)" value={item.uses_left} onChange={e => setItem(i => ({ ...i, uses_left: e.target.value }))} />
-            <button type="button" style={btn("primary")} disabled={busy || !item.name.trim()} onClick={addItem}>Add</button>
+            <button type="button" style={btn("primary")} disabled={busy || !item.name.trim() || !item.card} onClick={addItem}>Add</button>
           </div>
         </div>
         <div style={card}>
