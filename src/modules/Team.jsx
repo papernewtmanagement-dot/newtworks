@@ -520,10 +520,10 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp, userRole
                       {app.res_composite != null && (
                         <span style={{ fontSize:10, fontWeight:700, color:layerColor(Number(app.res_composite), verdictThresh.resume) }}>R {Math.round(Number(app.res_composite))}</span>
                       )}
-                      {app.assessment_composite != null && (
-                        <span style={{ fontSize:10, fontWeight:700, color:layerColor(Number(app.assessment_composite), verdictThresh.assessment) }}>A {Math.round(Number(app.assessment_composite))}</span>
+                      {(app.assessment_composite != null || app.cts_best_fit != null) && (
+                        <span style={{ fontSize:10, fontWeight:700, color:layerColor(app.assessment_composite != null ? Number(app.assessment_composite) : null, verdictThresh.assessment) }}>A {app.assessment_composite != null ? Math.round(Number(app.assessment_composite)) : "—"}{app.cts_best_fit != null && <span title="CTS best-role fit" style={{ color:T.slate500 }}>/{app.cts_best_fit}</span>}</span>
                       )}
-                      {app.res_composite == null && app.assessment_composite == null && (
+                      {app.res_composite == null && app.assessment_composite == null && app.cts_best_fit == null && (
                         <span style={{ fontSize:9, color:T.slate400 }}>—</span>
                       )}
                       {app.protocol_validity_label && app.protocol_validity_label !== "high" && (
@@ -686,7 +686,7 @@ const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidate
                     {app.res_composite != null ? Math.round(Number(app.res_composite)) : "—"}
                   </td>
                   <td style={{ ...tdBase, textAlign: "right", fontWeight: 700, color: layerColor(Number(app.assessment_composite), verdictThresh.assessment) }}>
-                    {app.assessment_composite != null ? Math.round(Number(app.assessment_composite)) : "—"}
+                    {app.assessment_composite != null ? Math.round(Number(app.assessment_composite)) : "—"}{app.cts_best_fit != null && <span title="CTS best-role fit" style={{ color: T.slate500 }}>/{app.cts_best_fit}</span>}
                   </td>
                   <td style={{ ...tdBase, color: T.slate600, minWidth: 200, lineHeight: 1.35 }}>
                     {preview || "—"}
@@ -3202,7 +3202,7 @@ export default function Team({ userRole }) {
       if (!isRetry) { setApplicantsLoading(true); setApplicantsError(false); }
       const { data, error } = await supabase
         .from("hiring_candidates")
-        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, assertiveness, compassion, resume_document_id, resume_url, reliability, cached_assessment_composite, cached_protocol_validity_v, cached_protocol_validity_label")
+        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, assertiveness, compassion, resume_document_id, resume_url, reliability, cached_assessment_composite, cached_protocol_validity_v, cached_protocol_validity_label, cts_best_fit")
         .eq("agency_id", AGENCY_ID)
         .in("status", PIPELINE_STATUSES)
         .order("created_at", { ascending: false });
