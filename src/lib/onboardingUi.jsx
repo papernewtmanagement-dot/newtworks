@@ -14,6 +14,7 @@ import { useState, createContext, useContext } from "react";
 import { T, BAND } from "./theme.js";
 import { supabase } from "./supabase.js";
 import InfoDot from "../components/InfoDot.jsx";
+import { mdToHtml } from "./markdown.js";
 import TeamForms from "../components/TeamForms.jsx";
 
 // A link to a site form opens that form in a pop-up over the page instead of
@@ -216,6 +217,25 @@ export function substepsToText(substeps) {
 }
 // Inverse of substepsToText. Keeps the flat shape when no headings were
 // used so a plain list never silently turns into a one-group object.
+// A tick is stored as the line's text, so two lines with the same words
+// (the same x1 role play under Tuesday and Wednesday) would tick together.
+// Each repeat gets an invisible zero-width space added until it is unique.
+const ZWSP = "\u200b";
+function uniqueLabels(groups) {
+  const seen = new Set();
+  groups.forEach(g => {
+    g.items = g.items.map(it => {
+      let lbl = it;
+      while (seen.has(lbl)) lbl += ZWSP;
+      seen.add(lbl);
+      if (lbl !== it && g.item_info && g.item_info[it]) {
+        g.item_info = { ...g.item_info, [lbl]: g.item_info[it] };
+      }
+      return lbl;
+    });
+  });
+}
+
 export function textToSubsteps(text) {
   const lines = String(text || "").split("\n").map(l => l.replace(/\s+$/, ""));
   const groups = [];
@@ -271,6 +291,7 @@ export function textToSubsteps(text) {
   });
   const kept = groups.filter(g => g.items.length || g.fill || (g.info && g.info.length));
   if (!kept.length) return null;
+  uniqueLabels(kept);
   if (!sawHeading) return kept[0].items;
   return kept;
 }
@@ -529,6 +550,41 @@ export function ItemInfo({ lines = [], children, pathColor, linkColor }) {
           onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }} />
       </div>
       {open && <InfoBox lines={lines} pathColor={pathColor} linkColor={linkColor} />}
+    </div>
+  );
+}
+
+// A pop-up of written instructions or background (an onboarding_instructions
+// row), opened from the (i) next to a card title or a sub-item.
+export function InstructionsModal({ item, onClose }) {
+  if (!item) return null;
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 16, zIndex: 1000, boxSizing: "border-box",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: T.white, borderRadius: 12, padding: "18px 20px",
+          width: "100%", maxWidth: 640, maxHeight: "85vh",
+          overflowY: "auto", overflowX: "hidden", boxSizing: "border-box",
+          boxShadow: "0 20px 50px rgba(0,0,0,0.25)", ...wrapLongText,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{item.title}</div>
+          <Button variant="secondary" onClick={onClose}>Close</Button>
+        </div>
+        <div
+          style={{ fontSize: 13, color: T.slate700, lineHeight: 1.55 }}
+          dangerouslySetInnerHTML={{ __html: mdToHtml(item.body_md || "") }}
+        />
+      </div>
     </div>
   );
 }

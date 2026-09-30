@@ -26,12 +26,11 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { TabLink, useTabParam, hrefWithParams } from "../lib/routing.jsx";
 import { useViewport } from "../lib/hooks.js";
-import { mdToHtml } from "../lib/markdown.js";
 import InfoDot from "../components/InfoDot.jsx";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
-  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo, asksForReply,
+  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo, asksForReply, InstructionsModal,
   splitIndent, columnStyle, bannerStyle, fmtDate, setStepDone, setSubstepDone, ORIENTATION_KIND,
   isNewCurriculum, newCurriculumCard,
 } from "../lib/onboardingUi.jsx";
@@ -183,40 +182,6 @@ function progress(steps) {
 }
 
 // ─── plan detail (steps by phase/category) ───────────────
-// ─── pop-up instructions for a sub-item ─────────────
-function InstructionsModal({ item, onClose }) {
-  if (!item) return null;
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        padding: 16, zIndex: 1000, boxSizing: "border-box",
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: T.white, borderRadius: 12, padding: "18px 20px",
-          width: "100%", maxWidth: 640, maxHeight: "85vh",
-          overflowY: "auto", overflowX: "hidden", boxSizing: "border-box",
-          boxShadow: "0 20px 50px rgba(0,0,0,0.25)", ...wrapLongText,
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{item.title}</div>
-          <Button variant="secondary" onClick={onClose}>Close</Button>
-        </div>
-        <div
-          style={{ fontSize: 13, color: T.slate700, lineHeight: 1.55 }}
-          dangerouslySetInnerHTML={{ __html: mdToHtml(item.body_md || "") }}
-        />
-      </div>
-    </div>
-  );
-}
-
 function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleStep, onToggleSubstep, onUpdateStepNotes, onDeletePlan, onChangeStatus, isAdmin, isOwner = false, userId = null, onReload = null, phaseMeta, ownerName, instructions = {}, icons = {}, showBack = true }) {
   const [expandedStep, setExpandedStep] = useState(null);
   // The orientation pop-up that is open (owner only): its instructions row.

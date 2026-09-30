@@ -22,7 +22,7 @@ import { useViewport } from "../lib/hooks.js";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, CATEGORY_KEYS, STAGE_LABELS,
-  subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText, GroupHead, ItemInfo,
+  subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText, GroupHead, ItemInfo, InstructionsModal,
   splitIndent, columnStyle, bannerStyle, weeksLabel, ORIENTATION_KIND,
   isNewCurriculum, newCurriculumCard,
 } from "../lib/onboardingUi.jsx";
@@ -696,6 +696,8 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
   const [editingPhase, setEditingPhase] = useState(null);
   // The orientation pop-up that is open (owner only): its instructions row.
   const [orientationRow, setOrientationRow] = useState(null);
+  // Any other pop-up that is open: its instructions row.
+  const [openInstr, setOpenInstr] = useState(null);
 
   // First week number of each major card (same database rule plans use).
   const [firstWeeks, setFirstWeeks] = useState({});
@@ -895,6 +897,11 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
                 style={{ color: T.slate900, textDecoration: "none", fontWeight: 600 }}
               >{r.title}</TabLink>
             ) : r.title}
+            {instructions[r.title] && instructions[r.title].kind !== ORIENTATION_KIND && (
+              <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>
+                <InfoDot title="Instructions" onClick={() => setOpenInstr(instructions[r.title])} />
+              </span>
+            )}
             {!r.is_required && (
               <span style={{ marginLeft: 8, fontSize: 10, color: T.slate400, fontWeight: 500 }}>optional</span>
             )}
@@ -953,6 +960,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
                 const { level, text: shown2 } = splitIndent(label2);
                 // The Orientation line: its (i) opens the orientation pop-up (owner only).
                 const orient = instructions[shown2]?.kind === ORIENTATION_KIND ? instructions[shown2] : null;
+                const instr2 = instructions[shown2] && !orient ? instructions[shown2] : null;
                 return (
                   <li key={ix} style={{ fontSize: 12, color: T.slate700, lineHeight: 1.4, marginLeft: level * 16 }}>
                     <ItemInfo lines={g.itemInfo[label2] || []} pathColor={T.teal} linkColor={T.blue}>
@@ -960,6 +968,11 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
                       {orient && isOwner && (
                         <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>
                           <InfoDot title="Open orientation" onClick={() => setOrientationRow(orient)} />
+                        </span>
+                      )}
+                      {instr2 && (
+                        <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>
+                          <InfoDot title="Instructions" onClick={() => setOpenInstr(instr2)} />
                         </span>
                       )}
                     </ItemInfo>
@@ -1146,6 +1159,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
         />
       )}
 
+      <InstructionsModal item={openInstr} onClose={() => setOpenInstr(null)} />
       {orientationRow && (
         <OrientationPopup
           instruction={orientationRow}
