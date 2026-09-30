@@ -484,11 +484,11 @@ export default function CandidateAssessment({ candidateId, token }) {
               fontSize: 15,
             }}
           >
-            You've been invited to complete our assessment. Plan on about an
-            hour, in three parts: about 15 minutes of quick questions, about 30
-            minutes of short screens where you rank four statements by how much
-            they sound like you, and then a few written questions. You can stop
-            at any point and come back later — your progress is saved.
+            You've been invited to complete our assessment. Plan on about 50
+            minutes, in three parts: about 10 minutes of quick questions, about
+            30 minutes of short screens where you rank four statements by how
+            much they sound like you, and then a few written questions. You can
+            stop at any point and come back later — your progress is saved.
           </div>
           <div
             style={{
