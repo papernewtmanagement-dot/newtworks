@@ -64,7 +64,9 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 
 const PARENT_ROLES = ["owner", "admin"];
 const TABS = ["characters", "creatures", "rules", "play"];
-const TAB_LABELS = { characters: "Characters", creatures: "Creatures", rules: "Rules", play: "Play" };
+// The game master also gets Objects: the object cards and everything made from them (rpg_object_list).
+const GM_TABS = ["characters", "creatures", "objects", "rules", "play"];
+const TAB_LABELS = { characters: "Characters", creatures: "Creatures", objects: "Objects", rules: "Rules", play: "Play" };
 // The sheet has five sections, in this order (Peter 2026-09-28): the rolled traits in Spirit, Mind and Body, the
 // numbers figured only from them in Derived, and every skill, ability and armor piece together in Skills. Each stat
 // carries its section from rpg_sheet (rpg_section), so the page never sorts stats by group itself. The hidden basics
@@ -127,7 +129,8 @@ export default function Roleplaying({ userRole }) {
   const isParent = PARENT_ROLES.includes(userRole);
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
-  const [tab, setTab, tabHref] = useTabParam("tab", "characters", TABS);
+  const tabs = isParent ? GM_TABS : TABS;
+  const [tab, setTab, tabHref] = useTabParam("tab", "characters", tabs);
   const [characterId, setCharacterId, characterHref] = useTabParam("character", null);
   const [creatureId, setCreatureId, creatureHref] = useTabParam("creature", null);
   const [fightId, setFightId, fightHref] = useTabParam("fight", null);
@@ -151,15 +154,15 @@ export default function Roleplaying({ userRole }) {
     return () => { alive = false; };
   }, []);
 
-  const activeTab = TABS.includes(tab) ? tab : "characters";
+  const activeTab = tabs.includes(tab) ? tab : "characters";
 
   return (
     <div style={{ padding: _pad, maxWidth: 980, margin: "0 auto", boxSizing: "border-box" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900 }}>Roleplaying</div>
-        {TABS.length > 1 && (
+        {tabs.length > 1 && (
           <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap" }}>
-            {TABS.map(t => (
+            {tabs.map(t => (
               <TabLink key={t} href={tabHref(t)} onSelect={() => setTab(t)}
                 style={{ ...btn(activeTab === t ? "primary" : "soft", true), flexShrink: 0 }}>{TAB_LABELS[t]}</TabLink>
             ))}
@@ -178,6 +181,7 @@ export default function Roleplaying({ userRole }) {
           ? <CreatureCard id={creatureId} onBack={() => setCreatureId(null)} backHref={creatureHref(null)} onError={setErr} />
           : <CreatureList isParent={isParent} onOpen={setCreatureId} hrefFor={creatureHref} onError={setErr} />
       )}
+      {activeTab === "objects" && isParent && <ObjectsTab onError={setErr} />}
       {activeTab === "rules" && <RulesTab onError={setErr} />}
       {activeTab === "play" && (fightId
         ? <FightView id={fightId} isParent={isParent} defs={defs} onBack={() => setFightId(null)} backHref={fightHref(null)} onError={setErr} />
@@ -723,6 +727,76 @@ function CreatureList({ isParent, onOpen, hrefFor, onError }) {
         ))}
       </div>
       {isParent && rows.length > 0 && <div style={{ fontSize: 12, color: T.slate500, marginTop: 10 }}>Players only see a creature after you open it and tap Show to players.</div>}
+    </div>
+  );
+}
+
+// ── Objects (game master) ────────────────────────────────────────────────────
+// Every object card with how one is made from it (the same recipe chips the creature cards use), the actions it
+// carries (rpg_action_text's line), and every item made from it: who holds it, life, uses (rpg_object_list, which
+// reads each item through rpg_item_row, the row the sheet shows). Repair is the sheet's rpg_item_repair.
+function ObjectsTab({ onError }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const pull = useCallback(async () => {
+    const { data, error } = await supabase.rpc("rpg_object_list");
+    if (error) onError(error.message);
+    setRows(Array.isArray(data) ? data : []);
+    setLoading(false);
+  }, [onError]);
+  useEffect(() => { pull(); }, [pull]);
+  const repair = async (it) => {
+    if (busy) return;
+    setBusy(true);
+    const { error } = await supabase.rpc("rpg_item_repair", { p_item_id: it.id });
+    setBusy(false);
+    if (error) { onError(error.message); return; }
+    pull();
+  };
+  if (loading) return <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div>;
+  const chip = { fontSize: 12, color: T.slate800, background: T.slate100, border: `1px solid ${T.slate200}`, borderRadius: 999, padding: "3px 10px", boxSizing: "border-box" };
+  return (
+    <div>
+      <div style={{ ...label, marginBottom: 10 }}>Objects</div>
+      <div style={{ display: "grid", gap: 10 }}>
+        {rows.map(c => {
+          const entries = Array.isArray(c.template?.entries) ? c.template.entries : [];
+          const actions = Array.isArray(c.actions) ? c.actions : [];
+          const items = Array.isArray(c.items) ? c.items : [];
+          return (
+            <div key={c.id} style={{ ...card, borderLeft: `4px solid ${c.color || T.slate400}` }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ fontWeight: 700, fontSize: 15, color: T.slate900 }}>{c.name}</div>
+                <span style={{ fontSize: 12, color: T.slate500 }}>{c.worn ? "worn" : "held"}{c.weapon_name ? ` · swung with ${c.weapon_name}` : ""}</span>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                {entries.map(e => <span key={e.key} style={chip}>{e.name} {chipText(e)}</span>)}
+              </div>
+              {actions.map(a => (
+                <div key={a.id} style={{ fontSize: 12, color: T.slate600, marginTop: 6 }}><b style={{ color: T.slate800 }}>{a.name}.</b> {a.line}</div>
+              ))}
+              {items.length === 0
+                ? <div style={{ fontSize: 12, color: T.slate500, marginTop: 8 }}>Nothing made from it yet.</div>
+                : items.map(it => (
+                  <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderTop: `1px solid ${T.slate100}`, marginTop: 6 }}>
+                    <div style={{ flex: 1, minWidth: 0, opacity: it.equipped ? 1 : 0.5 }}>
+                      <div style={{ fontSize: 13, color: it.broken ? T.red : T.slate900 }}><b>{it.name}</b> · {it.owner}{it.broken ? " · broken" : ""}</div>
+                      <div style={{ fontSize: 11, color: T.slate500 }}>
+                        life {num(it.life_left)}/{num(it.life)}
+                        {Number(it.integrity) > 0 && ` · ${it.worn ? "absorbs" : "blocks"} ${num(it.integrity)}`}
+                        {it.stat_name ? ` · ${Number(it.bonus) >= 0 ? "+" : ""}${it.bonus} ${it.stat_name}` : ""}
+                        {it.uses_left != null && ` · ${it.uses_left} uses left`}
+                        {!it.equipped && " · not equipped"}
+                      </div>
+                    </div>
+                    {Number(it.life_left) < Number(it.life) && <button type="button" style={btn("soft", true)} disabled={busy} title="1 silver a point of life, from the owner's coins" onClick={() => repair(it)}>Repair · {num(Number(it.life) - Number(it.life_left))} silver</button>}
+                  </div>
+                ))}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1470,8 +1544,8 @@ function FightView({ id, isParent, defs, onBack, backHref, onError }) {
 // corner), green when forest, orange while burning (a glyph in the corner), everyone on their square. On the turn of
 // someone you act for, the squares they can still reach this turn are ringed, with the ticks each costs; tap one to
 // move there (rpg_act_square). A card action aimed at a square (Briar Shift, a Torch's Light the ground) waits here
-// for its square. The game master places fighters, paints penalties, forest and fire (rpg_set_square, rpg_set_ground)
-// and sets the board's size.
+// for its square. The game master places fighters, paints penalties, forest and fire (rpg_set_square) and sets the
+// board's size.
 function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }) {
   const s = st?.session || {};
   const w = Number(s.grid_w) || 12;
@@ -1503,8 +1577,8 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
     if (isParent && mode === "place") { if (pick) run("rpg_place", { p_participant_id: pick, p_x: x, p_y: y }); return; }
     if (isParent && mode === "ground") {
       const g = ground(`${x},${y}`);
-      if (brush === "forest") run("rpg_set_ground", { p_session_id: s.id, p_x: x, p_y: y, p_forest: !g.forest });
-      else if (brush === "fire") run("rpg_set_ground", { p_session_id: s.id, p_x: x, p_y: y, p_burning: !g.burning });
+      if (brush === "forest") run("rpg_set_square", { p_session_id: s.id, p_x: x, p_y: y, p_forest: !g.forest });
+      else if (brush === "fire") run("rpg_set_square", { p_session_id: s.id, p_x: x, p_y: y, p_burning: !g.burning });
       else run("rpg_set_square", { p_session_id: s.id, p_x: x, p_y: y, p_penalty: pen });
       return;
     }
