@@ -1453,7 +1453,7 @@ function FightView({ id, isParent, defs, onBack, backHref, onError }) {
           <ParticipantRow key={p.id} p={p} i={i} isParent={isParent} ended={ended} busy={busy}
             open={openRow === p.id} onToggle={() => setOpenRow(openRow === p.id ? null : p.id)} run={run}>
             {actor && actor.id === p.id && p.kind === "character" && (
-              <CharacterActions key={p.id} actor={p} parts={parts} defs={defs} s={s} busy={busy} run={run} onEnd={endTurn} last={lastFor(p)} />
+              <CharacterActions key={p.id} actor={p} parts={parts} defs={defs} s={s} busy={busy} run={run} onEnd={endTurn} last={lastFor(p)} onPending={setPending} />
             )}
             {actor && actor.id === p.id && p.kind === "creature" && (
               <CreatureActions key={p.id} actor={p} parts={parts} defs={defs} s={s} sessionId={id} busy={busy} run={run} onEnd={endTurn} last={lastFor(p)} onPending={setPending} />
@@ -1467,10 +1467,11 @@ function FightView({ id, isParent, defs, onBack, backHref, onError }) {
   );
 }
 // The fight board, built from rpg_session_state: squares shaded by their movement penalty (the number sits in the
-// corner), everyone on their square. On the turn of someone you act for, the squares they can still reach this turn
-// are ringed, with the beats each costs; tap one to move there (rpg_act_square). A card action aimed at a square
-// (Briar Shift) waits here for its square. The game master places fighters, paints movement penalties and sets the
-// board's size.
+// corner), green when forest, orange while burning (a glyph in the corner), everyone on their square. On the turn of
+// someone you act for, the squares they can still reach this turn are ringed, with the ticks each costs; tap one to
+// move there (rpg_act_square). A card action aimed at a square (Briar Shift, a Torch's Light the ground) waits here
+// for its square. The game master places fighters, paints penalties, forest and fire (rpg_set_square, rpg_set_ground)
+// and sets the board's size.
 function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }) {
   const s = st?.session || {};
   const w = Number(s.grid_w) || 12;
@@ -1481,12 +1482,14 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
   const [mode, setMode] = useState("move");
   const [who, setWho] = useState("");
   const [pen, setPen] = useState(2);
+  const [brush, setBrush] = useState("penalty");
   const [size, setSize] = useState(null);
   const placed = parts.filter(p => p.pos_x != null);
   if (ended || (!isParent && placed.length === 0)) return null;
   const sq = (x, y) => `${String.fromCharCode(64 + x)}${y}`;
   const at = {};
   placed.forEach(p => { at[`${p.pos_x},${p.pos_y}`] = p; });
+  const ground = (k) => (terrain[k] && typeof terrain[k] === "object" ? terrain[k] : {});
   const moveAt = {};
   if (actor && !pending && mode === "move") moves.forEach(m => { moveAt[`${m.x},${m.y}`] = m; });
   const pick = parts.some(p => p.id === who) ? who : ((parts.find(p => p.pos_x == null) || parts[0])?.id || "");
@@ -1498,7 +1501,13 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
       return;
     }
     if (isParent && mode === "place") { if (pick) run("rpg_place", { p_participant_id: pick, p_x: x, p_y: y }); return; }
-    if (isParent && mode === "ground") { run("rpg_set_square", { p_session_id: s.id, p_x: x, p_y: y, p_penalty: pen }); return; }
+    if (isParent && mode === "ground") {
+      const g = ground(`${x},${y}`);
+      if (brush === "forest") run("rpg_set_ground", { p_session_id: s.id, p_x: x, p_y: y, p_forest: !g.forest });
+      else if (brush === "fire") run("rpg_set_ground", { p_session_id: s.id, p_x: x, p_y: y, p_burning: !g.burning });
+      else run("rpg_set_square", { p_session_id: s.id, p_x: x, p_y: y, p_penalty: pen });
+      return;
+    }
     if (moveAt[`${x},${y}`]) run("rpg_act_square", { p_actor_id: actor.id, p_x: x, p_y: y }, actor.id);
   };
   const axis = { fontSize: 10, color: T.slate500, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" };
@@ -1510,16 +1519,20 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
       const k = `${x},${y}`;
       const p = at[k];
       const m = moveAt[k];
-      const n = Number(terrain[k]) || 0;
-      const title = `${sq(x, y)}${n ? ` · movement penalty ${n}` : ""}${p ? ` · ${p.name}${p.out ? ` (${p.out})` : ""}` : ""}${m ? ` · costs ${m.cost}, ${m.ticks} ticks` : ""}`;
+      const g = ground(k);
+      const n = Number(g.p) || 0;
+      const forest = !!g.forest;
+      const fire = !!g.burning;
+      const title = `${sq(x, y)}${n ? ` · movement penalty ${n}` : ""}${forest ? " · forest" : ""}${fire ? ` · burning (${s.burn_cost} more to step into)` : ""}${p ? ` · ${p.name}${p.out ? ` (${p.out})` : ""}` : ""}${m ? ` · costs ${m.cost}, ${m.ticks} ticks` : ""}`;
       const live = pending || (isParent && mode !== "move") || m;
       cells.push(
         <button key={k} type="button" title={title} onClick={() => click(x, y)}
           style={{ aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, position: "relative", borderRadius: 3, fontFamily: "inherit",
                    border: m ? `2px solid ${T.blue}` : `1px solid ${T.slate200}`, cursor: live ? "pointer" : "default",
-                   background: n > 0 ? `hsl(75, 28%, ${92 - n * 6}%)` : T.slate50,
+                   background: fire ? `hsl(24, 90%, ${86 - n * 4}%)` : forest ? `hsl(130, 32%, ${88 - n * 5}%)` : n > 0 ? `hsl(75, 28%, ${92 - n * 6}%)` : T.slate50,
                    display: "flex", alignItems: "center", justifyContent: "center" }}>
           {n > 0 && <span style={{ position: "absolute", top: 0, left: 2, fontSize: 8, lineHeight: 1.2, color: n >= 6 ? T.white : T.slate600 }}>{n}</span>}
+          {(fire || forest) && <span style={{ position: "absolute", top: 0, right: 1, fontSize: 8, lineHeight: 1.2 }}>{fire ? "🔥" : "🌲"}</span>}
           {p ? (
             <span style={{ width: "76%", height: "76%", borderRadius: "50%", background: p.color || T.slate400, opacity: p.out ? 0.35 : 1,
                            color: T.white, fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
@@ -1565,8 +1578,10 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
             <>
               <span style={{ fontSize: 12, color: T.slate600 }}>Movement penalty</span>
               {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(v => (
-                <button key={v} type="button" style={{ ...btn(pen === v ? "primary" : "soft", true), minWidth: 30 }} onClick={() => setPen(v)}>{v}</button>
+                <button key={v} type="button" style={{ ...btn(brush === "penalty" && pen === v ? "primary" : "soft", true), minWidth: 30 }} onClick={() => { setBrush("penalty"); setPen(v); }}>{v}</button>
               ))}
+              <button type="button" style={btn(brush === "forest" ? "primary" : "soft", true)} title="Tap a square to make it forest, or plain again" onClick={() => setBrush("forest")}>🌲 Forest</button>
+              <button type="button" style={btn(brush === "fire" ? "primary" : "soft", true)} title={`Tap a square to set it alight for ${s.burn_rounds} rounds, or to put it out`} onClick={() => setBrush("fire")}>🔥 Fire</button>
               <span style={{ fontSize: 12, color: T.slate600 }}>Size</span>
               <input style={{ ...input, width: 48, textAlign: "center" }} inputMode="numeric" value={sw.w} onChange={e => setSize({ ...sw, w: e.target.value })} />
               <span style={{ fontSize: 12, color: T.slate600 }}>×</span>
@@ -1672,8 +1687,10 @@ function ParticipantRow({ p, i, isParent, ended, busy, open, onToggle, run, chil
 
 // A character's turn. Any check a rule put on them comes first (Frightened → Courage against 8), then one attack;
 // after the attack the controls give way to what happened. Every roll takes a die rolled by hand, or blank for the site's.
-function CharacterActions({ actor, parts, defs, s, busy, run, onEnd, last }) {
+function CharacterActions({ actor, parts, defs, s, busy, run, onEnd, last, onPending }) {
   const weapons = Array.isArray(actor.weapons) ? actor.weapons : [];
+  // Actions lent by things held in the hand (rpg_session_state -> actions): a Torch's Light the ground is aimed at a square on the board.
+  const itemActions = (Array.isArray(actor.actions) ? actor.actions : []).filter(a => a.square);
   // Prayer and Bible Study in a fight: the turn's action, paid from spiritual energy (rpg_act); the burden raises what they need.
   const disciplines = (Array.isArray(defs) ? defs : []).filter(d => d.spirit_discipline);
   // A creature at 0 (Dead, or Sunk under its card's revival rule) cannot be attacked; a Sunk one can only be reached
@@ -1757,6 +1774,10 @@ function CharacterActions({ actor, parts, defs, s, busy, run, onEnd, last }) {
                 onClick={() => act({ p_actor_id: actor.id, p_stat_key: d.key, p_roll: dv })}>{ok ? d.name : `${d.name} · too tired`}</button>
             );
           })}
+          {itemActions.map(a => (
+            <button key={a.id} type="button" style={btn("soft", true)} disabled={busy} title={a.line || ""}
+              onClick={() => onPending({ actorId: actor.id, actionId: a.id, name: `${a.name} (${a.item})` })}>{a.name} · {a.item}</button>
+          ))}
         </div>
       )}
       {Array.isArray(last) && last.length > 0 && <ResultCard results={last} />}
