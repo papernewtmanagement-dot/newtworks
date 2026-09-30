@@ -616,8 +616,8 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                     // The Orientation line: only the owner ticks it, from its pop-up or here.
                                     const isOrientationLine = instr?.kind === ORIENTATION_KIND;
                                     const lineLocked = isOrientationLine && !isOwner;
-                                    // A line that asks for a reply opens a box when ticked; once
-                                    // ticked, the card shows the reply in place of the question.
+                                    // A training video line asks for one takeaway when ticked; once
+                                    // ticked, the card shows the reply under the line.
                                     const wantsReply = asksForReply(label);
                                     const reply = wantsReply && sd ? (step.substep_answers || {})[label] : null;
                                     return (
@@ -647,11 +647,14 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                         <span style={{
                                           fontSize: 12, lineHeight: 1.4,
                                           color: sd ? T.slate400 : T.slate700,
-                                          textDecoration: sd && !reply ? "line-through" : "none",
-                                          ...(reply ? { color: T.slate700, fontStyle: "italic", whiteSpace: "pre-wrap" } : {}),
-                                        }}>{reply
-                                          ? reply
-                                          : <LabelText text={shown} icon={icon} pathColor={sd ? T.slate400 : T.teal} linkColor={T.blue} />}</span>
+                                          textDecoration: sd ? "line-through" : "none",
+                                        }}><LabelText text={shown} icon={icon} pathColor={sd ? T.slate400 : T.teal} linkColor={T.blue} />
+                                          {reply && (
+                                            <span style={{
+                                              display: "block", marginTop: 2, color: T.slate700, fontStyle: "italic",
+                                              textDecoration: "none", whiteSpace: "pre-wrap",
+                                            }}>{reply}</span>
+                                          )}</span>
                                       </button>
                                       {instr && !isOrientationLine && (
                                         <InfoDot title="Instructions" onClick={() => setOpenInstr(instr)} />

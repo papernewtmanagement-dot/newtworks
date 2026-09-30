@@ -92,11 +92,11 @@ export async function setSubstepDone(step, label, done, userId, answer = null) {
   return supabase.from("team_onboarding_steps").update(patch).eq("id", step.id);
 }
 
-// A sub-item that asks the new hire to type a reply before it ticks
-// ("What's one takeaway?"). The one place that decides which lines do.
+// A training line that asks "What's one takeaway?" when it is ticked: any
+// line that links to a video. The one place that decides which lines do.
+export const REPLY_QUESTION = "What's one takeaway?";
 export function asksForReply(label) {
-  const t = splitIndent(label).text.replace(/[\u2018\u2019]/g, "'").toLowerCase();
-  return t === "what's one takeaway?" || t === "what's one takeaway";
+  return /\]\(\s*(https?:\/\/)?([a-z0-9-]+\.)*(youtube\.com|youtu\.be|vimeo\.com|loom\.com)\//i.test(String(label || ""));
 }
 
 // ─── orientation ────────────────────────────────────
