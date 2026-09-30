@@ -488,16 +488,18 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
             <button type="button" style={btn("danger", true)} disabled={busy} onClick={() => adjustVitality(1)}>Hurt</button>
             <button type="button" style={btn("soft", true)} disabled={busy} onClick={() => adjustVitality(-1)}>Heal</button>
           </div>
-          {/* The spirit side: the burden (set by the game master) and the Shield of Faith's life, 3 × its value (rpg_shield_state) */}
+          {/* The spirit side: the burden (set by the game master) and the armor of God pieces that wear, each with a life of
+              3 × its value (rpg_sheet -> armor, from rpg_armor_state): the Shield of Faith blocks spiritual attacks, the
+              Breastplate absorbs attacks on the heart, the Helmet attacks on the mind; Prayer or Bible Study restore them. */}
           <div style={{ display: "flex", gap: 6, marginTop: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12, color: T.slate600 }}>
             <span>Burden <b style={{ color: Number(sheet.spiritual_burden) > 0 ? T.red : T.slate900 }}>{num(sheet.spiritual_burden)}</b></span>
             {isParent && <button type="button" style={btn("soft", true)} disabled={busy} title="Sins and bad decisions weigh on Prayer, Bible Study and the Boots" onClick={() => adjustBurden(1)}>+1</button>}
             {isParent && <button type="button" style={btn("soft", true)} disabled={busy || Number(sheet.spiritual_burden) <= 0} onClick={() => adjustBurden(-1)}>−1</button>}
-            {sheet.shield && (
-              <span title="Life 3 × Shield of Faith; it takes the strength of every spiritual attack it stops, and Prayer or Bible Study restore it">
-                · Shield of Faith <b style={{ color: sheet.shield.broken ? T.red : T.slate900 }}>{num(sheet.shield.left)} / {num(sheet.shield.life)}</b>{sheet.shield.broken ? " · broken" : ""}
+            {(Array.isArray(sheet.armor) ? sheet.armor : []).map(a => (
+              <span key={a.key} title={`Life 3 × ${a.name}; ${a.guards === "block" ? "it blocks spiritual attacks and takes the strength of each one it stops" : `it absorbs an attack on the ${a.guards} up to its value, and only what is left lands`}; Prayer or Bible Study restore it`}>
+                · {a.name} <b style={{ color: a.broken ? T.red : T.slate900 }}>{num(a.left)} / {num(a.life)}</b>{a.broken ? " · broken" : ""}
               </span>
-            )}
+            ))}
           </div>
         </div>
         <div style={card}>
