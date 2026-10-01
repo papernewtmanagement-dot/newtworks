@@ -569,6 +569,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
                             {Number(s.item_bonus) !== 0 && ` · items +${num(s.item_bonus)}`}
                             {Number(s.earned_levels) > 0 && ` · trained +${num(s.earned_levels)}`}
                             {s.trainable && Number(s.next_level_cost) > 0 && ` · ${num(s.skill_points)}/${num(s.next_level_cost)} pts`}
+                            {s.bulk && Number(s.bulk.over) > 0 && <span style={{ color: T.amber }} title={`${s.bulk.item} has bulk ${num(s.bulk.bulk)}; you handle ${num(s.bulk.handling)} (its basics plus (Strength + Agility) ÷ 10). Each point over takes 1 off the skill for the swing and makes it slower.`}>{` · ${s.bulk.item}: bulk ${num(s.bulk.over)} over, rolls as ${num(Math.max(Number(s.value) - Number(s.bulk.over), 0))}`}</span>}
                           </div>
                         </div>
                         <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, minWidth: 34, textAlign: "right" }}>{num(s.value)}</div>
@@ -609,6 +610,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
                   {` · life ${num(it.life_left)}/${num(it.life)}`}
                   {Number(it.integrity) > 0 && ` · ${it.worn ? "absorbs" : "blocks"} ${num(it.integrity)}`}
                   {Number(it.weight) > 0 && ` · weight ${num(it.weight)}`}
+                  {Number(it.bulk) > 0 && ` · bulk ${num(it.bulk)}`}
                 </div>
                 <div style={{ fontSize: 11, color: T.slate500 }}>
                   {it.stat_name ? `${Number(it.bonus) >= 0 ? "+" : ""}${it.bonus} ${it.stat_name}` : "no bonus"}
@@ -1814,7 +1816,7 @@ function CharacterActions({ actor, parts, defs, s, busy, run, onEnd, last, onPen
           <div>
             <div style={small}>Weapon</div>
             <select style={{ ...input, marginTop: 4 }} value={w} onChange={e => setWeapon(e.target.value)}>
-              {weapons.map(x => <option key={x.key} value={x.key}>{x.name} {num(x.value)} · {x.ticks} ticks · {x.energy_cost} {x.energy_type}</option>)}
+              {weapons.map(x => <option key={x.key} value={x.key}>{x.name} {num(x.value)}{x.bulk && Number(x.bulk.over) > 0 ? ` (bulk ${num(x.bulk.over)} over: rolls as ${num(Math.max(Number(x.value) - Number(x.bulk.over), 0))})` : ""} · {x.ticks} ticks · {x.energy_cost} {x.energy_type}</option>)}
             </select>
           </div>
           <div>
