@@ -94,10 +94,11 @@ export async function setSubstepDone(step, label, done, userId, answer = null) {
 }
 
 // A training line that asks "What's one takeaway?" when it is ticked: any
-// line that links to a video. The one place that decides which lines do.
+// line that links to a video (the video sites, plus the training videos on
+// insuranceagencytraining.org/tools). The one place that decides which lines do.
 export const REPLY_QUESTION = "What's one takeaway?";
 export function asksForReply(label) {
-  return /\]\(\s*(https?:\/\/)?([a-z0-9-]+\.)*(youtube\.com|youtu\.be|vimeo\.com|loom\.com)\//i.test(String(label || ""));
+  return /\]\(\s*(https?:\/\/)?([a-z0-9-]+\.)*(youtube\.com|youtu\.be|vimeo\.com|loom\.com|insuranceagencytraining\.org\/tools)\//i.test(String(label || ""));
 }
 
 // ─── orientation ────────────────────────────────────
