@@ -70,7 +70,9 @@ const TAB_LABELS = { characters: "Characters", creatures: "Creatures", objects: 
 // The sheet has five sections, in this order (Peter 2026-09-28): the rolled traits in Spirit, Mind and Body, the
 // numbers figured only from them in Derived, and every skill, ability and armor piece together in Skills. Each stat
 // carries its section from rpg_sheet (rpg_section), so the page never sorts stats by group itself. The hidden basics
-// (Swing arm, Grip, ...) are never rows; they show inside a skill's parents.
+// (Swing arm, Grip, ...) are never rows; they show inside a skill's parents. A skill that is second nature
+// (rpg_skill_tree: every parent second nature and its own number at its bar) is hidden the same way: never a row,
+// shown inside the parents of the skills built on it, and it still rolls, counts and trains.
 const SECTIONS = ["Spirit", "Mind", "Body", "Derived", "Skills"];
 const COINS = [["platinum", "Platinum"], ["gold", "Gold"], ["silver", "Silver"], ["copper", "Copper"]];
 
@@ -107,7 +109,7 @@ function MixLine({ mix }) {
 }
 // What a calculated stat is built from (rpg_stat_parents): the averaged parts, then the hidden basics added whole.
 const SECTION_COLORS = { Spirit: T.blue, Mind: T.amber, Body: T.red };
-function Parents({ stat }) {
+function Parents({ stat, stats }) {
   const parents = Array.isArray(stat.parents) ? stat.parents : [];
   if (!parents.length) return null;
   const mix = stat.mix || {};
@@ -117,7 +119,7 @@ function Parents({ stat }) {
       <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px" }}>
         {parents.map(p => (
           <span key={`${p.plus ? "plus-" : ""}${p.key}`} style={{ color: SECTION_COLORS[p.section] || T.slate700, fontWeight: 600 }}>
-            {p.plus ? "+ " : ""}{p.name} {num(p.value)}{Number(p.weight) !== 1 ? ` ×${num(p.weight)}` : ""}{p.section === "Basic" ? " · basic" : ""}
+            {p.plus ? "+ " : ""}{p.name} {num(p.value)}{Number(p.weight) !== 1 ? ` ×${num(p.weight)}` : ""}{p.section === "Basic" ? " · basic" : (stats || []).some(x => x.key === p.key && x.tree?.second_nature) ? " · second nature" : ""}
           </span>
         ))}
       </div>
@@ -539,7 +541,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
       {/* The sheet: Spirit, Mind, Body, Derived, Skills (each stat's section comes from rpg_sheet). A calculated stat
           carries its mix line and opens to show the parents it is built from; a rolled trait keeps its controls. */}
       {SECTIONS.map(sec => {
-        const rowsOf = stats.filter(s => s.section === sec);
+        const rowsOf = stats.filter(s => s.section === sec && !s.tree?.second_nature);
         if (!rowsOf.length) return null;
         const open = openGroups[sec];
         return (
@@ -585,7 +587,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
                         )}
                         <button type="button" style={btn("primary", true)} disabled={!!rolling} onClick={() => roll(s)}>{rolling === s.key ? "…" : "Roll"}</button>
                       </div>
-                      {isOpen && <Parents stat={s} />}
+                      {isOpen && <Parents stat={s} stats={stats} />}
                     </div>
                   );
                 })}
