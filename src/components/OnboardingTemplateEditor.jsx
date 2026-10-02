@@ -22,7 +22,7 @@ import { useViewport } from "../lib/hooks.js";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, CATEGORY_KEYS, STAGE_LABELS,
-  subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText, GroupHead, ItemInfo, InstructionsModal,
+  subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText, GroupHead, ItemInfo, AfterText, InstructionsModal,
   splitIndent, columnStyle, bannerStyle, weeksLabel, ORIENTATION_KIND,
   isNewCurriculum, newCurriculumCard,
 } from "../lib/onboardingUi.jsx";
@@ -898,9 +898,9 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
               >{r.title}</TabLink>
             ) : r.title}
             {instructions[r.title] && instructions[r.title].kind !== ORIENTATION_KIND && (
-              <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>
+              <AfterText>
                 <InfoDot title="Instructions" onClick={() => setOpenInstr(instructions[r.title])} />
-              </span>
+              </AfterText>
             )}
             {!r.is_required && (
               <span style={{ marginLeft: 8, fontSize: 10, color: T.slate400, fontWeight: 500 }}>optional</span>
@@ -966,14 +966,14 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
                     <ItemInfo lines={g.itemInfo[label2] || []} pathColor={T.teal} linkColor={T.blue}>
                       <LabelText text={shown2} pathColor={T.teal} linkColor={T.blue} />
                       {orient && isOwner && (
-                        <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>
+                        <AfterText>
                           <InfoDot title="Open orientation" onClick={() => setOrientationRow(orient)} />
-                        </span>
+                        </AfterText>
                       )}
                       {instr2 && (
-                        <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>
+                        <AfterText>
                           <InfoDot title="Instructions" onClick={() => setOpenInstr(instr2)} />
-                        </span>
+                        </AfterText>
                       )}
                     </ItemInfo>
                   </li>

@@ -302,12 +302,20 @@ export function textToSubsteps(text) {
 // offer-stage columns both have to finish before the next milestone opens.
 // Goals and other full-width subcards: a highlighted band across the top of
 // a major card, above the columns.
-// The training-curriculum cards added 2026-09-25 (keys start "cur_") are
-// tinted blue so they stand apart from the older Confluence week cards
-// while both sets sit side by side. One place decides it for the template
-// and for every plan. T.blue is the sage primary, not a blue, so this uses
-// the real blue from the Great band.
-export const isNewCurriculum = (key) => typeof key === "string" && key.startsWith("cur_");
+// The training-curriculum cards added 2026-09-25 (keys start "cur_", then the
+// week: cur_s_w04_goals) are tinted blue so they stand apart from the older
+// Confluence week cards while both sets sit side by side. A week loses the
+// tint once work has started on the week after it (Peter 2026-10-02), so the
+// tint starts at the week being worked on now: raise TINT_FROM_WEEK by one
+// each time work moves on to the next week. One place decides it for the
+// template and for every plan. T.blue is the sage primary, not a blue, so
+// this uses the real blue from the Great band.
+const TINT_FROM_WEEK = 4;
+export const isNewCurriculum = (key) => {
+  if (typeof key !== "string" || !key.startsWith("cur_")) return false;
+  const week = /_w(\d+)_/.exec(key);
+  return !week || Number(week[1]) >= TINT_FROM_WEEK;
+};
 export const newCurriculumCard = { background: BAND.Great.fill, border: `1px solid ${BAND.Great.ink}` };
 
 export const bannerStyle = {
@@ -493,6 +501,16 @@ export function LabelText({ text, icon = null, pathColor, linkColor }) {
   );
 }
 
+// An (i) always sits right after the text before it, on the same line. It is
+// never pushed out to the right edge (Peter 2026-10-02). Put the button in
+// this, in the same block as the text it follows.
+export function AfterText({ children }) {
+  return (
+    <span onClick={(e) => e.stopPropagation()}
+      style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>{children}</span>
+  );
+}
+
 // ─── a sub-item heading ──────────────────────────────
 // The heading of a group of sub-items. When the group carries info lines it
 // gets the (i); opening it shows those lines under the heading. extra is
@@ -541,17 +559,22 @@ export function InfoBox({ lines = [], pathColor, linkColor }) {
   );
 }
 
-// A sub-item line with its own (i): children is the line, lines open under it.
+// A sub-item line with its own (i): the (i) follows the line's text and its
+// lines open under the line. children is the line itself, or a function that
+// is handed the (i) so a row with its own layout can put it after its text.
 export function ItemInfo({ lines = [], children, pathColor, linkColor }) {
   const [open, setOpen] = useState(false);
-  if (!lines.length) return children;
+  const places = typeof children === "function";
+  if (!lines.length) return places ? children(null) : children;
+  const dot = (
+    <AfterText>
+      <InfoDot open={open} title="How to"
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }} />
+    </AfterText>
+  );
   return (
     <div style={{ minWidth: 0 }}>
-      <div style={{ display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
-        <InfoDot open={open} title="How to"
-          onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }} />
-      </div>
+      {places ? children(dot) : <div style={{ minWidth: 0 }}>{children}{dot}</div>}
       {open && <InfoBox lines={lines} pathColor={pathColor} linkColor={linkColor} />}
     </div>
   );

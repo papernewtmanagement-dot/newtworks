@@ -30,7 +30,7 @@ import InfoDot from "../components/InfoDot.jsx";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
-  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo, asksForReply, InstructionsModal,
+  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo, AfterText, asksForReply, InstructionsModal,
   splitIndent, columnStyle, bannerStyle, fmtDate, setStepDone, setSubstepDone, ORIENTATION_KIND,
   isNewCurriculum, newCurriculumCard,
 } from "../lib/onboardingUi.jsx";
@@ -459,9 +459,9 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                               <span style={{ marginLeft: 8, fontSize: 10, color: T.slate400, fontWeight: 500 }}>optional</span>
                             )}
                             {instructions[step.title] && instructions[step.title].kind !== ORIENTATION_KIND && (
-                              <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 6, display: "inline-block", verticalAlign: "middle" }}>
+                              <AfterText>
                                 <InfoDot title="Instructions" onClick={() => setOpenInstr(instructions[step.title])} />
-                              </span>
+                              </AfterText>
                             )}
                           </div>
                           <div style={{ display: "flex", gap: 4, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -585,49 +585,59 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                     // ticked, the card shows the reply under the line.
                                     const wantsReply = asksForReply(label);
                                     const reply = wantsReply && sd ? (step.substep_answers || {})[label] : null;
+                                    // One click handler for the whole line: the box, the words and
+                                    // the space beside them. The (i)s and links keep their own clicks.
+                                    const onTick = byForm || lineLocked ? undefined
+                                      : (wantsReply && !sd) ? () => setReplyFor({ step, label })
+                                      : () => onToggleSubstep(step, label);
                                     return (
                                       <ItemInfo key={ix} lines={itemInfo[label] || []} pathColor={T.teal} linkColor={T.blue}>
-                                      <div style={{ display: "flex", gap: 6, alignItems: "flex-start", minWidth: 0, paddingLeft: level * 18 }}>
-                                      <button
-                                        onClick={byForm || lineLocked ? undefined
-                                          : (wantsReply && !sd) ? () => setReplyFor({ step, label })
-                                          : () => onToggleSubstep(step, label)}
+                                      {(howTo) => (
+                                      <div
+                                        onClick={onTick}
                                         title={byForm ? "Ticks itself when the form is done"
                                           : lineLocked ? "Peter checks this off at orientation" : undefined}
                                         style={{
-                                          display: "flex", gap: 7, alignItems: "flex-start",
-                                          background: "none", border: "none", padding: 0,
-                                          cursor: byForm || lineLocked ? "default" : "pointer", textAlign: "left", flex: 1, minWidth: 0,
+                                          display: "flex", gap: 7, alignItems: "flex-start", minWidth: 0,
+                                          marginLeft: level * 18, cursor: onTick ? "pointer" : "default",
                                         }}
                                       >
-                                        <span style={{
-                                          width: 14, height: 14, borderRadius: 3, flexShrink: 0,
-                                          marginTop: 2, boxSizing: "border-box",
-                                          background: sd ? T.green : T.white,
-                                          border: `1.5px solid ${sd ? T.green : T.slate300}`,
-                                          display: "flex", alignItems: "center", justifyContent: "center",
-                                        }}>
+                                        <button
+                                          type="button"
+                                          aria-label={shown}
+                                          aria-pressed={sd}
+                                          style={{
+                                            width: 14, height: 14, borderRadius: 3, flexShrink: 0,
+                                            margin: "2px 0 0", padding: 0, boxSizing: "border-box",
+                                            appearance: "none", WebkitAppearance: "none", cursor: "inherit",
+                                            background: sd ? T.green : T.white,
+                                            border: `1.5px solid ${sd ? T.green : T.slate300}`,
+                                            display: "flex", alignItems: "center", justifyContent: "center",
+                                          }}
+                                        >
                                           {sd && <span style={{ color: T.white, fontSize: 9, lineHeight: 1 }}>✓</span>}
-                                        </span>
-                                        <span style={{
-                                          fontSize: 12, lineHeight: 1.4,
-                                          color: sd ? T.slate400 : T.slate700,
-                                          textDecoration: sd ? "line-through" : "none",
-                                        }}><LabelText text={shown} icon={icon} pathColor={sd ? T.slate400 : T.teal} linkColor={T.blue} />
+                                        </button>
+                                        {/* The words, then every (i) right after them on the same line. */}
+                                        <div style={{ flex: 1, minWidth: 0, fontSize: 12, lineHeight: 1.4 }}>
+                                          <span style={{
+                                            color: sd ? T.slate400 : T.slate700,
+                                            textDecoration: sd ? "line-through" : "none",
+                                          }}><LabelText text={shown} icon={icon} pathColor={sd ? T.slate400 : T.teal} linkColor={T.blue} /></span>
+                                          {instr && !isOrientationLine && (
+                                            <AfterText><InfoDot title="Instructions" onClick={() => setOpenInstr(instr)} /></AfterText>
+                                          )}
+                                          {isOrientationLine && isOwner && (
+                                            <AfterText><InfoDot title="Open orientation" onClick={() => setOrientation(instr)} /></AfterText>
+                                          )}
+                                          {howTo}
                                           {reply && (
-                                            <span style={{
-                                              display: "block", marginTop: 2, color: T.slate700, fontStyle: "italic",
-                                              textDecoration: "none", whiteSpace: "pre-wrap",
-                                            }}>{reply}</span>
-                                          )}</span>
-                                      </button>
-                                      {instr && !isOrientationLine && (
-                                        <InfoDot title="Instructions" onClick={() => setOpenInstr(instr)} />
-                                      )}
-                                      {isOrientationLine && isOwner && (
-                                        <InfoDot title="Open orientation" onClick={() => setOrientation(instr)} />
-                                      )}
+                                            <div style={{
+                                              marginTop: 2, color: T.slate700, fontStyle: "italic", whiteSpace: "pre-wrap",
+                                            }}>{reply}</div>
+                                          )}
+                                        </div>
                                       </div>
+                                      )}
                                       </ItemInfo>
                                     );
                                   })}
