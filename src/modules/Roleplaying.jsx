@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
-import { useViewport } from "../lib/hooks.js";
+import { useViewport, useElementWidth } from "../lib/hooks.js";
 import { useTabParam, TabLink, handleModuleLinkClick } from "../lib/routing.jsx";
 import { mdToHtml } from "../lib/markdown.js";
 import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
@@ -19,7 +19,8 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 // Agility, players attack and roll checks on their character's turn, the game master rolls the
 // creatures' card actions, and every screen follows along live. Step 6: the fight board, where everyone
 // stands, moving by beats across squares with movement penalties, and a reach in squares for every roll.
-// World map step 1: Maps tab, game master only. The world drawn at every level, from its place cards.
+// World map step 1: Maps tab, game master only. The world drawn at every level, from its place cards: icons on the
+// grid, the lists in a sidebar on the left, each grid listing the places one level down, the world drawn finest.
 // Every number comes from the database, one saved function per job:
 //   rpg_character_list()                     the character cards
 //   rpg_sheet(id, difficulty)                every stat, what a roll needs at that difficulty
@@ -57,7 +58,9 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //                                            (Rootstep, Briar Shift)
 //   rpg_place / rpg_place_start / rpg_set_square / rpg_set_board   the game master sets up the board
 //   rpg_map_view(level, x, y)                the Maps tab in one read (game master only): one grid of the world map,
-//                                            from the place cards and a fixed-seed roll for unnamed land and sea
+//                                            from the place cards and a fixed-seed roll for unnamed land and sea,
+//                                            with the list that grid shows (the places one level down) and, for
+//                                            the world, every cell of the Continent grids to draw it fine
 //   rpg_creatures.image_path                 a picture in the private rpg-images bucket (parents upload)
 //   rpg_session_set_status / rpg_session_adjust_vitality / rpg_session_remove / rpg_session_end   game master changes
 // A character's details, coins and items change through rpg_character_update and rpg_item_add / _set_equipped /
@@ -164,7 +167,7 @@ export default function Roleplaying({ userRole }) {
   const activeTab = tabs.includes(tab) ? tab : "characters";
 
   return (
-    <div style={{ padding: _pad, maxWidth: 980, margin: "0 auto", boxSizing: "border-box" }}>
+    <div style={{ padding: _pad, maxWidth: activeTab === "maps" ? "none" : 980, margin: "0 auto", boxSizing: "border-box" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900 }}>Roleplaying</div>
         {tabs.length > 1 && (
@@ -816,13 +819,62 @@ function ObjectsTab({ onError }) {
 // ── Maps (game master only) ─────────────────────────────────────────────────
 // The world map, drawn at every level (rpg_map_view): seven nested grids from an Earth-size world down to a battle
 // grid. Ground comes from the place cards (Old Forest, Haven, ...) and, where no place is, from a fixed-seed roll
-// for land and sea; nothing is stored per square. The function sends every cell, name, size and link, and the page
-// only draws them. A cell opens the grid inside it; the open grid lives in the URL (map=level-x-y, none = the world).
+// for land and sea; nothing is stored per square. The function sends every cell, name, size, icon and link, and the
+// page only draws them. A cell opens the grid inside it; the open grid lives in the URL (map=level-x-y, none = the
+// world). The lists sit in a sidebar on the left (under the map when the tab is narrow) and the map takes the rest
+// of the screen. Each grid lists the places one level down (v.list: the world lists continents, a continent
+// countries, a country regions, and so on). The world is drawn as fine as the grids inside it (v.detail: every cell
+// of the Continent grids as one dot of a picture) under its own 12 by 6 cells, so it is the largest map.
 const MAP_GROUND = { sea: "hsl(205, 48%, 80%)", land: "hsl(75, 28%, 90%)" };
 const MAP_MOVES = [["west", "←"], ["north", "↑"], ["south", "↓"], ["east", "→"]];
+// The sidebar is 280 wide and sits beside the map once the tab itself is 760 across.
+const MAP_SIDE = 280;
+const MAP_WIDE = 760;
+// A place's color softened halfway to white, so its icon reads on top of it.
+const mapTint = (color) => {
+  const m = /^#([0-9a-f]{6})$/i.exec(color || "");
+  if (!m) return color || T.slate300;
+  const n = parseInt(m[1], 16);
+  const half = (c) => Math.round((c + 255) / 2);
+  return `rgb(${half(n >> 16)}, ${half((n >> 8) & 255)}, ${half(n & 255)})`;
+};
+// A place as a small tile: its softened color with its icon on it, the way the map draws it.
+function MapTile({ p, size = 24 }) {
+  return (
+    <span style={{ width: size, height: size, borderRadius: Math.round(size / 4), background: mapTint(p.color), flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: Math.round(size * 0.6), lineHeight: 1 }}>{p.icon || ""}</span>
+  );
+}
+// The world drawn fine: one dot of a picture for every cell of the Continent grids (~ sea, . land, else the place
+// numbered by the character), stretched under the world's own cells.
+function MapDetail({ detail, places }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const ctx = ref.current && ref.current.getContext ? ref.current.getContext("2d") : null;
+    if (!ctx) return;
+    const colors = (Array.isArray(detail.places) ? detail.places : []).map(id => mapTint((places.find(p => p.id === id) || {}).color));
+    detail.cells.forEach((row, y) => {
+      const line = String(row || "");
+      let x = 0;
+      while (x < line.length) {
+        const k = line.charCodeAt(x);
+        let end = x + 1;
+        while (end < line.length && line.charCodeAt(end) === k) end += 1;
+        ctx.fillStyle = k === 126 ? MAP_GROUND.sea : k === 46 ? MAP_GROUND.land : (colors[k - 256] || MAP_GROUND.land);
+        ctx.fillRect(x, y, end - x, 1);
+        x = end;
+      }
+    });
+  }, [detail, places]);
+  return (
+    <canvas ref={ref} width={Number(detail.cols) || 1} height={Number(detail.rows) || 1}
+      style={{ position: "absolute", left: 16, top: 16, width: "calc(100% - 16px)", height: "calc(100% - 16px)", imageRendering: "pixelated" }} />
+  );
+}
 function MapsTab({ onError }) {
   const [at, setAt, atHref] = useTabParam("map", null);
   const [v, setV] = useState(null);
+  const rootRef = useRef(null);
+  const wide = useElementWidth(rootRef) >= MAP_WIDE;
   useEffect(() => {
     let alive = true;
     const m = /^(\d+)-(\d+)-(\d+)$/.exec(at || "");
@@ -834,99 +886,142 @@ function MapsTab({ onError }) {
     })();
     return () => { alive = false; };
   }, [at, setAt, onError]);
-  if (!v) return <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div>;
-  const cols = Number(v.cols) || 12;
-  const cells = Array.isArray(v.cells) ? v.cells : [];
+  return (
+    <div ref={rootRef} style={{ display: "grid", gridTemplateColumns: wide ? `${MAP_SIDE}px minmax(0, 1fr)` : "minmax(0, 1fr)", gap: 12, alignItems: "start" }}>
+      {!v ? <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div> : (
+        <>
+          <MapSide v={v} atHref={atHref} setAt={setAt} order={wide ? 0 : 2} />
+          <MapGrid v={v} atHref={atHref} setAt={setAt} />
+        </>
+      )}
+    </div>
+  );
+}
+// The sidebar: what this grid lists (the places one level down that reach into it), every other place, the grids.
+function MapSide({ v, atHref, setAt, order }) {
   const places = Array.isArray(v.places) ? v.places : [];
-  const crumbs = Array.isArray(v.crumbs) ? v.crumbs : [];
   const ladder = Array.isArray(v.ladder) ? v.ladder : [];
-  const moves = v.moves && typeof v.moves === "object" ? v.moves : null;
-  const grounds = v.grounds && typeof v.grounds === "object" ? v.grounds : {};
-  const byId = {};
-  places.forEach(p => { byId[p.id] = p; });
-  const axis = { fontSize: 10, color: T.slate500, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" };
-  const grid = [<div key="corner" />];
-  for (let x = 1; x <= cols; x++) grid.push(<div key={`c${x}`} style={axis}>{String.fromCharCode(64 + x)}</div>);
-  cells.forEach(c => {
-    if (c.x === 1) grid.push(<div key={`r${c.y}`} style={axis}>{c.y}</div>);
-    const p = c.place ? byId[c.place] : null;
-    const marks = (Array.isArray(c.marks) ? c.marks : []).map(id => byId[id]).filter(Boolean);
-    const title = `${c.name} · ${p ? `${p.name} · ${p.ground}` : (grounds[c.kind] || c.kind)}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
-    const style = { aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, borderRadius: 3, boxSizing: "border-box", border: `1px solid ${T.slate200}`,
-                    background: p ? (p.color || T.slate400) : (MAP_GROUND[c.kind] || T.slate50),
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 3, cursor: c.open ? "pointer" : "default" };
-    const inner = marks.length > 3
-      ? <span style={{ fontSize: 9, fontWeight: 800, lineHeight: "14px", color: T.white, background: T.slate900, borderRadius: 999, padding: "0 4px" }}>{marks.length}</span>
-      : marks.map(k => <span key={k.id} style={{ width: 8, height: 8, borderRadius: "50%", background: k.color || T.slate400, border: `1px solid ${T.white}`, boxShadow: `0 0 0 1px ${T.slate700}`, boxSizing: "border-box" }} />);
-    grid.push(c.open
-      ? <TabLink key={c.name} href={atHref(c.open)} onSelect={() => setAt(c.open)} title={title} ariaLabel={title} style={style}>{inner}</TabLink>
-      : <div key={c.name} title={title} style={style}>{inner}</div>);
-  });
-  const kinds = Object.keys(MAP_GROUND).filter(k => cells.some(c => c.kind === k));
-  const dots = cells.some(c => Array.isArray(c.marks) && c.marks.length > 0);
-  const here = places.filter(p => p.here);
-  const away = places.filter(p => !p.here);
-  const placeRow = (p) => (
+  const list = v.list && typeof v.list === "object" ? v.list : null;
+  const listed = places.filter(p => p.listed);
+  const others = places.filter(p => !p.listed);
+  const row = (p, kind) => (
     <TabLink key={p.id} href={atHref(p.view || null)} onSelect={() => setAt(p.view || null)}
       style={{ display: "flex", gap: 10, alignItems: "flex-start", width: "100%", padding: "8px 0 0", borderTop: `1px solid ${T.slate100}`, marginTop: 8 }}>
-      <span style={{ width: 14, height: 14, borderRadius: 4, background: p.color || T.slate400, flexShrink: 0, marginTop: 2 }} />
+      <MapTile p={p} />
       <span style={{ minWidth: 0 }}>
         <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: T.slate900 }}>{p.name}</span>
-        <span style={{ display: "block", fontSize: 12, color: T.slate600 }}>{p.size} · {p.ground}{p.inside ? ` · in ${p.inside}` : ""} · {p.level} level</span>
+        <span style={{ display: "block", fontSize: 12, color: T.slate600 }}>{kind ? `${p.level} · ` : ""}{p.size} · {p.ground}{p.inside ? ` · in ${p.inside}` : ""}</span>
         {p.about && <span style={{ display: "block", fontSize: 12, color: T.slate500, marginTop: 2 }}>{p.about}</span>}
       </span>
     </TabLink>
   );
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, alignItems: "start" }}>
-      <div style={{ ...card, display: "grid", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          {crumbs.map((k, i) => (i === crumbs.length - 1
-            ? <span key={i} style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{k.label}</span>
-            : (
-              <span key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <TabLink href={atHref(k.view || null)} onSelect={() => setAt(k.view || null)} style={{ fontSize: 14, fontWeight: 600, color: T.blue }}>{k.label}</TabLink>
-                <span style={{ color: T.slate400 }}>›</span>
-              </span>
-            )))}
-          {moves && (
-            <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
-              {MAP_MOVES.map(([k, t]) => (
-                <TabLink key={k} href={atHref(moves[k] || null)} onSelect={() => setAt(moves[k])} disabled={!moves[k]} title={`The next grid ${k}`} ariaLabel={`The next grid ${k}`}
-                  style={{ ...btn("soft", true), minWidth: 30, textAlign: "center", opacity: moves[k] ? 1 : 0.35 }}>{t}</TabLink>
-              ))}
-            </div>
-          )}
+    <div style={{ order, minWidth: 0 }}>
+      {list && (
+        <div style={{ ...card, marginBottom: 12 }}>
+          <div style={label}>{list.title}</div>
+          {listed.length === 0 && <div style={{ fontSize: 12, color: T.slate500, marginTop: 6 }}>{list.empty}</div>}
+          {listed.map(p => row(p, false))}
         </div>
-        <div style={{ fontSize: 12, color: T.slate600 }}>{v.scale}{cells.some(c => c.open) ? " Tap a cell to open the grid inside it." : ""}</div>
-        <div style={{ display: "grid", gridTemplateColumns: `16px repeat(${cols}, minmax(0, 1fr))`, gap: 1, width: "100%", maxWidth: 44 * cols + 16, userSelect: "none" }}>
-          {grid}
-        </div>
-        {(kinds.length > 0 || dots) && (
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: T.slate600 }}>
-            {kinds.map(k => (
-              <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <span style={{ width: 12, height: 12, borderRadius: 3, background: MAP_GROUND[k], border: `1px solid ${T.slate200}`, boxSizing: "border-box" }} />
-                {grounds[k] || k}
-              </span>
+      )}
+      {others.length > 0 && <Fold title={`Other places (${others.length})`}>{others.map(p => row(p, true))}</Fold>}
+      <Fold title="The grids">
+        {ladder.map(l => (
+          <div key={l.name} style={{ fontSize: 13, color: T.slate700, padding: "3px 0" }}><b style={{ color: T.slate900 }}>{l.name}.</b> {l.line}</div>
+        ))}
+        <div style={{ fontSize: 13, color: T.slate700, padding: "3px 0" }}>One square is {v.square}.</div>
+      </Fold>
+    </div>
+  );
+}
+// The map itself. It is as wide as the space it gets, held to what the height of the screen can show whole. A cell
+// shows the icon of the place that is its ground, then the smaller places in it; more than three of those show as
+// a count. Icons size themselves from the width of the map (cqw).
+function MapGrid({ v, atHref, setAt }) {
+  const cols = Number(v.cols) || 12;
+  const cells = Array.isArray(v.cells) ? v.cells : [];
+  const places = Array.isArray(v.places) ? v.places : [];
+  const crumbs = Array.isArray(v.crumbs) ? v.crumbs : [];
+  const moves = v.moves && typeof v.moves === "object" ? v.moves : null;
+  const grounds = v.grounds && typeof v.grounds === "object" ? v.grounds : {};
+  const detail = v.detail && Array.isArray(v.detail.cells) ? v.detail : null;
+  const byId = {};
+  places.forEach(p => { byId[p.id] = p; });
+  const drawn = new Set(detail && Array.isArray(detail.places) ? detail.places : []);
+  const size = (share) => `calc((100cqw - 16px) / ${cols} * ${share})`;
+  const axis = { fontSize: 10, color: T.slate500, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" };
+  const grid = [<div key="corner" />];
+  for (let x = 1; x <= cols; x++) grid.push(<div key={`c${x}`} style={axis}>{String.fromCharCode(64 + x)}</div>);
+  let counted = false;
+  cells.forEach(c => {
+    if (c.x === 1) grid.push(<div key={`r${c.y}`} style={axis}>{c.y}</div>);
+    const p = c.place ? byId[c.place] : null;
+    const marks = (Array.isArray(c.marks) ? c.marks : []).map(id => byId[id]).filter(Boolean);
+    if (p) drawn.add(p.id);
+    marks.forEach(k => drawn.add(k.id));
+    const title = `${c.name} · ${p ? `${p.name} · ${p.ground}` : (grounds[c.kind] || c.kind)}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
+    const style = { aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, boxSizing: "border-box", overflow: "hidden", position: "relative",
+                    borderRight: `1px solid ${T.white}`, borderBottom: `1px solid ${T.white}`,
+                    background: detail ? "transparent" : p ? mapTint(p.color) : (MAP_GROUND[c.kind] || T.slate50),
+                    display: "flex", flexWrap: "wrap", alignItems: "center", alignContent: "center", justifyContent: "center", gap: "0 1px", lineHeight: 1,
+                    cursor: c.open ? "pointer" : "default" };
+    let inner = null;
+    if (marks.length > 3) {
+      counted = true;
+      inner = <span style={{ fontSize: size(0.3), fontWeight: 800, color: T.white, background: T.slate900, borderRadius: 999, padding: "0.15em 0.5em" }}>{marks.length}</span>;
+    } else {
+      const shown = (p && p.icon ? [p] : []).concat(marks);
+      const each = size(shown.length > 1 ? 0.36 : 0.56);
+      inner = shown.map(k => (k.icon
+        ? <span key={k.id} style={{ fontSize: each, lineHeight: 1 }}>{k.icon}</span>
+        : <span key={k.id} style={{ width: size(0.2), height: size(0.2), borderRadius: "50%", background: k.color || T.slate400, border: `1px solid ${T.white}`, boxShadow: `0 0 0 1px ${T.slate700}`, boxSizing: "border-box" }} />));
+    }
+    grid.push(c.open
+      ? <TabLink key={c.name} href={atHref(c.open)} onSelect={() => setAt(c.open)} title={title} ariaLabel={title} style={style}>{inner}</TabLink>
+      : <div key={c.name} title={title} style={style}>{inner}</div>);
+  });
+  const kinds = Object.keys(MAP_GROUND).filter(k => cells.some(c => c.kind === k));
+  const ground = places.filter(p => drawn.has(p.id) && !p.listed);
+  return (
+    <div style={{ ...card, order: 1, minWidth: 0, display: "grid", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        {crumbs.map((k, i) => (i === crumbs.length - 1
+          ? <span key={i} style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{k.label}</span>
+          : (
+            <span key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <TabLink href={atHref(k.view || null)} onSelect={() => setAt(k.view || null)} style={{ fontSize: 14, fontWeight: 600, color: T.blue }}>{k.label}</TabLink>
+              <span style={{ color: T.slate400 }}>›</span>
+            </span>
+          )))}
+        {moves && (
+          <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+            {MAP_MOVES.map(([k, t]) => (
+              <TabLink key={k} href={atHref(moves[k] || null)} onSelect={() => setAt(moves[k])} disabled={!moves[k]} title={`The next grid ${k}`} ariaLabel={`The next grid ${k}`}
+                style={{ ...btn("soft", true), minWidth: 30, textAlign: "center", opacity: moves[k] ? 1 : 0.35 }}>{t}</TabLink>
             ))}
-            {dots && <span>A dot is a place too small to fill a cell. A number is that many places.</span>}
           </div>
         )}
       </div>
-      <div>
-        <div style={{ ...card, marginBottom: 12 }}>
-          <div style={label}>Places on this grid</div>
-          {here.length === 0 && <div style={{ fontSize: 12, color: T.slate500, marginTop: 6 }}>None. This is unnamed land and sea.</div>}
-          {here.map(placeRow)}
+      <div style={{ width: `min(100%, max(340px, calc((100dvh - 300px) * ${detail ? 2 : 1} + 16px)))`, margin: "0 auto", containerType: "inline-size", userSelect: "none" }}>
+        <div style={{ position: "relative", display: "grid", gridTemplateColumns: `16px repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: "16px" }}>
+          {detail && <MapDetail detail={detail} places={places} />}
+          {grid}
         </div>
-        {away.length > 0 && <Fold title={`Places elsewhere (${away.length})`}>{away.map(placeRow)}</Fold>}
-        <Fold title="The grids">
-          {ladder.map(l => (
-            <div key={l.name} style={{ fontSize: 13, color: T.slate700, padding: "3px 0" }}><b style={{ color: T.slate900 }}>{l.name}.</b> {l.line}</div>
-          ))}
-          <div style={{ fontSize: 13, color: T.slate700, padding: "3px 0" }}>One square is {v.square}.</div>
-        </Fold>
+      </div>
+      <div style={{ display: "flex", gap: "6px 14px", flexWrap: "wrap", alignItems: "center", fontSize: 12, color: T.slate600 }}>
+        <span>{v.scale}{cells.some(c => c.open) ? " Tap a cell to open the grid inside it." : ""}</span>
+        {ground.map(p => (
+          <TabLink key={p.id} href={atHref(p.view || null)} onSelect={() => setAt(p.view || null)} style={{ display: "flex", alignItems: "center", gap: 5, color: T.slate700, fontWeight: 600 }}>
+            <MapTile p={p} size={18} />{p.name}
+          </TabLink>
+        ))}
+        {kinds.map(k => (
+          <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 12, height: 12, borderRadius: 3, background: MAP_GROUND[k], border: `1px solid ${T.slate200}`, boxSizing: "border-box" }} />
+            {grounds[k] || k}
+          </span>
+        ))}
+        {counted && <span>A number is that many places in one cell.</span>}
       </div>
     </div>
   );
