@@ -23,7 +23,7 @@ import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, CATEGORY_KEYS, STAGE_LABELS,
   subGroups, substepsToText, textToSubsteps, trackColumns, wrapLongText, LabelText, GroupHead, ItemInfo, AfterText, InstructionsModal,
-  splitIndent, columnStyle, bannerStyle, weeksLabel, ORIENTATION_KIND,
+  splitIndent, columnStyle, bannerStyle, dayColumns, dayColumnsStyle, weeksLabel, ORIENTATION_KIND,
   isNewCurriculum, newCurriculumCard,
 } from "../lib/onboardingUi.jsx";
 import InfoDot from "./InfoDot.jsx";
@@ -935,8 +935,9 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
             <LabelText text={r.description} pathColor={T.teal} linkColor={T.blue} />
           </div>
         )}
+        <div style={r.full_width && dayColumns(groups) ? dayColumnsStyle : undefined}>
         {groups.map((g, gi) => (
-          <div key={gi} style={{ marginTop: 8 }}>
+          <div key={gi} style={{ marginTop: 8, minWidth: 0 }}>
             {(g.group || g.altFor || g.info.length > 0) && (
               <GroupHead
                 label={g.group || (g.altFor ? "Archived" : null)}
@@ -982,6 +983,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
             </ul>
           </div>
         ))}
+        </div>
         {r.unlock_rule === "friday_before_start" && (
           <div style={{ fontSize: 10, color: T.amber, marginTop: 8, fontWeight: 600 }}>
             Opens the Friday before they start

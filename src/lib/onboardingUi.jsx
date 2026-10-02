@@ -318,6 +318,18 @@ export const isNewCurriculum = (key) => {
 };
 export const newCurriculumCard = { background: BAND.Great.fill, border: `1px solid ${BAND.Great.ink}` };
 
+// A full-width card (the week's Goals) with goals under more than one day
+// lays the days out side by side, one column per day (Peter 2026-10-02).
+// Used by the plan and the template screen.
+const WEEKDAYS = new Set(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]);
+export function dayColumns(groups) {
+  return (groups || []).filter(g => WEEKDAYS.has(String(g.group || "").trim())).length > 1;
+}
+export const dayColumnsStyle = {
+  display: "grid", gap: "4px 14px", alignItems: "start",
+  gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+};
+
 export const bannerStyle = {
   display: "grid", gap: 10, marginBottom: 12, padding: 10, borderRadius: 10,
   gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", alignItems: "start",

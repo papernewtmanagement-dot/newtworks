@@ -31,7 +31,7 @@ import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
   subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo, AfterText, asksForReply, InstructionsModal,
-  splitIndent, columnStyle, bannerStyle, fmtDate, setStepDone, setSubstepDone, ORIENTATION_KIND,
+  splitIndent, columnStyle, bannerStyle, dayColumns, dayColumnsStyle, fmtDate, setStepDone, setSubstepDone, ORIENTATION_KIND,
   isNewCurriculum, newCurriculumCard,
 } from "../lib/onboardingUi.jsx";
 import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx";
@@ -412,6 +412,8 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                 // A step with sub-items cannot be ticked until they are all ticked.
                 const gated = !done && !isAuto && sp.total > 0 && !sp.complete;
                 const boxOff = locked || gated || isAuto;
+                // Goals with more than one day: one column per day.
+                const byDay = !!step.full_width && dayColumns(groups);
 
                 return (
                   <div key={step.id} style={{
@@ -552,8 +554,9 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
 
                         {!collapsed && !locked && groups.length > 0 && (
                           <div style={{ marginTop: 8 }}>
+                            <div style={byDay ? dayColumnsStyle : undefined}>
                             {groups.filter(g => !g.altFor).map((g, gi) => (
-                              <div key={gi} style={{ marginTop: gi === 0 ? 0 : 10 }}>
+                              <div key={gi} style={{ marginTop: byDay || gi === 0 ? 0 : 10, minWidth: 0 }}>
                                 {(g.group || g.info.length > 0) && (
                                   <GroupHead
                                     label={g.group}
@@ -644,6 +647,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                 </div>
                               </div>
                             ))}
+                            </div>
                             <div style={{ fontSize: 10, color: gated ? T.amber : T.slate400, marginTop: 6 }}>
                               {sp.done}/{sp.total} done
                               {gated ? " — tick them all to finish this step" : ""}
