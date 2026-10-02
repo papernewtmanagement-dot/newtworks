@@ -10,11 +10,12 @@
 // slowly drifts.
 // =========================================================================
 
-import { useState, createContext, useContext } from "react";
+import { useState, useEffect, useMemo, useRef, createContext, useContext } from "react";
 import { T, BAND } from "./theme.js";
-import { supabase } from "./supabase.js";
+import { supabase, AGENCY_ID } from "./supabase.js";
 import InfoDot from "../components/InfoDot.jsx";
-import { mdToHtml } from "./markdown.js";
+import { mdToHtml, withRoleplayBlocks } from "./markdown.js";
+import { wireRoleplayPickers } from "./roleplayPickers.js";
 import TeamForms from "../components/TeamForms.jsx";
 
 // A link to a site form opens that form in a pop-up over the page instead of
@@ -94,11 +95,11 @@ export async function setSubstepDone(step, label, done, userId, answer = null) {
 }
 
 // A training line that asks "What's one takeaway?" when it is ticked: any
-// line that links to a video (the video sites, plus the training videos on
+// line that links to a video (the video sites and TikTok, plus the training videos on
 // insuranceagencytraining.org/tools). The one place that decides which lines do.
 export const REPLY_QUESTION = "What's one takeaway?";
 export function asksForReply(label) {
-  return /\]\(\s*(https?:\/\/)?([a-z0-9-]+\.)*(youtube\.com|youtu\.be|vimeo\.com|loom\.com|insuranceagencytraining\.org\/tools)\//i.test(String(label || ""));
+  return /\]\(\s*(https?:\/\/)?([a-z0-9-]+\.)*(youtube\.com|youtu\.be|vimeo\.com|loom\.com|tiktok\.com|insuranceagencytraining\.org\/tools)\//i.test(String(label || ""));
 }
 
 // ─── orientation ────────────────────────────────────
@@ -555,9 +556,38 @@ export function ItemInfo({ lines = [], children, pathColor, linkColor }) {
   );
 }
 
+// The Daily Kickoff page holds the role play cards. A pop-up that names one
+// with {{roleplay: id}} shows it from there, so there is only one copy.
+let kickoffMdPromise = null;
+function loadKickoffMd() {
+  if (!kickoffMdPromise) {
+    kickoffMdPromise = supabase.from("manuals").select("content")
+      .eq("agency_id", AGENCY_ID).eq("confluence_page_id", "daily-kickoff").eq("is_active", true)
+      .maybeSingle()
+      .then(({ data }) => data?.content || "", () => "")
+      .then((md) => { if (!md) kickoffMdPromise = null; return md; });
+  }
+  return kickoffMdPromise;
+}
+
 // A pop-up of written instructions or background (an onboarding_instructions
 // row), opened from the (i) next to a card title or a sub-item.
 export function InstructionsModal({ item, onClose }) {
+  const bodyRef = useRef(null);
+  const body = item?.body_md || "";
+  const usesKickoff = /\{\{roleplay:/i.test(body);
+  const [kickoffMd, setKickoffMd] = useState("");
+  useEffect(() => {
+    if (!usesKickoff) return undefined;
+    let live = true;
+    loadKickoffMd().then((md) => { if (live) setKickoffMd(md); });
+    return () => { live = false; };
+  }, [usesKickoff]);
+  const html = useMemo(
+    () => mdToHtml(usesKickoff ? withRoleplayBlocks(body, kickoffMd) : body),
+    [body, usesKickoff, kickoffMd]
+  );
+  useEffect(() => wireRoleplayPickers(bodyRef.current), [html]);
   if (!item) return null;
   return (
     <div
@@ -582,8 +612,9 @@ export function InstructionsModal({ item, onClose }) {
           <Button variant="secondary" onClick={onClose}>Close</Button>
         </div>
         <div
+          ref={bodyRef}
           style={{ fontSize: 13, color: T.slate700, lineHeight: 1.55 }}
-          dangerouslySetInnerHTML={{ __html: mdToHtml(item.body_md || "") }}
+          dangerouslySetInnerHTML={{ __html: html }}
         />
       </div>
     </div>

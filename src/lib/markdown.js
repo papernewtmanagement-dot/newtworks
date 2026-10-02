@@ -1079,6 +1079,33 @@ const RP_START_RE = /^[ \t]*\*?\[Roleplay:\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
 const RP_SCEN_RE = /^[ \t]*\*?\[Scenario:\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
 const RP_END_RE = /^[ \t]*\*?\[Roleplay end\]\*?[ \t]*$/i;
 const RP_TOKEN_RE = /\{\{roleplay:\s*([a-z0-9_-]+)\s*\}\}/gi;
+
+// Role play blocks kept on another page (the Daily Kickoff). Copies in the
+// block for every {{roleplay: id}} token that md uses but does not hold, so
+// mdToHtml shows it at the token. The onboarding pop-ups use this to show the
+// kickoff's practice cards without keeping a second copy of them.
+export function withRoleplayBlocks(md, sourceMd) {
+  const text = String(md || "");
+  const want = new Set(Array.from(text.matchAll(RP_TOKEN_RE), (m) => m[1].toLowerCase()));
+  if (!want.size || !sourceMd) return text;
+  const idOf = (line) => {
+    const m = RP_START_RE.exec(line);
+    return m ? m[1].split("|")[0].trim().toLowerCase() : null;
+  };
+  text.split("\n").forEach((line) => { const id = idOf(line); if (id) want.delete(id); });
+  const lines = String(sourceMd).split("\n");
+  const blocks = [];
+  for (let i = 0; i < lines.length && want.size; i++) {
+    const id = idOf(lines[i]);
+    if (!id || !want.has(id)) continue;
+    let j = i + 1;
+    while (j < lines.length && !RP_END_RE.test(lines[j])) j++;
+    blocks.push(lines.slice(i, j + 1).join("\n"));
+    want.delete(id);
+    i = j;
+  }
+  return blocks.length ? text + "\n\n" + blocks.join("\n\n") : text;
+}
 // {{pick: Page Title}} — one item at random from another page in the same
 // manual, with a refresh button for another. Items are the page's list lines,
 // or its blockquotes, or failing both its paragraphs that carry a link.
