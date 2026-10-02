@@ -19,6 +19,7 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 // Agility, players attack and roll checks on their character's turn, the game master rolls the
 // creatures' card actions, and every screen follows along live. Step 6: the fight board, where everyone
 // stands, moving by beats across squares with movement penalties, and a reach in squares for every roll.
+// World map step 1: Maps tab, game master only. The world drawn at every level, from its place cards.
 // Every number comes from the database, one saved function per job:
 //   rpg_character_list()                     the character cards
 //   rpg_sheet(id, difficulty)                every stat, what a roll needs at that difficulty
@@ -55,6 +56,8 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //                                            costs 1 + its movement penalty), or a card action aimed at a square
 //                                            (Rootstep, Briar Shift)
 //   rpg_place / rpg_place_start / rpg_set_square / rpg_set_board   the game master sets up the board
+//   rpg_map_view(level, x, y)                the Maps tab in one read (game master only): one grid of the world map,
+//                                            from the place cards and a fixed-seed roll for unnamed land and sea
 //   rpg_creatures.image_path                 a picture in the private rpg-images bucket (parents upload)
 //   rpg_session_set_status / rpg_session_adjust_vitality / rpg_session_remove / rpg_session_end   game master changes
 // A character's details, coins and items change through rpg_character_update and rpg_item_add / _set_equipped /
@@ -64,9 +67,10 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 
 const PARENT_ROLES = ["owner", "admin"];
 const TABS = ["characters", "creatures", "rules", "play"];
-// The game master also gets Objects: the object cards and everything made from them (rpg_object_list).
-const GM_TABS = ["characters", "creatures", "objects", "rules", "play"];
-const TAB_LABELS = { characters: "Characters", creatures: "Creatures", objects: "Objects", rules: "Rules", play: "Play" };
+// The game master also gets Objects: the object cards and everything made from them (rpg_object_list), and Maps:
+// the world drawn at every level (rpg_map_view).
+const GM_TABS = ["characters", "creatures", "objects", "rules", "play", "maps"];
+const TAB_LABELS = { characters: "Characters", creatures: "Creatures", objects: "Objects", rules: "Rules", play: "Play", maps: "Maps" };
 // The sheet has five sections, in this order (Peter 2026-09-28): the rolled traits in Spirit, Mind and Body, the
 // numbers figured only from them in Derived, and every skill, ability and armor piece together in Skills. Each stat
 // carries its section from rpg_sheet (rpg_section), so the page never sorts stats by group itself. The hidden basics
@@ -189,6 +193,7 @@ export default function Roleplaying({ userRole }) {
       {activeTab === "play" && (fightId
         ? <FightView id={fightId} isParent={isParent} defs={defs} onBack={() => setFightId(null)} backHref={fightHref(null)} onError={setErr} />
         : <FightList isParent={isParent} onOpen={setFightId} hrefFor={fightHref} onError={setErr} />)}
+      {activeTab === "maps" && isParent && <MapsTab onError={setErr} />}
     </div>
   );
 }
@@ -803,6 +808,125 @@ function ObjectsTab({ onError }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ── Maps (game master only) ─────────────────────────────────────────────────
+// The world map, drawn at every level (rpg_map_view): seven nested grids from an Earth-size world down to a battle
+// grid. Ground comes from the place cards (Old Forest, Haven, ...) and, where no place is, from a fixed-seed roll
+// for land and sea; nothing is stored per square. The function sends every cell, name, size and link, and the page
+// only draws them. A cell opens the grid inside it; the open grid lives in the URL (map=level-x-y, none = the world).
+const MAP_GROUND = { sea: "hsl(205, 48%, 80%)", land: "hsl(75, 28%, 90%)" };
+const MAP_MOVES = [["west", "←"], ["north", "↑"], ["south", "↓"], ["east", "→"]];
+function MapsTab({ onError }) {
+  const [at, setAt, atHref] = useTabParam("map", null);
+  const [v, setV] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const m = /^(\d+)-(\d+)-(\d+)$/.exec(at || "");
+    (async () => {
+      const { data, error } = await supabase.rpc("rpg_map_view", m ? { p_level: Number(m[1]), p_x: Number(m[2]), p_y: Number(m[3]) } : {});
+      if (!alive) return;
+      if (error) { onError(error.message); if (at) setAt(null); return; }
+      setV(data || null);
+    })();
+    return () => { alive = false; };
+  }, [at, setAt, onError]);
+  if (!v) return <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div>;
+  const cols = Number(v.cols) || 12;
+  const cells = Array.isArray(v.cells) ? v.cells : [];
+  const places = Array.isArray(v.places) ? v.places : [];
+  const crumbs = Array.isArray(v.crumbs) ? v.crumbs : [];
+  const ladder = Array.isArray(v.ladder) ? v.ladder : [];
+  const moves = v.moves && typeof v.moves === "object" ? v.moves : null;
+  const grounds = v.grounds && typeof v.grounds === "object" ? v.grounds : {};
+  const byId = {};
+  places.forEach(p => { byId[p.id] = p; });
+  const axis = { fontSize: 10, color: T.slate500, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" };
+  const grid = [<div key="corner" />];
+  for (let x = 1; x <= cols; x++) grid.push(<div key={`c${x}`} style={axis}>{String.fromCharCode(64 + x)}</div>);
+  cells.forEach(c => {
+    if (c.x === 1) grid.push(<div key={`r${c.y}`} style={axis}>{c.y}</div>);
+    const p = c.place ? byId[c.place] : null;
+    const marks = (Array.isArray(c.marks) ? c.marks : []).map(id => byId[id]).filter(Boolean);
+    const title = `${c.name} · ${p ? `${p.name} · ${p.ground}` : (grounds[c.kind] || c.kind)}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
+    const style = { aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, borderRadius: 3, boxSizing: "border-box", border: `1px solid ${T.slate200}`,
+                    background: p ? (p.color || T.slate400) : (MAP_GROUND[c.kind] || T.slate50),
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 3, cursor: c.open ? "pointer" : "default" };
+    const inner = marks.length > 3
+      ? <span style={{ fontSize: 9, fontWeight: 800, lineHeight: "14px", color: T.white, background: T.slate900, borderRadius: 999, padding: "0 4px" }}>{marks.length}</span>
+      : marks.map(k => <span key={k.id} style={{ width: 8, height: 8, borderRadius: "50%", background: k.color || T.slate400, border: `1px solid ${T.white}`, boxShadow: `0 0 0 1px ${T.slate700}`, boxSizing: "border-box" }} />);
+    grid.push(c.open
+      ? <TabLink key={c.name} href={atHref(c.open)} onSelect={() => setAt(c.open)} title={title} ariaLabel={title} style={style}>{inner}</TabLink>
+      : <div key={c.name} title={title} style={style}>{inner}</div>);
+  });
+  const kinds = Object.keys(MAP_GROUND).filter(k => cells.some(c => c.kind === k));
+  const dots = cells.some(c => Array.isArray(c.marks) && c.marks.length > 0);
+  const here = places.filter(p => p.here);
+  const away = places.filter(p => !p.here);
+  const placeRow = (p) => (
+    <TabLink key={p.id} href={atHref(p.view || null)} onSelect={() => setAt(p.view || null)}
+      style={{ display: "flex", gap: 10, alignItems: "flex-start", width: "100%", padding: "8px 0 0", borderTop: `1px solid ${T.slate100}`, marginTop: 8 }}>
+      <span style={{ width: 14, height: 14, borderRadius: 4, background: p.color || T.slate400, flexShrink: 0, marginTop: 2 }} />
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: T.slate900 }}>{p.name}</span>
+        <span style={{ display: "block", fontSize: 12, color: T.slate600 }}>{p.size} · {p.ground}{p.inside ? ` · in ${p.inside}` : ""} · {p.level} level</span>
+        {p.about && <span style={{ display: "block", fontSize: 12, color: T.slate500, marginTop: 2 }}>{p.about}</span>}
+      </span>
+    </TabLink>
+  );
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, alignItems: "start" }}>
+      <div style={{ ...card, display: "grid", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          {crumbs.map((k, i) => (i === crumbs.length - 1
+            ? <span key={i} style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{k.label}</span>
+            : (
+              <span key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <TabLink href={atHref(k.view || null)} onSelect={() => setAt(k.view || null)} style={{ fontSize: 14, fontWeight: 600, color: T.blue }}>{k.label}</TabLink>
+                <span style={{ color: T.slate400 }}>›</span>
+              </span>
+            )))}
+          {moves && (
+            <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+              {MAP_MOVES.map(([k, t]) => (
+                <TabLink key={k} href={atHref(moves[k] || null)} onSelect={() => setAt(moves[k])} disabled={!moves[k]} title={`The next grid ${k}`} ariaLabel={`The next grid ${k}`}
+                  style={{ ...btn("soft", true), minWidth: 30, textAlign: "center", opacity: moves[k] ? 1 : 0.35 }}>{t}</TabLink>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ fontSize: 12, color: T.slate600 }}>{v.scale}{cells.some(c => c.open) ? " Tap a cell to open the grid inside it." : ""}</div>
+        <div style={{ display: "grid", gridTemplateColumns: `16px repeat(${cols}, minmax(0, 1fr))`, gap: 1, width: "100%", maxWidth: 44 * cols + 16, userSelect: "none" }}>
+          {grid}
+        </div>
+        {(kinds.length > 0 || dots) && (
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: T.slate600 }}>
+            {kinds.map(k => (
+              <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 12, height: 12, borderRadius: 3, background: MAP_GROUND[k], border: `1px solid ${T.slate200}`, boxSizing: "border-box" }} />
+                {grounds[k] || k}
+              </span>
+            ))}
+            {dots && <span>A dot is a place too small to fill a cell. A number is that many places.</span>}
+          </div>
+        )}
+      </div>
+      <div>
+        <div style={{ ...card, marginBottom: 12 }}>
+          <div style={label}>Places on this grid</div>
+          {here.length === 0 && <div style={{ fontSize: 12, color: T.slate500, marginTop: 6 }}>None. This is unnamed land and sea.</div>}
+          {here.map(placeRow)}
+        </div>
+        {away.length > 0 && <Fold title={`Places elsewhere (${away.length})`}>{away.map(placeRow)}</Fold>}
+        <Fold title="The grids">
+          {ladder.map(l => (
+            <div key={l.name} style={{ fontSize: 13, color: T.slate700, padding: "3px 0" }}><b style={{ color: T.slate900 }}>{l.name}.</b> {l.line}</div>
+          ))}
+          <div style={{ fontSize: 13, color: T.slate700, padding: "3px 0" }}>One square is {v.square}.</div>
+        </Fold>
       </div>
     </div>
   );
