@@ -647,6 +647,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                               <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8 }}>
                                 Reference: <a
                                   href={`/admin#${step.source_anchor || ""}`}
+                                  target="_blank" rel="noreferrer"
                                   style={{ color: T.blue, textDecoration: "underline" }}
                                   onClick={(e) => e.stopPropagation()}
                                 >admin manual</a>

@@ -432,7 +432,8 @@ export function formIdOf(label) {
 
 // ─── sub-item text ───────────────────────────────────
 // Renders one sub-item label. [text](url) and bare web addresses become
-// links. A click path written with " > " (File > Options > Mail) is shown in
+// links. Every link opens in a new tab, so the plan stays open behind it; a
+// form link opens its pop-up instead. A click path written with " > " (File > Options > Mail) is shown in
 // its own colour so it reads as a path. An icon, when one is on file for the
 // label, sits right after the text.
 const LINK_RE = /\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s)]+)/g;
@@ -477,7 +478,7 @@ export function LabelText({ text, icon = null, pathColor, linkColor }) {
   return (
     <>
       {parts.map((p, i) => p.href ? (
-        <a key={i} href={p.href} target={p.href.startsWith("/") ? undefined : "_blank"} rel="noreferrer"
+        <a key={i} href={p.href} target={formIdOf(p.href) && openForm ? undefined : "_blank"} rel="noreferrer"
           onClick={(e) => {
             e.stopPropagation();
             const fid = formIdOf(p.href);
