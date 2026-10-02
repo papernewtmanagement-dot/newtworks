@@ -72,8 +72,9 @@ const TAB_LABELS = { characters: "Characters", creatures: "Creatures", objects: 
 // carries its section from rpg_sheet (rpg_section), so the page never sorts stats by group itself. The hidden basics
 // (Swing arm, Grip, ...) are never rows; they show inside a skill's parents. A skill that is second nature
 // (rpg_skill_tree: every parent second nature and its own number at its bar) is hidden the same way: never a row,
-// shown inside the parents of the skills built on it, and it still rolls, counts and trains.
-const SECTIONS = ["Spirit", "Mind", "Body", "Derived", "Skills"];
+// shown inside the parents of the skills built on it, and it still rolls, counts and trains. Knowledge rows (Knowing
+// Bramblemaw, one per card) have their own section; rpg_sheet decides which of them a kid sees, so the page just lists them.
+const SECTIONS = ["Spirit", "Mind", "Body", "Derived", "Skills", "Knowledge"];
 const COINS = [["platinum", "Platinum"], ["gold", "Gold"], ["silver", "Silver"], ["copper", "Copper"]];
 
 const card = { background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 12, padding: 14, boxSizing: "border-box" };
