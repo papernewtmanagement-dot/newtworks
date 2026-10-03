@@ -18,6 +18,9 @@ import { withRoleplayBlocks } from "./markdown.js";
 //                                onboarding week's Practice card, in order. Under
 //                                each item go the decks its onboarding pop-up
 //                                names, each deck once per day.
+// Both day tokens take more than one onboarding week, in order:
+// {{practice: 3,5 | Monday}} (a kickoff week that condenses several onboarding
+// weeks, or Other Auto riding on the auto week; Peter 2026-10-03).
 //
 // Sources: onboarding_phases (week name), onboarding_step_templates (the
 // Practice card's day items, and the videos on every card of the week),
@@ -27,11 +30,11 @@ import { withRoleplayBlocks } from "./markdown.js";
 // time by withRoleplayBlocks, so the page keeps one copy of every deck.
 
 const WEEK_TOKEN_RE = /\{\{practice-week:\s*(\d+)\s*\}\}/gi;
-const VIDEO_TOKEN_RE = /\{\{practice-videos:\s*(\d+)\s*\|\s*([A-Za-z]+)\s*\}\}/gi;
+const VIDEO_TOKEN_RE = /\{\{practice-videos:\s*(\d+(?:\s*,\s*\d+)*)\s*\|\s*([A-Za-z]+)\s*\}\}/gi;
 const VIDEO_URL_RE = /\]\((https?:\/\/[^)]*(youtube\.com|youtu\.be|vimeo\.com|facebook\.com|fb\.watch|instagram\.com)[^)]*)\)/i;
 const STAIRS_RE = /stairs\s*&\s*buckets/i;
 const WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday"];
-const DAY_TOKEN_RE = /\{\{practice:\s*(\d+)\s*\|\s*([A-Za-z]+)\s*\}\}/gi;
+const DAY_TOKEN_RE = /\{\{practice:\s*(\d+(?:\s*,\s*\d+)*)\s*\|\s*([A-Za-z]+)\s*\}\}/gi;
 const RP_TOKEN_RE = /\{\{roleplay:\s*([a-z0-9_-]+)\s*\}\}/gi;
 const WEEK_OPEN_RE = /^[ \t]*\*?\[Week:\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
 const WEEK_END_RE = /^[ \t]*\*?\[Week end\]\*?[ \t]*$/i;
@@ -97,8 +100,13 @@ function addVideos(w, groupName, items) {
   (w.videos[day] = w.videos[day] || []).push({ heading, items: vids });
 }
 
-function videoBlock(data, week, day) {
-  const groups = data?.weeks?.[week]?.videos?.[String(day).toLowerCase()] || [];
+// "3,5" → [3, 5]
+function weekList(n) {
+  return String(n).split(",").map((x) => Number(x.trim())).filter((x) => x > 0);
+}
+
+function videoBlock(data, weeks, day) {
+  const groups = weeks.flatMap((week) => data?.weeks?.[week]?.videos?.[String(day).toLowerCase()] || []);
   if (!groups.length) return "";
   const parts = ["**Videos**"];
   groups.forEach((g) => {
@@ -122,9 +130,9 @@ function isShuffleDeck(id, md) {
   return re.test(md);
 }
 
-function dayBlock(data, week, day, md) {
-  const w = data?.weeks?.[week];
-  const items = (w?.days?.[String(day).toLowerCase()] || []).filter((it) => /^\s*🎭/.test(String(it || "")));
+function dayBlock(data, weeks, day, md) {
+  const items = weeks.flatMap((week) => data?.weeks?.[week]?.days?.[String(day).toLowerCase()] || [])
+    .filter((it) => /^\s*🎭/.test(String(it || "")));
   if (!items.length) return "";
   const shown = new Set();
   const parts = [];
@@ -147,12 +155,18 @@ export function fillPractice(md, data) {
     const w = data?.weeks?.[Number(n)];
     return w ? `Week ${Number(n)} — ${w.title}` : `Week ${Number(n)}`;
   });
-  out = out.replace(VIDEO_TOKEN_RE, (_m, n, day) => (data ? videoBlock(data, Number(n), day) : ""));
+  out = out.replace(VIDEO_TOKEN_RE, (_m, n, day) => (data ? videoBlock(data, weekList(n), day) : ""));
+  // The kickoff weeks whose day blocks hold a {{practice:}} token. Their label
+  // can differ from the onboarding weeks the token names (kickoff 5 ← 7,8).
   const filledWeeks = new Set();
-  out = out.replace(DAY_TOKEN_RE, (_m, n, day) => {
-    filledWeeks.add(String(Number(n)));
-    return data ? dayBlock(data, Number(n), day, src) : "";
+  let inWeek = null;
+  src.split("\n").forEach((line) => {
+    const open = WEEK_OPEN_RE.exec(line);
+    if (open) inWeek = open[1].trim();
+    else if (WEEK_END_RE.test(line)) inWeek = null;
+    else if (inWeek && /\{\{practice:/i.test(line)) filledWeeks.add(inWeek);
   });
+  out = out.replace(DAY_TOKEN_RE, (_m, n, day) => (data ? dayBlock(data, weekList(n), day, src) : ""));
   if (!data || !filledWeeks.size) return out;
   // A deck from another week would be dropped by the week filter, so copy it
   // into the week that names it, just before that week's end.
