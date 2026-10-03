@@ -57,7 +57,8 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //   rpg_act_square(actor, x, y, action)      a move on the board: a walk that costs ticks by the mover's Speed (a square
 //                                            costs 1 + its movement penalty), or a card action aimed at a square
 //                                            (Rootstep, Briar Shift)
-//   rpg_place / rpg_place_start / rpg_set_square / rpg_set_board   the game master sets up the board
+//   rpg_place / rpg_set_square               the game master moves a fighter by hand or sets fire; the ground itself
+//                                            is the world map under the fight (rpg_fight_squares)
 //   rpg_map_view(level, x, y)                the Maps tab in one read (game master only): one grid of the world map,
 //                                            from the place cards and fixed-seed rolls for unnamed ground (sea, open
 //                                            land, forest, hills, mountains), with the list that grid shows (the
@@ -200,9 +201,10 @@ export default function Roleplaying({ userRole }) {
       {activeTab === "objects" && isParent && <ObjectsTab onError={setErr} />}
       {activeTab === "rules" && <RulesTab onError={setErr} />}
       {activeTab === "play" && (fightId
-        ? <FightView id={fightId} isParent={isParent} defs={defs} onBack={() => setFightId(null)} backHref={fightHref(null)} onError={setErr} />
+        ? <FightView id={fightId} isParent={isParent} defs={defs} onBack={() => setFightId(null)} backHref={fightHref(null)} onError={setErr}
+            onMap={isParent ? () => { setFightId(null); setTab("maps"); } : null} />
         : <FightList isParent={isParent} onOpen={setFightId} hrefFor={fightHref} onError={setErr} />)}
-      {activeTab === "maps" && isParent && <MapsTab onError={setErr} />}
+      {activeTab === "maps" && isParent && <MapsTab onError={setErr} onFight={(f) => { setTab("play"); setFightId(f); }} />}
     </div>
   );
 }
@@ -1369,7 +1371,7 @@ function MapSwatch({ what, color, size = 24, top }) {
     </svg>
   );
 }
-function MapsTab({ onError }) {
+function MapsTab({ onError, onFight }) {
   const [at, setAt, atHref] = useTabParam("map", null);
   const [v, setV] = useState(null);
   const rootRef = useRef(null);
@@ -1416,7 +1418,7 @@ function MapsTab({ onError }) {
     if (mode.kind === "walk") act("rpg_map_walk", { p_participant_id: mode.id, p_x: c.to[0], p_y: c.to[1] });
     else act("rpg_place", { p_participant_id: mode.id, p_x: c.to[0], p_y: c.to[1] });
   } : null;
-  const journey = v ? <MapJourney j={j} v={v} busy={busy} note={note} mode={live ? mode : null} setMode={setMode} act={act} atHref={atHref} setAt={setAt} /> : null;
+  const journey = v ? <MapJourney j={j} busy={busy} note={note} mode={live ? mode : null} setMode={setMode} act={act} atHref={atHref} setAt={setAt} onFight={onFight} /> : null;
   return (
     <div ref={rootRef} style={{ display: "grid", gridTemplateColumns: wide ? `${MAP_SIDE}px minmax(0, 1fr)` : "minmax(0, 1fr)", gap: 12, alignItems: "start" }}>
       {!v ? <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div> : wide ? (
@@ -1437,7 +1439,7 @@ function MapsTab({ onError }) {
 // The journey: the group walking the world map, turn by turn on one clock. No journey open → one button to start
 // one. Otherwise the clock in words, every piece (where it is, when it goes next, its walking day), the controls for
 // the piece whose turn it is, adding a character, and what happened. Everything shown comes from rpg_map_view.
-function MapJourney({ j, v, busy, note, mode, setMode, act, atHref, setAt }) {
+function MapJourney({ j, busy, note, mode, setMode, act, atHref, setAt, onFight }) {
   const [pick, setPick] = useState("");
   if (!j) {
     return (
@@ -1464,7 +1466,12 @@ function MapJourney({ j, v, busy, note, mode, setMode, act, atHref, setAt }) {
       {cur && (
         <div style={{ border: `1px solid ${T.blue}`, borderRadius: 10, padding: 10, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, color: T.slate900 }}>{dot(cur, 14)}{cur.name}’s turn</div>
-          {cur.placed ? (
+          {cur.fight ? (
+            <>
+              <div style={{ fontSize: 12, color: T.slate600 }}>A fight is on. {cur.creature ? "The creature" : cur.name} moves and acts on the fight board.</div>
+              <div><button type="button" style={btn("primary", true)} onClick={() => onFight(j.id)}>Open the fight board</button></div>
+            </>
+          ) : cur.placed ? (
             <>
               <div style={{ fontSize: 12, color: T.slate600 }}>{cur.day_left} of walking left today.</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -1500,7 +1507,7 @@ function MapJourney({ j, v, busy, note, mode, setMode, act, atHref, setAt }) {
                   ? <TabLink href={atHref(p.find)} onSelect={() => setAt(p.find)} style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{p.name}</TabLink>
                   : <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{p.name}</span>}
                 <span style={{ display: "block", fontSize: 12, color: T.slate600 }}>
-                  {[!p.placed ? "Not on the map" : p.cell ? `On ${p.cell}` : "Elsewhere", j.current === p.id && !setup ? "its turn" : p.next ? `next turn in ${p.next}` : null].filter(Boolean).join(" · ")}
+                  {[p.out || (p.creature ? "creature" : null), !p.placed ? "Not on the map" : p.cell ? `On ${p.cell}` : "Elsewhere", p.fight && !p.creature ? "in a fight" : null, j.current === p.id && !setup ? "its turn" : p.next ? `next turn in ${p.next}` : null].filter(Boolean).join(" · ")}
                 </span>
               </span>
               <button type="button" disabled={busy} style={btn(mode && mode.kind === "place" && mode.id === p.id ? "primary" : "soft", true)}
@@ -1621,8 +1628,9 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
     return (
       <span key={p.id} title={p.name} aria-hidden="true"
         style={{ position: "absolute", left: `calc(16px + (100% - 16px) * ${p.spot[0] / (cols * 1000)} + ${(n - 1) * 12}px)`, top: `calc(16px + (100% - 16px) * ${p.spot[1] / (rows * 1000)})`,
-          transform: "translate(-50%, -50%)", width: 22, height: 22, borderRadius: "50%", background: p.color || T.slate500, border: "2px solid #fff",
+          transform: "translate(-50%, -50%)", width: 22, height: 22, background: p.color || T.slate500, border: "2px solid #fff",
           boxShadow: turn ? `0 0 0 3px ${T.blue}, 0 1px 3px rgba(0,0,0,.4)` : "0 1px 3px rgba(0,0,0,.4)", color: "#fff", fontSize: 11, fontWeight: 800,
+          borderRadius: p.creature ? 5 : "50%", borderColor: p.creature ? "#5A1E1E" : "#fff", opacity: p.out ? 0.4 : 1,
           display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", boxSizing: "border-box", zIndex: turn ? 3 : 2 }}>
         {String(p.name || "?").charAt(0)}
       </span>
@@ -2323,7 +2331,7 @@ function DieBox({ value, onChange }) {
 }
 const cannotActWhy = (p) => (isDown(p) ? "is down" : (p.effects || []).find(e => e.cannot_act) ? `is ${(p.effects || []).find(e => e.cannot_act).name}` : "cannot act");
 
-function FightView({ id, isParent, defs, onBack, backHref, onError }) {
+function FightView({ id, isParent, defs, onBack, backHref, onError, onMap }) {
   const [st, setSt] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
@@ -2362,6 +2370,8 @@ function FightView({ id, isParent, defs, onBack, backHref, onError }) {
   const ended = s.status === "ended";
   const active = s.status === "active";
   const setup = s.status === "setup";
+  // a fight on a journey belongs to the map: it starts when a creature is met and the journey ends from the Maps tab
+  const journey = !!s.on_map;
   // The one whose turn it is acts. Players act for a character on its turn; the game master acts for anyone on theirs.
   const actor = current && active && (isParent || current.kind === "character") ? current : null;
   const endTurn = () => run("rpg_session_next_turn", { p_session_id: id });
@@ -2376,19 +2386,21 @@ function FightView({ id, isParent, defs, onBack, backHref, onError }) {
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-        <TabLink href={backHref} onSelect={onBack} style={btn("soft", true)}>‹ All fights</TabLink>
+        {journey && onMap
+          ? <button type="button" style={btn("soft", true)} onClick={onMap}>‹ Map</button>
+          : <TabLink href={backHref} onSelect={onBack} style={btn("soft", true)}>‹ All fights</TabLink>}
         <div style={{ fontSize: 18, fontWeight: 700, color: T.slate900, minWidth: 0, flex: "1 1 auto" }}>{s.name}{ended ? " · over" : ""}</div>
         {isParent && !ended && (
           <button type="button" style={btn(adding || setup ? "primary" : "soft", true)} onClick={() => setAdding(!adding)}>{adding || setup ? "Adding" : "Add someone"}</button>
         )}
-        {isParent && setup && (
+        {isParent && setup && !journey && (
           <button type="button" style={btn("primary", true)} disabled={busy || parts.length === 0} onClick={endTurn}>Start the fight</button>
         )}
-        {isParent && !ended && (
+        {isParent && !ended && !journey && (
           <button type="button" style={btn("soft", true)} disabled={busy}
             onClick={() => { if (window.confirm("End this fight? Nothing more can happen in it.")) run("rpg_session_end", { p_session_id: id }); }}>End fight</button>
         )}
-        {isParent && ended && <button type="button" style={btn("danger", true)} onClick={del}>Delete fight</button>}
+        {isParent && ended && !journey && <button type="button" style={btn("danger", true)} onClick={del}>Delete fight</button>}
       </div>
 
       {msg && <div style={{ ...card, borderColor: T.red, color: T.red, fontSize: 13 }}>{msg}</div>}
@@ -2416,70 +2428,72 @@ function FightView({ id, isParent, defs, onBack, backHref, onError }) {
     </div>
   );
 }
-// The fight board, built from rpg_session_state: squares shaded by their movement penalty (the number sits in the
-// corner), green when forest, orange while burning (a glyph in the corner), everyone on their square. On the turn of
-// someone you act for, the squares they can still reach this turn are ringed, with the ticks each costs; tap one to
-// move there (rpg_act_square). A card action aimed at a square (Briar Shift, a Torch's Light the ground) waits here
-// for its square. The game master places fighters, paints penalties, forest and fire (rpg_set_square) and sets the
-// board's size.
+// The fight board, built from rpg_session_state: the world map under the fight, round the one whose turn it is
+// (board: its first square, size, column and row names within each battle grid, each square's penalty, forest, fire
+// and sea). Squares are shaded by their movement penalty (the number sits in the corner), green when forest, orange
+// while burning, blue for sea; everyone on their square. On the turn of someone you act for, the squares they can
+// still reach this turn are ringed, with the ticks each costs; tap one to move there (rpg_act_square). A card action
+// aimed at a square (Briar Shift, a Torch's Light the ground) waits here for its square. The game master can move a
+// fighter by hand (rpg_place) and set fire or put it out (rpg_set_square). A fight off the map has no board.
 function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }) {
   const s = st?.session || {};
-  const w = Number(s.grid_w) || 12;
-  const h = Number(s.grid_h) || 12;
-  const terrain = s.terrain && typeof s.terrain === "object" ? s.terrain : {};
+  const b = s.board && typeof s.board === "object" ? s.board : null;
   const parts = Array.isArray(st?.participants) ? st.participants : [];
   const moves = Array.isArray(st?.moves) ? st.moves : [];
   const [mode, setMode] = useState("move");
   const [who, setWho] = useState("");
-  const [pen, setPen] = useState(2);
-  const [brush, setBrush] = useState("penalty");
-  const [size, setSize] = useState(null);
-  const placed = parts.filter(p => p.pos_x != null);
-  if (ended || (!isParent && placed.length === 0)) return null;
-  const sq = (x, y) => `${String.fromCharCode(64 + x)}${y}`;
+  if (ended) return null;
+  if (!b) {
+    return isParent && s.on_map === false && parts.length > 0
+      ? <div style={{ ...card, fontSize: 12, color: T.slate600 }}>This fight is off the map, so there is no board and everyone is in reach. Fights on the ground happen on a journey.</div>
+      : null;
+  }
+  const w = Number(b.w) || 0;
+  const h = Number(b.h) || 0;
+  const x0 = Number(b.x0) || 1;
+  const y0 = Number(b.y0) || 1;
+  const sqs = Array.isArray(b.squares) ? b.squares : [];
+  const cols = Array.isArray(b.cols) ? b.cols : [];
+  const rows = Array.isArray(b.rows) ? b.rows : [];
+  const away = b.away && typeof b.away === "object" ? b.away : {};
   const at = {};
-  placed.forEach(p => { at[`${p.pos_x},${p.pos_y}`] = p; });
-  const ground = (k) => (terrain[k] && typeof terrain[k] === "object" ? terrain[k] : {});
+  parts.filter(p => p.pos_x != null).forEach(p => { at[`${p.pos_x},${p.pos_y}`] = p; });
   const moveAt = {};
   if (actor && !pending && mode === "move") moves.forEach(m => { moveAt[`${m.x},${m.y}`] = m; });
-  const pick = parts.some(p => p.id === who) ? who : ((parts.find(p => p.pos_x == null) || parts[0])?.id || "");
-  const sw = size || { w, h };
-  const click = (x, y) => {
+  const pick = parts.some(p => p.id === who) ? who : (parts[0]?.id || "");
+  const nameOf = (x, y) => `${cols[x - x0] || ""}${rows[y - y0] || ""}`;
+  const click = (x, y, g) => {
     if (busy) return;
     if (pending) {
       run("rpg_act_square", { p_actor_id: pending.actorId, p_x: x, p_y: y, p_action_id: pending.actionId }, pending.actorId).then(r => { if (r) onPending(null); });
       return;
     }
     if (isParent && mode === "place") { if (pick) run("rpg_place", { p_participant_id: pick, p_x: x, p_y: y }); return; }
-    if (isParent && mode === "ground") {
-      const g = ground(`${x},${y}`);
-      if (brush === "forest") run("rpg_set_square", { p_session_id: s.id, p_x: x, p_y: y, p_forest: !g.forest });
-      else if (brush === "fire") run("rpg_set_square", { p_session_id: s.id, p_x: x, p_y: y, p_burning: !g.burning });
-      else run("rpg_set_square", { p_session_id: s.id, p_x: x, p_y: y, p_penalty: pen });
-      return;
-    }
+    if (isParent && mode === "fire") { run("rpg_set_square", { p_session_id: s.id, p_x: x, p_y: y, p_burning: !g[2] }); return; }
     if (moveAt[`${x},${y}`]) run("rpg_act_square", { p_actor_id: actor.id, p_x: x, p_y: y }, actor.id);
   };
   const axis = { fontSize: 10, color: T.slate500, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" };
   const cells = [<div key="corner" />];
-  for (let x = 1; x <= w; x++) cells.push(<div key={`c${x}`} style={axis}>{String.fromCharCode(64 + x)}</div>);
-  for (let y = 1; y <= h; y++) {
-    cells.push(<div key={`r${y}`} style={axis}>{y}</div>);
-    for (let x = 1; x <= w; x++) {
+  for (let i = 0; i < w; i++) cells.push(<div key={`c${i}`} style={axis}>{cols[i]}</div>);
+  for (let j = 0; j < h; j++) {
+    cells.push(<div key={`r${j}`} style={axis}>{rows[j]}</div>);
+    for (let i = 0; i < w; i++) {
+      const x = x0 + i, y = y0 + j;
       const k = `${x},${y}`;
+      const g = Array.isArray(sqs[j * w + i]) ? sqs[j * w + i] : [0, false, false, false];
       const p = at[k];
       const m = moveAt[k];
-      const g = ground(k);
-      const n = Number(g.p) || 0;
-      const forest = !!g.forest;
-      const fire = !!g.burning;
-      const title = `${sq(x, y)}${n ? ` · movement penalty ${n}` : ""}${forest ? " · forest" : ""}${fire ? ` · burning (${s.burn_cost} more to step into)` : ""}${p ? ` · ${p.name}${p.out ? ` (${p.out})` : ""}` : ""}${m ? ` · costs ${m.cost}, ${m.ticks} ticks` : ""}`;
+      const sea = !!g[3];
+      const n = Number(g[0]) || 0;
+      const forest = !!g[1];
+      const fire = !!g[2];
+      const title = `${nameOf(x, y)}${sea ? " · sea" : ""}${n ? ` · movement penalty ${n}` : ""}${forest ? " · forest" : ""}${fire ? ` · burning (${s.burn_cost} more to step into)` : ""}${p ? ` · ${p.name}${p.out ? ` (${p.out})` : ""}` : ""}${m ? ` · costs ${m.cost}, ${m.ticks} ticks` : ""}`;
       const live = pending || (isParent && mode !== "move") || m;
       cells.push(
-        <button key={k} type="button" title={title} onClick={() => click(x, y)}
+        <button key={k} type="button" title={title} onClick={() => click(x, y, g)}
           style={{ aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, position: "relative", borderRadius: 3, fontFamily: "inherit",
                    border: m ? `2px solid ${T.blue}` : `1px solid ${T.slate200}`, cursor: live ? "pointer" : "default",
-                   background: fire ? `hsl(24, 90%, ${86 - n * 4}%)` : forest ? `hsl(130, 32%, ${88 - n * 5}%)` : n > 0 ? `hsl(75, 28%, ${92 - n * 6}%)` : T.slate50,
+                   background: sea ? "#B9D3DE" : fire ? `hsl(24, 90%, ${86 - n * 4}%)` : forest ? `hsl(130, 32%, ${88 - n * 5}%)` : n > 0 ? `hsl(75, 28%, ${92 - n * 6}%)` : T.slate50,
                    display: "flex", alignItems: "center", justifyContent: "center" }}>
           {n > 0 && <span style={{ position: "absolute", top: 0, left: 2, fontSize: 8, lineHeight: 1.2, color: n >= 6 ? T.white : T.slate600 }}>{n}</span>}
           {(fire || forest) && <span style={{ position: "absolute", top: 0, right: 1, fontSize: 8, lineHeight: 1.2 }}>{fire ? "🔥" : "🌲"}</span>}
@@ -2494,6 +2508,7 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
       );
     }
   }
+  const far = parts.filter(p => p.pos_x != null && away[p.id] != null);
   const off = parts.filter(p => p.pos_x == null);
   return (
     <div style={{ ...card, display: "grid", gap: 10 }}>
@@ -2512,39 +2527,23 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
       </div>
       {isParent && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          {[["move", "Move"], ["place", "Place"], ["ground", "Ground"]].map(([k, t]) => (
-            <button key={k} type="button" style={btn(mode === k ? "primary" : "soft", true)} onClick={() => setMode(k)}>{t}</button>
+          {[["move", "Move"], ["place", "Place"], ["fire", "🔥 Fire"]].map(([k, t]) => (
+            <button key={k} type="button" style={btn(mode === k ? "primary" : "soft", true)} onClick={() => setMode(k)}
+              title={k === "fire" ? `Tap a square to set it alight for ${s.burn_rounds} rounds, or to put it out` : undefined}>{t}</button>
           ))}
           {mode === "place" && (
-            <>
-              <select style={input} value={pick} onChange={e => setWho(e.target.value)}>
-                {parts.map(p => <option key={p.id} value={p.id}>{p.name}{p.pos_x != null ? ` · ${sq(p.pos_x, p.pos_y)}` : " · off the board"}</option>)}
-              </select>
-              <button type="button" style={btn("soft", true)} disabled={busy || !pick} onClick={() => run("rpg_place", { p_participant_id: pick })}>Take off the board</button>
-              <button type="button" style={btn("soft", true)} disabled={busy || off.length === 0} onClick={() => run("rpg_place_start", { p_session_id: s.id })}>Place everyone</button>
-            </>
-          )}
-          {mode === "ground" && (
-            <>
-              <span style={{ fontSize: 12, color: T.slate600 }}>Movement penalty</span>
-              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(v => (
-                <button key={v} type="button" style={{ ...btn(brush === "penalty" && pen === v ? "primary" : "soft", true), minWidth: 30 }} onClick={() => { setBrush("penalty"); setPen(v); }}>{v}</button>
-              ))}
-              <button type="button" style={btn(brush === "forest" ? "primary" : "soft", true)} title="Tap a square to make it forest, or plain again" onClick={() => setBrush("forest")}>🌲 Forest</button>
-              <button type="button" style={btn(brush === "fire" ? "primary" : "soft", true)} title={`Tap a square to set it alight for ${s.burn_rounds} rounds, or to put it out`} onClick={() => setBrush("fire")}>🔥 Fire</button>
-              <span style={{ fontSize: 12, color: T.slate600 }}>Size</span>
-              <input style={{ ...input, width: 48, textAlign: "center" }} inputMode="numeric" value={sw.w} onChange={e => setSize({ ...sw, w: e.target.value })} />
-              <span style={{ fontSize: 12, color: T.slate600 }}>×</span>
-              <input style={{ ...input, width: 48, textAlign: "center" }} inputMode="numeric" value={sw.h} onChange={e => setSize({ ...sw, h: e.target.value })} />
-              <button type="button" style={btn("soft", true)} disabled={busy || !size}
-                onClick={() => run("rpg_set_board", { p_session_id: s.id, p_w: Math.round(Number(sw.w)), p_h: Math.round(Number(sw.h)) }).then(r => { if (r) setSize(null); })}>Set size</button>
-            </>
+            <select style={input} value={pick} onChange={e => setWho(e.target.value)}>
+              {parts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
           )}
         </div>
       )}
-      <div style={{ display: "grid", gridTemplateColumns: `16px repeat(${w}, minmax(0, 1fr))`, gap: 1, width: "100%", maxWidth: 36 * w + 16, userSelect: "none" }}>
+      <div style={{ display: "grid", gridTemplateColumns: `16px repeat(${w}, minmax(0, 1fr))`, gap: 1, width: "100%", maxWidth: 32 * w + 16, userSelect: "none" }}>
         {cells}
       </div>
+      {far.length > 0 && (
+        <div style={{ fontSize: 12, color: T.slate600 }}>Farther off: {far.map(p => `${p.name} (${away[p.id]} squares)`).join(", ")}.</div>
+      )}
       {isParent && off.length > 0 && (
         <div style={{ fontSize: 12, color: T.slate600 }}>Off the board, so always in reach: {off.map(p => p.name).join(", ")}.</div>
       )}
