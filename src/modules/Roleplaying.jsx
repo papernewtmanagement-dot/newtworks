@@ -62,7 +62,11 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //                                            from the place cards and fixed-seed rolls for unnamed ground (sea, open
 //                                            land, forest, hills, mountains), with the list that grid shows (the
 //                                            places one level down), the lands it lies in and, for the world, every
-//                                            cell of the Continent grids to draw it fine
+//                                            cell of the Continent grids to draw it fine; and the open journey (its
+//                                            clock in words, whose turn, the pieces and where they stand on this grid)
+//   rpg_session_new(name, on_map) / rpg_map_walk(piece, x, y) / rpg_map_camp(piece)   a journey: the group walks
+//                                            the world map on the fight clock (a tick is 1/6 of a second, 8 hours of
+//                                            walking a day, then 16 of camp; nobody walks into the sea)
 //   rpg_creatures.image_path                 a picture in the private rpg-images bucket (parents upload)
 //   rpg_session_set_status / rpg_session_adjust_vitality / rpg_session_remove / rpg_session_end   game master changes
 // A character's details, coins and items change through rpg_character_update and rpg_item_add / _set_equipped /
@@ -1372,6 +1376,12 @@ function MapsTab({ onError }) {
   // the grids already opened while this tab is up, so going back up the map is at once
   const seen = useRef(new Map());
   const wide = useElementWidth(rootRef) >= MAP_WIDE;
+  // after a move on the journey every grid is read again (the pieces have moved); tick forces the read
+  const [tick, setTick] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(null);
+  // what a tap on a cell does: open the grid inside it (null), walk the piece whose turn it is, or place a piece
+  const [mode, setMode] = useState(null);
   useEffect(() => {
     let alive = true;
     const key = at || "";
@@ -1385,15 +1395,140 @@ function MapsTab({ onError }) {
       setV(data || null);
     })();
     return () => { alive = false; };
-  }, [at, setAt, onError]);
+  }, [at, setAt, onError, tick]);
+  const act = useCallback(async (fn, args) => {
+    if (busy) return;
+    setBusy(true);
+    const { data, error } = await supabase.rpc(fn, args);
+    setBusy(false);
+    if (error) { onError(error.message); return; }
+    setMode(null);
+    setNote(data && typeof data === "object" && data.text ? data.text : null);
+    seen.current.clear();
+    setTick(t => t + 1);
+  }, [busy, onError]);
+  const j = v && v.journey && typeof v.journey === "object" ? v.journey : null;
+  // a walk or a placing that no longer fits the journey (the turn passed, the piece left) is dropped
+  const live = mode && j && (mode.kind === "place" ? (j.pieces || []).some(p => p.id === mode.id)
+    : j.status === "active" && j.current === mode.id);
+  const onCell = live ? (c) => {
+    if (!Array.isArray(c.to)) return;
+    if (mode.kind === "walk") act("rpg_map_walk", { p_participant_id: mode.id, p_x: c.to[0], p_y: c.to[1] });
+    else act("rpg_place", { p_participant_id: mode.id, p_x: c.to[0], p_y: c.to[1] });
+  } : null;
+  const journey = v ? <MapJourney j={j} v={v} busy={busy} note={note} mode={live ? mode : null} setMode={setMode} act={act} atHref={atHref} setAt={setAt} /> : null;
   return (
     <div ref={rootRef} style={{ display: "grid", gridTemplateColumns: wide ? `${MAP_SIDE}px minmax(0, 1fr)` : "minmax(0, 1fr)", gap: 12, alignItems: "start" }}>
-      {!v ? <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div> : (
+      {!v ? <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div> : wide ? (
         <>
-          <MapSide v={v} atHref={atHref} setAt={setAt} order={wide ? 0 : 2} />
-          <MapGrid v={v} atHref={atHref} setAt={setAt} />
+          <div style={{ minWidth: 0 }}>{journey}<MapSide v={v} atHref={atHref} setAt={setAt} order={0} /></div>
+          <MapGrid v={v} atHref={atHref} setAt={setAt} journey={j} onCell={onCell} />
+        </>
+      ) : (
+        <>
+          {journey}
+          <MapGrid v={v} atHref={atHref} setAt={setAt} journey={j} onCell={onCell} />
+          <MapSide v={v} atHref={atHref} setAt={setAt} order={2} />
         </>
       )}
+    </div>
+  );
+}
+// The journey: the group walking the world map, turn by turn on one clock. No journey open → one button to start
+// one. Otherwise the clock in words, every piece (where it is, when it goes next, its walking day), the controls for
+// the piece whose turn it is, adding a character, and what happened. Everything shown comes from rpg_map_view.
+function MapJourney({ j, v, busy, note, mode, setMode, act, atHref, setAt }) {
+  const [pick, setPick] = useState("");
+  if (!j) {
+    return (
+      <div style={{ ...card, marginBottom: 12 }}>
+        <div style={label}>Journey</div>
+        <div style={{ fontSize: 13, color: T.slate600, margin: "6px 0 10px" }}>Walk the group across the map, one turn at a time.</div>
+        <button type="button" style={btn("primary")} disabled={busy} onClick={() => act("rpg_session_new", { p_name: null, p_on_map: true })}>Start a journey</button>
+      </div>
+    );
+  }
+  const pieces = Array.isArray(j.pieces) ? j.pieces : [];
+  const join = Array.isArray(j.can_join) ? j.can_join : [];
+  const log = Array.isArray(j.log) ? j.log : [];
+  const cur = j.status === "active" ? pieces.find(p => p.id === j.current) : null;
+  const setup = j.status === "setup";
+  const dot = (p, size = 12) => <span style={{ width: size, height: size, borderRadius: "50%", background: p.color || T.slate400, border: "2px solid #fff", boxShadow: `0 0 0 1px ${T.slate300}`, flexShrink: 0, display: "inline-block" }} />;
+  return (
+    <div style={{ ...card, marginBottom: 12, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+        <span style={{ ...label, minWidth: 0 }}>{j.name}</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900, whiteSpace: "nowrap" }}>{j.time}</span>
+      </div>
+      {note && <div style={{ fontSize: 13, color: T.slate700, background: T.slate50, borderRadius: 8, padding: "7px 9px" }}>{note}</div>}
+      {cur && (
+        <div style={{ border: `1px solid ${T.blue}`, borderRadius: 10, padding: 10, display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, color: T.slate900 }}>{dot(cur, 14)}{cur.name}’s turn</div>
+          {cur.placed ? (
+            <>
+              <div style={{ fontSize: 12, color: T.slate600 }}>{cur.day_left} of walking left today.</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button type="button" disabled={busy} style={btn(mode && mode.kind === "walk" ? "primary" : "soft", true)}
+                  onClick={() => setMode(mode && mode.kind === "walk" ? null : { kind: "walk", id: cur.id })}>{mode && mode.kind === "walk" ? "Tap the map…" : "Walk"}</button>
+                {Array.isArray(cur.walk_to) && (
+                  <button type="button" disabled={busy} style={btn("soft", true)}
+                    onClick={() => act("rpg_map_walk", { p_participant_id: cur.id, p_x: cur.walk_to[0], p_y: cur.walk_to[1] })}>Keep walking · {cur.to_go}</button>
+                )}
+                <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => act("rpg_map_camp", { p_participant_id: cur.id })}>Camp 16 h</button>
+                <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => act("rpg_session_next_turn", { p_session_id: j.id })}>End turn</button>
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: 12, color: T.slate600 }}>Not on the map yet. Place it below, or end the turn.
+              <button type="button" disabled={busy} style={{ ...btn("soft", true), marginLeft: 6 }} onClick={() => act("rpg_session_next_turn", { p_session_id: j.id })}>End turn</button>
+            </div>
+          )}
+        </div>
+      )}
+      {mode && mode.kind === "place" && (
+        <div style={{ fontSize: 13, color: T.slate700 }}>Tap the map to place {(pieces.find(p => p.id === mode.id) || {}).name}.
+          <button type="button" style={{ ...btn("soft", true), marginLeft: 6 }} onClick={() => setMode(null)}>Cancel</button>
+        </div>
+      )}
+      {pieces.length > 0 && (
+        <div>
+          {pieces.map(p => (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderTop: `1px solid ${T.slate100}` }}>
+              {dot(p)}
+              <span style={{ minWidth: 0, flex: 1 }}>
+                {p.find
+                  ? <TabLink href={atHref(p.find)} onSelect={() => setAt(p.find)} style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{p.name}</TabLink>
+                  : <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{p.name}</span>}
+                <span style={{ display: "block", fontSize: 12, color: T.slate600 }}>
+                  {[!p.placed ? "Not on the map" : p.cell ? `On ${p.cell}` : "Elsewhere", j.current === p.id && !setup ? "its turn" : p.next ? `next turn in ${p.next}` : null].filter(Boolean).join(" · ")}
+                </span>
+              </span>
+              <button type="button" disabled={busy} style={btn(mode && mode.kind === "place" && mode.id === p.id ? "primary" : "soft", true)}
+                onClick={() => setMode(mode && mode.kind === "place" && mode.id === p.id ? null : { kind: "place", id: p.id })}>{p.placed ? "Move" : "Place"}</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {join.length > 0 && (
+        <div style={{ display: "flex", gap: 6 }}>
+          <select value={pick} onChange={e => setPick(e.target.value)} style={{ ...input, flex: 1, minWidth: 0 }}>
+            <option value="">Add a character…</option>
+            {join.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <button type="button" disabled={busy || !pick} style={btn("soft", true)}
+            onClick={() => { act("rpg_session_add", { p_session_id: j.id, p_character_id: pick }); setPick(""); }}>Add</button>
+        </div>
+      )}
+      {setup && (
+        <button type="button" disabled={busy || !pieces.some(p => p.placed)} style={btn("primary")}
+          onClick={() => act("rpg_session_next_turn", { p_session_id: j.id })}>{pieces.some(p => p.placed) ? "Begin the journey" : "Place someone to begin"}</button>
+      )}
+      <details>
+        <summary style={{ ...label, cursor: "pointer" }}>What happened</summary>
+        {log.map((t, k) => <div key={k} style={{ fontSize: 12, color: T.slate700, padding: "3px 0" }}>{t}</div>)}
+        <button type="button" disabled={busy} style={{ ...btn("danger", true), marginTop: 8 }}
+          onClick={() => { if (window.confirm("End this journey? Nothing more can happen in it.")) act("rpg_session_end", { p_session_id: j.id }); }}>End journey</button>
+      </details>
     </div>
   );
 }
@@ -1437,7 +1572,7 @@ function MapSide({ v, atHref, setAt, order }) {
 // The map itself. It is as wide as the space it gets, held to what the height of the screen can show whole. The
 // picture (MapArt) lies under a grid of clear cells; each cell carries its name and what is in it, and opens the
 // grid inside it. Under the map: the scale, then the key to the grounds and places drawn on this grid.
-function MapGrid({ v, atHref, setAt }) {
+function MapGrid({ v, atHref, setAt, journey, onCell }) {
   const boxRef = useRef(null);
   const width = useElementWidth(boxRef);
   const level = Number(v.level) || 1;
@@ -1467,10 +1602,31 @@ function MapGrid({ v, atHref, setAt }) {
     if (p) drawn.add(p.id);
     marks.forEach(k => drawn.add(k.id));
     const title = `${c.name} · ${p ? [p.name, p.ground].filter(Boolean).join(" · ") : ground(c.kind)}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
-    const style = { aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, boxSizing: "border-box", position: "relative", display: "block", cursor: c.open ? "pointer" : "default" };
-    grid.push(c.open
-      ? <TabLink key={c.name} href={atHref(c.open)} onSelect={() => setAt(c.open)} title={title} ariaLabel={title} className="rpg-map-cell" style={style} />
-      : <div key={c.name} title={title} style={style} />);
+    const style = { aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, boxSizing: "border-box", position: "relative", display: "block", cursor: c.open || onCell ? "pointer" : "default" };
+    grid.push(onCell
+      ? <button key={c.name} type="button" onClick={() => onCell(c)} title={title} aria-label={title} className="rpg-map-cell" style={{ ...style, background: "none", border: "none" }} />
+      : c.open
+        ? <TabLink key={c.name} href={atHref(c.open)} onSelect={() => setAt(c.open)} title={title} ariaLabel={title} className="rpg-map-cell" style={style} />
+        : <div key={c.name} title={title} style={style} />);
+  });
+  // the pieces of the open journey that stand on this grid, at their spot (thousandths of a cell from the top-left
+  // corner); pieces sharing a cell sit side by side, and the one whose turn it is wears a ring
+  const rows = Number(v.rows) || 12;
+  const pieces = journey && Array.isArray(journey.pieces) ? journey.pieces.filter(p => Array.isArray(p.spot)) : [];
+  const shared = {};
+  const tokens = pieces.map(p => {
+    const k = `${Math.floor(p.spot[0] / 1000)},${Math.floor(p.spot[1] / 1000)}`;
+    const n = shared[k] = (shared[k] || 0) + 1;
+    const turn = journey.status === "active" && journey.current === p.id;
+    return (
+      <span key={p.id} title={p.name} aria-hidden="true"
+        style={{ position: "absolute", left: `calc(16px + (100% - 16px) * ${p.spot[0] / (cols * 1000)} + ${(n - 1) * 12}px)`, top: `calc(16px + (100% - 16px) * ${p.spot[1] / (rows * 1000)})`,
+          transform: "translate(-50%, -50%)", width: 22, height: 22, borderRadius: "50%", background: p.color || T.slate500, border: "2px solid #fff",
+          boxShadow: turn ? `0 0 0 3px ${T.blue}, 0 1px 3px rgba(0,0,0,.4)` : "0 1px 3px rgba(0,0,0,.4)", color: "#fff", fontSize: 11, fontWeight: 800,
+          display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", boxSizing: "border-box", zIndex: turn ? 3 : 2 }}>
+        {String(p.name || "?").charAt(0)}
+      </span>
+    );
   });
   const kinds = ["sea", "land", "forest", "hills", "mountains"].filter(k => cells.some(c => c.kind === k) || (detail && detail.cells.some(row => String(row).includes({ sea: "~", land: ".", forest: "t", hills: "h", mountains: "m" }[k]))));
   const shown = places.filter(p => drawn.has(p.id) && !p.listed);
@@ -1500,10 +1656,11 @@ function MapGrid({ v, atHref, setAt }) {
         <div style={{ position: "relative", display: "grid", gridTemplateColumns: `16px repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: "16px" }}>
           <MapArt art={art} px={px} />
           {grid}
+          {tokens}
         </div>
       </div>
       <div style={{ display: "flex", gap: "6px 14px", flexWrap: "wrap", alignItems: "center", fontSize: 12, color: T.slate600 }}>
-        <span>{within.length > 0 ? `In ${within.slice().reverse().join(", ")}. ` : ""}{v.scale}{cells.some(c => c.open) ? " Tap a cell to open the grid inside it." : ""}</span>
+        <span>{within.length > 0 ? `In ${within.slice().reverse().join(", ")}. ` : ""}{v.scale}{onCell ? " Tap a cell: the piece goes to its middle." : cells.some(c => c.open) ? " Tap a cell to open the grid inside it." : ""}</span>
         {shown.map(p => (
           <TabLink key={p.id} href={atHref(p.view || null)} onSelect={() => setAt(p.view || null)} style={{ display: "flex", alignItems: "center", gap: 5, color: T.slate700, fontWeight: 600 }}>
             <MapSwatch what={p.icon} color={p.color} size={20} top={top} />{p.name}{p.ground && <span style={{ fontWeight: 400, color: T.slate600 }}>· {p.ground}</span>}
