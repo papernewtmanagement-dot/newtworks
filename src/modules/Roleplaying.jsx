@@ -833,17 +833,22 @@ function ObjectsTab({ onError }) {
 // tab is narrow) and the map takes the rest of the screen. Each grid lists the places one level down (v.list: the
 // world lists continents, a continent countries, a country regions, and so on). The world is drawn as fine as the
 // grids inside it (v.detail: every cell of the Continent grids), so it is the largest map.
-// The drawing has two styles (MAP_ART). From the world down to a district it is a fantasy map: parchment land, an
-// inked coast, little trees, hills and peaks, and names written on the land. The battle grid is seen from above:
-// grass, tree trunks under their crowns, rocks, water. The drawing is decoration only; what a cell is, and what it
-// costs to enter, comes from the function. The same cell always draws the same way (mapRand).
+// The drawing has two styles (MAP_ART). From the world down to a district it is a fantasy map: an inked coast,
+// little trees, hills and peaks, and names written on the land. The battle grid is seen from above: grass, tree
+// trunks under their crowns, rocks, water. Every ground has one color at every level: the fantasy map paints it in
+// the color the battle grid gives it, lightened toward the paper (mapWash), so open land is grassland on every grid
+// and never bare paper. The drawing is decoration only; what a cell is, and what it costs to enter, comes from the
+// function. The same cell always draws the same way (mapRand).
 const MAP_MOVES = [["west", "←"], ["north", "↑"], ["south", "↓"], ["east", "→"]];
 // The sidebar is 280 wide and sits beside the map once the tab itself is 760 across.
 const MAP_SIDE = 280;
 const MAP_WIDE = 760;
 const MAP_INK = "#4B3B2A";
 const MAP_SERIF = "Georgia, 'Times New Roman', serif";
+// The paper of the fantasy map: the sea, and the bare paper (land) that shows behind names and symbol pads.
 const MAP_PAPER = { sea: "#B4CACB", shallow: "#C6D9D6", shore: "#D6E4DD", land: "#EFE5C8" };
+// How much of a ground's battle-grid color the fantasy map takes; the rest is paper.
+const MAP_TINT = 0.42;
 // blank parchment over the cells the group has not found yet (the kids login)
 const MAP_FOG = "#E6DCC3";
 // A steady number from 0 to 1 for a spot on the map, so the same cell always draws the same way.
@@ -975,7 +980,7 @@ const MAP_ART = {
     { k: "pine", fill: "#6F8B5B", line: MAP_INK, w: 1 },
     { k: "thorn", fill: "#8D9245", line: MAP_INK, w: 0.9 },
     { k: "wall", fill: "#F6EED8", line: MAP_INK, w: 1 }, { k: "roof", fill: "#B4633C", line: MAP_INK, w: 1 }, { k: "door", line: MAP_INK, w: 1 },
-    { k: "tuft", line: "#8C8156", w: 0.9 }, { k: "dip", line: "#8C8156", w: 1 }, { k: "stream", line: "#6C9BAE", w: 1.5 },
+    { k: "tuft", line: "#7A8A4C", w: 0.9 }, { k: "dip", line: "#8C8156", w: 1 }, { k: "stream", line: "#6C9BAE", w: 1.5 },
     { k: "mist", line: "#8E8AA3", w: 1.7 }, { k: "wave", line: "#8DAEB1", w: 1 },
   ],
   fantasy: {
@@ -1082,6 +1087,12 @@ const MAP_ART = {
     { k: "mist", line: "#FFFFFF", w: 5, o: 0.4 },
   ],
 };
+// A color part of the way from one color to another (both "#RRGGBB"; t = 0 the first, 1 the second).
+const mapMix = (a, b, t) => "#" + [1, 3, 5].map(n => Math.round(parseInt(a.slice(n, n + 2), 16) * (1 - t) + parseInt(b.slice(n, n + 2), 16) * t).toString(16).padStart(2, "0")).join("");
+// The color of a ground on the fantasy map: the paper tinted with the color that ground has on the battle grid
+// (MAP_ART.top), so a cell and the squares inside it are one color family at every level. A ground the battle grid
+// has no look of its own for is open land.
+const mapWash = (what) => (what === "sea" ? MAP_PAPER.sea : mapMix(MAP_PAPER.land, (MAP_ART.top[what] || MAP_ART.top.land).tones[0], MAP_TINT));
 // One grid in the fantasy style: the strokes to paint, bottom first, and the names to write.
 function mapFantasy(v, byId) {
   const level = Number(v.level) || 1, cols = Number(v.cols) || 12, rows = Number(v.rows) || 12;
@@ -1105,11 +1116,13 @@ function mapFantasy(v, byId) {
   const get = (i, j) => grid[(j < 0 ? 0 : j >= R ? R - 1 : j) * C + (detail ? ((i % C) + C) % C : (i < 0 ? 0 : i >= C ? C - 1 : i))] || none;
   const layers = [{ d: `M0 0H${cols * 100}V${rows * 100}H0Z`, fill: MAP_PAPER.sea }];
   const land = mapOutline(C, R, (i, j) => get(i, j).k !== "sea", unit, 0.45);
-  layers.push({ d: land, line: MAP_PAPER.shallow, units: unit * (detail ? 1.5 : 0.4) }, { d: land, line: MAP_PAPER.shore, units: unit * (detail ? 0.7 : 0.2) }, { d: land, fill: MAP_PAPER.land });
-  [["forest", "#C3D09B", 0.75], ["hills", "#E4D29C", 0.8], ["mountains", "#D6C8AE", 0.85]].forEach(([k, fill, o]) => {
-    const d = mapOutline(C, R, (i, j) => get(i, j).k === k, unit, 0.45);
-    if (d) layers.push({ d, fill, o });
-  });
+  // the land is open land (grass) from coast to coast; every other ground is painted over it in its own color
+  layers.push({ d: land, line: MAP_PAPER.shallow, units: unit * (detail ? 1.5 : 0.4) }, { d: land, line: MAP_PAPER.shore, units: unit * (detail ? 0.7 : 0.2) }, { d: land, fill: mapWash("land") });
+  // what ground a cell shows: a place's symbol names it, else the kind of the cell
+  const shows = (g) => { const p = g.k === "place" ? byId[g.id] : null; return p ? p.icon : g.k; };
+  const grounds = new Set();
+  grid.forEach(g => { const what = g ? shows(g) : null; if (what && what !== "sea" && what !== "land" && what !== "unknown" && MAP_ART.top[what]) grounds.add(what); });
+  grounds.forEach(what => layers.push({ d: mapOutline(C, R, (i, j) => shows(get(i, j)) === what, unit, 0.45), fill: mapWash(what) }));
   // every place with ground of its own on this grid: a wash of its color under its symbols
   const filled = new Map();
   grid.forEach((g, n) => { if (g && g.k === "place" && g.id) { if (!filled.has(g.id)) filled.set(g.id, []); filled.get(g.id).push(n); } });
@@ -1126,7 +1139,7 @@ function mapFantasy(v, byId) {
     if (!g) continue;
     const rnd = (n) => mapRand(lvl, x0 + i, y0 + j, n);
     const p = g.k === "place" ? byId[g.id] : null;
-    const what = p ? p.icon : g.k;
+    const what = shows(g);
     if (what === "road") road(g.id, j * C + i, true);
     else if (MAP_ART.fantasy[what]) MAP_ART.fantasy[what](strokes.add, i * unit, j * unit, unit, rnd, !!detail);
     // the smaller places in this cell: a road runs through it; any other is drawn once, in the cell its center is in
@@ -1361,7 +1374,7 @@ function MapArt({ art, px }) {
 function MapSwatch({ what, color, size = 24, top }) {
   const layers = useMemo(() => {
     if (top) return mapTop(1, 1, 3, 5, () => (MAP_ART.top[what] ? what : "plain"), color ? [{ d: "M0 0H100V100H0Z", fill: color, o: 0.14 }] : [], true);
-    const out = [{ d: "M0 0H100V100H0Z", fill: what === "sea" ? MAP_PAPER.sea : MAP_PAPER.land }];
+    const out = [{ d: "M0 0H100V100H0Z", fill: mapWash(what) }];
     if (color) out.push({ d: "M0 0H100V100H0Z", fill: color, o: 0.3 });
     const rows = mapRows(12);
     const plain = what === "sea" || what === "land";
