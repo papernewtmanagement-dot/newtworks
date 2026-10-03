@@ -849,8 +849,8 @@ const MAP_SERIF = "Georgia, 'Times New Roman', serif";
 const MAP_PAPER = { sea: "#B4CACB", shallow: "#C6D9D6", shore: "#D6E4DD", land: "#EFE5C8" };
 // How much of a ground's battle-grid color the fantasy map takes; the rest is paper.
 const MAP_TINT = 0.42;
-// blank parchment over the cells the group has not found yet (the kids login)
-const MAP_FOG = "#E6DCC3";
+// The ground the group has not found yet (the kids login): dark, with specks of light, like nothing else on the map.
+const MAP_FOG = { dark: "#1F2029", speck: "#EDE6D3", line: "#FFFFFF" };
 // A steady number from 0 to 1 for a spot on the map, so the same cell always draws the same way.
 const mapRand = (a, b, c, d) => {
   let h = Math.imul((a | 0) + 0x9E3779B9, 0x85EBCA6B);
@@ -919,6 +919,25 @@ function mapOutline(cols, rows, inside, unit, round) {
     d += "Z";
   }));
   return d;
+}
+// The ground not found yet, as strokes to paint last: the dark itself, specks of light scattered over it (the same
+// specks every time, seven to a cell of the grid, in three sizes), and the lines of the grid in a faint light so its
+// cells still show. unknown(i, j) says whether a square of the drawing (unit wide) is not found yet; cols and rows
+// are the cells of the grid, lvl, x0, y0 where the grid is in the world.
+function mapFog(C, R, unit, unknown, round, cols, rows, lvl, x0, y0) {
+  const shape = mapOutline(C, R, unknown, unit, round);
+  if (!shape) return [];
+  const at = (x, y) => { const i = Math.floor(x / unit), j = Math.floor(y / unit); return i >= 0 && j >= 0 && i < C && j < R && unknown(i, j); };
+  const dots = ["", "", ""];
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) for (let n = 0; n < 7; n++) {
+    const x = (i + mapRand(lvl, x0 + i, y0 + j, 900 + n * 2)) * 100, y = (j + mapRand(lvl, x0 + i, y0 + j, 901 + n * 2)) * 100;
+    if (at(x, y)) dots[n === 0 ? 2 : n < 3 ? 1 : 0] += `M${mapNum(x)} ${mapNum(y)}h0.01`;
+  }
+  let lines = "";
+  const run = (len, hit, seg) => { let from = -1; for (let k = 0; k <= len; k++) { const on = k < len && hit(k); if (on && from < 0) from = k; if (!on && from >= 0) { lines += seg(from, k); from = -1; } } };
+  for (let i = 1; i < cols; i++) { const g = Math.round(i * 100 / unit); run(R, (k) => unknown(g - 1, k) || unknown(g, k), (a, b) => `M${i * 100} ${mapNum(a * unit)}V${mapNum(b * unit)}`); }
+  for (let j = 1; j < rows; j++) { const g = Math.round(j * 100 / unit); run(C, (k) => unknown(k, g - 1) || unknown(k, g), (a, b) => `M${mapNum(a * unit)} ${j * 100}H${mapNum(b * unit)}`); }
+  return [{ d: shape, fill: MAP_FOG.dark }, { d: dots[0], line: MAP_FOG.speck, w: 1, o: 0.45 }, { d: dots[1], line: MAP_FOG.speck, w: 1.6, o: 0.7 }, { d: dots[2], line: MAP_FOG.speck, w: 2.3, o: 0.9 }, { d: lines, line: MAP_FOG.line, w: 0.8, o: 0.14 }].filter(l => l.d);
 }
 // Strokes kept in rows from the top of the map down, so a tree lower on the map overlaps the one above it.
 function mapRows(step) {
@@ -1115,7 +1134,7 @@ function mapFantasy(v, byId) {
   const none = { k: "sea" };
   const get = (i, j) => grid[(j < 0 ? 0 : j >= R ? R - 1 : j) * C + (detail ? ((i % C) + C) % C : (i < 0 ? 0 : i >= C ? C - 1 : i))] || none;
   const layers = [{ d: `M0 0H${cols * 100}V${rows * 100}H0Z`, fill: MAP_PAPER.sea }];
-  const land = mapOutline(C, R, (i, j) => get(i, j).k !== "sea", unit, 0.45);
+  const land = mapOutline(C, R, (i, j) => { const k = get(i, j).k; return k !== "sea" && k !== "unknown"; }, unit, 0.45);
   // the land is open land (grass) from coast to coast; every other ground is painted over it in its own color
   layers.push({ d: land, line: MAP_PAPER.shallow, units: unit * (detail ? 1.5 : 0.4) }, { d: land, line: MAP_PAPER.shore, units: unit * (detail ? 0.7 : 0.2) }, { d: land, fill: mapWash("land") });
   // what ground a cell shows: a place's symbol names it, else the kind of the cell
@@ -1213,11 +1232,11 @@ function mapFantasy(v, byId) {
   const lines = [];
   for (let i = 1; i < cols; i++) lines.push(mapLine([[i * 100, 0], [i * 100, rows * 100]]));
   for (let j = 1; j < rows; j++) lines.push(mapLine([[0, j * 100], [cols * 100, j * 100]]));
-  // what the group has not found yet: blank parchment over it
-  const fog = mapOutline(C, R, (i, j) => get(i, j).k === "unknown", unit, 0.45);
+  // what the group has not found yet: the dark over it
+  const fog = mapFog(C, R, unit, (i, j) => get(i, j).k === "unknown", 0.45, cols, rows, lvl, x0, y0);
   return {
     wide: cols * 100, high: rows * 100, unit, aged: true,
-    layers: layers.concat(rose, strokes.list(MAP_ART.ink), lanes, pads, marked.list(MAP_ART.ink), fog ? [{ d: fog, fill: MAP_FOG }] : [], [{ d: lines.join(""), line: MAP_INK, w: 0.8, o: 0.16 }]),
+    layers: layers.concat(rose, strokes.list(MAP_ART.ink), lanes, pads, marked.list(MAP_ART.ink), [{ d: lines.join(""), line: MAP_INK, w: 0.8, o: 0.16 }], fog),
     names: lands.concat(names, ways), blocks,
   };
 }
@@ -1302,8 +1321,8 @@ function mapBattle(v, byId) {
   for (let i = 1; i < cols; i++) lines.push(mapLine([[i * 100, 0], [i * 100, rows * 100]]));
   for (let j = 1; j < rows; j++) lines.push(mapLine([[0, j * 100], [cols * 100, j * 100]]));
   const layers = mapTop(cols, rows, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0, (i, j) => get(i, j).what, washes, false);
-  const fog = mapOutline(cols, rows, (i, j) => get(i, j).what === "unknown", 100, 0.3);
-  return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat(fog ? [{ d: fog, fill: MAP_FOG }] : [], [{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }]), names: [], blocks: [] };
+  const fog = mapFog(cols, rows, 100, (i, j) => get(i, j).what === "unknown", 0.3, cols, rows, 7, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0);
+  return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat([{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }], fog), names: [], blocks: [] };
 }
 // The strokes as SVG. A stroke's line is w screen pixels wide (thinner on a small map), or `units` of the drawing
 // wide less `inset` screen pixels (the fill of a road inside its inked edge).
@@ -1373,6 +1392,7 @@ function MapArt({ art, px }) {
 // style or, for the battle grid, seen from above. A place that only names the land shows a pennant of its color.
 function MapSwatch({ what, color, size = 24, top }) {
   const layers = useMemo(() => {
+    if (what === "unknown") return mapFog(1, 1, 100, () => true, 0, 1, 1, 0, 3, 5);
     if (top) return mapTop(1, 1, 3, 5, () => (MAP_ART.top[what] ? what : "plain"), color ? [{ d: "M0 0H100V100H0Z", fill: color, o: 0.14 }] : [], true);
     const out = [{ d: "M0 0H100V100H0Z", fill: mapWash(what) }];
     if (color) out.push({ d: "M0 0H100V100H0Z", fill: color, o: 0.3 });
@@ -1702,7 +1722,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
           </span>
         ))}
         {costly && <span>A movement penalty is the extra cost to enter a square: at penalty 2 a square costs 3.</span>}
-        {(cells.some(c => c.kind === "unknown") || (detail && detail.cells.some(row => String(row).includes("?")))) && <span>Blank parchment: not found yet.</span>}
+        {(cells.some(c => c.kind === "unknown") || (detail && detail.cells.some(row => String(row).includes("?")))) && <span style={{ display: "flex", alignItems: "center", gap: 5 }}><MapSwatch what="unknown" size={20} />Not found yet</span>}
       </div>
     </div>
   );
