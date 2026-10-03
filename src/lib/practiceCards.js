@@ -135,9 +135,13 @@ function dayBlock(data, weeks, day, md) {
     .filter((it) => /^\s*🎭/.test(String(it || "")));
   if (!items.length) return "";
   const shown = new Set();
+  const lines = new Set();
   const parts = [];
   items.forEach((label) => {
-    parts.push(itemLine(label));
+    // Two weeks with the same step that day (Thursday's harder objections)
+    // show it once, with the decks of both.
+    const line = itemLine(label);
+    if (!lines.has(line)) { lines.add(line); parts.push(line); }
     const body = data.popups?.[label] || "";
     Array.from(body.matchAll(RP_TOKEN_RE), (m) => m[1].toLowerCase()).forEach((id) => {
       if (shown.has(id)) return;
