@@ -110,9 +110,9 @@ const RELATIONSHIPS = [
 // the line has types); a pivot names the line it pivoted to.
 const LINE_REQUIRED = { policy_review: "type", pivot: "line" };
 // Peter 2026-10-03: service work is for a customer already on the books, so any of
-// these sets the relationship to Existing.
+// these sets the relationship to Existing. Not autopay: it can ride on a new sale.
 const EXISTING_ONLY = new Set(["pivot", "policy_review", "service_task", "service_task_company",
-  "service_task_coi", "autopay_enrollment", "cancelation_saved"]);
+  "service_task_coi", "cancelation_saved"]);
 const TABS = ["log", "checklist", "hours", "deposits", "week", "issued", "development", "changes", "spotcheck", "backfill", "history", "billing"];
 const CARD_PARTS = [
   { key: "demeanor_score",        label: "Demeanor",              short: "Demeanor" },
