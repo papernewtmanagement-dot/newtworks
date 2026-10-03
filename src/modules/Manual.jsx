@@ -32,6 +32,7 @@ import { wireRoleplayPickers } from "../lib/roleplayPickers.js";
 import { MarkdownTextarea } from "../lib/markdownEditor.jsx";
 import { handleModuleLinkClick, useTabParam } from "../lib/routing.jsx";
 import { fillLiveFormulas } from "../lib/liveFormulas.js";
+import { usesPractice, loadPractice, fillPractice } from "../lib/practiceCards.js";
 import { kickoffToday, pickCycleValue } from "../lib/kickoff.js";
 import CommitPicker, { CommitLine } from "../components/CommitPicker.jsx";
 
@@ -1798,10 +1799,21 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     });
     return () => { alive = false; };
   }, [usesLive, page?.id]);
+  // The Daily Kickoff draws each week's practice from the onboarding training
+  // (Peter 2026-10-02): {{practice: N | Day}} and {{practice-week: N}} tokens.
+  // See src/lib/practiceCards.js.
+  const [practice, setPractice] = useState(null);
+  const usesPracticeCards = usesPractice(page?.content);
+  useEffect(() => {
+    if (!usesPracticeCards) return undefined;
+    let alive = true;
+    loadPractice().then((d) => { if (alive) setPractice(d || null); });
+    return () => { alive = false; };
+  }, [usesPracticeCards, page?.id]);
   const bodyMd = useMemo(() => {
     const raw = String(page?.content || "");
-    return fillLiveFormulas(raw.replace(/^\s*#[ \t]+[^\n]*\n?/, ""), liveFormulas);
-  }, [page?.content, liveFormulas]);
+    return fillPractice(fillLiveFormulas(raw.replace(/^\s*#[ \t]+[^\n]*\n?/, ""), liveFormulas), practice);
+  }, [page?.content, liveFormulas, practice]);
   const cycleOpts = useMemo(() => {
     const sc = scanSelector(bodyMd);
     return { weeks: sc.weeks || [], days: sc.days || [] };
