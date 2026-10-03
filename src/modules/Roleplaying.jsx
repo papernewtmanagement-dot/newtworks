@@ -76,9 +76,9 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 // =========================================================================
 
 const PARENT_ROLES = ["owner", "admin"];
-const TABS = ["characters", "creatures", "rules", "play"];
-// The game master also gets Objects: the object cards and everything made from them (rpg_object_list), and Maps:
-// the world drawn at every level (rpg_map_view).
+const TABS = ["characters", "creatures", "rules", "play", "maps"];
+// The game master also gets Objects: the object cards and everything made from them (rpg_object_list). Maps (the
+// world drawn at every level, rpg_map_view) is for everyone: the kids login sees what the group has found.
 const GM_TABS = ["characters", "creatures", "objects", "rules", "play", "maps"];
 const TAB_LABELS = { characters: "Characters", creatures: "Creatures", objects: "Objects", rules: "Rules", play: "Play", maps: "Maps" };
 // The sheet has five sections, in this order (Peter 2026-09-28): the rolled traits in Spirit, Mind and Body, the
@@ -202,9 +202,9 @@ export default function Roleplaying({ userRole }) {
       {activeTab === "rules" && <RulesTab onError={setErr} />}
       {activeTab === "play" && (fightId
         ? <FightView id={fightId} isParent={isParent} defs={defs} onBack={() => setFightId(null)} backHref={fightHref(null)} onError={setErr}
-            onMap={isParent ? () => { setFightId(null); setTab("maps"); } : null} />
+            onMap={() => { setFightId(null); setTab("maps"); }} />
         : <FightList isParent={isParent} onOpen={setFightId} hrefFor={fightHref} onError={setErr} />)}
-      {activeTab === "maps" && isParent && <MapsTab onError={setErr} onFight={(f) => { setTab("play"); setFightId(f); }} />}
+      {activeTab === "maps" && <MapsTab isParent={isParent} onError={setErr} onFight={(f) => { setTab("play"); setFightId(f); }} />}
     </div>
   );
 }
@@ -844,6 +844,8 @@ const MAP_WIDE = 760;
 const MAP_INK = "#4B3B2A";
 const MAP_SERIF = "Georgia, 'Times New Roman', serif";
 const MAP_PAPER = { sea: "#B4CACB", shallow: "#C6D9D6", shore: "#D6E4DD", land: "#EFE5C8" };
+// blank parchment over the cells the group has not found yet (the kids login)
+const MAP_FOG = "#E6DCC3";
 // A steady number from 0 to 1 for a spot on the map, so the same cell always draws the same way.
 const mapRand = (a, b, c, d) => {
   let h = Math.imul((a | 0) + 0x9E3779B9, 0x85EBCA6B);
@@ -1094,7 +1096,7 @@ function mapFantasy(v, byId) {
   const x0 = m ? Number(m[2]) * cols : 0, y0 = m ? Number(m[3]) * rows : 0;
   const grid = new Array(C * R).fill(null);
   if (detail) {
-    const kinds = { 126: "sea", 46: "land", 116: "forest", 104: "hills", 109: "mountains" };
+    const kinds = { 126: "sea", 46: "land", 116: "forest", 104: "hills", 109: "mountains", 63: "unknown" };
     detail.cells.forEach((row, j) => { for (let i = 0; i < C; i++) { const code = String(row || "").charCodeAt(i); grid[j * C + i] = kinds[code] ? { k: kinds[code] } : { k: "place", id: (detail.places || [])[code - 256] }; } });
   } else {
     cells.forEach(c => { grid[(c.y - 1) * C + (c.x - 1)] = { k: c.kind, id: c.place || null, marks: Array.isArray(c.marks) ? c.marks : [] }; });
@@ -1198,9 +1200,11 @@ function mapFantasy(v, byId) {
   const lines = [];
   for (let i = 1; i < cols; i++) lines.push(mapLine([[i * 100, 0], [i * 100, rows * 100]]));
   for (let j = 1; j < rows; j++) lines.push(mapLine([[0, j * 100], [cols * 100, j * 100]]));
+  // what the group has not found yet: blank parchment over it
+  const fog = mapOutline(C, R, (i, j) => get(i, j).k === "unknown", unit, 0.45);
   return {
     wide: cols * 100, high: rows * 100, unit, aged: true,
-    layers: layers.concat(rose, strokes.list(MAP_ART.ink), lanes, pads, marked.list(MAP_ART.ink), [{ d: lines.join(""), line: MAP_INK, w: 0.8, o: 0.16 }]),
+    layers: layers.concat(rose, strokes.list(MAP_ART.ink), lanes, pads, marked.list(MAP_ART.ink), fog ? [{ d: fog, fill: MAP_FOG }] : [], [{ d: lines.join(""), line: MAP_INK, w: 0.8, o: 0.16 }]),
     names: lands.concat(names, ways), blocks,
   };
 }
@@ -1285,7 +1289,8 @@ function mapBattle(v, byId) {
   for (let i = 1; i < cols; i++) lines.push(mapLine([[i * 100, 0], [i * 100, rows * 100]]));
   for (let j = 1; j < rows; j++) lines.push(mapLine([[0, j * 100], [cols * 100, j * 100]]));
   const layers = mapTop(cols, rows, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0, (i, j) => get(i, j).what, washes, false);
-  return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat([{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }]), names: [], blocks: [] };
+  const fog = mapOutline(cols, rows, (i, j) => get(i, j).what === "unknown", 100, 0.3);
+  return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat(fog ? [{ d: fog, fill: MAP_FOG }] : [], [{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }]), names: [], blocks: [] };
 }
 // The strokes as SVG. A stroke's line is w screen pixels wide (thinner on a small map), or `units` of the drawing
 // wide less `inset` screen pixels (the fill of a road inside its inked edge).
@@ -1371,7 +1376,7 @@ function MapSwatch({ what, color, size = 24, top }) {
     </svg>
   );
 }
-function MapsTab({ onError, onFight }) {
+function MapsTab({ isParent, onError, onFight }) {
   const [at, setAt, atHref] = useTabParam("map", null);
   const [v, setV] = useState(null);
   const rootRef = useRef(null);
@@ -1418,7 +1423,7 @@ function MapsTab({ onError, onFight }) {
     if (mode.kind === "walk") act("rpg_map_walk", { p_participant_id: mode.id, p_x: c.to[0], p_y: c.to[1] });
     else act("rpg_place", { p_participant_id: mode.id, p_x: c.to[0], p_y: c.to[1] });
   } : null;
-  const journey = v ? <MapJourney j={j} busy={busy} note={note} mode={live ? mode : null} setMode={setMode} act={act} atHref={atHref} setAt={setAt} onFight={onFight} /> : null;
+  const journey = v ? <MapJourney j={j} busy={busy} note={note} mode={live ? mode : null} setMode={setMode} act={act} atHref={atHref} setAt={setAt} onFight={onFight} isParent={isParent} /> : null;
   return (
     <div ref={rootRef} style={{ display: "grid", gridTemplateColumns: wide ? `${MAP_SIDE}px minmax(0, 1fr)` : "minmax(0, 1fr)", gap: 12, alignItems: "start" }}>
       {!v ? <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div> : wide ? (
@@ -1439,14 +1444,14 @@ function MapsTab({ onError, onFight }) {
 // The journey: the group walking the world map, turn by turn on one clock. No journey open → one button to start
 // one. Otherwise the clock in words, every piece (where it is, when it goes next, its walking day), the controls for
 // the piece whose turn it is, adding a character, and what happened. Everything shown comes from rpg_map_view.
-function MapJourney({ j, busy, note, mode, setMode, act, atHref, setAt, onFight }) {
+function MapJourney({ j, busy, note, mode, setMode, act, atHref, setAt, onFight, isParent }) {
   const [pick, setPick] = useState("");
   if (!j) {
     return (
       <div style={{ ...card, marginBottom: 12 }}>
         <div style={label}>Journey</div>
-        <div style={{ fontSize: 13, color: T.slate600, margin: "6px 0 10px" }}>Walk the group across the map, one turn at a time.</div>
-        <button type="button" style={btn("primary")} disabled={busy} onClick={() => act("rpg_session_new", { p_name: null, p_on_map: true })}>Start a journey</button>
+        <div style={{ fontSize: 13, color: T.slate600, margin: "6px 0 10px" }}>{isParent ? "Walk the group across the map, one turn at a time." : "No journey yet. The game master starts one."}</div>
+        {isParent && <button type="button" style={btn("primary")} disabled={busy} onClick={() => act("rpg_session_new", { p_name: null, p_on_map: true })}>Start a journey</button>}
       </div>
     );
   }
@@ -1468,7 +1473,7 @@ function MapJourney({ j, busy, note, mode, setMode, act, atHref, setAt, onFight 
           <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, color: T.slate900 }}>{dot(cur, 14)}{cur.name}’s turn</div>
           {cur.fight ? (
             <>
-              <div style={{ fontSize: 12, color: T.slate600 }}>A fight is on. {cur.creature ? "The creature" : cur.name} moves and acts on the fight board.</div>
+              <div style={{ fontSize: 12, color: T.slate600 }}>A fight is on. {cur.creature ? (isParent ? "The creature" : "The game master plays the creature; it") : cur.name} moves and acts on the fight board.</div>
               <div><button type="button" style={btn("primary", true)} onClick={() => onFight(j.id)}>Open the fight board</button></div>
             </>
           ) : cur.placed ? (
@@ -1510,13 +1515,15 @@ function MapJourney({ j, busy, note, mode, setMode, act, atHref, setAt, onFight 
                   {[p.out || (p.creature ? "creature" : null), !p.placed ? "Not on the map" : p.cell ? `On ${p.cell}` : "Elsewhere", p.fight && !p.creature ? "in a fight" : null, j.current === p.id && !setup ? "its turn" : p.next ? `next turn in ${p.next}` : null].filter(Boolean).join(" · ")}
                 </span>
               </span>
-              <button type="button" disabled={busy} style={btn(mode && mode.kind === "place" && mode.id === p.id ? "primary" : "soft", true)}
-                onClick={() => setMode(mode && mode.kind === "place" && mode.id === p.id ? null : { kind: "place", id: p.id })}>{p.placed ? "Move" : "Place"}</button>
+              {isParent && (
+                <button type="button" disabled={busy} style={btn(mode && mode.kind === "place" && mode.id === p.id ? "primary" : "soft", true)}
+                  onClick={() => setMode(mode && mode.kind === "place" && mode.id === p.id ? null : { kind: "place", id: p.id })}>{p.placed ? "Move" : "Place"}</button>
+              )}
             </div>
           ))}
         </div>
       )}
-      {join.length > 0 && (
+      {isParent && join.length > 0 && (
         <div style={{ display: "flex", gap: 6 }}>
           <select value={pick} onChange={e => setPick(e.target.value)} style={{ ...input, flex: 1, minWidth: 0 }}>
             <option value="">Add a character…</option>
@@ -1526,15 +1533,17 @@ function MapJourney({ j, busy, note, mode, setMode, act, atHref, setAt, onFight 
             onClick={() => { act("rpg_session_add", { p_session_id: j.id, p_character_id: pick }); setPick(""); }}>Add</button>
         </div>
       )}
-      {setup && (
+      {setup && isParent && (
         <button type="button" disabled={busy || !pieces.some(p => p.placed)} style={btn("primary")}
           onClick={() => act("rpg_session_next_turn", { p_session_id: j.id })}>{pieces.some(p => p.placed) ? "Begin the journey" : "Place someone to begin"}</button>
       )}
       <details>
         <summary style={{ ...label, cursor: "pointer" }}>What happened</summary>
         {log.map((t, k) => <div key={k} style={{ fontSize: 12, color: T.slate700, padding: "3px 0" }}>{t}</div>)}
-        <button type="button" disabled={busy} style={{ ...btn("danger", true), marginTop: 8 }}
-          onClick={() => { if (window.confirm("End this journey? Nothing more can happen in it.")) act("rpg_session_end", { p_session_id: j.id }); }}>End journey</button>
+        {isParent && (
+          <button type="button" disabled={busy} style={{ ...btn("danger", true), marginTop: 8 }}
+            onClick={() => { if (window.confirm("End this journey? Nothing more can happen in it.")) act("rpg_session_end", { p_session_id: j.id }); }}>End journey</button>
+        )}
       </details>
     </div>
   );
@@ -1680,6 +1689,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
           </span>
         ))}
         {costly && <span>A movement penalty is the extra cost to enter a square: at penalty 2 a square costs 3.</span>}
+        {(cells.some(c => c.kind === "unknown") || (detail && detail.cells.some(row => String(row).includes("?")))) && <span>Blank parchment: not found yet.</span>}
       </div>
     </div>
   );
