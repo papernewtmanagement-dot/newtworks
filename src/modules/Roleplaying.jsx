@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport, useElementWidth } from "../lib/hooks.js";
@@ -19,8 +19,9 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 // Agility, players attack and roll checks on their character's turn, the game master rolls the
 // creatures' card actions, and every screen follows along live. Step 6: the fight board, where everyone
 // stands, moving by beats across squares with movement penalties, and a reach in squares for every roll.
-// World map step 1: Maps tab, game master only. The world drawn at every level, from its place cards: icons on the
-// grid, the lists in a sidebar on the left, each grid listing the places one level down, the world drawn finest.
+// World map step 1: Maps tab, game master only. The world drawn at every level, from its place cards and the map
+// rolls: a fantasy map down to a district (drawn symbols, names on the land), the battle grid seen from above, the
+// lists in a sidebar on the left, each grid listing the places one level down, the world drawn finest.
 // Every number comes from the database, one saved function per job:
 //   rpg_character_list()                     the character cards
 //   rpg_sheet(id, difficulty)                every stat, what a roll needs at that difficulty
@@ -58,9 +59,10 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //                                            (Rootstep, Briar Shift)
 //   rpg_place / rpg_place_start / rpg_set_square / rpg_set_board   the game master sets up the board
 //   rpg_map_view(level, x, y)                the Maps tab in one read (game master only): one grid of the world map,
-//                                            from the place cards and a fixed-seed roll for unnamed land and sea,
-//                                            with the list that grid shows (the places one level down) and, for
-//                                            the world, every cell of the Continent grids to draw it fine
+//                                            from the place cards and fixed-seed rolls for unnamed ground (sea, open
+//                                            land, forest, hills, mountains), with the list that grid shows (the
+//                                            places one level down), the lands it lies in and, for the world, every
+//                                            cell of the Continent grids to draw it fine
 //   rpg_creatures.image_path                 a picture in the private rpg-images bucket (parents upload)
 //   rpg_session_set_status / rpg_session_adjust_vitality / rpg_session_remove / rpg_session_end   game master changes
 // A character's details, coins and items change through rpg_character_update and rpg_item_add / _set_equipped /
@@ -818,70 +820,568 @@ function ObjectsTab({ onError }) {
 
 // ── Maps (game master only) ─────────────────────────────────────────────────
 // The world map, drawn at every level (rpg_map_view): seven nested grids from an Earth-size world down to a battle
-// grid. Ground comes from the place cards (Old Forest, Haven, ...) and, where no place is, from a fixed-seed roll
-// for land and sea; nothing is stored per square. The function sends every cell, name, size, icon and link, and the
-// page only draws them. A cell opens the grid inside it; the open grid lives in the URL (map=level-x-y, none = the
-// world). The lists sit in a sidebar on the left (under the map when the tab is narrow) and the map takes the rest
-// of the screen. Each grid lists the places one level down (v.list: the world lists continents, a continent
-// countries, a country regions, and so on). The world is drawn as fine as the grids inside it (v.detail: every cell
-// of the Continent grids as one dot of a picture) under its own 12 by 6 cells, so it is the largest map.
-const MAP_GROUND = { sea: "hsl(205, 48%, 80%)", land: "hsl(75, 28%, 90%)" };
+// grid. Ground comes from the place cards (Old Forest, Haven, ...) and, where no place is, from fixed-seed rolls
+// (land and sea, then forest, hills and mountains); nothing is stored per square. The function sends every cell,
+// name, size, symbol name and link, and the page only draws them. A cell opens the grid inside it; the open grid
+// lives in the URL (map=level-x-y, none = the world). The lists sit in a sidebar on the left (under the map when the
+// tab is narrow) and the map takes the rest of the screen. Each grid lists the places one level down (v.list: the
+// world lists continents, a continent countries, a country regions, and so on). The world is drawn as fine as the
+// grids inside it (v.detail: every cell of the Continent grids), so it is the largest map.
+// The drawing has two styles (MAP_ART). From the world down to a district it is a fantasy map: parchment land, an
+// inked coast, little trees, hills and peaks, and names written on the land. The battle grid is seen from above:
+// grass, tree trunks under their crowns, rocks, water. The drawing is decoration only; what a cell is, and what it
+// costs to enter, comes from the function. The same cell always draws the same way (mapRand).
 const MAP_MOVES = [["west", "←"], ["north", "↑"], ["south", "↓"], ["east", "→"]];
 // The sidebar is 280 wide and sits beside the map once the tab itself is 760 across.
 const MAP_SIDE = 280;
 const MAP_WIDE = 760;
-// A place's color softened halfway to white, so its icon reads on top of it.
-const mapTint = (color) => {
-  const m = /^#([0-9a-f]{6})$/i.exec(color || "");
-  if (!m) return color || T.slate300;
-  const n = parseInt(m[1], 16);
-  const half = (c) => Math.round((c + 255) / 2);
-  return `rgb(${half(n >> 16)}, ${half((n >> 8) & 255)}, ${half(n & 255)})`;
+const MAP_INK = "#4B3B2A";
+const MAP_SERIF = "Georgia, 'Times New Roman', serif";
+const MAP_PAPER = { sea: "#B4CACB", shallow: "#C6D9D6", shore: "#D6E4DD", land: "#EFE5C8" };
+// A steady number from 0 to 1 for a spot on the map, so the same cell always draws the same way.
+const mapRand = (a, b, c, d) => {
+  let h = Math.imul((a | 0) + 0x9E3779B9, 0x85EBCA6B);
+  h = Math.imul(h ^ (h >>> 15) ^ (b | 0), 0xC2B2AE35);
+  h = Math.imul(h ^ (h >>> 13) ^ (c | 0), 0x27D4EB2F);
+  h = Math.imul(h ^ (h >>> 16) ^ (d | 0), 0x165667B1);
+  h = Math.imul(h ^ (h >>> 16), 0x85EBCA6B);
+  h = Math.imul(h ^ (h >>> 13), 0xC2B2AE35);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 };
-// A place as a small tile: its softened color with its icon on it, the way the map draws it.
-function MapTile({ p, size = 24 }) {
+// A number to one decimal place, to keep the drawing's text short.
+const mapNum = (n) => Math.round(n * 10) / 10;
+const mapPt = (p) => `${mapNum(p[0])} ${mapNum(p[1])}`;
+const mapLine = (pts) => "M" + pts.map(mapPt).join("L");
+const mapPoly = (pts) => mapLine(pts) + "Z";
+const mapCircle = (x, y, r) => `M${mapNum(x - r)} ${mapNum(y)}a${mapNum(r)} ${mapNum(r)} 0 1 0 ${mapNum(2 * r)} 0a${mapNum(r)} ${mapNum(r)} 0 1 0 ${mapNum(-2 * r)} 0Z`;
+// A round shape with a bumpy edge: one big circle and smaller ones round it (a tree crown from above, a bush).
+const mapBlob = (x, y, r, n, turn) => {
+  let d = mapCircle(x, y, r * 0.72);
+  for (let k = 0; k < n; k++) { const a = turn + k * 2 * Math.PI / n; d += mapCircle(x + Math.cos(a) * r * 0.64, y + Math.sin(a) * r * 0.64, r * 0.36); }
+  return d;
+};
+// A spiky or rocky shape: points round a center, every other one pulled in, each a little uneven.
+const mapStar = (x, y, r, n, inner, rnd, turn = 0) => mapPoly(Array.from({ length: n }, (_, k) => {
+  const a = turn + k * 2 * Math.PI / n;
+  const q = r * (k % 2 ? inner : 1) * (0.78 + 0.22 * rnd(40 + k));
+  return [x + Math.cos(a) * q, y + Math.sin(a) * q];
+}));
+// The outline of a set of cells as closed shapes with rounded corners (SVG path data). inside(i, j) says whether a
+// cell is in the set; it is asked one ring past the grid too, so a shape that runs off the grid is drawn running off.
+function mapOutline(cols, rows, inside, unit, round) {
+  const at = (i, j) => (i < -1 || j < -1 || i > cols || j > rows ? false : inside(i, j));
+  const out = new Map();
+  const put = (x0, y0, x1, y1) => { const k = x0 + "," + y0; const e = { x0, y0, x1, y1, used: false }; const l = out.get(k); if (l) l.push(e); else out.set(k, [e]); };
+  for (let j = -1; j <= rows; j++) for (let i = -1; i <= cols; i++) {
+    if (!at(i, j)) continue;
+    if (!at(i, j - 1)) put(i, j, i + 1, j);
+    if (!at(i + 1, j)) put(i + 1, j, i + 1, j + 1);
+    if (!at(i, j + 1)) put(i + 1, j + 1, i, j + 1);
+    if (!at(i - 1, j)) put(i, j + 1, i, j);
+  }
+  let d = "";
+  out.forEach((list) => list.forEach((first) => {
+    if (first.used) return;
+    const run = [];
+    let e = first;
+    while (e && !e.used) {
+      e.used = true;
+      run.push(e);
+      const dx = e.x1 - e.x0, dy = e.y1 - e.y0;
+      const next = (out.get(e.x1 + "," + e.y1) || []).filter(n => !n.used);
+      // where two cells touch only at a corner, keep to the cell being walked round (turn right)
+      e = next.length > 1 ? (next.find(n => n.x1 - n.x0 === -dy && n.y1 - n.y0 === dx) || next[0]) : next[0];
+    }
+    const corners = [];
+    run.forEach((p, k) => { const q = run[(k + run.length - 1) % run.length]; if (q.x1 - q.x0 !== p.x1 - p.x0 || q.y1 - q.y0 !== p.y1 - p.y0) corners.push([p.x0, p.y0]); });
+    const n = corners.length;
+    if (n < 4) return;
+    corners.forEach((c, k) => {
+      const a = corners[(k + n - 1) % n], b = corners[(k + 1) % n];
+      const ra = Math.min(round, (Math.abs(c[0] - a[0]) + Math.abs(c[1] - a[1])) / 2), rb = Math.min(round, (Math.abs(b[0] - c[0]) + Math.abs(b[1] - c[1])) / 2);
+      const pa = [(c[0] + Math.sign(a[0] - c[0]) * ra) * unit, (c[1] + Math.sign(a[1] - c[1]) * ra) * unit];
+      const pb = [(c[0] + Math.sign(b[0] - c[0]) * rb) * unit, (c[1] + Math.sign(b[1] - c[1]) * rb) * unit];
+      d += (k === 0 ? "M" : "L") + mapPt(pa) + "Q" + mapPt([c[0] * unit, c[1] * unit]) + " " + mapPt(pb);
+    });
+    d += "Z";
+  }));
+  return d;
+}
+// Strokes kept in rows from the top of the map down, so a tree lower on the map overlaps the one above it.
+function mapRows(step) {
+  const rows = new Map();
+  return {
+    add(y, k, d) { const b = Math.round(y / step); let r = rows.get(b); if (!r) { r = {}; rows.set(b, r); } r[k] = (r[k] || "") + d; },
+    list(styles) {
+      const out = [];
+      Array.from(rows.keys()).sort((a, b) => a - b).forEach(b => { const r = rows.get(b); styles.forEach(s => { if (r[s.k]) out.push({ ...s, d: r[s.k] }); }); });
+      return out;
+    },
+  };
+}
+// The fantasy-map symbols, one stroke at a time. x, base = the foot of the symbol.
+const mapTree = (add, x, base, d) => {
+  const cy = base - d * 0.72;
+  const p0 = [x - d * 0.5, cy + d * 0.18], p1 = [x - d * 0.28, cy - d * 0.3], p2 = [x + d * 0.28, cy - d * 0.3], p3 = [x + d * 0.5, cy + d * 0.18];
+  const arc = (r, ry, p) => `A${mapNum(d * r)} ${mapNum(d * ry)} 0 0 1 ${mapPt(p)}`;
+  const crown = "M" + mapPt(p0) + arc(0.3, 0.3, p1) + arc(0.32, 0.32, p2) + arc(0.3, 0.3, p3) + arc(0.62, 0.36, p0) + "Z";
+  add(base, "trunk", mapLine([[x, base], [x, base - d * 0.42]]));
+  add(base, "crown", crown);
+  add(base, "crownShade", "M" + mapPt([x + d * 0.14, cy - d * 0.36]) + `Q${mapPt([x + d * 0.5, cy - d * 0.2])} ${mapPt([x + d * 0.42, cy + d * 0.16])}Q${mapPt([x + d * 0.24, cy + d * 0.3])} ${mapPt([x + d * 0.04, cy + d * 0.28])}Q${mapPt([x + d * 0.34, cy + d * 0.04])} ${mapPt([x + d * 0.14, cy - d * 0.36])}Z`);
+  add(base, "crownLine", crown);
+};
+const mapPine = (add, x, base, d) => {
+  const h = d * 1.3, w = d * 0.46, top = base - h;
+  add(base, "trunk", mapLine([[x, base], [x, base - h * 0.2]]));
+  add(base, "pine", mapPoly([[x, top + h * 0.45], [x + w, base - h * 0.14], [x - w, base - h * 0.14]]) + mapPoly([[x, top + h * 0.2], [x + w * 0.78, top + h * 0.62], [x - w * 0.78, top + h * 0.62]]) + mapPoly([[x, top], [x + w * 0.52, top + h * 0.36], [x - w * 0.52, top + h * 0.36]]));
+};
+const mapPeak = (add, x, base, w, h, lean) => {
+  const a = [x + lean * w, base - h], bl = [x - w / 2, base], br = [x + w / 2, base];
+  const k1 = [x + (lean - 0.09) * w, base - h * 0.62], k2 = [x + (lean + 0.1) * w, base - h * 0.3], kb = [x + lean * w * 0.5, base];
+  add(base, "peakLight", mapPoly([bl, a, k1, k2, kb]));
+  add(base, "peakShade", mapPoly([a, br, kb, k2, k1]));
+  add(base, "peakLine", mapLine([bl, a, br]) + mapLine([a, k1, k2, kb]));
+};
+const mapHump = (add, x, base, w, h) => {
+  const c = `M${mapPt([x - w / 2, base])}C${mapPt([x - w * 0.3, base - h * 1.3])} ${mapPt([x + w * 0.3, base - h * 1.3])} ${mapPt([x + w / 2, base])}`;
+  add(base, "hillFill", c + "Z");
+  add(base, "hillLine", c + mapLine([[x + w * 0.2, base - h * 0.62], [x + w * 0.29, base - h * 0.24]]) + mapLine([[x + w * 0.07, base - h * 0.8], [x + w * 0.15, base - h * 0.4]]));
+};
+const mapTuft = (add, x, base, s) => add(base, "tuft", mapLine([[x, base], [x - s * 0.3, base - s * 0.7]]) + mapLine([[x, base], [x, base - s]]) + mapLine([[x, base], [x + s * 0.3, base - s * 0.7]]));
+const mapHouse = (add, x, base, s) => {
+  add(base, "wall", mapPoly([[x - s * 0.3, base], [x - s * 0.3, base - s * 0.42], [x + s * 0.3, base - s * 0.42], [x + s * 0.3, base]]));
+  add(base, "roof", mapPoly([[x - s * 0.42, base - s * 0.4], [x, base - s * 0.88], [x + s * 0.42, base - s * 0.4]]));
+  add(base, "door", mapLine([[x, base], [x, base - s * 0.22]]));
+};
+// MAP_ART: the drawing for each kind of ground and each symbol a place card can name (rpg_map_icons), in both
+// styles. fantasy[name](add, x, y, s, rnd, few) draws it in the square at x, y of side s; few = a small or crowded
+// spot, so one or two strokes of it and not a full cell's worth. top[name] says how a battle square of it looks.
+const MAP_ART = {
+  // The strokes of the fantasy map, in the order they are painted within one row.
+  ink: [
+    { k: "hillFill", fill: "#DCC98F" }, { k: "hillLine", line: MAP_INK, w: 1 },
+    { k: "peakLight", fill: "#F1EBDA" }, { k: "peakShade", fill: "#A99A86" }, { k: "peakLine", line: MAP_INK, w: 1 },
+    { k: "den", fill: "#84705B", line: MAP_INK, w: 1 }, { k: "hole", fill: "#2B211A" },
+    { k: "stone", fill: "#DDD6C4", line: MAP_INK, w: 1 },
+    { k: "trunk", line: MAP_INK, w: 1.1 }, { k: "crown", fill: "#93A86D" }, { k: "crownShade", fill: "#738A54" }, { k: "crownLine", line: MAP_INK, w: 1 },
+    { k: "pine", fill: "#6F8B5B", line: MAP_INK, w: 1 },
+    { k: "thorn", fill: "#8D9245", line: MAP_INK, w: 0.9 },
+    { k: "wall", fill: "#F6EED8", line: MAP_INK, w: 1 }, { k: "roof", fill: "#B4633C", line: MAP_INK, w: 1 }, { k: "door", line: MAP_INK, w: 1 },
+    { k: "tuft", line: "#8C8156", w: 0.9 }, { k: "dip", line: "#8C8156", w: 1 }, { k: "stream", line: "#6C9BAE", w: 1.5 },
+    { k: "mist", line: "#8E8AA3", w: 1.7 }, { k: "wave", line: "#8DAEB1", w: 1 },
+  ],
+  fantasy: {
+    sea(add, x, y, s, rnd, few) {
+      if (rnd(1) > (few ? 0.012 : 0.2)) return;
+      const cx = x + (0.3 + rnd(2) * 0.4) * s, cy = y + (0.3 + rnd(3) * 0.4) * s, w = s * (few ? 1.2 : 0.2);
+      add(cy, "wave", `M${mapPt([cx - w, cy])}Q${mapPt([cx - w / 2, cy - w * 0.6])} ${mapPt([cx, cy])}T${mapPt([cx + w, cy])}`);
+    },
+    land(add, x, y, s, rnd, few) {
+      if (few || rnd(1) > 0.3) return;
+      mapTuft(add, x + (0.25 + rnd(2) * 0.5) * s, y + (0.35 + rnd(3) * 0.5) * s, s * 0.11);
+    },
+    forest(add, x, y, s, rnd, few, dark) {
+      if (few) { (dark || rnd(1) < 0.2 ? mapPine : mapTree)(add, x + (0.5 + (rnd(2) - 0.5) * 0.3) * s, y + (0.96 + (rnd(3) - 0.5) * 0.2) * s, s * (0.9 + rnd(4) * 0.25)); return; }
+      [[0.24, 0.4], [0.72, 0.34], [0.48, 0.66], [0.2, 0.94], [0.78, 0.92]].forEach(([u, v], k) => {
+        (dark || rnd(20 + k) < 0.2 ? mapPine : mapTree)(add, x + (u + (rnd(k) - 0.5) * 0.14) * s, y + (v + (rnd(10 + k) - 0.5) * 0.1) * s, s * (0.3 + rnd(30 + k) * 0.08));
+      });
+    },
+    hills(add, x, y, s, rnd, few) {
+      if (few) { mapHump(add, x + (0.5 + (rnd(1) - 0.5) * 0.3) * s, y + (0.8 + (rnd(2) - 0.5) * 0.2) * s, s * 1.25, s * 0.5); return; }
+      [[0.3, 0.46, 0.46], [0.7, 0.58, 0.42], [0.42, 0.88, 0.5]].forEach(([u, v, w], k) => mapHump(add, x + (u + (rnd(k) - 0.5) * 0.12) * s, y + (v + (rnd(10 + k) - 0.5) * 0.08) * s, s * w, s * w * 0.42));
+    },
+    mountains(add, x, y, s, rnd, few) {
+      if (few) { mapPeak(add, x + (0.5 + (rnd(1) - 0.5) * 0.3) * s, y + (0.98 + (rnd(2) - 0.5) * 0.16) * s, s * (1.3 + rnd(3) * 0.4), s * (1.1 + rnd(4) * 0.5), (rnd(5) - 0.5) * 0.16); return; }
+      [[0.38, 0.7, 0.66, 0.6], [0.74, 0.94, 0.48, 0.4], [0.2, 0.96, 0.34, 0.28]].forEach(([u, v, w, h], k) => mapPeak(add, x + (u + (rnd(k) - 0.5) * 0.1) * s, y + (v + (rnd(10 + k) - 0.5) * 0.06) * s, s * w, s * h * (0.9 + rnd(20 + k) * 0.3), (rnd(30 + k) - 0.5) * 0.16));
+    },
+    village(add, x, y, s, rnd, few) {
+      if (few) { [[0.3, 0.62, 0.34], [0.68, 0.56, 0.4], [0.5, 0.9, 0.36]].forEach(([u, v, w]) => mapHouse(add, x + u * s, y + v * s, s * w)); return; }
+      [[0.26, 0.46], [0.72, 0.4], [0.5, 0.88]].forEach(([u, v], k) => { if (k === 0 || rnd(k) < 0.55) mapHouse(add, x + (u + (rnd(5 + k) - 0.5) * 0.2) * s, y + (v + (rnd(10 + k) - 0.5) * 0.14) * s, s * (0.28 + rnd(15 + k) * 0.14)); });
+    },
+    ruins(add, x, y, s, rnd, few) {
+      if (!few && rnd(1) > 0.3) { if (rnd(2) < 0.4) mapTuft(add, x + (0.3 + rnd(3) * 0.4) * s, y + (0.4 + rnd(4) * 0.4) * s, s * 0.11); return; }
+      const k = few ? 1.5 : 1, base = y + s * (few ? 0.84 : 0.55 + rnd(5) * 0.35), cx = x + s * (few ? 0.5 : 0.3 + rnd(6) * 0.4), w = s * 0.05 * k;
+      const col = (dx, h) => { const px = cx + dx * s * k, top = base - h * s * k; add(base, "stone", mapPoly([[px - w, base], [px - w, top + w * 0.7], [px - w * 0.2, top], [px + w * 0.4, top + w * 0.9], [px + w, top + w * 0.3], [px + w, base]])); return top; };
+      const kind = few ? 1 : Math.floor(rnd(7) * 3);
+      if (kind === 0) { col(-0.17, 0.3 + rnd(8) * 0.14); col(0, 0.14 + rnd(9) * 0.12); col(0.17, 0.22 + rnd(10) * 0.14); }
+      if (kind === 1) {
+        const top = col(-0.14, 0.4), l = cx - 0.14 * s * k, r = s * 0.2 * k;
+        col(0.16, 0.2 + rnd(11) * 0.08);
+        add(base, "stone", "M" + mapPt([l - w, top + w]) + `Q${mapPt([l - w, top - r])} ${mapPt([l + r * 0.9, top - r * 1.05])}L${mapPt([l + r * 0.8, top - r * 0.6])}Q${mapPt([l + w, top - r * 0.5])} ${mapPt([l + w, top + w])}Z`);
+      }
+      if (kind === 2) [[-0.16, 0.05, 0.3], [0.04, 0.07, -0.2], [0.18, 0.045, 0.6]].forEach(([dx, r, t]) => { const px = cx + dx * s, c = Math.cos(t), q = Math.sin(t), h = r * s * 0.62; add(base, "stone", mapPoly([[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => [px + u * r * s * c - v * h * q, base - h + u * r * s * q + v * h * c]))); });
+      if (kind < 2) add(base, "stone", mapPoly([[cx - s * 0.27 * k, base], [cx - s * 0.27 * k, base + w], [cx + s * 0.27 * k, base + w], [cx + s * 0.27 * k, base]]));
+    },
+    lair(add, x, y, s, rnd, few) {
+      if (!few) { MAP_ART.fantasy.forest(add, x, y, s, rnd, false, true); return; }
+      const cx = x + s * 0.5, base = y + s * 0.88, w = s * 0.9, h = s * 0.5;
+      add(base, "den", `M${mapPt([cx - w / 2, base])}C${mapPt([cx - w * 0.34, base - h * 1.5])} ${mapPt([cx + w * 0.34, base - h * 1.5])} ${mapPt([cx + w / 2, base])}Z`);
+      add(base, "hole", `M${mapPt([cx - w * 0.17, base])}C${mapPt([cx - w * 0.17, base - h * 0.95])} ${mapPt([cx + w * 0.17, base - h * 0.95])} ${mapPt([cx + w * 0.17, base])}Z`);
+    },
+    valley(add, x, y, s, rnd, few) {
+      if (few) {
+        mapHump(add, x + s * 0.24, y + s * 0.8, s * 0.6, s * 0.3); mapHump(add, x + s * 0.76, y + s * 0.8, s * 0.6, s * 0.3);
+        add(y + s * 0.82, "stream", `M${mapPt([x + s * 0.5, y + s * 0.3])}Q${mapPt([x + s * 0.4, y + s * 0.5])} ${mapPt([x + s * 0.52, y + s * 0.66])}T${mapPt([x + s * 0.48, y + s * 0.98])}`);
+        return;
+      }
+      [[0.3, 0.36], [0.68, 0.62]].forEach(([u, v], k) => { const cx = x + (u + (rnd(k) - 0.5) * 0.16) * s, cy = y + (v + (rnd(5 + k) - 0.5) * 0.12) * s, w = s * 0.17; add(cy, "dip", `M${mapPt([cx - w, cy - w * 0.5])}Q${mapPt([cx, cy + w * 0.7])} ${mapPt([cx + w, cy - w * 0.5])}`); });
+      mapTuft(add, x + (0.3 + rnd(8) * 0.4) * s, y + (0.86 + rnd(9) * 0.08) * s, s * 0.11);
+    },
+    fog(add, x, y, s, rnd, few) {
+      (few ? [0.3, 0.52, 0.74] : [0.26 + rnd(1) * 0.1, 0.56 + rnd(2) * 0.1, 0.84]).forEach((v, k) => {
+        const w = s * (few ? 0.18 : 0.15), x0 = x + s * (0.14 + (k % 2) * 0.1 + (few ? 0 : (rnd(3 + k) - 0.5) * 0.1)), cy = y + v * s;
+        add(cy, "mist", `M${mapPt([x0, cy])}q${mapNum(w / 2)} ${mapNum(-w * 0.55)} ${mapNum(w)} 0t${mapNum(w)} 0t${mapNum(w)} 0t${mapNum(w)} 0`);
+      });
+    },
+    thorns(add, x, y, s, rnd, few) {
+      (few ? [[0.32, 0.5, 0.26], [0.7, 0.62, 0.22]] : [[0.26, 0.34, 0.14], [0.7, 0.3, 0.12], [0.5, 0.64, 0.15], [0.2, 0.84, 0.11], [0.8, 0.82, 0.13]]).forEach(([u, v, r], k) => {
+        const cx = x + (u + (few ? 0 : (rnd(k) - 0.5) * 0.1)) * s, cy = y + (v + (few ? 0 : (rnd(8 + k) - 0.5) * 0.1)) * s;
+        add(cy + r * s, "thorn", mapStar(cx, cy, r * s, 12, 0.48, (n) => rnd(n + k * 13), rnd(20 + k) * 3));
+      });
+    },
+  },
+  // The battle grid, seen from above. Each ground: its three tones, then how likely a square of it is to carry each
+  // thing (blade = grass, pebble, flower, rock = a boulder, slab and crack = bare stone, bush, thorn, block = a cut
+  // stone, cobble, streak = a wheel mark, puddle, mist, root, wave, tree and big = a trunk under its crown).
+  top: {
+    sea:       { tones: ["#6FA3B7", "#6CA0B4", "#72A6BA"], wave: 0.8 },
+    land:      { tones: ["#93B262", "#90AF5F", "#96B565"], blade: 0.75, flower: 0.07, pebble: 0.08, bush: 0.02 },
+    forest:    { tones: ["#6F8F4A", "#6C8C47", "#72924D"], blade: 0.5, bush: 0.11, tree: 0.04, big: 0.013, pebble: 0.04 },
+    hills:     { tones: ["#A9AE6A", "#A6AB67", "#ACB16D"], blade: 0.5, rock: 0.14, pebble: 0.3 },
+    mountains: { tones: ["#A29C91", "#9E988D", "#A6A095"], crack: 0.5, slab: 0.4, rock: 0.22, pebble: 0.45 },
+    village:   { tones: ["#CBB78C", "#C8B489", "#CEBA8F"], cobble: 0.45, pebble: 0.2, blade: 0.08 },
+    road:      { tones: ["#B99C6C", "#B69969", "#BC9F6F"], streak: 0.7, pebble: 0.25 },
+    ruins:     { tones: ["#AEAA6E", "#ABA76B", "#B1AD71"], block: 0.17, pebble: 0.3, blade: 0.45 },
+    valley:    { tones: ["#86B45C", "#83B159", "#89B75F"], blade: 0.85, flower: 0.32 },
+    fog:       { tones: ["#94A18B", "#919E88", "#97A48E"], puddle: 0.22, mist: 0.36, blade: 0.25 },
+    thorns:    { tones: ["#A09E60", "#9D9B5D", "#A3A163"], thorn: 0.45, blade: 0.3, pebble: 0.1 },
+    lair:      { tones: ["#55683F", "#52653C", "#586B42"], root: 0.4, thorn: 0.14, tree: 0.05, big: 0.02, gloom: true },
+    plain:     { tones: ["#93B262", "#90AF5F", "#96B565"] },
+  },
+  // The strokes of the battle grid, in the order they are painted.
+  paint: [
+    { k: "blade", line: "#5E7E39", w: 1 }, { k: "streak", line: "#927952", w: 1.6 }, { k: "wave", line: "#CFE6EC", w: 1.4 }, { k: "crack", line: "#6F6A62", w: 1 },
+    { k: "puddle", fill: "#8AA6AD", line: "#B9CDD0", w: 1 }, { k: "root", line: "#4E3B29", w: 2.6 },
+    { k: "pebble", fill: "#9B958A" }, { k: "slab", fill: "#B9B4A9" }, { k: "petal", fill: "#F6F2DC" }, { k: "gold", fill: "#E6C552" },
+    { k: "shade", fill: "#000000", o: 0.2 },
+    { k: "rock", fill: "#A9A398", line: "#69645C", w: 1 }, { k: "rockLit", fill: "#CBC6BC" },
+    { k: "block", fill: "#D2CBBB", line: "#7B7568", w: 1 }, { k: "cobble", fill: "#C6B797", line: "#A08E6C", w: 0.8 },
+    { k: "bush", fill: "#5F8B40", line: "#456A2E", w: 1 }, { k: "bushLit", fill: "#81A856" },
+    { k: "thorn", fill: "#59652F", line: "#3D4621", w: 1 }, { k: "thornLit", fill: "#7F8B46" },
+    { k: "trunk", fill: "#6B4A2E", line: "#44301C", w: 1.2 },
+    { k: "leafDark", fill: "#3E6A32", o: 0.7 }, { k: "leaf", fill: "#5B8D44", o: 0.72 }, { k: "leafLit", fill: "#88B465", o: 0.6 },
+    { k: "gloomDark", fill: "#2C4A27", o: 0.74 }, { k: "gloom", fill: "#40662F", o: 0.74 }, { k: "gloomLit", fill: "#5F8744", o: 0.55 },
+    { k: "mist", line: "#FFFFFF", w: 5, o: 0.4 },
+  ],
+};
+// One grid in the fantasy style: the strokes to paint, bottom first, and the names to write.
+function mapFantasy(v, byId) {
+  const level = Number(v.level) || 1, cols = Number(v.cols) || 12, rows = Number(v.rows) || 12;
+  const cells = Array.isArray(v.cells) ? v.cells : [];
+  const places = Array.isArray(v.places) ? v.places : [];
+  const detail = v.detail && Array.isArray(v.detail.cells) ? v.detail : null;
+  const m = /^(\d+)-(\d+)-(\d+)$/.exec(v.view || "");
+  // The squares being drawn: the world draws the finer cells of its detail, every other grid its own cells.
+  const C = detail ? Number(detail.cols) || cols : cols, R = detail ? Number(detail.rows) || rows : rows;
+  const unit = cols * 100 / C;
+  const lvl = detail ? level + 1 : level;
+  const x0 = m ? Number(m[2]) * cols : 0, y0 = m ? Number(m[3]) * rows : 0;
+  const grid = new Array(C * R).fill(null);
+  if (detail) {
+    const kinds = { 126: "sea", 46: "land", 116: "forest", 104: "hills", 109: "mountains" };
+    detail.cells.forEach((row, j) => { for (let i = 0; i < C; i++) { const code = String(row || "").charCodeAt(i); grid[j * C + i] = kinds[code] ? { k: kinds[code] } : { k: "place", id: (detail.places || [])[code - 256] }; } });
+  } else {
+    cells.forEach(c => { grid[(c.y - 1) * C + (c.x - 1)] = { k: c.kind, id: c.place || null, marks: Array.isArray(c.marks) ? c.marks : [] }; });
+  }
+  const none = { k: "sea" };
+  const get = (i, j) => grid[(j < 0 ? 0 : j >= R ? R - 1 : j) * C + (detail ? ((i % C) + C) % C : (i < 0 ? 0 : i >= C ? C - 1 : i))] || none;
+  const layers = [{ d: `M0 0H${cols * 100}V${rows * 100}H0Z`, fill: MAP_PAPER.sea }];
+  const land = mapOutline(C, R, (i, j) => get(i, j).k !== "sea", unit, 0.45);
+  layers.push({ d: land, line: MAP_PAPER.shallow, units: unit * (detail ? 1.5 : 0.4) }, { d: land, line: MAP_PAPER.shore, units: unit * (detail ? 0.7 : 0.2) }, { d: land, fill: MAP_PAPER.land });
+  [["forest", "#C3D09B", 0.75], ["hills", "#E4D29C", 0.8], ["mountains", "#D6C8AE", 0.85]].forEach(([k, fill, o]) => {
+    const d = mapOutline(C, R, (i, j) => get(i, j).k === k, unit, 0.45);
+    if (d) layers.push({ d, fill, o });
+  });
+  // every place with ground of its own on this grid: a wash of its color under its symbols
+  const filled = new Map();
+  grid.forEach((g, n) => { if (g && g.k === "place" && g.id) { if (!filled.has(g.id)) filled.set(g.id, []); filled.get(g.id).push(n); } });
+  filled.forEach((list, id) => { const p = byId[id]; if (p && p.color) layers.push({ d: mapOutline(C, R, (i, j) => { const g = get(i, j); return g.k === "place" && g.id === id; }, unit, 0.45), fill: p.color, o: 0.3 }); });
+  layers.push({ d: land, line: MAP_INK, w: 1.25 });
+  const strokes = mapRows(unit * (detail ? 1 : 0.12));
+  const marked = mapRows(unit * 0.12);
+  const pads = [], lanes = [], lands = [], blocks = [], ways = [];
+  const names = [];
+  const roads = new Map();
+  const road = (id, n, full) => { if (!roads.has(id)) roads.set(id, { cells: new Set(), full }); roads.get(id).cells.add(n); };
+  for (let j = 0; j < R; j++) for (let i = 0; i < C; i++) {
+    const g = grid[j * C + i];
+    if (!g) continue;
+    const rnd = (n) => mapRand(lvl, x0 + i, y0 + j, n);
+    const p = g.k === "place" ? byId[g.id] : null;
+    const what = p ? p.icon : g.k;
+    if (what === "road") road(g.id, j * C + i, true);
+    else if (MAP_ART.fantasy[what]) MAP_ART.fantasy[what](strokes.add, i * unit, j * unit, unit, rnd, !!detail);
+    // the smaller places in this cell: a road runs through it; any other is drawn once, in the cell its center is in
+    const marks = (g.marks || []).map(id => byId[id]).filter(Boolean);
+    marks.filter(k => k.icon === "road").forEach(k => road(k.id, j * C + i, false));
+    const here = marks.filter(k => k.icon !== "road" && Array.isArray(k.spot) && Math.floor(k.spot[0] / 1000) === i && Math.floor(k.spot[1] / 1000) === j);
+    if (here.length > 3) {
+      pads.push({ d: mapCircle((i + 0.5) * unit, (j + 0.5) * unit, unit * 0.26), fill: MAP_INK });
+      names.push({ text: String(here.length), x: (i + 0.5) * unit, y: (j + 0.5) * unit, count: true });
+    } else {
+      const s = unit * [0, 0.62, 0.46, 0.42][here.length];
+      const spots = [[], [[0.5, 0.5]], [[0.27, 0.5], [0.73, 0.5]], [[0.27, 0.29], [0.73, 0.29], [0.5, 0.73]]][here.length];
+      here.forEach((k, n) => {
+        const cx = (i + spots[n][0]) * unit, cy = (j + spots[n][1]) * unit;
+        if (p) pads.push({ d: mapCircle(cx, cy, s * 0.56), fill: MAP_PAPER.land, o: 0.82 });
+        if (MAP_ART.fantasy[k.icon]) MAP_ART.fantasy[k.icon](marked.add, cx - s / 2, cy - s / 2, s, (q) => mapRand(lvl, x0 + i, y0 + j, q + 100 * (n + 1)), true);
+        else pads.push({ d: mapCircle(cx, cy, s * 0.2), fill: k.color || MAP_INK, line: MAP_INK, w: 1 });
+        blocks.push([cx - s / 2, cy - s / 2, cx + s / 2, cy + s / 2]);
+        names.push({ text: k.name, x: cx, y: cy, r: s / 2, size: 11.5 });
+      });
+    }
+  }
+  // a road: one line through the cells it runs through, out to the edge of the grid where it runs off it
+  roads.forEach((r, id) => {
+    let d = "";
+    const has = (i, j) => i >= 0 && j >= 0 && i < C && j < R && r.cells.has(j * C + i);
+    const list = Array.from(r.cells).sort((a, b) => a - b);
+    list.forEach(n => {
+      const i = n % C, j = Math.floor(n / C), cx = (i + 0.5) * unit, cy = (j + 0.5) * unit;
+      const e = has(i + 1, j), w = has(i - 1, j), s = has(i, j + 1), u = has(i, j - 1);
+      if (e) d += mapLine([[cx, cy], [cx + unit, cy]]);
+      if (s) d += mapLine([[cx, cy], [cx, cy + unit]]);
+      if (!e && !w && !s && !u) d += mapLine([[cx - unit * 0.35, cy], [cx + unit * 0.35, cy]]);
+      if (i === 0 && e) d += mapLine([[0, cy], [cx, cy]]);
+      if (i === C - 1 && w) d += mapLine([[cx, cy], [C * unit, cy]]);
+      if (j === 0 && s) d += mapLine([[cx, 0], [cx, cy]]);
+      if (j === R - 1 && u) d += mapLine([[cx, cy], [cx, R * unit]]);
+    });
+    if (r.full) lanes.push({ d, line: MAP_INK, units: unit * 0.3, cap: "butt" }, { d, line: "#D9BF8C", units: unit * 0.3, inset: 2.4, cap: "butt" });
+    else lanes.push({ d, line: MAP_PAPER.land, w: 3.4 }, { d, line: "#7A5A3A", w: 1.6, dash: [5, 3.5] });
+    const mid = list[Math.floor(list.length / 2)];
+    if (byId[id] && mid !== undefined) ways.push({ text: byId[id].name, x: (mid % C + 0.5) * unit, y: (Math.floor(mid / C) + 0.5) * unit, r: unit * (r.full ? 0.2 : 0.1), size: 11.5, way: unit * 2.5 });
+  });
+  // the names of the lands this grid lists (continents on the world, countries on a continent), spread to their size
+  places.filter(p => p.listed && !p.ground && Array.isArray(p.spot)).forEach(p => {
+    lands.push({ text: String(p.name || "").toUpperCase(), x: p.spot[0] / 10, y: p.spot[1] / 10, caps: true, room: (p.spot[2] || 0) / 10, must: true });
+  });
+  // the name of each place with ground here, at the middle of its cells
+  filled.forEach((list, id) => {
+    const p = byId[id];
+    if (!p || p.icon === "road") return;
+    const sx = list.reduce((t, n) => t + n % C, 0) / list.length, sy = list.reduce((t, n) => t + Math.floor(n / C), 0) / list.length;
+    if (list.length > 2) lands.push({ text: p.name, x: (sx + 0.5) * unit, y: (sy + 0.5) * unit, size: 13, must: true, mid: true });
+    else lands.push({ text: p.name, x: (sx + 0.5) * unit, y: (sy + 0.5) * unit, r: unit * 0.5, size: 12.5, must: true });
+  });
+  // a compass rose in the first corner that is open sea
+  const rose = [];
+  const reach = detail ? 0.62 : 1.02, edge = detail ? 0.72 : 1.1;
+  const corner = [[cols - edge, rows - edge], [edge, rows - edge], [cols - edge, edge], [edge, edge]].find(([cx, cy]) => {
+    for (let j = Math.floor((cy - reach) * 100 / unit); j <= Math.floor((cy + reach) * 100 / unit - 0.001); j++) for (let i = Math.floor((cx - reach) * 100 / unit); i <= Math.floor((cx + reach) * 100 / unit - 0.001); i++) if (i < 0 || j < 0 || i >= C || j >= R || (grid[j * C + i] || none).k !== "sea") return false;
+    return true;
+  });
+  if (corner) {
+    const cx = corner[0] * 100, cy = corner[1] * 100, r = reach * 62;
+    const point = (a, len, wd, side) => mapPoly([[cx + Math.cos(a) * len, cy + Math.sin(a) * len], [cx + Math.cos(a + side * Math.PI / 2) * wd, cy + Math.sin(a + side * Math.PI / 2) * wd], [cx, cy]]);
+    let light = "", dark = "";
+    for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4 - Math.PI / 2, len = r * (k % 2 ? 0.52 : 1), wd = r * (k % 2 ? 0.13 : 0.17); light += point(a, len, wd, -1); dark += point(a, len, wd, 1); }
+    rose.push({ d: mapCircle(cx, cy, r * 0.66), line: MAP_INK, w: 0.9, o: 0.7 }, { d: light, fill: MAP_PAPER.land, line: MAP_INK, w: 0.8 }, { d: dark, fill: "#7A6A55", line: MAP_INK, w: 0.8 });
+    lands.push({ text: "N", x: cx, y: cy - r * 1.22, north: true, size: r * 0.36 });
+  }
+  const lines = [];
+  for (let i = 1; i < cols; i++) lines.push(mapLine([[i * 100, 0], [i * 100, rows * 100]]));
+  for (let j = 1; j < rows; j++) lines.push(mapLine([[0, j * 100], [cols * 100, j * 100]]));
+  return {
+    wide: cols * 100, high: rows * 100, unit, aged: true,
+    layers: layers.concat(rose, strokes.list(MAP_ART.ink), lanes, pads, marked.list(MAP_ART.ink), [{ d: lines.join(""), line: MAP_INK, w: 0.8, o: 0.16 }]),
+    names: lands.concat(names, ways), blocks,
+  };
+}
+// One grid seen from above (the battle grid). what(i, j) = the ground of a square, also asked past the edge of the
+// grid, where the nearest square answers, so a crown rooted just off the grid still hangs over it.
+function mapTop(cols, rows, x0, y0, what, washes, show) {
+  const U = 100;
+  const layers = [];
+  const bases = new Map();
+  const sink = {};
+  const add = (k, d) => { sink[k] = (sink[k] || "") + d; };
+  const art = (i, j) => MAP_ART.top[what(i, j)] || MAP_ART.top.plain;
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    const tone = art(i, j).tones[Math.floor(mapRand(7, x0 + i, y0 + j, 0) * 3)];
+    bases.set(tone, (bases.get(tone) || "") + `M${i * U} ${j * U}h${U}v${U}h${-U}Z`);
+  }
+  bases.forEach((d, fill) => layers.push({ d, fill }));
+  washes.forEach(w => layers.push(w));
+  const dry = (i, j) => what(i, j) !== "sea";
+  let wet = false;
+  for (let j = 0; j < rows && !wet; j++) for (let i = 0; i < cols; i++) if (!dry(i, j)) { wet = true; break; }
+  if (wet) layers.push({ d: mapOutline(cols, rows, dry, U, 0.3), line: "#E6DFC2", units: 9, o: 0.9 });
+  // run of the road: along the longer side of what this grid shows of it
+  let across = 0, down = 0;
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) if (what(i, j) === "road") { if (i + 1 < cols && what(i + 1, j) === "road") across += 1; if (j + 1 < rows && what(i, j + 1) === "road") down += 1; }
+  const tall = down > across;
+  const trees = [];
+  for (let j = -4; j < rows + 4; j++) for (let i = -4; i < cols + 4; i++) {
+    const a = art(i, j);
+    const on = i >= 0 && j >= 0 && i < cols && j < rows;
+    const rnd = (n) => mapRand(7, x0 + i, y0 + j, n);
+    const at = (n) => [(i + 0.15 + rnd(n) * 0.7) * U, (j + 0.15 + rnd(n + 1) * 0.7) * U];
+    if (show ? a.tree && i === 0 && j === 0 : (a.big && rnd(1) < a.big) || (a.tree && rnd(2) < a.tree)) {
+      const big = !show && a.big && rnd(1) < a.big;
+      trees.push({ x: (i + 0.3 + rnd(3) * 0.4) * U, y: (j + 0.3 + rnd(4) * 0.4) * U, r: show ? U * 0.4 : U * (big ? 1.5 + rnd(5) * 0.8 : 0.75 + rnd(5) * 0.5), trunk: show ? U * 0.1 : U * (big ? 0.3 + rnd(6) * 0.12 : 0.14 + rnd(6) * 0.08), turn: rnd(7) * 6, gloom: !!a.gloom, n: 8 + Math.floor(rnd(8) * 4) });
+      continue;
+    }
+    if (!on) continue;
+    if (a.wave && rnd(10) < a.wave) { const [x, y] = at(11); const w = U * (0.14 + rnd(13) * 0.1); add("wave", `M${mapPt([x - w, y])}q${mapNum(w / 2)} ${mapNum(-w * 0.5)} ${mapNum(w)} 0t${mapNum(w)} 0`); }
+    if (a.blade && rnd(14) < a.blade) for (let n = 0; n < 1 + Math.floor(rnd(15) * 3); n++) { const [x, y] = at(16 + n * 2); const h = U * (0.07 + rnd(22 + n) * 0.06); add("blade", mapLine([[x, y], [x - h * 0.4, y - h]]) + mapLine([[x, y], [x + h * 0.1, y - h * 1.2]]) + mapLine([[x, y], [x + h * 0.5, y - h * 0.8]])); }
+    if (a.streak && rnd(26) < a.streak) for (let n = 0; n < 2; n++) { const [x, y] = at(27 + n * 2); const l = U * (0.2 + rnd(31 + n) * 0.3); add("streak", tall ? mapLine([[x, y - l / 2], [x, y + l / 2]]) : mapLine([[x - l / 2, y], [x + l / 2, y]])); }
+    if (a.crack && rnd(33) < a.crack) { const [x, y] = at(34); const l = U * 0.24; add("crack", mapLine([[x - l, y - l * rnd(36)], [x - l * 0.2, y + l * 0.2 * (rnd(37) - 0.5)], [x + l * 0.3, y - l * 0.4 * rnd(38)], [x + l, y + l * rnd(39)]])); }
+    if (a.slab && rnd(40) < a.slab) { const [x, y] = at(41); add("slab", mapStar(x, y, U * (0.16 + rnd(43) * 0.14), 7, 0.82, rnd, rnd(44) * 3)); }
+    if (a.puddle && rnd(45) < a.puddle) { const [x, y] = at(46); const w = U * (0.16 + rnd(48) * 0.14); add("puddle", `M${mapPt([x - w, y])}a${mapNum(w)} ${mapNum(w * 0.6)} 0 1 0 ${mapNum(2 * w)} 0a${mapNum(w)} ${mapNum(w * 0.6)} 0 1 0 ${mapNum(-2 * w)} 0Z`); }
+    if (a.root && rnd(49) < a.root) { const [x, y] = at(50); const l = U * (0.3 + rnd(52) * 0.3), t = rnd(53) * 6.3; add("root", `M${mapPt([x - Math.cos(t) * l, y - Math.sin(t) * l])}Q${mapPt([x + Math.sin(t) * l * 0.5, y - Math.cos(t) * l * 0.5])} ${mapPt([x + Math.cos(t) * l, y + Math.sin(t) * l])}`); }
+    if (a.pebble && rnd(54) < a.pebble) for (let n = 0; n < 1 + Math.floor(rnd(55) * 3); n++) { const [x, y] = at(56 + n * 2); add("pebble", mapCircle(x, y, U * (0.025 + rnd(62 + n) * 0.03))); }
+    if (a.flower && rnd(65) < a.flower) for (let n = 0; n < 1 + Math.floor(rnd(66) * 3); n++) { const [x, y] = at(67 + n * 2); add(rnd(73 + n) < 0.5 ? "petal" : "gold", mapCircle(x, y, U * 0.035)); }
+    if (a.cobble && rnd(76) < a.cobble) for (let n = 0; n < 3 + Math.floor(rnd(77) * 3); n++) { const [x, y] = at(78 + n * 2); add("cobble", mapStar(x, y, U * (0.06 + rnd(88 + n) * 0.04), 6, 0.9, (q) => rnd(q + n * 7), rnd(94 + n) * 3)); }
+    if (a.rock && rnd(100) < a.rock) { const [x, y] = at(101); const r = U * (0.2 + rnd(103) * 0.22), t = rnd(104) * 3; add("shade", mapStar(x + r * 0.16, y + r * 0.2, r, 7, 0.86, rnd, t)); add("rock", mapStar(x, y, r, 7, 0.86, rnd, t)); add("rockLit", mapStar(x - r * 0.18, y - r * 0.2, r * 0.5, 7, 0.86, rnd, t)); }
+    if (a.block && rnd(105) < a.block) for (let n = 0; n < 1 + Math.floor(rnd(106) * 2); n++) {
+      const [x, y] = at(107 + n * 2); const w = U * (0.16 + rnd(111 + n) * 0.14), h = U * (0.1 + rnd(113 + n) * 0.08), t = rnd(115 + n) * 3.2, c = Math.cos(t), s = Math.sin(t);
+      const box = (ox, oy) => mapPoly([[-w, -h], [w, -h], [w, h * 0.3], [w * 0.6, h], [-w, h]].map(([px, py]) => [x + ox + px * c - py * s, y + oy + px * s + py * c]));
+      add("shade", box(U * 0.03, U * 0.04)); add("block", box(0, 0));
+    }
+    if (a.bush && rnd(117) < a.bush) { const [x, y] = at(118); const r = U * (0.2 + rnd(120) * 0.16), t = rnd(121) * 6; add("shade", mapBlob(x + r * 0.14, y + r * 0.18, r, 7, t)); add("bush", mapBlob(x, y, r, 7, t)); add("bushLit", mapBlob(x - r * 0.16, y - r * 0.18, r * 0.5, 6, t)); }
+    if (a.thorn && rnd(122) < a.thorn) { const [x, y] = at(123); const r = U * (0.18 + rnd(125) * 0.16), t = rnd(126) * 3; add("shade", mapCircle(x + r * 0.12, y + r * 0.16, r * 0.8)); add("thorn", mapStar(x, y, r, 14, 0.5, rnd, t)); add("thornLit", mapStar(x - r * 0.1, y - r * 0.1, r * 0.5, 10, 0.5, rnd, t)); }
+    if (a.mist && rnd(127) < a.mist) { const [x, y] = at(128); const w = U * (0.2 + rnd(130) * 0.15); add("mist", `M${mapPt([x - w, y])}q${mapNum(w / 2)} ${mapNum(-w * 0.45)} ${mapNum(w)} 0t${mapNum(w)} 0`); }
+  }
+  // trees last: every shadow, then every trunk, then the crowns, smallest first, so the trunk shows through its crown
+  trees.sort((a, b) => a.r - b.r);
+  trees.forEach(t => add("shade", mapBlob(t.x + t.r * 0.1, t.y + t.r * 0.13, t.r, t.n, t.turn)));
+  trees.forEach(t => add("trunk", mapCircle(t.x, t.y, t.trunk)));
+  MAP_ART.paint.forEach(s => { if (sink[s.k]) layers.push({ ...s, d: sink[s.k] }); });
+  trees.forEach(t => {
+    const set = t.gloom ? ["gloomDark", "gloom", "gloomLit"] : ["leafDark", "leaf", "leafLit"];
+    const style = (k) => MAP_ART.paint.find(s => s.k === k);
+    layers.push({ ...style(set[0]), d: mapBlob(t.x, t.y, t.r, t.n, t.turn) }, { ...style(set[1]), d: mapBlob(t.x - t.r * 0.04, t.y - t.r * 0.05, t.r * 0.86, t.n, t.turn + 0.3) }, { ...style(set[2]), d: mapBlob(t.x - t.r * 0.2, t.y - t.r * 0.24, t.r * 0.46, 6, t.turn) });
+  });
+  return layers;
+}
+// The battle grid: every square seen from above, with a light wash of each place's color and the lines of the grid.
+function mapBattle(v, byId) {
+  const cols = Number(v.cols) || 12, rows = Number(v.rows) || 12;
+  const cells = Array.isArray(v.cells) ? v.cells : [];
+  const m = /^(\d+)-(\d+)-(\d+)$/.exec(v.view || "");
+  const grid = new Array(cols * rows).fill(null);
+  cells.forEach(c => { const p = c.place ? byId[c.place] : null; grid[(c.y - 1) * cols + (c.x - 1)] = { what: p ? (MAP_ART.top[p.icon] ? p.icon : "plain") : c.kind, id: c.place || null }; });
+  const get = (i, j) => grid[(j < 0 ? 0 : j >= rows ? rows - 1 : j) * cols + (i < 0 ? 0 : i >= cols ? cols - 1 : i)] || { what: "plain" };
+  const washes = [];
+  Array.from(new Set(grid.filter(g => g && g.id).map(g => g.id))).forEach(id => { const p = byId[id]; if (p && p.color) washes.push({ d: mapOutline(cols, rows, (i, j) => get(i, j).id === id, 100, 0.3), fill: p.color, o: 0.14 }); });
+  const lines = [];
+  for (let i = 1; i < cols; i++) lines.push(mapLine([[i * 100, 0], [i * 100, rows * 100]]));
+  for (let j = 1; j < rows; j++) lines.push(mapLine([[0, j * 100], [cols * 100, j * 100]]));
+  const layers = mapTop(cols, rows, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0, (i, j) => get(i, j).what, washes, false);
+  return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat([{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }]), names: [], blocks: [] };
+}
+// The strokes as SVG. A stroke's line is w screen pixels wide (thinner on a small map), or `units` of the drawing
+// wide less `inset` screen pixels (the fill of a road inside its inked edge).
+function MapStrokes({ layers, px, unit }) {
+  const pen = Math.max(0.4, Math.min(1, px * unit * 0.06));
+  return layers.map((l, n) => (
+    <path key={n} d={l.d} fill={l.fill || "none"} stroke={l.line || "none"} opacity={l.o}
+      strokeWidth={l.line ? (l.units ? Math.max(0, l.units - (l.inset || 0) / px) : l.w * pen / px) : undefined}
+      strokeLinejoin="round" strokeLinecap={l.cap || "round"} strokeDasharray={l.dash ? l.dash.map(n2 => n2 * pen / px).join(" ") : undefined} />
+  ));
+}
+// Where the names go. Each tries a few spots round its place and takes the first that is clear of the names already
+// written and of the symbols (blocks); a small place whose name fits nowhere goes without (it is still in the lists
+// and on its cell). A name's size is in screen pixels, but the N over the compass rose is sized in units of the drawing.
+function mapNames(names, blocks, px, wide, high) {
+  const done = blocks.map(b => [0, 0, b[0], b[1], b[2], b[3]]);
+  const out = [];
+  names.forEach((n) => {
+    if (n.count) { out.push({ ...n, cx: n.x, cy: n.y, size: 12 / px }); return; }
+    if (n.north) { out.push({ ...n, cx: n.x, cy: n.y, caps: true }); done.push([0, 0, n.x - n.size * 3.2, n.y - n.size, n.x + n.size * 3.2, n.y + n.size * 7]); return; }
+    const len = n.text.length;
+    const small = Math.max(0.78, Math.min(1, Math.sqrt(px / 0.5)));
+    const sizePx = n.caps ? Math.max(8.5, Math.min(26, (n.room * px * 0.9) / (len * 0.95))) : n.size * small;
+    const size = sizePx / px, w = len * size * (n.caps ? 0.95 : 0.5), r = n.r || 0;
+    const tries = n.caps || n.mid ? [0, -1.4, 1.4, -2.8, 2.8].map(k => [n.x, n.y + k * size])
+      : n.way ? [0, n.way, -n.way].flatMap(dx => [[n.x + dx, n.y + r + size * 0.8], [n.x + dx, n.y - r - size * 0.65]])
+        : [[n.x, n.y + r + size * 0.75], [n.x, n.y - r - size * 0.6], [n.x + r + size * 0.4 + w / 2, n.y], [n.x - r - size * 0.4 - w / 2, n.y], [n.x, n.y + r + size * 2], [n.x, n.y - r - size * 1.9]];
+    const boxes = tries.map(([x, y]) => { const cx = Math.max(w / 2 + 4, Math.min(wide - w / 2 - 4, x)); return [cx, y, cx - w / 2 - 2, y - size * 0.62, cx + w / 2 + 2, y + size * 0.5]; })
+      .filter(b => b[3] >= 0 && b[5] <= high);
+    const free = boxes.find(b => !done.some(q => b[2] < q[4] && b[4] > q[2] && b[3] < q[5] && b[5] > q[3]));
+    const b = free || (n.must ? boxes[0] : null);
+    if (!b) return;
+    done.push(b);
+    out.push({ ...n, cx: b[0], cy: b[1], size });
+  });
+  return out;
+}
+// The picture under the cells of the grid: the strokes, an aged edge and a neat line on the fantasy map, the names.
+function MapArt({ art, px }) {
+  const names = useMemo(() => mapNames(art.names, art.blocks, px, art.wide, art.high), [art, px]);
   return (
-    <span style={{ width: size, height: size, borderRadius: Math.round(size / 4), background: mapTint(p.color), flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: Math.round(size * 0.6), lineHeight: 1 }}>{p.icon || ""}</span>
+    <svg viewBox={`0 0 ${art.wide} ${art.high}`} preserveAspectRatio="none" aria-hidden="true"
+      style={{ position: "absolute", left: 16, top: 16, width: "calc(100% - 16px)", height: "calc(100% - 16px)", borderRadius: 4, pointerEvents: "none", display: "block" }}>
+      <MapStrokes layers={art.layers} px={px} unit={art.unit} />
+      {art.aged && (
+        <>
+          <defs>
+            <radialGradient id="rpg-map-edge" cx="50%" cy="50%" r="74%">
+              <stop offset="60%" stopColor="#7A5A32" stopOpacity="0" />
+              <stop offset="100%" stopColor="#7A5A32" stopOpacity="0.24" />
+            </radialGradient>
+          </defs>
+          <rect x="0" y="0" width={art.wide} height={art.high} fill="url(#rpg-map-edge)" />
+          <rect x={3 / px} y={3 / px} width={art.wide - 6 / px} height={art.high - 6 / px} fill="none" stroke={MAP_INK} strokeOpacity={0.5} strokeWidth={1 / px} />
+        </>
+      )}
+      {names.map((n, k) => (
+        <text key={k} x={mapNum(n.cx)} y={mapNum(n.cy + n.size * 0.34)} textAnchor="middle" fontSize={mapNum(n.size)}
+          fontFamily={n.count ? "inherit" : MAP_SERIF} fontStyle={n.caps || n.count ? "normal" : "italic"} fontWeight={n.count ? 800 : n.caps ? 700 : 400}
+          letterSpacing={n.caps && !n.north ? mapNum(n.size * 0.24) : undefined} fill={n.count ? MAP_PAPER.land : MAP_INK} opacity={n.caps ? 0.82 : 1}
+          stroke={n.count ? "none" : MAP_PAPER.land} strokeOpacity={0.9} strokeWidth={mapNum(3.4 / px)} strokeLinejoin="round" style={{ paintOrder: "stroke" }}>{n.text}</text>
+      ))}
+    </svg>
   );
 }
-// The world drawn fine: one dot of a picture for every cell of the Continent grids (~ sea, . land, else the place
-// numbered by the character), stretched under the world's own cells.
-function MapDetail({ detail, places }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    const ctx = ref.current && ref.current.getContext ? ref.current.getContext("2d") : null;
-    if (!ctx) return;
-    const colors = (Array.isArray(detail.places) ? detail.places : []).map(id => mapTint((places.find(p => p.id === id) || {}).color));
-    detail.cells.forEach((row, y) => {
-      const line = String(row || "");
-      let x = 0;
-      while (x < line.length) {
-        const k = line.charCodeAt(x);
-        let end = x + 1;
-        while (end < line.length && line.charCodeAt(end) === k) end += 1;
-        ctx.fillStyle = k === 126 ? MAP_GROUND.sea : k === 46 ? MAP_GROUND.land : (colors[k - 256] || MAP_GROUND.land);
-        ctx.fillRect(x, y, end - x, 1);
-        x = end;
-      }
-    });
-  }, [detail, places]);
+// A small square of the map for the lists and the key: one kind of ground or one place's symbol, in the fantasy
+// style or, for the battle grid, seen from above. A place that only names the land shows a pennant of its color.
+function MapSwatch({ what, color, size = 24, top }) {
+  const layers = useMemo(() => {
+    if (top) return mapTop(1, 1, 3, 5, () => (MAP_ART.top[what] ? what : "plain"), color ? [{ d: "M0 0H100V100H0Z", fill: color, o: 0.14 }] : [], true);
+    const out = [{ d: "M0 0H100V100H0Z", fill: what === "sea" ? MAP_PAPER.sea : MAP_PAPER.land }];
+    if (color) out.push({ d: "M0 0H100V100H0Z", fill: color, o: 0.3 });
+    const rows = mapRows(12);
+    const plain = what === "sea" || what === "land";
+    if (what === "road") out.push({ d: "M0 50H100", line: "#7A5A3A", w: 2, dash: [5, 3.5] });
+    else if (MAP_ART.fantasy[what]) MAP_ART.fantasy[what](rows.add, plain ? 16 : 19, plain ? 16 : 27, plain ? 100 : 62, () => (plain ? 0.1 : 0.5), !plain);
+    else if (color) out.push({ d: "M30 86V16", line: MAP_INK, w: 1.6 }, { d: "M30 18L78 30L30 46Z", fill: color, line: MAP_INK, w: 1.2 });
+    return out.concat(rows.list(MAP_ART.ink));
+  }, [what, color, top]);
   return (
-    <canvas ref={ref} width={Number(detail.cols) || 1} height={Number(detail.rows) || 1}
-      style={{ position: "absolute", left: 16, top: 16, width: "calc(100% - 16px)", height: "calc(100% - 16px)", imageRendering: "pixelated" }} />
+    <svg viewBox="0 0 100 100" width={size} height={size} aria-hidden="true" style={{ flexShrink: 0, borderRadius: Math.round(size / 5), display: "block", border: `1px solid ${T.slate200}`, boxSizing: "border-box" }}>
+      <MapStrokes layers={layers} px={size / 100} unit={top ? 100 : 40} />
+    </svg>
   );
 }
 function MapsTab({ onError }) {
   const [at, setAt, atHref] = useTabParam("map", null);
   const [v, setV] = useState(null);
   const rootRef = useRef(null);
+  // the grids already opened while this tab is up, so going back up the map is at once
+  const seen = useRef(new Map());
   const wide = useElementWidth(rootRef) >= MAP_WIDE;
   useEffect(() => {
     let alive = true;
-    const m = /^(\d+)-(\d+)-(\d+)$/.exec(at || "");
+    const key = at || "";
+    if (seen.current.has(key)) { setV(seen.current.get(key)); return undefined; }
+    const m = /^(\d+)-(\d+)-(\d+)$/.exec(key);
     (async () => {
       const { data, error } = await supabase.rpc("rpg_map_view", m ? { p_level: Number(m[1]), p_x: Number(m[2]), p_y: Number(m[3]) } : {});
       if (!alive) return;
       if (error) { onError(error.message); if (at) setAt(null); return; }
+      if (data) seen.current.set(key, data);
       setV(data || null);
     })();
     return () => { alive = false; };
@@ -907,10 +1407,10 @@ function MapSide({ v, atHref, setAt, order }) {
   const row = (p, kind) => (
     <TabLink key={p.id} href={atHref(p.view || null)} onSelect={() => setAt(p.view || null)}
       style={{ display: "flex", gap: 10, alignItems: "flex-start", width: "100%", padding: "8px 0 0", borderTop: `1px solid ${T.slate100}`, marginTop: 8 }}>
-      <MapTile p={p} />
+      <MapSwatch what={p.icon} color={p.color} size={28} />
       <span style={{ minWidth: 0 }}>
         <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: T.slate900 }}>{p.name}</span>
-        <span style={{ display: "block", fontSize: 12, color: T.slate600 }}>{kind ? `${p.level} · ` : ""}{p.size} · {p.ground}{p.inside ? ` · in ${p.inside}` : ""}</span>
+        <span style={{ display: "block", fontSize: 12, color: T.slate600 }}>{[kind ? p.level : null, p.size, p.ground, p.inside ? `in ${p.inside}` : null].filter(Boolean).join(" · ")}</span>
         {p.about && <span style={{ display: "block", fontSize: 12, color: T.slate500, marginTop: 2 }}>{p.about}</span>}
       </span>
     </TabLink>
@@ -934,56 +1434,50 @@ function MapSide({ v, atHref, setAt, order }) {
     </div>
   );
 }
-// The map itself. It is as wide as the space it gets, held to what the height of the screen can show whole. A cell
-// shows the icon of the place that is its ground, then the smaller places in it; more than three of those show as
-// a count. Icons size themselves from the width of the map (cqw).
+// The map itself. It is as wide as the space it gets, held to what the height of the screen can show whole. The
+// picture (MapArt) lies under a grid of clear cells; each cell carries its name and what is in it, and opens the
+// grid inside it. Under the map: the scale, then the key to the grounds and places drawn on this grid.
 function MapGrid({ v, atHref, setAt }) {
+  const boxRef = useRef(null);
+  const width = useElementWidth(boxRef);
+  const level = Number(v.level) || 1;
   const cols = Number(v.cols) || 12;
   const cells = Array.isArray(v.cells) ? v.cells : [];
   const places = Array.isArray(v.places) ? v.places : [];
   const crumbs = Array.isArray(v.crumbs) ? v.crumbs : [];
+  const within = Array.isArray(v.within) ? v.within : [];
   const moves = v.moves && typeof v.moves === "object" ? v.moves : null;
   const grounds = v.grounds && typeof v.grounds === "object" ? v.grounds : {};
   const detail = v.detail && Array.isArray(v.detail.cells) ? v.detail : null;
-  const byId = {};
-  places.forEach(p => { byId[p.id] = p; });
+  // the last grid of the ladder is the battle grid, seen from above
+  const top = Array.isArray(v.ladder) && v.ladder.length > 0 && level === v.ladder.length;
+  const byId = useMemo(() => { const all = {}; (Array.isArray(v.places) ? v.places : []).forEach(p => { all[p.id] = p; }); return all; }, [v]);
+  const art = useMemo(() => (top ? mapBattle : mapFantasy)(v, byId), [v, byId, top]);
+  // how many screen pixels one unit of the drawing takes (a cell is 100 units)
+  const px = width > 16 ? (width - 16) / (cols * 100) : 1;
+  const ground = (k) => { const g = grounds[k]; return g && typeof g === "object" ? [g.name, g.penalty].filter(Boolean).join(" · ") : String(g || k); };
   const drawn = new Set(detail && Array.isArray(detail.places) ? detail.places : []);
-  const size = (share) => `calc((100cqw - 16px) / ${cols} * ${share})`;
   const axis = { fontSize: 10, color: T.slate500, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" };
   const grid = [<div key="corner" />];
   for (let x = 1; x <= cols; x++) grid.push(<div key={`c${x}`} style={axis}>{String.fromCharCode(64 + x)}</div>);
-  let counted = false;
   cells.forEach(c => {
     if (c.x === 1) grid.push(<div key={`r${c.y}`} style={axis}>{c.y}</div>);
     const p = c.place ? byId[c.place] : null;
     const marks = (Array.isArray(c.marks) ? c.marks : []).map(id => byId[id]).filter(Boolean);
     if (p) drawn.add(p.id);
     marks.forEach(k => drawn.add(k.id));
-    const title = `${c.name} · ${p ? `${p.name} · ${p.ground}` : (grounds[c.kind] || c.kind)}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
-    const style = { aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, boxSizing: "border-box", overflow: "hidden", position: "relative",
-                    borderRight: `1px solid ${T.white}`, borderBottom: `1px solid ${T.white}`,
-                    background: detail ? "transparent" : p ? mapTint(p.color) : (MAP_GROUND[c.kind] || T.slate50),
-                    display: "flex", flexWrap: "wrap", alignItems: "center", alignContent: "center", justifyContent: "center", gap: "0 1px", lineHeight: 1,
-                    cursor: c.open ? "pointer" : "default" };
-    let inner = null;
-    if (marks.length > 3) {
-      counted = true;
-      inner = <span style={{ fontSize: size(0.3), fontWeight: 800, color: T.white, background: T.slate900, borderRadius: 999, padding: "0.15em 0.5em" }}>{marks.length}</span>;
-    } else {
-      const shown = (p && p.icon ? [p] : []).concat(marks);
-      const each = size(shown.length > 1 ? 0.36 : 0.56);
-      inner = shown.map(k => (k.icon
-        ? <span key={k.id} style={{ fontSize: each, lineHeight: 1 }}>{k.icon}</span>
-        : <span key={k.id} style={{ width: size(0.2), height: size(0.2), borderRadius: "50%", background: k.color || T.slate400, border: `1px solid ${T.white}`, boxShadow: `0 0 0 1px ${T.slate700}`, boxSizing: "border-box" }} />));
-    }
+    const title = `${c.name} · ${p ? [p.name, p.ground].filter(Boolean).join(" · ") : ground(c.kind)}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
+    const style = { aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, boxSizing: "border-box", position: "relative", display: "block", cursor: c.open ? "pointer" : "default" };
     grid.push(c.open
-      ? <TabLink key={c.name} href={atHref(c.open)} onSelect={() => setAt(c.open)} title={title} ariaLabel={title} style={style}>{inner}</TabLink>
-      : <div key={c.name} title={title} style={style}>{inner}</div>);
+      ? <TabLink key={c.name} href={atHref(c.open)} onSelect={() => setAt(c.open)} title={title} ariaLabel={title} className="rpg-map-cell" style={style} />
+      : <div key={c.name} title={title} style={style} />);
   });
-  const kinds = Object.keys(MAP_GROUND).filter(k => cells.some(c => c.kind === k));
-  const ground = places.filter(p => drawn.has(p.id) && !p.listed);
+  const kinds = ["sea", "land", "forest", "hills", "mountains"].filter(k => cells.some(c => c.kind === k) || (detail && detail.cells.some(row => String(row).includes({ sea: "~", land: ".", forest: "t", hills: "h", mountains: "m" }[k]))));
+  const shown = places.filter(p => drawn.has(p.id) && !p.listed);
+  const costly = kinds.some(k => grounds[k] && grounds[k].penalty) || shown.some(p => /penalty/.test(p.ground || ""));
   return (
     <div style={{ ...card, order: 1, minWidth: 0, display: "grid", gap: 10 }}>
+      <style>{".rpg-map-cell:hover{box-shadow:inset 0 0 0 2px rgba(75,59,42,.6);border-radius:3px}"}</style>
       <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
         {crumbs.map((k, i) => (i === crumbs.length - 1
           ? <span key={i} style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{k.label}</span>
@@ -1002,26 +1496,25 @@ function MapGrid({ v, atHref, setAt }) {
           </div>
         )}
       </div>
-      <div style={{ width: `min(100%, max(340px, calc((100dvh - 300px) * ${detail ? 2 : 1} + 16px)))`, margin: "0 auto", containerType: "inline-size", userSelect: "none" }}>
+      <div ref={boxRef} style={{ width: `min(100%, max(340px, calc((100dvh - 300px) * ${detail ? 2 : 1} + 16px)))`, margin: "0 auto", userSelect: "none" }}>
         <div style={{ position: "relative", display: "grid", gridTemplateColumns: `16px repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: "16px" }}>
-          {detail && <MapDetail detail={detail} places={places} />}
+          <MapArt art={art} px={px} />
           {grid}
         </div>
       </div>
       <div style={{ display: "flex", gap: "6px 14px", flexWrap: "wrap", alignItems: "center", fontSize: 12, color: T.slate600 }}>
-        <span>{v.scale}{cells.some(c => c.open) ? " Tap a cell to open the grid inside it." : ""}</span>
-        {ground.map(p => (
+        <span>{within.length > 0 ? `In ${within.slice().reverse().join(", ")}. ` : ""}{v.scale}{cells.some(c => c.open) ? " Tap a cell to open the grid inside it." : ""}</span>
+        {shown.map(p => (
           <TabLink key={p.id} href={atHref(p.view || null)} onSelect={() => setAt(p.view || null)} style={{ display: "flex", alignItems: "center", gap: 5, color: T.slate700, fontWeight: 600 }}>
-            <MapTile p={p} size={18} />{p.name}
+            <MapSwatch what={p.icon} color={p.color} size={20} top={top} />{p.name}{p.ground && <span style={{ fontWeight: 400, color: T.slate600 }}>· {p.ground}</span>}
           </TabLink>
         ))}
         {kinds.map(k => (
           <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <span style={{ width: 12, height: 12, borderRadius: 3, background: MAP_GROUND[k], border: `1px solid ${T.slate200}`, boxSizing: "border-box" }} />
-            {grounds[k] || k}
+            <MapSwatch what={k} size={20} top={top} />{ground(k)}
           </span>
         ))}
-        {counted && <span>A number is that many places in one cell.</span>}
+        {costly && <span>A movement penalty is the extra cost to enter a square: at penalty 2 a square costs 3.</span>}
       </div>
     </div>
   );
