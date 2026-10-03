@@ -18,6 +18,8 @@ import { DayDoneStyles, Dancer, CritterIcon, useDancers } from "../components/Cr
 //   family_inventory_unmark_low()   Undo
 //   family_inventory_mark_ordered() parents: these were ordered, this much of each
 //   family_inventory_mark_left()    parents: not out yet, this much is left
+//   family_meal_grocery()           parents, Wednesday to Friday: next week's meals (Sat-Fri)
+//                                   as a grocery list, checked against this inventory
 // Changing an item's amount or schedule restarts its learning (database trigger).
 // Items keep the master list's store sections and order. "How often" may be blank:
 // the site then learns it from use and predicts nothing until it has measured a cycle.
@@ -289,6 +291,7 @@ function AdminView({ rows, today, onChanged, setErr, onEdit }) {
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
+      <MealGroceries today={today} rows={rows} onChanged={onChanged} setErr={setErr} />
       <div style={card}>
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Order this week</div>
         {!low.length && !likely.length ? (
@@ -448,6 +451,109 @@ function ItemEditor({ item, sections, onClose, onSaved }) {
           </div>
         </div>
       </form>
+    </div>
+  );
+}
+
+// ─── Groceries for next week's meals (Wednesday to Friday) ────────────────
+// The meal plan's grocery list for the coming Saturday-to-Friday week, checked against
+// this inventory by family_meal_grocery(). Items you'll need are checked; "Add to order"
+// taps them Running low so they join the order above. Things not on the inventory list
+// are listed to buy separately.
+const GROCERY_DAYS = [3, 4, 5]; // Wednesday, Thursday, Friday
+function MealGroceries({ today, rows, onChanged, setErr }) {
+  const dow = new Date(utcDay(today)).getUTCDay();
+  const show = GROCERY_DAYS.includes(dow);
+  const [list, setList] = useState(null);
+  const [off, setOff] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [showHave, setShowHave] = useState(false);
+  const { all: allDancers } = useDancers();
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.rpc("family_meal_grocery");
+    if (error) setErr(error.message); else setList(Array.isArray(data) ? data : []);
+  }, [setErr]);
+  useEffect(() => { if (show) load(); }, [show, load, rows]);
+
+  if (!show || !list) return null;
+  const need = list.filter(r => r.status === "need" || r.status === "check");
+  const onOrder = list.filter(r => r.status === "low");
+  const have = list.filter(r => r.status === "have");
+  const other = list.filter(r => r.status === "other");
+  const isOn = (r) => off[r.item_id] === undefined ? r.status === "need" : !off[r.item_id];
+  const picked = need.filter(isOn);
+  const weekStart = new Date(utcDay(today) + ((6 - dow + 7) % 7 || 7) * 86400000);
+  const fmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+  const addToOrder = async () => {
+    if (!picked.length || saving) return;
+    setSaving(true);
+    const inUse = new Set(rows.filter(x => x.is_low && x.dancer).map(x => x.dancer));
+    for (const r of picked) {
+      const free = allDancers.filter(d => !inUse.has(d.key));
+      const pool = free.length ? free : allDancers;
+      const dancer = pool.length ? pool[Math.floor(Math.random() * pool.length)].key : null;
+      if (dancer) inUse.add(dancer);
+      const { error } = await supabase.rpc("family_inventory_mark_low", { p_item_id: r.item_id, p_dancer: dancer });
+      if (error) { setErr(error.message); break; }
+    }
+    setSaving(false);
+    setOff({});
+    onChanged();
+  };
+
+  const line = (r, check) => (
+    <div key={(r.item_id || r.name) + r.meals} style={{ padding: "9px 0", borderTop: `1px solid ${T.slate100}` }}>
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: check ? "pointer" : "default" }}>
+        {check && (
+          <input type="checkbox" checked={isOn(r)} onChange={() => setOff(s => ({ ...s, [r.item_id]: isOn(r) }))}
+            style={{ width: 20, height: 20, accentColor: T.blue, flexShrink: 0, margin: 0 }} />
+        )}
+        <span style={{ minWidth: 0 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>{r.name}</span>
+          {r.status === "check" && <span style={{ fontSize: 11, color: T.slate500 }}> · not sure how much is left</span>}
+          <span style={{ display: "block", fontSize: 12, color: T.slate500, overflowWrap: "anywhere" }}>{r.amounts}</span>
+        </span>
+      </label>
+    </div>
+  );
+
+  return (
+    <div style={{ ...card, borderColor: T.blue }}>
+      <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Groceries for next week's meals</div>
+      <div style={{ fontSize: 13, color: T.slate500, marginTop: 2 }}>
+        {fmt(weekStart)} – {fmt(new Date(weekStart.getTime() + 6 * 86400000))}, checked against what's in the house.
+      </div>
+      {!list.length && <div style={{ fontSize: 13, color: T.slate500, marginTop: 8 }}>No recipes on next week's plan yet.</div>}
+      {need.length > 0 && (
+        <Group title={`Need to buy (${need.length})`} note="Expected to run out before the meal that uses it.">
+          {need.map(r => line(r, true))}
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+            <button style={{ ...btn("primary"), opacity: picked.length && !saving ? 1 : 0.5 }} disabled={!picked.length || saving} onClick={addToOrder}>
+              {saving ? "Adding…" : `Add ${picked.length} to the order`}
+            </button>
+          </div>
+        </Group>
+      )}
+      {other.length > 0 && (
+        <Group title={`Not on the inventory list (${other.length})`} note="Buy these or check the pantry.">
+          {other.map(r => line({ ...r, amounts: `${r.amounts} · ${r.meals}` }, false))}
+        </Group>
+      )}
+      {onOrder.length > 0 && (
+        <Group title={`Already on the order (${onOrder.length})`}>
+          {onOrder.map(r => line(r, false))}
+        </Group>
+      )}
+      {have.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <button style={btn("soft", true)} onClick={() => setShowHave(v => !v)}>
+            {showHave ? "Hide" : "Show"} {have.length} you should already have
+          </button>
+          {showHave && <div style={{ marginTop: 6 }}>{have.map(r => line(r, false))}</div>}
+        </div>
+      )}
     </div>
   );
 }

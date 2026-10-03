@@ -7,7 +7,7 @@ import { useTabParam, TabLink } from "../lib/routing.jsx";
 import { todayISOCentral, dayOfWeekISO, addDaysISO } from "../lib/weeks.js";
 
 // =========================================================================
-// MealPlan.jsx — what's for dinner, a week at a time (Sunday to Saturday).
+// MealPlan.jsx — what's for dinner, a week at a time (Saturday to Friday, like the chores).
 // Everyone who can see Family sees the week: tonight's dinner with a QR code
 // for the recipe, the week list, and tomorrow. Parents can change any day,
 // look at next week, add and edit meals, and approve meal ideas.
@@ -16,6 +16,8 @@ import { todayISOCentral, dayOfWeekISO, addDaysISO } from "../lib/weeks.js";
 //   family_meal_set_day(date, meal_id, out)   parents: change one day
 //   family_meal_pick / family_meal_slot (used inside those two): chicken and beef
 //   alternate, Thursday is a simple night, Friday is dinner out.
+//   family_meal_recipe(meal, skip)  the recipe scaled to who is eating (portions by age
+//                                   and sex), amounts already written out by the database.
 // Meals live in family_meals: status approved (on the rotation) or suggested (an idea
 // waiting for a parent's yes). Parents write that table directly; the rules allow it.
 // =========================================================================
@@ -61,19 +63,19 @@ export default function MealPlan({ userRole }) {
   const [err, setErr] = useState(null);
 
   const today = todayISOCentral();
-  const thisSunday = addDaysISO(today, -(dayOfWeekISO(today) || 0));
+  const thisSaturday = addDaysISO(today, -(((dayOfWeekISO(today) ?? 0) + 1) % 7));
   const showNext = isParent && week === "next";
-  const weekStart = showNext ? addDaysISO(thisSunday, 7) : thisSunday;
+  const weekStart = showNext ? addDaysISO(thisSaturday, 7) : thisSaturday;
 
   const visibleTabs = isParent ? TABS : ["week"];
   const activeTab = visibleTabs.includes(tab) ? tab : "week";
 
   const loadWeek = useCallback(async () => {
-    // Tomorrow can fall in next week (on Saturday), so this week always loads a day past it.
+    // Tomorrow can fall in next week (on Friday), so this week always loads a day past it.
     const { data, error } = await supabase.rpc("family_meal_week", { p_week_start: weekStart });
     if (error) { setErr(error.message); setLoading(false); return; }
     let rows = Array.isArray(data) ? data : [];
-    if (!showNext && dayOfWeekISO(today) === 6) {
+    if (!showNext && dayOfWeekISO(today) === 5) {
       const nx = await supabase.rpc("family_meal_week", { p_week_start: addDaysISO(weekStart, 7) });
       if (!nx.error && Array.isArray(nx.data)) rows = rows.concat(nx.data.slice(0, 1));
     }
@@ -196,14 +198,16 @@ function TonightCard({ day }) {
         )}
         {out && <div style={{ fontSize: 15, color: T.slate500, marginTop: 8 }}>No cooking tonight.</div>}
       </div>
-      {!out && day.recipe_url && <RecipeQR url={day.recipe_url} />}
+      {!out && day.meal_id && <RecipeQR url={day.recipe_url} mealId={day.meal_id} />}
     </div>
   );
 }
 
-function RecipeQR({ url }) {
+function RecipeQR({ url, mealId }) {
   const [src, setSrc] = useState(null);
+  const [open, setOpen] = useState(false);
   useEffect(() => {
+    if (!url) return undefined;
     let live = true;
     QRCode.toDataURL(url, { margin: 1, width: 300, color: { dark: T.slate900, light: "#FFFFFF" } })
       .then(d => { if (live) setSrc(d); })
@@ -212,12 +216,117 @@ function RecipeQR({ url }) {
   }, [url]);
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, flexShrink: 0, margin: "0 auto" }}>
-      <a href={url} target="_blank" rel="noopener noreferrer" aria-label="Recipe QR code"
-        style={{ display: "block", width: 150, height: 150, borderRadius: 12, border: `1px solid ${T.slate200}`, background: T.white, padding: 6, boxSizing: "border-box" }}>
-        {src && <img src={src} alt="QR code for the recipe" style={{ width: "100%", height: "100%", display: "block" }} />}
-      </a>
-      <a href={url} target="_blank" rel="noopener noreferrer"
-        style={{ fontSize: 14, fontWeight: 600, color: T.blue, textDecoration: "underline" }}>Open the recipe</a>
+      {url && (
+        <a href={url} target="_blank" rel="noopener noreferrer" aria-label="Recipe QR code"
+          style={{ display: "block", width: 150, height: 150, borderRadius: 12, border: `1px solid ${T.slate200}`, background: T.white, padding: 6, boxSizing: "border-box" }}>
+          {src && <img src={src} alt="QR code for the recipe" style={{ width: "100%", height: "100%", display: "block" }} />}
+        </a>
+      )}
+      {url && (
+        <a href={url} target="_blank" rel="noopener noreferrer"
+          style={{ fontSize: 14, fontWeight: 600, color: T.blue, textDecoration: "underline" }}>Open the recipe</a>
+      )}
+      <button style={{ ...btn("primary"), width: 150 }} onClick={() => setOpen(true)}>See the recipe</button>
+      {open && <RecipeModal mealId={mealId} onClose={() => setOpen(false)} />}
+    </div>
+  );
+}
+
+// ─── Recipe popup: who's eating, the scaled ingredients, the steps ────────
+function RecipeModal({ mealId, onClose }) {
+  const [skip, setSkip] = useState([]);
+  const [rec, setRec] = useState(null);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    let live = true;
+    supabase.rpc("family_meal_recipe", { p_meal_id: mealId, p_skip: skip }).then(({ data, error }) => {
+      if (!live) return;
+      if (error) setErr(error.message); else setRec(data || null);
+    });
+    return () => { live = false; };
+  }, [mealId, skip]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [onClose]);
+
+  const people = Array.isArray(rec?.people) ? rec.people : [];
+  const ings = Array.isArray(rec?.ingredients) ? rec.ingredients : [];
+  const steps = Array.isArray(rec?.steps) ? rec.steps : [];
+  const eating = people.filter(p => p.eating).length;
+  const toggle = (k) => setSkip(xs => (xs.includes(k) ? xs.filter(x => x !== k) : [...xs, k]));
+
+  return (
+    <div onClick={onClose} role="dialog" aria-modal="true" aria-label="Recipe"
+      style={{ position: "fixed", inset: 0, background: "rgba(45,47,38,0.45)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "24px 12px", overflowY: "auto", boxSizing: "border-box" }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ ...card, width: "100%", maxWidth: 620, padding: 0, textAlign: "left", overflow: "hidden" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, padding: "16px 16px 12px", borderBottom: `1px solid ${T.slate100}` }}>
+          <div style={{ fontSize: 21, fontWeight: 800, color: T.slate900, overflowWrap: "anywhere" }}>{rec?.name || "Recipe"}</div>
+          <button style={btn("soft", true)} onClick={onClose} aria-label="Close">Close</button>
+        </div>
+
+        <div style={{ padding: 16, display: "grid", gap: 18 }}>
+          {err && <div style={{ color: T.red, fontSize: 13 }}>{err}</div>}
+          {!rec && !err && <div style={{ color: T.slate500, fontSize: 13 }}>Loading…</div>}
+
+          {people.length > 0 && (
+            <div>
+              <div style={eyebrow}>Who's eating</div>
+              <div style={{ fontSize: 12, color: T.slate500, margin: "2px 0 8px" }}>Tap anyone who won't be there.</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {people.map(p => (
+                  <button key={p.key} onClick={() => toggle(p.key)} aria-pressed={p.eating}
+                    style={{ ...btn(p.eating ? "primary" : "soft", true), padding: "6px 12px", fontSize: 13,
+                      textDecoration: p.eating ? "none" : "line-through", color: p.eating ? T.white : T.slate400 }}>
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+              {rec?.servings > 0 && (
+                <div style={{ fontSize: 13, color: T.slate700, marginTop: 8 }}>
+                  {eating} eating, about {rec.need_servings} adult servings. The recipe makes {Number(rec.servings)}, so amounts are {rec.multiplier}×.
+                </div>
+              )}
+            </div>
+          )}
+
+          {ings.length > 0 ? (
+            <div>
+              <div style={eyebrow}>Ingredients</div>
+              <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                {ings.map((i, n) => (
+                  <div key={n} style={{ display: "flex", gap: 10, fontSize: 15, color: T.slate900, lineHeight: 1.35 }}>
+                    <span style={{ minWidth: 76, fontWeight: 700, color: T.chromeBgDeep, flexShrink: 0 }}>{i.amount || ""}</span>
+                    <span style={{ overflowWrap: "anywhere" }}>{i.amount ? i.item : i.text}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : rec && (
+            <div style={{ fontSize: 14, color: T.slate700 }}>This recipe isn't written out on its page. Use the link to see it.</div>
+          )}
+
+          {steps.length > 0 && (
+            <div>
+              <div style={eyebrow}>Steps</div>
+              <ol style={{ margin: "8px 0 0", paddingLeft: 22, display: "grid", gap: 10 }}>
+                {steps.map((t, n) => <li key={n} style={{ fontSize: 15, color: T.slate900, lineHeight: 1.45 }}>{t}</li>)}
+              </ol>
+              <div style={{ fontSize: 12, color: T.slate500, marginTop: 10 }}>Steps are as written for the original amount; the ingredients above are already scaled.</div>
+            </div>
+          )}
+
+          {rec?.recipe_url && (
+            <a href={rec.recipe_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, color: T.blue }}>Original recipe</a>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
