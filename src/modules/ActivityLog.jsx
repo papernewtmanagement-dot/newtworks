@@ -106,6 +106,13 @@ const RELATIONSHIPS = [
   { key: "existing", label: "Existing" },
   { key: "winback",  label: "Winback" },
 ];
+// Peter 2026-10-03: a policy review names the policy reviewed (line, and type where
+// the line has types); a pivot names the line it pivoted to.
+const LINE_REQUIRED = { policy_review: "type", pivot: "line" };
+// Peter 2026-10-03: service work is for a customer already on the books, so any of
+// these sets the relationship to Existing.
+const EXISTING_ONLY = new Set(["pivot", "policy_review", "service_task", "service_task_company",
+  "service_task_coi", "autopay_enrollment", "cancelation_saved"]);
 const TABS = ["log", "checklist", "hours", "deposits", "week", "issued", "development", "changes", "spotcheck", "backfill", "history", "billing"];
 const CARD_PARTS = [
   { key: "demeanor_score",        label: "Demeanor",              short: "Demeanor" },
@@ -382,7 +389,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       setCustKind(d.customer_kind || "person");
       setFirst(d.customer_first || ""); setInitial(d.customer_last_initial || "");
       setPhone(d.phone_last4 || ""); setDate(d.date || today); setDateOpen(true);
-      setRelationship(d.relationship || ""); setSource(d.marketing_source || "");
+      setRelationship(d.relationship || (d.kind === "activity" && EXISTING_ONLY.has(d.activity_key) ? "existing" : "")); setSource(d.marketing_source || "");
       setSourcedBy(d.sourced_by_team_member_id || ""); setEcrm(d.ecrm_url || "");
       setNote(d.note || "");
       setSuggest([]); setSuggestOpen(false); setOk(""); setErr(""); setAttempted(false); setLast(null);
@@ -405,7 +412,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           vehicles: d.vehicle_count == null ? "" : String(d.vehicle_count),
           isNewLine: false, addedToExisting: false, autopay: false }]);
       } else if (d.kind === "activity") {
-        setActivities([{ id: newPolicyId(), key: d.activity_key,
+        setActivities([{ id: newPolicyId(), orig: true, key: d.activity_key,
           line: d.save_line || d.policy_line || "", type: d.product_type || "",
           premium: d.premium == null ? "" : String(d.premium), reason: d.save_reason || "",
           site: d.review_platform || "" }]);
@@ -484,7 +491,11 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     .filter(r => r.line_of_business === p.line && !r.already_canceled && (!date || r.submitted_date <= date) && (!date || r.window_end > date))
     .sort((a, b) => ((b.product_type === p.type) - (a.product_type === p.type)) || (a.submitted_date < b.submitted_date ? 1 : -1))[0] || null;
 
-  const addActivity = (key) => { if (key) setActivities(list => [...list, { id: newPolicyId(), key, line: "", type: "", premium: "" }]); };
+  const addActivity = (key) => {
+    if (!key) return;
+    setActivities(list => [...list, { id: newPolicyId(), key, line: "", type: "", premium: "" }]);
+    if (EXISTING_ONLY.has(key)) setRelationship(r => r || "existing");
+  };
   const editActivity = (id, patch) => setActivities(list => list.map(a => a.id === id ? { ...a, ...patch } : a));
   const dropActivity = (id) => setActivities(list => list.filter(a => a.id !== id));
   const addPolicy = (line) => {
@@ -532,11 +543,14 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const needsSite = (key) => !!(values || []).find(v => v.activity_key === key)?.requires_platform;
   const hasSave = activities.some(a => a.key === "cancelation_saved");
   const hasReview = activities.some(a => a.key === "policy_review");
-  const activityItems = activities.filter(a => byKey[a.key]).map(a =>
+  // One shape per activity, for logging and for anything added while editing.
+  const toItem = (a) =>
     a.key === "cancelation_saved" ? { activity_key: a.key, save_line: a.line, product_type: a.type || null, save_reason: (a.reason || "").trim() }
     : a.key === "autopay_enrollment" ? { activity_key: a.key, policy_line: a.line, product_type: a.type || null, premium: a.premium === "" ? null : Number(a.premium) }
     : needsSite(a.key) ? { activity_key: a.key, review_platform: a.site || null }
-    : { activity_key: a.key });
+    : LINE_REQUIRED[a.key] ? { activity_key: a.key, policy_line: a.line || null, product_type: a.type || null }
+    : { activity_key: a.key };
+  const activityItems = activities.filter(a => byKey[a.key]).map(toItem);
   const activityTotal = activityItems.reduce((s, it) => s + Number(byKey[it.activity_key]?.points || 0), 0);
   const quoted = policies.filter(p => p.status === "quoted" || p.status === "quoted_sold");
   const sold = policies.filter(p => p.status === "sold" || p.status === "quoted_sold");
@@ -551,8 +565,12 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   // Peter 2026-09-19: a sale already needed the ECRM link. A cancelation needs
   // one too, and so does any activity marked for it in the point values table
   // (Policy Change, to start with).
-  const needsEcrm = hasSale || hasCxl
-    || activities.some(a => (values || []).some(v => v.activity_key === a.key && v.requires_ecrm));
+  // Peter 2026-10-03: the link is required when the entry is logged. An edit never
+  // asks for one the record went without; only what the edit adds can need it, and a
+  // sale always carries it. The box still shows on a record that uses one.
+  const ecrmKind = (list) => list.some(a => (values || []).some(v => v.activity_key === a.key && v.requires_ecrm));
+  const needsEcrm = hasSale || (!isEdit && hasCxl) || ecrmKind(activities.filter(a => !a.orig));
+  const showEcrm = needsEcrm || hasCxl || ecrmKind(activities) || !!ecrm.trim();
   // The rules that hold both when something is logged and when it is edited
   // later. Logging and editing each used to carry their own copy of these and
   // drifted apart, so a review could be edited without naming the site.
@@ -585,6 +603,41 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const replaces = flagged.filter(p => onFileAnswer[p.id] === "replaces");
   const showSuggest = suggestOpen && suggest.length > 0 && !(suggest.length === 1 && suggest[0].customer_first_name === first.trim() && (suggest[0].customer_last_initial || "") === initial.trim().toUpperCase());
 
+  // Line, then type where the line has types: the one pair of pickers wherever an
+  // activity names a policy (autopay, save, policy review, pivot).
+  const lineFields = (a, withType = true) => (
+    <>
+      <div style={field(130)}>
+        <label style={labelStyle}>Line</label>
+        <select style={inputBase} value={a.line} onChange={e => editActivity(a.id, { line: e.target.value, type: "" })}>
+          <option value="">Pick one</option>
+          {PRODUCTS.map(pr => <option key={pr.key} value={pr.key}>{pr.label}</option>)}
+        </select>
+      </div>
+      {withType && needsType(a.line) && (
+        <div style={field(150)}>
+          <label style={labelStyle}>Type</label>
+          <select style={inputBase} value={a.type} onChange={e => editActivity(a.id, { type: e.target.value })}>
+            <option value="">Pick one</option>
+            {(types[a.line] || []).map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
+          </select>
+        </div>
+      )}
+    </>
+  );
+  // Peter 2026-10-03: what a review or pivot has to name.
+  const lineMissing = (a) => !!LINE_REQUIRED[a.key] && (!a.line || (LINE_REQUIRED[a.key] === "type" && needsType(a.line) && !a.type));
+  // What each activity has to carry. Logging checks every activity in the entry;
+  // an edit checks only the ones it adds.
+  const activityChecks = (list) => {
+    const out = [];
+    if (list.some(a => a.key === "cancelation_saved" && (!a.line || (needsType(a.line) && !a.type) || !(a.reason || "").trim()))) out.push("Each save needs the policy line, its type, and the reason the customer gave.");
+    if (list.some(a => a.key === "policy_review") && !note.trim()) out.push("The policy review needs a note on what you covered.");
+    if (list.some(a => a.key === "policy_review" && lineMissing(a))) out.push("The policy review needs the policy reviewed: its line and type.");
+    if (list.some(a => a.key === "pivot" && lineMissing(a))) out.push("The pivot needs the line it pivoted to.");
+    if (list.some(a => a.key === "autopay_enrollment" && (!a.line || (needsType(a.line) && !a.type) || a.premium === "" || !(Number(a.premium) >= 0)))) out.push("Each autopay needs the policy line, type, and premium.");
+    return out;
+  };
   // ---- what still needs fixing, in plain words (mirrors the server rules) ----
   const problems = [];
   if (!customerOk) problems.push(isOrg ? "The organization name." : "Customer first name and last initial.");
@@ -598,13 +651,11 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   if (hasSale && date < addDays(today, -30)) problems.push("A sale is logged within 30 days of the bind.");
   if (hasCxl && date < addDays(today, -90)) problems.push("A cancelation is logged within 90 days.");
   if (hasSave && date !== today) problems.push("A save is logged the same day it comes in. Set the date to today.");
-  if (activities.some(a => a.key === "cancelation_saved" && (!a.line || (needsType(a.line) && !a.type) || !(a.reason || "").trim()))) problems.push("Each save needs the policy line, its type, and the reason the customer gave.");
-  if (hasReview && !note.trim()) problems.push("The policy review needs a note on what you covered.");
+  activityChecks(activities).forEach(m => problems.push(m));
   if (!relationship) problems.push("Pick the relationship.");
   if ((hasSale || hasQuote) && !source) problems.push("Pick the marketing source.");
   sharedGate(false).forEach(m => problems.push(m));
   if (needsCard && cardChosen < CARD_PARTS.length) problems.push("Score every part of the scorecard. Tap x on a part you did not do.");
-  if (activities.some(a => a.key === "autopay_enrollment" && (!a.line || (needsType(a.line) && !a.type) || a.premium === "" || !(Number(a.premium) >= 0)))) problems.push("Each autopay needs the policy line, type, and premium.");
   if (flagged.some(p => !onFileAnswer[p.id])) problems.push("Say whether the new policy replaces the one on file, is added to it, or is a different household.");
   if (hasSale && hasCxl) {
     const soldLines = new Set(sold.map(p => p.line));
@@ -644,7 +695,16 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     sharedGate(k === "sale" && editRec.entry_source === "historical_backfill").forEach(m => gate.push(m));
     // An activity can gain a quote here, and a quote can take the activity's place.
     const addQuote = k === "activity" && quoted.length > 0;
-    if (k === "activity" && activities.length === 0 && !addQuote) gate.push("Nothing left to save. Use Delete to remove the record.");
+    // Peter 2026-10-03: only the record's own activity is edited. Anything added here
+    // is logged as its own entry, checked the way logging checks it.
+    const own = k === "activity" ? activities.find(a => a.orig) : null;
+    const extras = k === "activity" ? activities.filter(a => !a.orig && byKey[a.key]) : [];
+    if (k === "activity" && !own && extras.length === 0 && !addQuote) gate.push("Nothing left to save. Use Delete to remove the record.");
+    if (extras.length) {
+      if (!phoneOk) gate.push("Customer phone, last four digits.");
+      if (!relationship) gate.push("Pick the relationship.");
+      activityChecks(extras).forEach(m => gate.push(m));
+    }
     if (addQuote) {
       if (!phoneOk) gate.push("Customer phone, last four digits.");
       if (!relationship) gate.push("Pick the relationship for the quote.");
@@ -684,25 +744,26 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           vehicle_count: hasCars(one.line, one.type) && one.vehicles !== "" ? Number(one.vehicles) : null,
           note: note.trim() };
       } else if (k === "activity") {
-        if (addQuote) {
-          // Logged the way the entry page logs a quote, for the same person, day and household.
+        if (addQuote || extras.length) {
+          // Logged the way the entry page logs them, for the same person, day and household.
           const q = await supabase.rpc("rp_log_entry", { p_payload: {
             customer_first: first.trim(), customer_last_initial: initial.trim(), customer_kind: custKind, phone_last4: phone,
             occurred_on: date, ecrm_url: ecrm.trim() || null, note: note.trim() || null, team_member_id: editRec.team_member_id,
-            relationship_type: relationship, marketing_source: source,
-            sourced_by_team_member_id: isReferral && sourcedBy ? sourcedBy : null,
-            quote: { items: quoted.map(p => ({ line_of_business: p.line, product_type: p.type || null })) } } });
+            relationship_type: relationship, marketing_source: source || null,
+            sourced_by_team_member_id: addQuote && isReferral && sourcedBy ? sourcedBy : null,
+            activity: extras.length ? { items: extras.map(toItem) } : null,
+            quote: addQuote ? { items: quoted.map(p => ({ line_of_business: p.line, product_type: p.type || null })) } : null } });
           if (q.error) { setErr(errText(q.error)); return; }
           if (!q.data?.ok) { setErr(errText(q.data)); return; }
         }
-        if (activities.length === 0) {
-          const d = await supabase.rpc("rp_delete_record", { p_kind: "activity", p_id: editRec.id, p_reason: "changed to a quote" });
-          if (d.error) { setErr(`The quote is logged, but the activity is still on file: ${errText(d.error)}`); return; }
+        if (!own) {
+          const d = await supabase.rpc("rp_delete_record", { p_kind: "activity", p_id: editRec.id, p_reason: addQuote ? "changed to a quote" : "replaced while editing" });
+          if (d.error) { setErr(`What you added is logged, but the old activity is still on file: ${errText(d.error)}`); return; }
           onLogged?.();
-          onCloseEdit?.("Saved. The activity is a quote now.");
+          onCloseEdit?.(addQuote ? "Saved. The activity is a quote now." : "Saved. The old activity is replaced by what you added.");
           return;
         }
-        const a = activities[0] || {};
+        const a = own;
         fn = "rp_edit_activity";
         const isSave = a.key === "cancelation_saved";
         changes = { ...who, occurred_on: date, activity_key: a.key, note: note.trim(), ecrm_url: ecrm.trim(),
@@ -723,7 +784,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       onLogged?.();
       onCloseEdit?.(data?.moved_from_historical
         ? "Saved. That record left the historical load and sits in the production log now."
-        : addQuote ? "Saved. The quote is logged too." : "Saved.");
+        : addQuote ? "Saved. The quote is logged too." : extras.length ? "Saved. What you added is logged as its own entry." : "Saved.");
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
   };
 
@@ -923,22 +984,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           {activities.filter(a => a.key === "autopay_enrollment").map(a => (
             <div key={a.id} style={{ ...wrapRow, marginTop: 10, padding: 10, background: T.slate50, borderRadius: 8 }}>
               <div style={{ fontWeight: 700, color: T.slate800, flex: "0 0 auto", paddingBottom: 10 }}>Autopay on</div>
-              <div style={field(130)}>
-                <label style={labelStyle}>Line</label>
-                <select style={inputBase} value={a.line} onChange={e => editActivity(a.id, { line: e.target.value, type: "" })}>
-                  <option value="">Pick one</option>
-                  {PRODUCTS.map(pr => <option key={pr.key} value={pr.key}>{pr.label}</option>)}
-                </select>
-              </div>
-              {needsType(a.line) && (
-                <div style={field(150)}>
-                  <label style={labelStyle}>Type</label>
-                  <select style={inputBase} value={a.type} onChange={e => editActivity(a.id, { type: e.target.value })}>
-                    <option value="">Pick one</option>
-                    {(types[a.line] || []).map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
-                  </select>
-                </div>
-              )}
+              {lineFields(a)}
               <div style={field(130)}>
                 <label style={labelStyle}>Premium</label>
                 <input type="number" inputMode="decimal" min="0" step="0.01" style={moneyInput} value={a.premium} onChange={e => editActivity(a.id, { premium: e.target.value })} placeholder="0.00" />
@@ -957,25 +1003,16 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </div>
             </div>
           ))}
+          {activities.filter(a => LINE_REQUIRED[a.key]).map(a => (
+            <div key={a.id} style={{ ...wrapRow, marginTop: 10, padding: 10, background: T.slate50, borderRadius: 8 }}>
+              <div style={{ fontWeight: 700, color: T.slate800, flex: "0 0 auto", paddingBottom: 10 }}>{a.key === "pivot" ? "Pivoted to" : "Policy reviewed"}</div>
+              {lineFields(a, LINE_REQUIRED[a.key] === "type")}
+            </div>
+          ))}
           {activities.filter(a => a.key === "cancelation_saved").map(a => (
             <div key={a.id} style={{ ...wrapRow, marginTop: 10, padding: 10, background: T.slate50, borderRadius: 8 }}>
               <div style={{ fontWeight: 700, color: T.slate800, flex: "0 0 auto", paddingBottom: 10 }}>Saved</div>
-              <div style={field(130)}>
-                <label style={labelStyle}>Line</label>
-                <select style={inputBase} value={a.line} onChange={e => editActivity(a.id, { line: e.target.value, type: "" })}>
-                  <option value="">Pick one</option>
-                  {PRODUCTS.map(pr => <option key={pr.key} value={pr.key}>{pr.label}</option>)}
-                </select>
-              </div>
-              {needsType(a.line) && (
-                <div style={field(150)}>
-                  <label style={labelStyle}>Type</label>
-                  <select style={inputBase} value={a.type} onChange={e => editActivity(a.id, { type: e.target.value })}>
-                    <option value="">Pick one</option>
-                    {(types[a.line] || []).map(t => <option key={t.type_key} value={t.type_key}>{t.label}</option>)}
-                  </select>
-                </div>
-              )}
+              {lineFields(a)}
               <div style={field(260)}>
                 <label style={labelStyle}>Reason the customer gave</label>
                 <input style={inputBase} value={a.reason || ""} onChange={e => editActivity(a.id, { reason: e.target.value })} placeholder="Rate went up at renewal; found a cheaper quote" />
@@ -1138,9 +1175,9 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         {/* ---- bottom row: ECRM link (sale), marketing source (quote or sale), lead source (referral), note ---- */}
         {showBottomRow && (
         <div style={{ ...wrapRow, ...blockStyle }}>
-          {needsEcrm && (
+          {showEcrm && (
             <div style={field(200)}>
-              <label style={labelStyle}>ECRM link <span style={{ color: T.red }}>(required)</span></label>
+              <label style={labelStyle}>ECRM link {needsEcrm && <span style={{ color: T.red }}>(required)</span>}</label>
               <input style={inputBase} value={ecrm} onChange={e => setEcrm(e.target.value)} placeholder="https://…" />
             </div>
           )}
