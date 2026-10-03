@@ -8,7 +8,7 @@ import { useViewport } from "../lib/hooks.js";
 // Persistent band directly under the app header, on every route.
 //
 // Collapsed:
-//   Four value labels + one-word essence per value.
+//   Five value labels (Why first) + one-word essence per value.
 //
 // Expanded:
 //   - Same pill row, but essence hidden (full statements below make it redundant).
@@ -21,7 +21,7 @@ import { useViewport } from "../lib/hooks.js";
 //   - Office block.
 //
 // Data:
-//   core_principles domain=agency_identity  ->  4 rule bodies + essences
+//   core_principles domain=agency_identity  ->  5 rule bodies + essences
 //   agency row                              ->  office details + codes
 //
 //   Rules of the Road, When You Get Stuck, and NATO Alphabet are hard-coded
@@ -32,6 +32,7 @@ import { useViewport } from "../lib/hooks.js";
 // ============================================================
 
 const FALLBACK = {
+  WHY:     { essence: "Stability",  body: "We believe good information leads to good decisions, and good decisions build a stable life." },
   VISION:  { essence: "Trusted",    body: "We are the trusted resource for anyone who wants to protect and grow their assets and wealth." },
   MISSION: { essence: "Understand", body: "We understand people, and we help them understand what they have, what they don\u2019t have, and why it\u2019s important." },
   CULTURE: { essence: "Better",     body: "We make others better. We\u2019re positive, hard-working problem-solvers. We communicate clearly and speak the truth with respect." },
@@ -39,7 +40,7 @@ const FALLBACK = {
 };
 
 const LS_KEY = "newtworks.identityRibbon.expanded";
-const ORDER = ["VISION", "MISSION", "CULTURE", "DUTY"];
+const ORDER = ["WHY", "VISION", "MISSION", "CULTURE", "DUTY"];
 
 // ---- Rules of the Road (moved out of the handbook 2026-07-05) ----
 const RULES_OF_ROAD = [
@@ -121,7 +122,7 @@ const NATO = [
 function parseIdentity(rawContent) {
   const out = {};
   if (!rawContent) return out;
-  const ids = ["vision", "mission", "culture", "duty"];
+  const ids = ["why", "vision", "mission", "culture", "duty"];
   for (const id of ids) {
     const re = new RegExp(`<rule id="${id}">([\\s\\S]*?)</rule>`, "i");
     const m = rawContent.match(re);
@@ -220,6 +221,7 @@ export default function AgencyIdentityRibbon() {
         if (active && cp?.content) {
           const parsed = parseIdentity(cp.content);
           setIdentity({
+            WHY:     parsed.WHY     || FALLBACK.WHY,
             VISION:  parsed.VISION  || FALLBACK.VISION,
             MISSION: parsed.MISSION || FALLBACK.MISSION,
             CULTURE: parsed.CULTURE || FALLBACK.CULTURE,
@@ -281,13 +283,13 @@ export default function AgencyIdentityRibbon() {
       rowGap: vp.isPhone ? 8 : 0,
       overflowX: "visible",
     },
-    valueCell: (isLast) => ({
+    valueCell: (isLast, isFull) => ({
       display: "flex",
       flexDirection: "column",
       justifyContent: "flex-start",
       gap: 3,
       padding: vp.isPhone ? "0 12px" : "0 24px",
-      flex: vp.isPhone ? "1 1 45%" : 1,
+      flex: vp.isPhone ? (isFull ? "1 1 100%" : "1 1 45%") : 1,
       minWidth: vp.isPhone ? 0 : 0,
       borderRight: (isLast || vp.isPhone) ? "none" : `1px solid ${T.slate200}`,
       cursor: "pointer",
@@ -489,7 +491,7 @@ export default function AgencyIdentityRibbon() {
           {ORDER.map((k, idx) => (
             <div
               key={k}
-              style={css.valueCell(idx === ORDER.length - 1)}
+              style={css.valueCell(idx === ORDER.length - 1, k === "WHY")}
               onClick={toggle}
               role="button"
               tabIndex={0}
