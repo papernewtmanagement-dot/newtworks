@@ -85,7 +85,7 @@ export default function MealPlan({ userRole }) {
 
   const loadMeals = useCallback(async () => {
     const { data, error } = await supabase.from("family_meals")
-      .select("id, name, meat, recipe_url, served_with, is_simple, status, similar_to")
+      .select("id, name, meat, recipe_url, served_with, is_simple, status, similar_to, recipe_pulled_at, recipe_pull_note")
       .order("name");
     if (error) setErr(error.message);
     else setMeals(Array.isArray(data) ? data : []);
@@ -469,6 +469,11 @@ function AdminView({ meals, onChanged, setErr }) {
                       {m.recipe_url
                         ? <a href={m.recipe_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 15, color: T.slate900, textDecoration: "none", overflowWrap: "anywhere" }}>{m.name}</a>
                         : <span style={{ fontSize: 15, color: T.slate900 }}>{m.name}</span>}
+                      {!m.recipe_pulled_at && (
+                        <div style={{ fontSize: 12, color: T.slate500 }}>
+                          {!m.recipe_url ? "No recipe link" : m.recipe_pull_note ? `Recipe not pulled: ${m.recipe_pull_note}` : "Recipe comes in tonight"}
+                        </div>
+                      )}
                     </div>
                     {m.is_simple && <span style={pill(false)}>Easy night</span>}
                     <button style={btn("soft", true)} onClick={() => setEditing(editing?.id === m.id ? null : m)}>{editing?.id === m.id ? "Close" : "Edit"}</button>
