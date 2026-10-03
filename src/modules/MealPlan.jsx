@@ -211,13 +211,14 @@ function RecipeQR({ url }) {
     return () => { live = false; };
   }, [url]);
   return (
-    <a href={url} target="_blank" rel="noopener noreferrer"
-      style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, textDecoration: "none", flexShrink: 0, margin: "0 auto" }}>
-      <div style={{ width: 150, height: 150, borderRadius: 12, border: `1px solid ${T.slate200}`, background: T.white, padding: 6, boxSizing: "border-box" }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, flexShrink: 0, margin: "0 auto" }}>
+      <a href={url} target="_blank" rel="noopener noreferrer" aria-label="Recipe QR code"
+        style={{ display: "block", width: 150, height: 150, borderRadius: 12, border: `1px solid ${T.slate200}`, background: T.white, padding: 6, boxSizing: "border-box" }}>
         {src && <img src={src} alt="QR code for the recipe" style={{ width: "100%", height: "100%", display: "block" }} />}
-      </div>
-      <span style={{ fontSize: 13, fontWeight: 600, color: T.blue }}>Scan for the recipe</span>
-    </a>
+      </a>
+      <a href={url} target="_blank" rel="noopener noreferrer"
+        style={{ fontSize: 14, fontWeight: 600, color: T.blue, textDecoration: "underline" }}>Open the recipe</a>
+    </div>
   );
 }
 
