@@ -125,9 +125,9 @@ const NAV_ITEMS = [
   { type: "divider",   id: "_div_family" },
   { id: "family",      label: "Family",      icon: "home",          roles: FAMILY_ROLES },
   { id: "inventory",   label: "Inventory",   icon: "package",       roles: FAMILY_ROLES },
+  { id: "meals",       label: "Meal Plan",   icon: "utensils",      roles: FAMILY_ROLES },
   { id: "roleplaying", label: "Roleplaying", icon: "dice",          roles: FAMILY_ROLES },
   { id: "course",      label: "Course",      icon: "graduation",    roles: FAMILY_ROLES },
-  { id: "meals",       label: "Meal Plan",   icon: "utensils",      roles: FAMILY_ROLES },
 ];
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
