@@ -1246,6 +1246,18 @@ function useCPRData(weekDate) {
         } catch (e) {
           console.warn("retention points breakdown fetch failed:", e);
         }
+        // Names for the logged-activity rows in the Retention expander: the labels
+        // set on the Retention Points values, never the raw database keys.
+        let retentionPointLabels = {};
+        try {
+          const { data: rpv } = await supabase
+            .from("retention_point_values")
+            .select("activity_key, label")
+            .eq("agency_id", AGENCY_ID);
+          (rpv || []).forEach(v => { if (v?.activity_key && v.label) retentionPointLabels[v.activity_key] = v.label; });
+        } catch (e) {
+          console.warn("retention point labels fetch failed:", e);
+        }
 
         let marketingByTeammate = {};
         try {
@@ -1326,6 +1338,7 @@ function useCPRData(weekDate) {
           salesPointsByMember,
           salesPointsSourceByMember,
           retentionPointsByMember,
+          retentionPointLabels,
           cycleStartISO,
           cycleEndISO,
           currentCycleStartISO,
@@ -3885,7 +3898,7 @@ function PayLockBadge({ lock }) {
 // + MVP on weekly_cpr_reports then invokes write_weekly_comp_v2 to populate
 // base_salary, commission, bonus, marketing_pool_earned_weekly, and
 // manager_bonus from the residual pool + carveouts wire.
-function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, retentionPointsByMember = {}, onRefresh, canEdit = false, isOwner = false, cycleStartISO = null, cycleWeeklyDetails = [] }) {
+function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, retentionPointsByMember = {}, retentionPointLabels = {}, onRefresh, canEdit = false, isOwner = false, cycleStartISO = null, cycleWeeklyDetails = [] }) {
   // Commission row expander — shows per-teammate cycle-view commission chart (small multiples).
   const [commissionExpanded, setCommissionExpanded] = useState(false);
   // Locked means the payroll summary for this week has arrived and these figures
@@ -3914,6 +3927,8 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, ret
   const [teamBonusExpanded, setTeamBonusExpanded] = useState(false);
   const [goalsExpanded, setGoalsExpanded] = useState(false);
   const [retentionPointsExpanded, setRetentionPointsExpanded] = useState(false);
+  // One namer for logged-activity rows in both payroll layouts.
+  const rpLabel = k => retentionPointLabels?.[k] || k.replace(/_/g, " ").replace(/^./, c => c.toUpperCase());
   const [marketingDrafts, setMarketingDrafts] = useState({}); // {team_member_id: {points, notes}}
 
   // When entering edit mode, seed drafts from current values
@@ -4320,7 +4335,6 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, ret
                   const pointKeys = Array.from(new Set(
                     sorted.flatMap(d => Object.keys(retentionPointsByMember?.[d.team_member_id]?.detail?.counts_by_key || {}))
                   )).sort();
-                  const prettyKey = k => k.replace(/_/g, " ").replace(/^./, c => c.toUpperCase());
                   const retentionRows = (retentionPointsExpanded && !q4Layout)
                     ? [
                         retSplitRow,
@@ -4329,7 +4343,7 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, ret
                         rpDetail("hours",   "Hours in office",  (d, r) => r ? `${n2(r.hours_in_office)} h → ${n2(r.hour_points)}` : em),
                         rpDetail("calls",   "Calls answered",   (d, r) => r ? `${Number(r.calls_answered) || 0} → ${n2(r.call_points)}` : em),
                         rpDetail("logged",  "Logged activity",  (d, r) => r ? n2(r.logged_points) : em),
-                        ...pointKeys.map(k => rpDetail(`cnt-${k}`, `\u00a0\u00a0\u00a0${prettyKey(k)}`,
+                        ...pointKeys.map(k => rpDetail(`cnt-${k}`, `\u00a0\u00a0\u00a0${rpLabel(k)}`,
                           (d, r) => (r?.detail?.counts_by_key?.[k] ? String(r.detail.counts_by_key[k]) : em))),
                         rpDetail("derived", "Derived from sales", (d, r) => r ? n2(r.derived_points) : em),
                         rpDetail("gross",   "Gross points",       (d, r) => r ? n2(r.gross_points) : em),
@@ -4374,13 +4388,12 @@ function PayrollSection({ details, team, weekDate, marketingByTeammate = {}, ret
                   const keys = Array.from(new Set(
                     sorted.flatMap(d => Object.keys(retentionPointsByMember?.[d.team_member_id]?.detail?.counts_by_key || {}))
                   )).sort();
-                  const pretty = k => k.replace(/_/g, " ").replace(/^./, c => c.toUpperCase());
                   return [
                     retMain,
                     rd("hours",  "Hours in office",  (d, r) => r ? `${n2(r.hours_in_office)} h → ${n2(r.hour_points)}` : em),
                     rd("calls",  "Calls answered",   (d, r) => r ? `${Number(r.calls_answered) || 0} → ${n2(r.call_points)}` : em),
                     rd("logged", "Logged activity",  (d, r) => r ? n2(r.logged_points) : em),
-                    ...keys.map(k => rd(`cnt-${k}`, `\u00a0\u00a0\u00a0${pretty(k)}`,
+                    ...keys.map(k => rd(`cnt-${k}`, `\u00a0\u00a0\u00a0${rpLabel(k)}`,
                       (d, r) => (r?.detail?.counts_by_key?.[k] ? String(r.detail.counts_by_key[k]) : em))),
                     rd("derived", "Derived from sales", (d, r) => r ? n2(r.derived_points) : em),
                     rd("gross",   "Gross points",       (d, r) => r ? n2(r.gross_points) : em),
@@ -7182,7 +7195,7 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
       </Section>
 
       {/* 19. Payroll */}
-      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} marketingByTeammate={data.marketingByTeammate} retentionPointsByMember={data.retentionPointsByMember} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} cycleStartISO={data.cycleStartISO} cycleWeeklyDetails={data.cycleWeeklyDetails} /></Section>
+      <Section><PayrollSection details={data.details} team={data.team} weekDate={weekDate} marketingByTeammate={data.marketingByTeammate} retentionPointsByMember={data.retentionPointsByMember} retentionPointLabels={data.retentionPointLabels} onRefresh={data.refresh} canEdit={canEdit} isOwner={isOwner} cycleStartISO={data.cycleStartISO} cycleWeeklyDetails={data.cycleWeeklyDetails} /></Section>
 
       {/* Notes, Issued, Canceled — under Payroll (Peter 2026-09-21). */}
       <Section>
