@@ -61,8 +61,10 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //                                            is the world map under the fight (rpg_fight_squares)
 //   rpg_map_view(level, x, y)                the Maps tab in one read: one grid of the world map, from the place
 //                                            cards and fixed-seed rolls for unnamed ground (sea, open land, forest,
-//                                            hills, mountains), with the list that grid shows (the places one level
-//                                            down), the lands it lies in and, for the world, every cell of the
+//                                            hills, mountains, and by climate grassy plains, pine forest, jungle,
+//                                            desert, tundra, snow and ice, swamp), with the list that grid shows
+//                                            (the places one level down), the lands it lies in and, for the world,
+//                                            every cell of the
 //                                            Continent grids to draw it fine; and the open journey (its clock in
 //                                            words, whose turn, the pieces and where they stand on this grid)
 //   rpg_map_place_view(place)                the same read for a place shown whole: the block of cells that holds
@@ -829,7 +831,9 @@ function ObjectsTab({ onError }) {
 // ── Maps (game master only) ─────────────────────────────────────────────────
 // The world map, drawn at every level (rpg_map_view): seven nested grids from an Earth-size world down to a battle
 // grid. Ground comes from the place cards (Old Forest, Haven, ...) and, where no place is, from fixed-seed rolls
-// (land and sea, then forest, hills and mountains); nothing is stored per square. The function sends every cell,
+// (land and sea, then forest, hills and mountains, then the climate of the spot: snow and ice and tundra toward the
+// poles, pine forest in the cold, desert, grassy plains, jungle and swamp by how wet it is); nothing is stored per
+// square. The function sends every cell,
 // name, size, symbol name and link, and the page only draws them. A cell opens the grid inside it; the open grid
 // lives in the URL (map=level-x-y, none = the world). A place opens where its link says: the grid inside one cell
 // when it fits in one, else the place shown whole (map=p-<its id>, rpg_map_place_view: Westerwold on the 5 by 6
@@ -851,6 +855,9 @@ const MAP_INK = "#4B3B2A";
 const MAP_SERIF = "Georgia, 'Times New Roman', serif";
 // The paper of the fantasy map: the sea, and the bare paper (land) that shows behind names and symbol pads.
 const MAP_PAPER = { sea: "#B4CACB", shallow: "#C6D9D6", shore: "#D6E4DD", land: "#EFE5C8" };
+// The kinds of unnamed ground, in the order the key lists them, each with its letter in a grid drawn fine (v.detail;
+// the same letters as rpg_map_grounds).
+const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["forest", "t"], ["pine", "p"], ["jungle", "j"], ["hills", "h"], ["mountains", "m"], ["desert", "d"], ["tundra", "u"], ["ice", "i"], ["swamp", "s"]];
 // How much of a ground's battle-grid color the fantasy map takes; the rest is paper.
 const MAP_TINT = 0.42;
 // The ground the group has not found yet (the kids login): dark, with specks of light, like nothing else on the map.
@@ -956,20 +963,26 @@ function mapRows(step) {
   };
 }
 // The fantasy-map symbols, one stroke at a time. x, base = the foot of the symbol.
-const mapTree = (add, x, base, d) => {
+const mapTree = (add, x, base, d, tone = "crown") => {
   const cy = base - d * 0.72;
   const p0 = [x - d * 0.5, cy + d * 0.18], p1 = [x - d * 0.28, cy - d * 0.3], p2 = [x + d * 0.28, cy - d * 0.3], p3 = [x + d * 0.5, cy + d * 0.18];
   const arc = (r, ry, p) => `A${mapNum(d * r)} ${mapNum(d * ry)} 0 0 1 ${mapPt(p)}`;
   const crown = "M" + mapPt(p0) + arc(0.3, 0.3, p1) + arc(0.32, 0.32, p2) + arc(0.3, 0.3, p3) + arc(0.62, 0.36, p0) + "Z";
   add(base, "trunk", mapLine([[x, base], [x, base - d * 0.42]]));
-  add(base, "crown", crown);
-  add(base, "crownShade", "M" + mapPt([x + d * 0.14, cy - d * 0.36]) + `Q${mapPt([x + d * 0.5, cy - d * 0.2])} ${mapPt([x + d * 0.42, cy + d * 0.16])}Q${mapPt([x + d * 0.24, cy + d * 0.3])} ${mapPt([x + d * 0.04, cy + d * 0.28])}Q${mapPt([x + d * 0.34, cy + d * 0.04])} ${mapPt([x + d * 0.14, cy - d * 0.36])}Z`);
+  add(base, tone, crown);
+  add(base, tone + "Shade", "M" + mapPt([x + d * 0.14, cy - d * 0.36]) + `Q${mapPt([x + d * 0.5, cy - d * 0.2])} ${mapPt([x + d * 0.42, cy + d * 0.16])}Q${mapPt([x + d * 0.24, cy + d * 0.3])} ${mapPt([x + d * 0.04, cy + d * 0.28])}Q${mapPt([x + d * 0.34, cy + d * 0.04])} ${mapPt([x + d * 0.14, cy - d * 0.36])}Z`);
   add(base, "crownLine", crown);
 };
 const mapPine = (add, x, base, d) => {
   const h = d * 1.3, w = d * 0.46, top = base - h;
   add(base, "trunk", mapLine([[x, base], [x, base - h * 0.2]]));
   add(base, "pine", mapPoly([[x, top + h * 0.45], [x + w, base - h * 0.14], [x - w, base - h * 0.14]]) + mapPoly([[x, top + h * 0.2], [x + w * 0.78, top + h * 0.62], [x - w * 0.78, top + h * 0.62]]) + mapPoly([[x, top], [x + w * 0.52, top + h * 0.36], [x - w * 0.52, top + h * 0.36]]));
+};
+// A palm: a leaning trunk and five fronds hanging from its top.
+const mapPalm = (add, x, base, d) => {
+  const top = [x + d * 0.12, base - d * 0.95];
+  add(base, "trunk", `M${mapPt([x, base])}Q${mapPt([x - d * 0.02, base - d * 0.5])} ${mapPt(top)}`);
+  add(base, "frond", [[-0.42, 0.1], [-0.28, -0.14], [0.02, -0.22], [0.32, -0.12], [0.46, 0.12]].map(([u, v]) => `M${mapPt(top)}Q${mapPt([top[0] + u * d * 0.6, top[1] + v * d - d * 0.14])} ${mapPt([top[0] + u * d, top[1] + v * d + d * 0.12])}`).join(""));
 };
 const mapPeak = (add, x, base, w, h, lean) => {
   const a = [x + lean * w, base - h], bl = [x - w / 2, base], br = [x + w / 2, base];
@@ -983,7 +996,7 @@ const mapHump = (add, x, base, w, h) => {
   add(base, "hillFill", c + "Z");
   add(base, "hillLine", c + mapLine([[x + w * 0.2, base - h * 0.62], [x + w * 0.29, base - h * 0.24]]) + mapLine([[x + w * 0.07, base - h * 0.8], [x + w * 0.15, base - h * 0.4]]));
 };
-const mapTuft = (add, x, base, s) => add(base, "tuft", mapLine([[x, base], [x - s * 0.3, base - s * 0.7]]) + mapLine([[x, base], [x, base - s]]) + mapLine([[x, base], [x + s * 0.3, base - s * 0.7]]));
+const mapTuft = (add, x, base, s, k = "tuft") => add(base, k, mapLine([[x, base], [x - s * 0.3, base - s * 0.7]]) + mapLine([[x, base], [x, base - s]]) + mapLine([[x, base], [x + s * 0.3, base - s * 0.7]]));
 const mapHouse = (add, x, base, s) => {
   add(base, "wall", mapPoly([[x - s * 0.3, base], [x - s * 0.3, base - s * 0.42], [x + s * 0.3, base - s * 0.42], [x + s * 0.3, base]]));
   add(base, "roof", mapPoly([[x - s * 0.42, base - s * 0.4], [x, base - s * 0.88], [x + s * 0.42, base - s * 0.4]]));
@@ -999,11 +1012,14 @@ const MAP_ART = {
     { k: "peakLight", fill: "#F1EBDA" }, { k: "peakShade", fill: "#A99A86" }, { k: "peakLine", line: MAP_INK, w: 1 },
     { k: "den", fill: "#84705B", line: MAP_INK, w: 1 }, { k: "hole", fill: "#2B211A" },
     { k: "stone", fill: "#DDD6C4", line: MAP_INK, w: 1 },
-    { k: "trunk", line: MAP_INK, w: 1.1 }, { k: "crown", fill: "#93A86D" }, { k: "crownShade", fill: "#738A54" }, { k: "crownLine", line: MAP_INK, w: 1 },
+    { k: "trunk", line: MAP_INK, w: 1.1 }, { k: "crown", fill: "#93A86D" }, { k: "crownShade", fill: "#738A54" },
+    { k: "jungle", fill: "#6E9A4E" }, { k: "jungleShade", fill: "#557E3B" }, { k: "crownLine", line: MAP_INK, w: 1 }, { k: "frond", line: "#4E7A35", w: 1.4 },
     { k: "pine", fill: "#6F8B5B", line: MAP_INK, w: 1 },
     { k: "thorn", fill: "#8D9245", line: MAP_INK, w: 0.9 },
     { k: "wall", fill: "#F6EED8", line: MAP_INK, w: 1 }, { k: "roof", fill: "#B4633C", line: MAP_INK, w: 1 }, { k: "door", line: MAP_INK, w: 1 },
-    { k: "tuft", line: "#7A8A4C", w: 0.9 }, { k: "dip", line: "#8C8156", w: 1 }, { k: "stream", line: "#6C9BAE", w: 1.5 },
+    { k: "tuft", line: "#7A8A4C", w: 0.9 }, { k: "tuftDry", line: "#9C9450", w: 0.9 }, { k: "tuftCold", line: "#8A9579", w: 0.9 },
+    { k: "dip", line: "#8C8156", w: 1 }, { k: "stream", line: "#6C9BAE", w: 1.5 }, { k: "marsh", line: "#7FA0A0", w: 1.2 }, { k: "reed", line: "#5C6B37", w: 1 },
+    { k: "dune", line: "#B0925A", w: 1.1 }, { k: "drift", fill: "#FBFCFC", line: "#A9BFCB", w: 0.9 }, { k: "ridge", line: "#8EA9B8", w: 1 },
     { k: "mist", line: "#8E8AA3", w: 1.7 }, { k: "wave", line: "#8DAEB1", w: 1 },
   ],
   fantasy: {
@@ -1075,10 +1091,43 @@ const MAP_ART = {
         add(cy + r * s, "thorn", mapStar(cx, cy, r * s, 12, 0.48, (n) => rnd(n + k * 13), rnd(20 + k) * 3));
       });
     },
+    plains(add, x, y, s, rnd, few) {
+      if (few) { if (rnd(1) < 0.6) mapTuft(add, x + (0.3 + rnd(2) * 0.4) * s, y + (0.55 + rnd(3) * 0.35) * s, s * 0.5, "tuftDry"); return; }
+      [[0.28, 0.42], [0.7, 0.36], [0.5, 0.78], [0.18, 0.88], [0.84, 0.8]].forEach(([u, v], k) => { if (k < 2 || rnd(k) < 0.6) mapTuft(add, x + (u + (rnd(5 + k) - 0.5) * 0.12) * s, y + (v + (rnd(10 + k) - 0.5) * 0.1) * s, s * 0.12, "tuftDry"); });
+    },
+    pine(add, x, y, s, rnd, few) { MAP_ART.fantasy.forest(add, x, y, s, rnd, few, true); },
+    jungle(add, x, y, s, rnd, few) {
+      const tree = (px, base, d, k) => { if (rnd(40 + k) < 0.3) mapPalm(add, px, base, d); else mapTree(add, px, base, d, "jungle"); };
+      if (few) { tree(x + (0.5 + (rnd(2) - 0.5) * 0.3) * s, y + (0.96 + (rnd(3) - 0.5) * 0.2) * s, s * (0.95 + rnd(4) * 0.25), 0); return; }
+      [[0.2, 0.36], [0.56, 0.3], [0.84, 0.44], [0.36, 0.64], [0.7, 0.7], [0.16, 0.94], [0.5, 0.96], [0.86, 0.96]].forEach(([u, v], k) => tree(x + (u + (rnd(k) - 0.5) * 0.1) * s, y + (v + (rnd(10 + k) - 0.5) * 0.08) * s, s * (0.3 + rnd(30 + k) * 0.08), k));
+    },
+    desert(add, x, y, s, rnd, few) {
+      const dune = (cx, cy, w) => add(cy, "dune", `M${mapPt([cx - w / 2, cy])}Q${mapPt([cx - w * 0.1, cy - w * 0.32])} ${mapPt([cx + w / 2, cy - w * 0.04])}`);
+      if (few) { if (rnd(1) < 0.6) dune(x + (0.35 + rnd(2) * 0.3) * s, y + (0.45 + rnd(3) * 0.35) * s, s * 1.3); return; }
+      [[0.3, 0.34, 0.42], [0.68, 0.56, 0.48], [0.36, 0.86, 0.4]].forEach(([u, v, w], k) => dune(x + (u + (rnd(k) - 0.5) * 0.12) * s, y + (v + (rnd(10 + k) - 0.5) * 0.08) * s, s * w));
+    },
+    tundra(add, x, y, s, rnd, few) {
+      if (few) { if (rnd(1) < 0.55) mapTuft(add, x + (0.3 + rnd(2) * 0.4) * s, y + (0.55 + rnd(3) * 0.35) * s, s * 0.4, "tuftCold"); return; }
+      [[0.3, 0.4], [0.72, 0.6], [0.4, 0.88]].forEach(([u, v], k) => { if (k === 0 || rnd(k) < 0.6) mapTuft(add, x + (u + (rnd(5 + k) - 0.5) * 0.14) * s, y + (v + (rnd(10 + k) - 0.5) * 0.1) * s, s * 0.1, "tuftCold"); });
+      const cx = x + (0.6 + rnd(20) * 0.2) * s, cy = y + (0.24 + rnd(21) * 0.1) * s, w = s * 0.12;
+      add(cy, "drift", `M${mapPt([cx - w, cy])}a${mapNum(w)} ${mapNum(w * 0.42)} 0 1 0 ${mapNum(2 * w)} 0a${mapNum(w)} ${mapNum(w * 0.42)} 0 1 0 ${mapNum(-2 * w)} 0Z`);
+    },
+    ice(add, x, y, s, rnd, few) {
+      const ridge = (cx, cy, w) => add(cy, "ridge", mapLine([[cx - w / 2, cy], [cx - w * 0.2, cy - w * 0.16], [cx + w * 0.05, cy - w * 0.02], [cx + w * 0.3, cy - w * 0.2], [cx + w / 2, cy]]));
+      if (few) { if (rnd(1) < 0.6) ridge(x + (0.35 + rnd(2) * 0.3) * s, y + (0.45 + rnd(3) * 0.35) * s, s * 1.2); return; }
+      [[0.32, 0.34, 0.4], [0.7, 0.58, 0.44], [0.38, 0.86, 0.36]].forEach(([u, v, w], k) => ridge(x + (u + (rnd(k) - 0.5) * 0.12) * s, y + (v + (rnd(10 + k) - 0.5) * 0.08) * s, s * w));
+    },
+    swamp(add, x, y, s, rnd, few) {
+      const reeds = (cx, base, h) => add(base, "reed", mapLine([[cx, base], [cx - h * 0.25, base - h]]) + mapLine([[cx, base], [cx + h * 0.05, base - h * 1.15]]) + mapLine([[cx, base], [cx + h * 0.32, base - h * 0.85]]));
+      const water = (cx, cy, w) => add(cy, "marsh", mapLine([[cx - w / 2, cy], [cx + w / 2, cy]]));
+      if (few) { if (rnd(1) < 0.6) { const cx = x + (0.35 + rnd(2) * 0.3) * s, cy = y + (0.55 + rnd(3) * 0.3) * s; reeds(cx, cy, s * 0.6); water(cx + s * 0.2, cy + s * 0.12, s * 0.7); } return; }
+      [[0.3, 0.4], [0.7, 0.72]].forEach(([u, v], k) => { const cx = x + (u + (rnd(k) - 0.5) * 0.12) * s, cy = y + (v + (rnd(5 + k) - 0.5) * 0.1) * s; reeds(cx, cy, s * 0.16); water(cx + s * 0.1, cy + s * 0.05, s * 0.26); water(cx + s * 0.16, cy + s * 0.11, s * 0.16); });
+    },
   },
   // The battle grid, seen from above. Each ground: its three tones, then how likely a square of it is to carry each
   // thing (blade = grass, pebble, flower, rock = a boulder, slab and crack = bare stone, bush, thorn, block = a cut
-  // stone, cobble, streak = a wheel mark, puddle, mist, root, wave, tree and big = a trunk under its crown).
+  // stone, cobble, streak = a wheel mark, puddle, mist, root, wave, reed, ripple = blown sand, frost = a crack in
+  // ice, drift = a patch of snow, tree and big = a trunk under its crown; needle = its trees are pines).
   top: {
     sea:       { tones: ["#6FA3B7", "#6CA0B4", "#72A6BA"], wave: 0.8 },
     land:      { tones: ["#93B262", "#90AF5F", "#96B565"], blade: 0.75, flower: 0.07, pebble: 0.08, bush: 0.02 },
@@ -1092,12 +1141,20 @@ const MAP_ART = {
     fog:       { tones: ["#94A18B", "#919E88", "#97A48E"], puddle: 0.22, mist: 0.36, blade: 0.25 },
     thorns:    { tones: ["#A09E60", "#9D9B5D", "#A3A163"], thorn: 0.45, blade: 0.3, pebble: 0.1 },
     lair:      { tones: ["#55683F", "#52653C", "#586B42"], root: 0.4, thorn: 0.14, tree: 0.05, big: 0.02, gloom: true },
+    plains:    { tones: ["#C4BA6A", "#C1B767", "#C7BD6D"], blade: 0.95, flower: 0.06, pebble: 0.04 },
+    pine:      { tones: ["#5E7A4E", "#5B774B", "#617D51"], blade: 0.2, pebble: 0.06, tree: 0.12, big: 0.01, needle: true },
+    jungle:    { tones: ["#4E7A38", "#4B7735", "#517D3B"], blade: 0.3, bush: 0.3, root: 0.12, tree: 0.2, big: 0.015 },
+    desert:    { tones: ["#E4C17D", "#E1BE7A", "#E7C480"], ripple: 0.45, pebble: 0.08, rock: 0.02 },
+    tundra:    { tones: ["#A7AE93", "#A4AB90", "#AAB196"], blade: 0.22, pebble: 0.3, bush: 0.03, drift: 0.08, rock: 0.04 },
+    ice:       { tones: ["#E6EDF0", "#E3EAED", "#E9F0F3"], frost: 0.3, drift: 0.12 },
+    swamp:     { tones: ["#7B8A5B", "#788758", "#7E8D5E"], puddle: 0.38, reed: 0.5, blade: 0.3, root: 0.06, mist: 0.06 },
     plain:     { tones: ["#93B262", "#90AF5F", "#96B565"] },
   },
   // The strokes of the battle grid, in the order they are painted.
   paint: [
     { k: "blade", line: "#5E7E39", w: 1 }, { k: "streak", line: "#927952", w: 1.6 }, { k: "wave", line: "#CFE6EC", w: 1.4 }, { k: "crack", line: "#6F6A62", w: 1 },
-    { k: "puddle", fill: "#8AA6AD", line: "#B9CDD0", w: 1 }, { k: "root", line: "#4E3B29", w: 2.6 },
+    { k: "reed", line: "#4E5D2B", w: 1.1 }, { k: "ripple", line: "#B49C67", w: 1.3 }, { k: "frost", line: "#AFC5D1", w: 1.2 },
+    { k: "puddle", fill: "#8AA6AD", line: "#B9CDD0", w: 1 }, { k: "root", line: "#4E3B29", w: 2.6 }, { k: "drift", fill: "#FAFBFB", line: "#D5E0E5", w: 0.8 },
     { k: "pebble", fill: "#9B958A" }, { k: "slab", fill: "#B9B4A9" }, { k: "petal", fill: "#F6F2DC" }, { k: "gold", fill: "#E6C552" },
     { k: "shade", fill: "#000000", o: 0.2 },
     { k: "rock", fill: "#A9A398", line: "#69645C", w: 1 }, { k: "rockLit", fill: "#CBC6BC" },
@@ -1107,6 +1164,7 @@ const MAP_ART = {
     { k: "trunk", fill: "#6B4A2E", line: "#44301C", w: 1.2 },
     { k: "leafDark", fill: "#3E6A32", o: 0.7 }, { k: "leaf", fill: "#5B8D44", o: 0.72 }, { k: "leafLit", fill: "#88B465", o: 0.6 },
     { k: "gloomDark", fill: "#2C4A27", o: 0.74 }, { k: "gloom", fill: "#40662F", o: 0.74 }, { k: "gloomLit", fill: "#5F8744", o: 0.55 },
+    { k: "needleDark", fill: "#2E4A2B", o: 0.78 }, { k: "needle", fill: "#41633A", o: 0.78 }, { k: "needleLit", fill: "#6A8C55", o: 0.6 },
     { k: "mist", line: "#FFFFFF", w: 5, o: 0.4 },
   ],
 };
@@ -1153,7 +1211,7 @@ function mapFantasy(v, byId) {
   const wrap = !!detail && detail.wrap !== false;
   const grid = new Array(C * R).fill(null);
   if (detail) {
-    const kinds = { 126: "sea", 46: "land", 116: "forest", 104: "hills", 109: "mountains", 63: "unknown" };
+    const kinds = Object.fromEntries(MAP_GROUNDS.map(([k, ch]) => [ch.charCodeAt(0), k]).concat([["?".charCodeAt(0), "unknown"]]));
     // the smaller places reaching into a square of the detail, by "i,j" from the top-left corner
     const marks = detail.marks && typeof detail.marks === "object" ? detail.marks : {};
     detail.cells.forEach((row, j) => { for (let i = 0; i < C; i++) { const code = String(row || "").charCodeAt(i); const mk = marks[i + "," + j]; grid[j * C + i] = { ...(kinds[code] ? { k: kinds[code] } : { k: "place", id: (detail.places || [])[code - 256] }), marks: Array.isArray(mk) ? mk : [] }; } });
@@ -1305,7 +1363,7 @@ function mapTop(cols, rows, x0, y0, what, washes, show) {
     const at = (n) => [(i + 0.15 + rnd(n) * 0.7) * U, (j + 0.15 + rnd(n + 1) * 0.7) * U];
     if (show ? a.tree && i === 0 && j === 0 : (a.big && rnd(1) < a.big) || (a.tree && rnd(2) < a.tree)) {
       const big = !show && a.big && rnd(1) < a.big;
-      trees.push({ x: (i + 0.3 + rnd(3) * 0.4) * U, y: (j + 0.3 + rnd(4) * 0.4) * U, r: show ? U * 0.4 : U * (big ? 1.5 + rnd(5) * 0.8 : 0.75 + rnd(5) * 0.5), trunk: show ? U * 0.1 : U * (big ? 0.3 + rnd(6) * 0.12 : 0.14 + rnd(6) * 0.08), turn: rnd(7) * 6, gloom: !!a.gloom, n: 8 + Math.floor(rnd(8) * 4) });
+      trees.push({ x: (i + 0.3 + rnd(3) * 0.4) * U, y: (j + 0.3 + rnd(4) * 0.4) * U, r: show ? U * 0.4 : U * (big ? 1.5 + rnd(5) * 0.8 : 0.75 + rnd(5) * 0.5), trunk: show ? U * 0.1 : U * (big ? 0.3 + rnd(6) * 0.12 : 0.14 + rnd(6) * 0.08), turn: rnd(7) * 6, gloom: !!a.gloom, needle: !!a.needle, n: 8 + Math.floor(rnd(8) * 4) });
       continue;
     }
     if (!on) continue;
@@ -1328,16 +1386,22 @@ function mapTop(cols, rows, x0, y0, what, washes, show) {
     if (a.bush && rnd(117) < a.bush) { const [x, y] = at(118); const r = U * (0.2 + rnd(120) * 0.16), t = rnd(121) * 6; add("shade", mapBlob(x + r * 0.14, y + r * 0.18, r, 7, t)); add("bush", mapBlob(x, y, r, 7, t)); add("bushLit", mapBlob(x - r * 0.16, y - r * 0.18, r * 0.5, 6, t)); }
     if (a.thorn && rnd(122) < a.thorn) { const [x, y] = at(123); const r = U * (0.18 + rnd(125) * 0.16), t = rnd(126) * 3; add("shade", mapCircle(x + r * 0.12, y + r * 0.16, r * 0.8)); add("thorn", mapStar(x, y, r, 14, 0.5, rnd, t)); add("thornLit", mapStar(x - r * 0.1, y - r * 0.1, r * 0.5, 10, 0.5, rnd, t)); }
     if (a.mist && rnd(127) < a.mist) { const [x, y] = at(128); const w = U * (0.2 + rnd(130) * 0.15); add("mist", `M${mapPt([x - w, y])}q${mapNum(w / 2)} ${mapNum(-w * 0.45)} ${mapNum(w)} 0t${mapNum(w)} 0`); }
+    if (a.ripple && rnd(131) < a.ripple) for (let n = 0; n < 2; n++) { const [x, y] = at(132 + n * 2); const w = U * (0.16 + rnd(136 + n) * 0.12); add("ripple", `M${mapPt([x - w, y])}q${mapNum(w / 2)} ${mapNum(-w * 0.3)} ${mapNum(w)} 0t${mapNum(w)} 0`); }
+    if (a.frost && rnd(138) < a.frost) { const [x, y] = at(139); const l = U * (0.14 + rnd(141) * 0.12); add("frost", mapLine([[x - l, y], [x - l * 0.3, y - l * 0.35], [x + l * 0.2, y + l * 0.1], [x + l, y - l * 0.2]])); }
+    if (a.reed && rnd(142) < a.reed) for (let n = 0; n < 1 + Math.floor(rnd(143) * 3); n++) { const [x, y] = at(144 + n * 2); const h = U * (0.12 + rnd(150 + n) * 0.1); add("reed", mapLine([[x, y], [x - h * 0.2, y - h]]) + mapLine([[x, y], [x + h * 0.05, y - h * 1.15]]) + mapLine([[x, y], [x + h * 0.3, y - h * 0.85]])); }
+    if (a.drift && rnd(153) < a.drift) { const [x, y] = at(154); const w = U * (0.12 + rnd(156) * 0.14); add("drift", `M${mapPt([x - w, y])}a${mapNum(w)} ${mapNum(w * 0.55)} 0 1 0 ${mapNum(2 * w)} 0a${mapNum(w)} ${mapNum(w * 0.55)} 0 1 0 ${mapNum(-2 * w)} 0Z`); }
   }
   // trees last: every shadow, then every trunk, then the crowns, smallest first, so the trunk shows through its crown
   trees.sort((a, b) => a.r - b.r);
-  trees.forEach(t => add("shade", mapBlob(t.x + t.r * 0.1, t.y + t.r * 0.13, t.r, t.n, t.turn)));
+  // a broadleaf crown is a bumpy round; a pine's is a star of short points
+  const crown = (t, x, y, r, n, turn) => (t.needle ? mapStar(x, y, r, n * 2, 0.66, () => 0.6, turn) : mapBlob(x, y, r, n, turn));
+  trees.forEach(t => add("shade", crown(t, t.x + t.r * 0.1, t.y + t.r * 0.13, t.r, t.n, t.turn)));
   trees.forEach(t => add("trunk", mapCircle(t.x, t.y, t.trunk)));
   MAP_ART.paint.forEach(s => { if (sink[s.k]) layers.push({ ...s, d: sink[s.k] }); });
   trees.forEach(t => {
-    const set = t.gloom ? ["gloomDark", "gloom", "gloomLit"] : ["leafDark", "leaf", "leafLit"];
+    const set = t.gloom ? ["gloomDark", "gloom", "gloomLit"] : t.needle ? ["needleDark", "needle", "needleLit"] : ["leafDark", "leaf", "leafLit"];
     const style = (k) => MAP_ART.paint.find(s => s.k === k);
-    layers.push({ ...style(set[0]), d: mapBlob(t.x, t.y, t.r, t.n, t.turn) }, { ...style(set[1]), d: mapBlob(t.x - t.r * 0.04, t.y - t.r * 0.05, t.r * 0.86, t.n, t.turn + 0.3) }, { ...style(set[2]), d: mapBlob(t.x - t.r * 0.2, t.y - t.r * 0.24, t.r * 0.46, 6, t.turn) });
+    layers.push({ ...style(set[0]), d: crown(t, t.x, t.y, t.r, t.n, t.turn) }, { ...style(set[1]), d: crown(t, t.x - t.r * 0.04, t.y - t.r * 0.05, t.r * 0.86, t.n, t.turn + 0.3) }, { ...style(set[2]), d: crown(t, t.x - t.r * 0.2, t.y - t.r * 0.24, t.r * 0.46, 6, t.turn) });
   });
   return layers;
 }
@@ -1715,7 +1779,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
       </span>
     );
   });
-  const kinds = ["sea", "land", "forest", "hills", "mountains"].filter(k => cells.some(c => c.kind === k) || (detail && detail.cells.some(row => String(row).includes({ sea: "~", land: ".", forest: "t", hills: "h", mountains: "m" }[k]))));
+  const kinds = MAP_GROUNDS.filter(([k, ch]) => cells.some(c => c.kind === k) || (detail && detail.cells.some(row => String(row).includes(ch)))).map(([k]) => k);
   const shown = places.filter(p => drawn.has(p.id) && !p.listed);
   const costly = kinds.some(k => grounds[k] && grounds[k].penalty) || shown.some(p => /penalty/.test(p.ground || ""));
   return (
