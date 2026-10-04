@@ -1638,6 +1638,12 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
       .eq("agency_id", AGENCY_ID).maybeSingle()
       .then(({ data: tp }) => setTithePool(tp || null));
   }, [data]);
+  // PaperNewt sales + use tax owed (Peter 2026-10-04): the oldest tax year not yet paid.
+  const [salesTax, setSalesTax] = useState(null);
+  useEffect(() => {
+    supabase.rpc("papernewt_sales_tax_status", { p_agency_id: AGENCY_ID })
+      .then(({ data: rows }) => setSalesTax((rows || []).find((r) => Number(r.balance) > 0) || null));
+  }, [data]);
 
   // Drill state persisted in URL as pldrill=<entityId>::<accountName>::<section>::<type>::<from>::<to>
   // Entity id is part of the URL so a refresh restores the correct entity-scoped drill.
@@ -2140,6 +2146,14 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
             style={{ order: 99, marginLeft: "auto", fontSize: 12, color: T.slate700, padding: "5px 10px", background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 6 }}
           >
             Tithe pool <strong>{fmtMoney(tithePool.available)}</strong> available
+          </span>
+        )}
+        {salesTax && (
+          <span
+            title={`PaperNewt ${salesTax.tax_year}: sales tax ${fmtMoney(salesTax.sales_tax)} + use tax ${fmtMoney(salesTax.use_tax)}${Number(salesTax.paid) > 0 ? ` · paid ${fmtMoney(salesTax.paid)}` : ""}`}
+            style={{ order: 100, fontSize: 12, color: T.slate700, padding: "5px 10px", background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 6 }}
+          >
+            PaperNewt sales tax <strong>{fmtMoney(salesTax.balance)}</strong> due {new Date(salesTax.due_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
           </span>
         )}
         {grain === "annual" && (
