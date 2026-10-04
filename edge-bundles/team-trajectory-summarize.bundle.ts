@@ -319,6 +319,24 @@ async function requireOwnerOrManager(
   req: Request,
   agencyId: string,
 ): Promise<Response | null> {
+  return requireCallerRole(req, agencyId, ADMIN_ROLES);
+}
+
+// Owner only. Terminations use this. Peter 2026-09-25: "A termination should
+// only come from me through the website."
+async function requireOwner(
+  req: Request,
+  agencyId: string,
+): Promise<Response | null> {
+  return requireCallerRole(req, agencyId, ["owner"]);
+}
+
+// The one caller check. The wrappers above only choose which roles pass.
+async function requireCallerRole(
+  req: Request,
+  agencyId: string,
+  roles: string[],
+): Promise<Response | null> {
   const token = (req.headers.get("Authorization") || "").replace("Bearer ", "").trim();
   if (!token) return corsJson({ ok: false, error: "missing session token" }, 401);
 
@@ -341,7 +359,7 @@ async function requireOwnerOrManager(
     .eq("auth_user_id", who.user.id)
     .maybeSingle();
   if (rowErr) return corsJson({ ok: false, error: "could not verify caller" }, 500);
-  if (!row || row.agency_id !== agencyId || !ADMIN_ROLES.includes(row.role as string)) {
+  if (!row || row.agency_id !== agencyId || !roles.includes(row.role as string)) {
     return corsJson({ ok: false, error: "not permitted" }, 403);
   }
   return null;
@@ -501,29 +519,20 @@ async function processMember(agencyId: string, teamMemberId: string): Promise<{ 
     };
   }
 
-  // Read behavioral_log from team_profile (folded from team_behavioral_notes on 2026-07-16).
-  // Log is markdown, newest-first, with `## YYYY-MM-DD · pattern` headers.
-  const { data: profile, error: profileErr } = await sb.from("team_profile")
-    .select("behavioral_log")
-    .eq("agency_id", agencyId).eq("team_member_id", teamMemberId).maybeSingle();
-  if (profileErr) return { ok: false, error: `team_profile fetch failed: ${profileErr.message}` };
+  // Read the notes log (team_profile.behavioral_log, moved there 2026-07-16)
+  // through team_log_entries(), the one reader of the format team_log_append()
+  // writes. Entries come back newest first. The Team page reads the same way.
+  const { data: entries, error: logErr } = await sb.rpc("team_log_entries", { p_team_ids: [teamMemberId] });
+  if (logErr) return { ok: false, error: `notes log read failed: ${logErr.message}` };
 
-  // Parse markdown log into structured notes for the prompt. Header format:
-  //   `## YYYY-MM-DD · pattern_type[ · source: X][ · **RESOLVED** date]\n<body>`
-  // Entries separated by `\n\n---\n\n`.
   const cutoff = new Date(Date.now() - NOTES_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const notes: NoteCtx[] = [];
-  const logMd = (profile?.behavioral_log ?? "").trim();
-  if (logMd) {
-    for (const entry of logMd.split(/\n\n---\n\n/)) {
-      const m = entry.match(/^## (\d{4}-\d{2}-\d{2}) · ([^\n·]+?)(?:\s*·[^\n]*)?\n([\s\S]*)$/);
-      if (!m) continue;
-      const [, date, pattern, body] = m;
-      if (date < cutoff) continue;
-      if (pattern.trim() === "termination") continue;
-      notes.push({ observation_date: date, pattern_type: pattern.trim(), observation_text: body.trim() });
-      if (notes.length >= 30) break;
-    }
+  for (const e of (entries ?? []) as Array<{ entry_date: string; kind: string | null; body: string | null }>) {
+    const kind = (e.kind ?? "").trim();
+    if (e.entry_date < cutoff) continue;
+    if (kind === "termination") continue;
+    notes.push({ observation_date: e.entry_date, pattern_type: kind, observation_text: (e.body ?? "").trim() });
+    if (notes.length >= 30) break;
   }
 
   if (notes.length === 0 && !assessment) {

@@ -706,6 +706,10 @@ const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidate
 // Archived is the only thing that means they have left.
 const isIncoming = (s) => !!s && s.is_active === false && !s.archived_at;
 
+// The trend summary lives on team_profile (moved there 2026-07-16). One column
+// list for the first load and the refresh, so the two can never drift.
+const TRAJECTORY_COLS = "team_member_id, trajectory_summary, trajectory_notes_analyzed_count, trajectory_notes_range_start, trajectory_notes_range_end, trajectory_updated_at";
+
 // A new tab opened during the click itself, because a browser blocks a tab
 // opened after a wait. It shows a holding line until the page it is for is
 // known: go(url) sends it there, close() shuts it when there is nowhere to go.
@@ -850,8 +854,10 @@ const StaffDirectory = ({ staff }) => {
         const [asRes, prRes, bnRes, trRes] = await Promise.all([
           supabase.from("hiring_candidates").select("*").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds).order("created_at", { ascending: false }),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, premium_issued, policies_issued").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds),
-          supabase.from("team_behavioral_notes").select("id, team_member_id, observation_date, observation_text, pattern_type, is_resolved").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds).neq("pattern_type", "termination").order("observation_date", { ascending: false }).limit(120),
-          supabase.from("team_trajectory_summaries").select("team_member_id, summary, notes_analyzed_count, notes_range_start, notes_range_end, model_used, updated_at").eq("agency_id", AGENCY_ID).in("team_member_id", activeIds),
+          // Notes come from each person's notes log through team_log_entries(),
+          // the one reader of that log; the trend summary from team_profile.
+          supabase.rpc("team_log_entries", { p_team_ids: activeIds }),
+          supabase.from("team_profile").select(TRAJECTORY_COLS).eq("agency_id", AGENCY_ID).in("team_member_id", activeIds),
         ]);
         if (cancelled) return;
         // Latest assessment per member (query already sorted by date desc)
@@ -888,9 +894,13 @@ const StaffDirectory = ({ staff }) => {
             return next;
           });
         });
-        // Behavioral notes grouped, cap 5 shown later
+        // Notes grouped by person, newest first, termination entries left out;
+        // five shown later.
         const bMap = {};
-        (bnRes.data || []).forEach(row => { (bMap[row.team_member_id] = bMap[row.team_member_id] || []).push(row); });
+        (bnRes.data || []).forEach(row => {
+          if (row.kind === "termination") return;
+          (bMap[row.team_member_id] = bMap[row.team_member_id] || []).push(row);
+        });
         setBehavioralByMember(bMap);
         // Production: trailing 12 months from today, by LOB + by month
         const now = new Date();
@@ -924,9 +934,10 @@ const StaffDirectory = ({ staff }) => {
           b.byMonth = Object.values(b.byMonth).sort((x, y) => x.key.localeCompare(y.key));
         });
         setProdByMember(pMap);
-        // Trajectory summaries keyed by team_member_id
+        // Trend summaries keyed by team_member_id; a profile with no summary yet
+        // shows the Compute now line.
         const tMap = {};
-        (trRes.data || []).forEach(row => { tMap[row.team_member_id] = row; });
+        (trRes.data || []).forEach(row => { if (row.trajectory_summary) tMap[row.team_member_id] = row; });
         setTrajectoryByMember(tMap);
       } catch (e) {
         console.error("StaffDirectory extended fetches failed:", e);
@@ -946,14 +957,14 @@ const StaffDirectory = ({ staff }) => {
         p_team_member_id: memberId, p_all_active: false,
       });
       if (rpcErr) throw rpcErr;
-      // Edge fn is async through pg_net; poll for the updated_at bump.
-      const before = trajectoryByMember[memberId]?.updated_at || "";
+      // Edge fn is async through pg_net; poll for the trajectory_updated_at bump.
+      const before = trajectoryByMember[memberId]?.trajectory_updated_at || "";
       for (let i = 0; i < 15; i++) {
         await new Promise(r => setTimeout(r, 2000));
-        const { data } = await supabase.from("team_trajectory_summaries")
-          .select("team_member_id, summary, notes_analyzed_count, notes_range_start, notes_range_end, model_used, updated_at")
+        const { data } = await supabase.from("team_profile")
+          .select(TRAJECTORY_COLS)
           .eq("team_member_id", memberId).maybeSingle();
-        if (data && data.updated_at && data.updated_at !== before) {
+        if (data && data.trajectory_summary && data.trajectory_updated_at && data.trajectory_updated_at !== before) {
           setTrajectoryByMember(prev => ({ ...prev, [memberId]: data }));
           break;
         }
@@ -2309,18 +2320,18 @@ const StaffDirectory = ({ staff }) => {
                                 {recomputing ? "Recomputing…" : "↻ Refresh"}
                               </button>
                             </div>
-                            {traj && <div>{traj.summary}</div>}
+                            {traj && <div>{traj.trajectory_summary}</div>}
                             {traj && (
                               <div style={{ fontSize:9, color:T.slate500, marginTop:4 }}>
-                                {traj.notes_analyzed_count} note{traj.notes_analyzed_count === 1 ? "" : "s"} analyzed
-                                {traj.notes_range_start && traj.notes_range_end && traj.notes_range_start !== traj.notes_range_end && (
-                                  <span> · {traj.notes_range_start} → {traj.notes_range_end}</span>
+                                {traj.trajectory_notes_analyzed_count ?? 0} note{traj.trajectory_notes_analyzed_count === 1 ? "" : "s"} analyzed
+                                {traj.trajectory_notes_range_start && traj.trajectory_notes_range_end && traj.trajectory_notes_range_start !== traj.trajectory_notes_range_end && (
+                                  <span> · {traj.trajectory_notes_range_start} → {traj.trajectory_notes_range_end}</span>
                                 )}
-                                {traj.notes_range_start && traj.notes_range_start === traj.notes_range_end && (
-                                  <span> · {traj.notes_range_start}</span>
+                                {traj.trajectory_notes_range_start && traj.trajectory_notes_range_start === traj.trajectory_notes_range_end && (
+                                  <span> · {traj.trajectory_notes_range_start}</span>
                                 )}
-                                {traj.updated_at && (
-                                  <span> · summarized {new Date(traj.updated_at).toLocaleDateString("en-US", { month:"short", day:"numeric" })}</span>
+                                {traj.trajectory_updated_at && (
+                                  <span> · summarized {new Date(traj.trajectory_updated_at).toLocaleDateString("en-US", { month:"short", day:"numeric" })}</span>
                                 )}
                               </div>
                             )}
@@ -2360,9 +2371,9 @@ const StaffDirectory = ({ staff }) => {
                           <summary style={{ fontSize:10, color:T.blue, cursor:"pointer" }}>Recent behavioral notes ({(behavioralByMember[member.id] || []).length}) ▾</summary>
                           <div style={{ marginTop:6, display:"flex", flexDirection:"column", gap:6 }}>
                             {(behavioralByMember[member.id] || []).slice(0, 5).map(n => (
-                              <div key={n.id} style={{ padding:"6px 8px", background:T.white, borderRadius:6, border:`1px solid ${T.slate200}` }}>
-                                <div style={{ fontSize:9, color:T.slate500, marginBottom:2 }}>{n.observation_date} · {n.pattern_type || "note"}</div>
-                                <div style={{ fontSize:11, color:T.slate700, whiteSpace:"pre-wrap" }}>{n.observation_text}</div>
+                              <div key={n.entry_no} style={{ padding:"6px 8px", background:T.white, borderRadius:6, border:`1px solid ${T.slate200}` }}>
+                                <div style={{ fontSize:9, color:T.slate500, marginBottom:2 }}>{n.entry_date} · {n.kind || "note"}</div>
+                                <div style={{ fontSize:11, color:T.slate700, whiteSpace:"pre-wrap" }}>{n.body}</div>
                               </div>
                             ))}
                           </div>
