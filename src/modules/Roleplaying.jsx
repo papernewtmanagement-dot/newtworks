@@ -55,7 +55,8 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //                                            while beats and energy remain, walking toward a character when none is
 //                                            in reach, then passes
 //   rpg_act_square(actor, x, y, action)      a move on the board: a walk that costs ticks by the mover's Speed (a square
-//                                            costs 1 + its movement penalty), or a card action aimed at a square
+//                                            takes 5 ticks at Speed 10 plus the percent of time it adds), or a card
+//                                            action aimed at a square
 //                                            (Rootstep, Briar Shift)
 //   rpg_place / rpg_set_square               the game master moves a fighter by hand or sets fire; the ground itself
 //                                            is the world map under the fight (rpg_fight_squares)
@@ -1174,6 +1175,17 @@ const mapMix = (a, b, t) => "#" + [1, 3, 5].map(n => Math.round(parseInt(a.slice
 // (MAP_ART.top), so a cell and the squares inside it are one color family at every level. A ground the battle grid
 // has no look of its own for is open land.
 const mapWash = (what) => (what === "sea" ? MAP_PAPER.sea : mapMix(MAP_PAPER.land, (MAP_ART.top[what] || MAP_ART.top.land).tones[0], MAP_TINT));
+// Harder ground drawn darker (Peter 2026-10-03: thicker forest, deeper water darker): h(i, j) = how hard a square is
+// inside its ground, 0 to 9 (rpg_map_view: cells' hard, detail.hard), nothing when not known. Each step from 2 up adds
+// a thin dark wash over the squares at or above it, so 9 (a thicket) is the darkest.
+function mapHardShade(cols, rows, h, unit, round) {
+  const out = [];
+  let any = false;
+  for (let j = 0; j < rows && !any; j++) for (let i = 0; i < cols; i++) if (h(i, j) != null) { any = true; break; }
+  if (!any) return out;
+  for (let d = 2; d <= 9; d++) out.push({ d: mapOutline(cols, rows, (i, j) => { const v = h(i, j); return v != null && v >= d; }, unit, round), fill: "#1F2A12", o: 0.045 });
+  return out.filter(l => l.d);
+}
 // Where to set a symbol s wide near x, y so it does not cover one already set: at x, y when that is free, else the
 // first free spot on the rings round it, one symbol apart. The same symbols in the same order always land the same.
 function mapAside() {
@@ -1214,9 +1226,11 @@ function mapFantasy(v, byId) {
     const kinds = Object.fromEntries(MAP_GROUNDS.map(([k, ch]) => [ch.charCodeAt(0), k]).concat([["?".charCodeAt(0), "unknown"]]));
     // the smaller places reaching into a square of the detail, by "i,j" from the top-left corner
     const marks = detail.marks && typeof detail.marks === "object" ? detail.marks : {};
-    detail.cells.forEach((row, j) => { for (let i = 0; i < C; i++) { const code = String(row || "").charCodeAt(i); const mk = marks[i + "," + j]; grid[j * C + i] = { ...(kinds[code] ? { k: kinds[code] } : { k: "place", id: (detail.places || [])[code - 256] }), marks: Array.isArray(mk) ? mk : [] }; } });
+    // how hard each square is inside its ground, one digit a square (detail.hard; - for none)
+    const hard = Array.isArray(detail.hard) ? detail.hard : [];
+    detail.cells.forEach((row, j) => { for (let i = 0; i < C; i++) { const code = String(row || "").charCodeAt(i); const mk = marks[i + "," + j]; const hd = String(hard[j] || "").charAt(i); grid[j * C + i] = { ...(kinds[code] ? { k: kinds[code] } : { k: "place", id: (detail.places || [])[code - 256] }), marks: Array.isArray(mk) ? mk : [], h: hd >= "0" && hd <= "9" ? Number(hd) : null }; } });
   } else {
-    cells.forEach(c => { grid[(c.y - 1) * C + (c.x - 1)] = { k: c.kind, id: c.place || null, marks: Array.isArray(c.marks) ? c.marks : [] }; });
+    cells.forEach(c => { grid[(c.y - 1) * C + (c.x - 1)] = { k: c.kind, id: c.place || null, marks: Array.isArray(c.marks) ? c.marks : [], h: c.hard == null ? null : Number(c.hard) }; });
   }
   const none = { k: "sea" };
   const get = (i, j) => grid[(j < 0 ? 0 : j >= R ? R - 1 : j) * C + (wrap ? ((i % C) + C) % C : (i < 0 ? 0 : i >= C ? C - 1 : i))] || none;
@@ -1233,6 +1247,8 @@ function mapFantasy(v, byId) {
   const filled = new Map();
   grid.forEach((g, n) => { if (g && g.k === "place" && g.id) { if (!filled.has(g.id)) filled.set(g.id, []); filled.get(g.id).push(n); } });
   filled.forEach((list, id) => { const p = byId[id]; if (p && p.color) layers.push({ d: mapOutline(C, R, (i, j) => { const g = get(i, j); return g.k === "place" && g.id === id; }, unit, 0.45), fill: p.color, o: 0.3 }); });
+  // harder ground is darker: each square a shade by how hard it is inside its ground (0 to 9; thickets 9)
+  layers.push(...mapHardShade(C, R, (i, j) => get(i, j).h, unit, 0.45));
   layers.push({ d: land, line: MAP_INK, w: 1.25 });
   const strokes = mapRows(unit * (detail ? 1 : 0.12));
   const marked = mapRows(unit * 0.12);
@@ -1334,13 +1350,18 @@ function mapFantasy(v, byId) {
 }
 // One grid seen from above (the battle grid). what(i, j) = the ground of a square, also asked past the edge of the
 // grid, where the nearest square answers, so a crown rooted just off the grid still hangs over it.
-function mapTop(cols, rows, x0, y0, what, washes, show) {
+function mapTop(cols, rows, x0, y0, what, washes, show, hard) {
   const U = 100;
   const layers = [];
   const bases = new Map();
   const sink = {};
   const add = (k, d) => { sink[k] = (sink[k] || "") + d; };
   const art = (i, j) => MAP_ART.top[what(i, j)] || MAP_ART.top.plain;
+  // how hard a square is inside its ground (0 to 9, nothing when not known): harder ground carries more trees, bushes
+  // and thorns (from about half as many at 0 to half again as many at 9), and a thicket (9) of a ground with trees is
+  // a tangle of thorn bushes
+  const hd = (i, j) => (hard ? hard(i, j) : null);
+  const dense = (i, j) => { const v = hd(i, j); return v == null ? 1 : 0.55 + v * 0.1; };
   for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
     const tone = art(i, j).tones[Math.floor(mapRand(7, x0 + i, y0 + j, 0) * 3)];
     bases.set(tone, (bases.get(tone) || "") + `M${i * U} ${j * U}h${U}v${U}h${-U}Z`);
@@ -1361,7 +1382,7 @@ function mapTop(cols, rows, x0, y0, what, washes, show) {
     const on = i >= 0 && j >= 0 && i < cols && j < rows;
     const rnd = (n) => mapRand(7, x0 + i, y0 + j, n);
     const at = (n) => [(i + 0.15 + rnd(n) * 0.7) * U, (j + 0.15 + rnd(n + 1) * 0.7) * U];
-    if (show ? a.tree && i === 0 && j === 0 : (a.big && rnd(1) < a.big) || (a.tree && rnd(2) < a.tree)) {
+    if (show ? a.tree && i === 0 && j === 0 : (a.big && rnd(1) < a.big) || (a.tree && rnd(2) < a.tree * dense(i, j))) {
       const big = !show && a.big && rnd(1) < a.big;
       trees.push({ x: (i + 0.3 + rnd(3) * 0.4) * U, y: (j + 0.3 + rnd(4) * 0.4) * U, r: show ? U * 0.4 : U * (big ? 1.5 + rnd(5) * 0.8 : 0.75 + rnd(5) * 0.5), trunk: show ? U * 0.1 : U * (big ? 0.3 + rnd(6) * 0.12 : 0.14 + rnd(6) * 0.08), turn: rnd(7) * 6, gloom: !!a.gloom, needle: !!a.needle, n: 8 + Math.floor(rnd(8) * 4) });
       continue;
@@ -1383,8 +1404,8 @@ function mapTop(cols, rows, x0, y0, what, washes, show) {
       const box = (ox, oy) => mapPoly([[-w, -h], [w, -h], [w, h * 0.3], [w * 0.6, h], [-w, h]].map(([px, py]) => [x + ox + px * c - py * s, y + oy + px * s + py * c]));
       add("shade", box(U * 0.03, U * 0.04)); add("block", box(0, 0));
     }
-    if (a.bush && rnd(117) < a.bush) { const [x, y] = at(118); const r = U * (0.2 + rnd(120) * 0.16), t = rnd(121) * 6; add("shade", mapBlob(x + r * 0.14, y + r * 0.18, r, 7, t)); add("bush", mapBlob(x, y, r, 7, t)); add("bushLit", mapBlob(x - r * 0.16, y - r * 0.18, r * 0.5, 6, t)); }
-    if (a.thorn && rnd(122) < a.thorn) { const [x, y] = at(123); const r = U * (0.18 + rnd(125) * 0.16), t = rnd(126) * 3; add("shade", mapCircle(x + r * 0.12, y + r * 0.16, r * 0.8)); add("thorn", mapStar(x, y, r, 14, 0.5, rnd, t)); add("thornLit", mapStar(x - r * 0.1, y - r * 0.1, r * 0.5, 10, 0.5, rnd, t)); }
+    if (a.bush && rnd(117) < a.bush * dense(i, j)) { const [x, y] = at(118); const r = U * (0.2 + rnd(120) * 0.16), t = rnd(121) * 6; add("shade", mapBlob(x + r * 0.14, y + r * 0.18, r, 7, t)); add("bush", mapBlob(x, y, r, 7, t)); add("bushLit", mapBlob(x - r * 0.16, y - r * 0.18, r * 0.5, 6, t)); }
+    if ((a.thorn && rnd(122) < a.thorn * dense(i, j)) || (a.tree && hd(i, j) === 9 && rnd(122) < 0.85)) { const [x, y] = at(123); const r = U * (0.18 + rnd(125) * 0.16), t = rnd(126) * 3; add("shade", mapCircle(x + r * 0.12, y + r * 0.16, r * 0.8)); add("thorn", mapStar(x, y, r, 14, 0.5, rnd, t)); add("thornLit", mapStar(x - r * 0.1, y - r * 0.1, r * 0.5, 10, 0.5, rnd, t)); }
     if (a.mist && rnd(127) < a.mist) { const [x, y] = at(128); const w = U * (0.2 + rnd(130) * 0.15); add("mist", `M${mapPt([x - w, y])}q${mapNum(w / 2)} ${mapNum(-w * 0.45)} ${mapNum(w)} 0t${mapNum(w)} 0`); }
     if (a.ripple && rnd(131) < a.ripple) for (let n = 0; n < 2; n++) { const [x, y] = at(132 + n * 2); const w = U * (0.16 + rnd(136 + n) * 0.12); add("ripple", `M${mapPt([x - w, y])}q${mapNum(w / 2)} ${mapNum(-w * 0.3)} ${mapNum(w)} 0t${mapNum(w)} 0`); }
     if (a.frost && rnd(138) < a.frost) { const [x, y] = at(139); const l = U * (0.14 + rnd(141) * 0.12); add("frost", mapLine([[x - l, y], [x - l * 0.3, y - l * 0.35], [x + l * 0.2, y + l * 0.1], [x + l, y - l * 0.2]])); }
@@ -1411,14 +1432,15 @@ function mapBattle(v, byId) {
   const cells = Array.isArray(v.cells) ? v.cells : [];
   const m = /^(\d+)-(\d+)-(\d+)$/.exec(v.view || "");
   const grid = new Array(cols * rows).fill(null);
-  cells.forEach(c => { const p = c.place ? byId[c.place] : null; grid[(c.y - 1) * cols + (c.x - 1)] = { what: p ? (MAP_ART.top[p.icon] ? p.icon : "plain") : c.kind, id: c.place || null }; });
+  cells.forEach(c => { const p = c.place ? byId[c.place] : null; grid[(c.y - 1) * cols + (c.x - 1)] = { what: p ? (MAP_ART.top[p.icon] ? p.icon : "plain") : c.kind, id: c.place || null, h: c.hard == null ? null : Number(c.hard) }; });
   const get = (i, j) => grid[(j < 0 ? 0 : j >= rows ? rows - 1 : j) * cols + (i < 0 ? 0 : i >= cols ? cols - 1 : i)] || { what: "plain" };
   const washes = [];
   Array.from(new Set(grid.filter(g => g && g.id).map(g => g.id))).forEach(id => { const p = byId[id]; if (p && p.color) washes.push({ d: mapOutline(cols, rows, (i, j) => get(i, j).id === id, 100, 0.3), fill: p.color, o: 0.14 }); });
+  washes.push(...mapHardShade(cols, rows, (i, j) => (i < 0 || j < 0 || i >= cols || j >= rows ? null : get(i, j).h), 100, 0.3));
   const lines = [];
   for (let i = 1; i < cols; i++) lines.push(mapLine([[i * 100, 0], [i * 100, rows * 100]]));
   for (let j = 1; j < rows; j++) lines.push(mapLine([[0, j * 100], [cols * 100, j * 100]]));
-  const layers = mapTop(cols, rows, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0, (i, j) => get(i, j).what, washes, false);
+  const layers = mapTop(cols, rows, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0, (i, j) => get(i, j).what, washes, false, (i, j) => get(i, j).h);
   const fog = mapFog(cols, rows, 100, (i, j) => get(i, j).what === "unknown", 0.3, cols, rows, 7, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0);
   return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat([{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }], fog), names: [], blocks: [] };
 }
@@ -1751,7 +1773,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
     const marks = (Array.isArray(c.marks) ? c.marks : []).map(id => byId[id]).filter(Boolean);
     if (p) drawn.add(p.id);
     marks.forEach(k => drawn.add(k.id));
-    const title = `${c.name} · ${p ? [p.name, p.ground].filter(Boolean).join(" · ") : ground(c.kind)}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
+    const title = `${c.name} · ${p ? [p.name, p.ground].filter(Boolean).join(" · ") : ground(c.kind)}${c.cost != null ? ` · this ${top ? "square" : "cell"}: +${c.cost}% time a square` : ""}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
     const style = { aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, boxSizing: "border-box", position: "relative", display: "block", cursor: c.open || onCell ? "pointer" : "default" };
     grid.push(onCell
       ? <button key={c.name} type="button" onClick={() => onCell(c)} title={title} aria-label={title} className="rpg-map-cell" style={{ ...style, background: "none", border: "none" }} />
@@ -1781,7 +1803,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
   });
   const kinds = MAP_GROUNDS.filter(([k, ch]) => cells.some(c => c.kind === k) || (detail && detail.cells.some(row => String(row).includes(ch)))).map(([k]) => k);
   const shown = places.filter(p => drawn.has(p.id) && !p.listed);
-  const costly = kinds.some(k => grounds[k] && grounds[k].penalty) || shown.some(p => /penalty/.test(p.ground || ""));
+  const costly = kinds.some(k => grounds[k] && grounds[k].penalty) || shown.some(p => /%/.test(p.ground || ""));
   return (
     <div style={{ ...card, order: 1, minWidth: 0, display: "grid", gap: 10 }}>
       <style>{".rpg-map-cell:hover{box-shadow:inset 0 0 0 2px rgba(75,59,42,.6);border-radius:3px}"}</style>
@@ -1822,7 +1844,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
             <MapSwatch what={k} size={20} top={top} />{ground(k)}
           </span>
         ))}
-        {costly && <span>A movement penalty is the extra cost to enter a square: at penalty 2 a square costs 3.</span>}
+        {costly && <span>Each square adds its own share of time to cross it, inside its ground's range; darker is harder. At +60% a square takes 5 × 1.6 = 8 ticks instead of 5 at Speed 10.</span>}
         {(cells.some(c => c.kind === "unknown") || (detail && detail.cells.some(row => String(row).includes("?")))) && <span style={{ display: "flex", alignItems: "center", gap: 5 }}><MapSwatch what="unknown" size={20} />Not found yet</span>}
       </div>
     </div>
@@ -2573,8 +2595,8 @@ function FightView({ id, isParent, defs, onBack, backHref, onError, onMap }) {
   );
 }
 // The fight board, built from rpg_session_state: the world map under the fight, round the one whose turn it is
-// (board: its first square, size, column and row names within each battle grid, each square's penalty, forest, fire
-// and sea). Squares are shaded by their movement penalty (the number sits in the corner), green when forest, orange
+// (board: its first square, size, column and row names within each battle grid, the percent of time each square adds,
+// forest, fire and sea). Squares are shaded by that percent (the number sits in the corner), green when forest, orange
 // while burning, blue for sea; everyone on their square. On the turn of someone you act for, the squares they can
 // still reach this turn are ringed, with the ticks each costs; tap one to move there (rpg_act_square). A card action
 // aimed at a square (Briar Shift, a Torch's Light the ground) waits here for its square. The game master can move a
@@ -2629,17 +2651,18 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
       const m = moveAt[k];
       const sea = !!g[3];
       const n = Number(g[0]) || 0;
+      const steps = Math.min(n, 600) / 100;
       const forest = !!g[1];
       const fire = !!g[2];
-      const title = `${nameOf(x, y)}${sea ? " · sea" : ""}${n ? ` · movement penalty ${n}` : ""}${forest ? " · forest" : ""}${fire ? ` · burning (${s.burn_cost} more to step into)` : ""}${p ? ` · ${p.name}${p.out ? ` (${p.out})` : ""}` : ""}${m ? ` · costs ${m.cost}, ${m.ticks} ticks` : ""}`;
+      const title = `${nameOf(x, y)}${sea ? " · sea" : ""}${n ? ` · +${n}% time to cross` : ""}${forest ? " · forest" : ""}${fire ? ` · burning (+${s.burn_cost}% more to step into)` : ""}${p ? ` · ${p.name}${p.out ? ` (${p.out})` : ""}` : ""}${m ? ` · ${m.ticks} ticks to get here` : ""}`;
       const live = pending || (isParent && mode !== "move") || m;
       cells.push(
         <button key={k} type="button" title={title} onClick={() => click(x, y, g)}
           style={{ aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, position: "relative", borderRadius: 3, fontFamily: "inherit",
                    border: m ? `2px solid ${T.blue}` : `1px solid ${T.slate200}`, cursor: live ? "pointer" : "default",
-                   background: sea ? "#B9D3DE" : fire ? `hsl(24, 90%, ${86 - n * 4}%)` : forest ? `hsl(130, 32%, ${88 - n * 5}%)` : n > 0 ? `hsl(75, 28%, ${92 - n * 6}%)` : T.slate50,
+                   background: sea ? "#B9D3DE" : fire ? `hsl(24, 90%, ${86 - steps * 6}%)` : forest ? `hsl(130, 32%, ${88 - steps * 8}%)` : n > 0 ? `hsl(75, 28%, ${92 - steps * 9}%)` : T.slate50,
                    display: "flex", alignItems: "center", justifyContent: "center" }}>
-          {n > 0 && <span style={{ position: "absolute", top: 0, left: 2, fontSize: 8, lineHeight: 1.2, color: n >= 6 ? T.white : T.slate600 }}>{n}</span>}
+          {n > 0 && <span style={{ position: "absolute", top: 0, left: 2, fontSize: 8, lineHeight: 1.2, color: n >= 300 ? T.white : T.slate600 }}>{n}</span>}
           {(fire || forest) && <span style={{ position: "absolute", top: 0, right: 1, fontSize: 8, lineHeight: 1.2 }}>{fire ? "🔥" : "🌲"}</span>}
           {p ? (
             <span style={{ width: "76%", height: "76%", borderRadius: "50%", background: p.color || T.slate400, opacity: p.out ? 0.35 : 1,
