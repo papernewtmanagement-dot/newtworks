@@ -87,7 +87,7 @@ function retentionExample(f) {
   const v = stepped.slice().sort((a, b) => Number(b.points) - Number(a.points))[0];
   if (!v) return "";
   const factor = 1 + (Number(v.step_pct) / 100) * Math.min(Number(v.cap), 4);
-  return `Example: your fifth ${v.label} of the quarter pays ${money(v.points)} × ${num(factor)} = ${money(Math.round(Number(v.points) * factor * 100) / 100)}.`;
+  return `Example: your fifth ${v.label} of the week pays ${money(v.points)} × ${num(factor)} = ${money(Math.round(Number(v.points) * factor * 100) / 100)}.`;
 }
 
 function marketingTable(f) {

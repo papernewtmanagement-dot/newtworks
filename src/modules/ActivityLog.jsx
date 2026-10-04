@@ -366,7 +366,12 @@ function errText(e) {
 }
 let _pid = 0;
 const newPolicyId = () => `p${++_pid}`;
-const itemLabel = (v) => Number(v.points) > 0 ? `${v.label} · ${fmtPts(v.points)} pts` : v.label;
+// Peter 2026-10-04: the stack resets each week, so the Log form shows what the
+// next one of each kind pays this week (rp_next_values), not the bare base.
+const itemLabel = (v, next) => {
+  const pts = Number(next?.[v.activity_key] ?? v.points);
+  return pts > 0 ? `${v.label} · ${fmtPts(pts)} pts` : v.label;
+};
 
 // ---------- shared field blocks ----------
 
@@ -463,6 +468,18 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const items = useMemo(() => (values || []).filter(v => v.category === "logged")
     .slice().sort((a, b) => (Number(a.points) - Number(b.points)) || String(a.label).localeCompare(String(b.label))), [values]);
   const byKey = useMemo(() => Object.fromEntries((values || []).map(v => [v.activity_key, v])), [values]);
+  const [nextPts, setNextPts] = useState({});   // activity_key -> what the next one pays this week
+  useEffect(() => {
+    let alive = true;
+    supabase.rpc("rp_next_values", { p_team_member_id: logFor || null, p_on: date || null })
+      .then(r => {
+        if (!alive) return;
+        const m = {};
+        for (const row of (Array.isArray(r?.data) ? r.data : [])) m[row.activity_key] = Number(row.next_points);
+        setNextPts(m);
+      });
+    return () => { alive = false; };
+  }, [logFor, date, refreshKey]);
 
   // ---- Edit mode ----------------------------------------------------------
   // Peter 2026-09-14. There is ONE entry form. Editing opens this same form on a
@@ -1034,11 +1051,11 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           <div style={{ ...wrapRow, alignItems: "center" }}>
             <select style={addSelect} value="" onChange={e => addActivity(e.target.value)}>
               <option value="">+ Add Activity</option>
-              {items.map(v => <option key={v.activity_key} value={v.activity_key}>{itemLabel(v)}</option>)}
+              {items.map(v => <option key={v.activity_key} value={v.activity_key}>{itemLabel(v, isEdit ? null : nextPts)}</option>)}
             </select>
             {activities.map(a => byKey[a.key] && (
               <span key={a.id} style={pill}>
-                {itemLabel(byKey[a.key])}
+                {itemLabel(byKey[a.key], isEdit ? null : nextPts)}
                 <button type="button" style={pillX} onClick={() => dropActivity(a.id)} aria-label="remove">×</button>
               </span>
             ))}
