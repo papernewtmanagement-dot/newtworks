@@ -716,7 +716,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     dancer:      <ErrorBoundary name="Dancer"><Dancer /></ErrorBoundary>,
     meals:       <ErrorBoundary name="Meal Plan"><MealPlan userRole={userRole} /></ErrorBoundary>,
     course:      <ErrorBoundary key="course" name="Course"><Manual manualType="financial_literacy" userRole={userRole} /></ErrorBoundary>,
-    gridstrike:  <ErrorBoundary name="Gridstrike"><Gridstrike /></ErrorBoundary>,
+    gridstrike:  <ErrorBoundary name="Gridstrike"><Gridstrike userRole={userRole} /></ErrorBoundary>,
   };
   // Access guard — enforce nav role at the module level so direct URL
   // navigation (e.g. /financials) cannot bypass the sidebar filter. Mirrors
