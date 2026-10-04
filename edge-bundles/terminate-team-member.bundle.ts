@@ -335,7 +335,10 @@ async function requireCallerRole(
 //      team.is_excluded_paper_newt_bot) in the same update as step 3. Until
 //      2026-09-25 this wrote to team_telegram_map, a table that no longer
 //      exists, so it never took.
-//   6. Strips the person's block from the "Team List" processes page.
+//   6. Team List: nothing to do. The handbook's Team List is built live from
+//      active team members, so the archive in step 3 takes them off it. The
+//      old "Team List" processes page it used to edit is gone, and looking for
+//      it put a false warning on every termination until 2026-10-04.
 //   7. Takes the person off every team meeting invite (Daily Kickoff, Coffee
 //      and Donuts, Daily Wrap-up) straight away by running the same calendar
 //      sync the hourly job runs (public.huddle_calendar_sync). Both of their
@@ -390,10 +393,6 @@ function fmtDate(d: string | null | undefined): string {
   } catch {
     return d;
   }
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // Convert the small markdown subset used in admin_pages → HTML.
@@ -572,7 +571,8 @@ ${checklistMdToHtml(checklistMd)}
 <ul style="line-height:1.7;font-size:13px;margin:8px 0 0 0;padding-left:20px;">
 <li>Archived in Newtworks database (<code>team.archived_at</code>)</li>
 <li>Linked user login deactivated (if any)</li>
-<li>Stripped from the Team List page in Processes</li>\n<li>Taken off every team meeting invite (work + personal address)</li>
+<li>Off the Team List (it shows active team members only)</li>
+<li>Taken off every team meeting invite (work + personal address)</li>
 <li>Blocked from both Telegram bots</li>
 <li>${member.telegram_user_id ? "Removed from the team Telegram group" : "No Telegram account on file; any group invite link pulled"}</li>
 </ul>
@@ -641,40 +641,9 @@ Sent by the Newtworks on ${new Date().toLocaleString("en-US", { timeZone: "Ameri
       }
     }
 
-    // 7) Strip from "Team List" processes page (best-effort)
-    try {
-      const { data: pages, error: pbErr } = await sb.from("manuals")
-        .select("id, content")
-        .eq("agency_id", AGENCY_ID)
-        .eq("manual_type", "processes")
-        .eq("title", "Team List")
-        .limit(1);
-      if (pbErr) warnings.push(`Team List lookup: ${pbErr.message}`);
-      else if (pages && pages.length > 0) {
-        const page = pages[0];
-        const original: string = page.content || "";
-        const nameRe = new RegExp(
-          `(^|\\n\\n)${escapeRegex(member.first_name)}\\s+${escapeRegex(member.last_name)}\\s*\\n(?:[ \\t]*-[^\\n]*\\n?)+`,
-          "gi"
-        );
-        let next = original.replace(nameRe, (_match, lead) => lead || "");
-        next = next.replace(/\n{3,}/g, "\n\n").replace(/\s+$/, "") + "\n";
-        if (next !== original) {
-          const { error: upErr } = await sb.from("manuals").update({
-            content: next,
-            updated_at: nowIso,
-          }).eq("id", page.id);
-          if (upErr) warnings.push(`Team List update: ${upErr.message}`);
-          else auditLog.push("Stripped from Team List page");
-        } else {
-          warnings.push(`Could not locate ${fullName}'s block in Team List page`);
-        }
-      } else {
-        warnings.push("Team List processes page not found");
-      }
-    } catch (e) {
-      warnings.push(`processes strip exception: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    // 7) Team List: built live from active team members, so the archive above
+    //    already took them off it.
+    auditLog.push("Off the Team List (built from active team members)");
 
     // 7b) Take them off every team meeting invite (best-effort). The team row
     // is archived above, so the calendar sync drops both of their addresses
