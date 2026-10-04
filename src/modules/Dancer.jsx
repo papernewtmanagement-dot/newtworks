@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink } from "../lib/routing.jsx";
-import { PRACTICE_SONGS, renderSong } from "../lib/practiceSongs.js";
+import { PRACTICE_SONGS, renderSong, speedLabel } from "../lib/practiceSongs.js";
 import { analyzeSong, gradeOffset, MAX_POINTS, MISS_AFTER, starsFor, createLiveBeat, secondsPerBeat } from "../lib/beat.js";
 import { createDancer, stepDancer, puff, drawScene, drawDancer } from "../lib/airDancer.js";
 
@@ -18,7 +18,8 @@ import { createDancer, stepDancer, puff, drawScene, drawDancer } from "../lib/ai
 // stars = timing x the share of bars (4 beats) with at least one on-beat tap.
 // Watch: the dancer dances to the music by itself, switching every few bars between
 // puffing on every beat, every other beat, once a bar, double time, or resting.
-// Music: three original practice songs (exact beats known), a song file from
+// Music: ten original practice songs (exact beats known; picked from one list,
+// slowest first), a song file from
 // the phone (beat found by src/lib/beat.js), or Listen, which hears whatever is
 // playing in the room through the microphone and follows its beat live.
 // Nothing is saved to the database. Best scores and the timing adjustment are
@@ -35,6 +36,9 @@ const store = {
 };
 
 const SONG_CACHE = new Map(); // practice songs, rendered once per visit
+const SONGS_BY_SPEED = [...PRACTICE_SONGS].sort((a, b) => a.bpm - b.bpm);
+// the song list looks like the other buttons, with a small down arrow
+const SELECT_ARROW = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23667085'/%3E%3C/svg%3E\")";
 
 const btn = (kind = "soft") => ({
   border: `1px solid ${kind === "primary" ? T.blue : T.slate200}`,
@@ -62,6 +66,8 @@ export default function Dancer() {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
   const [mode, setMode, modeHref] = useTabParam("mode", "play", MODES);
+  // source.id is the song showing in the practice list; it stays set while a song
+  // file or Listen is on, so tapping the list goes back to that song.
   const [source, setSource] = useState({ kind: "practice", id: PRACTICE_SONGS[0].id });
   const [fileSong, setFileSong] = useState(null); // { name, buffer, beats, loud, bpm }
   const [status, setStatus] = useState("");
@@ -234,7 +240,7 @@ export default function Dancer() {
     if (!f) return;
     finish(false);
     setResult(null);
-    setSource({ kind: "file" });
+    setSource((s) => ({ kind: "file", id: s.id }));
     setStatus("Opening the song…");
     try {
       const ctx = getCtx();
@@ -356,9 +362,9 @@ export default function Dancer() {
     setResult(null);
     setStatus("");
     if (next.kind === "file" && (!fileSong || source.kind === "file")) { fileRef.current?.click(); return; }
-    setSource(next);
+    setSource((s) => ({ ...next, id: next.id || s.id }));
   };
-  const isOn = (k, id) => source.kind === k && (k !== "practice" || source.id === id);
+  const isOn = (k) => source.kind === k;
 
   return (
     <div style={{ padding: _pad, maxWidth: 760, margin: "0 auto", boxSizing: "border-box" }}>
@@ -376,9 +382,14 @@ export default function Dancer() {
       </div>
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-        {PRACTICE_SONGS.map((s) => (
-          <button key={s.id} type="button" style={chip(isOn("practice", s.id))} onClick={() => pick({ kind: "practice", id: s.id })}>{s.title}</button>
-        ))}
+        <select aria-label="Practice song" value={source.id}
+          onFocus={() => { if (source.kind !== "practice") pick({ kind: "practice", id: source.id }); }}
+          onChange={(e) => pick({ kind: "practice", id: e.target.value })}
+          style={{ ...chip(isOn("practice")), background: undefined, backgroundColor: isOn("practice") ? T.blueLt : T.white,
+            backgroundImage: SELECT_ARROW, backgroundRepeat: "no-repeat", backgroundPosition: "right 12px center",
+            appearance: "none", WebkitAppearance: "none", padding: "5px 30px 5px 12px", fontSize: 16, maxWidth: "100%" }}>
+          {SONGS_BY_SPEED.map((s) => <option key={s.id} value={s.id}>{s.title} ({speedLabel(s.bpm)})</option>)}
+        </select>
         <button type="button" style={chip(isOn("file"))} onClick={() => pick({ kind: "file" })}>
           {fileSong ? `🎵 ${fileSong.name.length > 18 ? fileSong.name.slice(0, 17) + "…" : fileSong.name}` : "🎵 Your song file"}
         </button>

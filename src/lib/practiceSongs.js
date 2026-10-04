@@ -1,5 +1,5 @@
 // =========================================================================
-// practiceSongs.js — three original songs for Dancer, made from math.
+// practiceSongs.js — ten original songs for Dancer, made from math.
 // No recordings, so nothing to license. Each song knows its exact beat
 // times, so the game never has to guess the beat for these.
 // renderSong(id, sampleRate) → { left, right, beats, downbeats, duration, bpm }
@@ -9,9 +9,22 @@ export const PRACTICE_SONGS = [
   { id: "warmup", title: "Warm Up", bpm: 92, bars: 24, key: 57, prog: [0, 5, 3, 4], feel: "easy" },
   { id: "carlot", title: "Car Lot", bpm: 112, bars: 32, key: 55, prog: [0, 3, 4, 3], feel: "funk" },
   { id: "blowout", title: "Blowout Sale", bpm: 126, bars: 40, key: 60, prog: [0, 4, 5, 3], feel: "dance" },
+  { id: "sunday", title: "Sunday Special", bpm: 72, bars: 24, key: 53, prog: [0, 3, 5, 4], feel: "slowjam" },
+  { id: "testdrive", title: "Test Drive", bpm: 86, bars: 28, key: 50, prog: [0, 5, 3, 4], feel: "swing", minor: true },
+  { id: "balloons", title: "Free Balloons", bpm: 100, bars: 32, key: 62, prog: [0, 3, 4, 3], feel: "island" },
+  { id: "opening", title: "Grand Opening", bpm: 118, bars: 36, key: 58, prog: [0, 5, 1, 4], feel: "disco" },
+  { id: "pricedrop", title: "Price Drop", bpm: 136, bars: 40, key: 52, prog: [0, 3, 0, 4], feel: "rock" },
+  { id: "midnight", title: "Midnight Madness", bpm: 150, bars: 44, key: 57, prog: [0, 5, 3, 4], feel: "bounce", minor: true },
+  { id: "zerodown", title: "Zero Down", bpm: 165, bars: 48, key: 55, prog: [5, 3, 0, 4], feel: "rush" },
 ];
 
+// How fast a song feels, in plain words, for the song picker.
+export function speedLabel(bpm) {
+  return bpm < 90 ? "slow" : bpm < 125 ? "medium" : bpm < 145 ? "fast" : "very fast";
+}
+
 const MAJOR = [0, 2, 4, 5, 7, 9, 11];
+const MINOR = [0, 2, 3, 5, 7, 8, 10];
 const hz = (midi) => 440 * Math.pow(2, (midi - 69) / 12);
 
 // small deterministic random so every play sounds the same
@@ -19,6 +32,75 @@ function rng(seed) {
   let s = seed >>> 0;
   return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
 }
+
+// Drums, bass and chords for one beat of each newer style (the first three songs'
+// styles are written out inside renderSong). b = beat in the bar (0-3), t = its time.
+const GROOVES = {
+  // slow R&B: soft kick on 1 and the "and" of 2, snare on 2 and 4, quiet sixteenth hats, long bass
+  slowjam({ t, b, spb, intro, root, kick, snare, hat, bass }) {
+    if (b === 0) kick(t, 0.9);
+    if (b === 1 && !intro) kick(t + spb / 2, 0.6);
+    if (!intro && (b === 1 || b === 3)) snare(t, 0.7);
+    for (let k = 0; k < 4; k++) hat(t + (k * spb) / 4, k === 0 ? 0.5 : 0.3);
+    if (b === 0 || b === 2) bass(t, spb * 1.9, root + (b === 2 ? 7 : 0));
+  },
+  // laid-back hip-hop: swung hats, kick on 1 and late in beat 2, snare on 2 and 4
+  swing({ t, b, spb, intro, root, kick, snare, hat, bass }) {
+    const late = (2 / 3) * spb; // the swung "and"
+    if (b === 0) kick(t);
+    if (b === 1 && !intro) kick(t + late, 0.75);
+    if (b === 2 && !intro) kick(t + late, 0.6);
+    if (!intro && (b === 1 || b === 3)) snare(t);
+    hat(t, 0.6); hat(t + late, 0.45);
+    if (b === 0) bass(t, spb * 0.9, root);
+    if (b === 1) bass(t + late, spb * 0.5, root + 3);
+    if (b === 2) bass(t, spb * 0.9, root + 7);
+    if (b === 3) bass(t + late, spb * 0.4, root + 10, 0.8);
+  },
+  // island bounce: kick on 1 and 3, rim-click snare on 2 and 4, chord stabs on every "and"
+  island({ t, b, spb, intro, root, triad, kick, snare, hat, bass, stab }) {
+    if (b % 2 === 0) kick(t, 0.9);
+    if (!intro && b % 2 === 1) snare(t, 0.55);
+    stab(t + spb / 2, spb * 0.22, triad, intro ? 0.6 : 1);
+    hat(t + (3 * spb) / 4, 0.35);
+    bass(t, spb * 0.45, root + (b === 1 ? 4 : b === 2 ? 7 : b === 3 ? 4 : 0));
+    if (b === 3) bass(t + spb / 2, spb * 0.4, root + 12, 0.7);
+  },
+  // disco: kick on every beat, open hat on every "and", clap on 2 and 4, octave bass
+  disco({ t, b, spb, intro, section, root, kick, snare, hat, clap, bass }) {
+    kick(t, b === 0 ? 1 : 0.9);
+    hat(t + spb / 2, 0.9, !intro);
+    if (!intro && (b === 1 || b === 3)) { clap(t); if (section % 2 === 0) snare(t, 0.6); }
+    bass(t, spb * 0.4, root);
+    bass(t + spb / 2, spb * 0.4, root + 12, 0.8);
+  },
+  // rock: kick on 1, 3 and the "and" of 3, loud snare on 2 and 4, eighth hats, power-chord chugs
+  rock({ t, b, spb, intro, root, kick, snare, hat, bass, stab }) {
+    if (b % 2 === 0) kick(t);
+    if (b === 2 && !intro) kick(t + spb / 2, 0.8);
+    if (!intro && (b === 1 || b === 3)) snare(t, 1.15);
+    hat(t, 0.6); hat(t + spb / 2, 0.45);
+    if (!intro) { stab(t, spb * 0.4, [root + 24, root + 31], 0.9); stab(t + spb / 2, spb * 0.4, [root + 24, root + 31], 0.7); }
+    bass(t, spb * 0.45, root); bass(t + spb / 2, spb * 0.45, root, 0.8);
+  },
+  // fast bounce: kick on every beat, snare on 2 and 4, offbeat stabs, walking bass
+  bounce({ t, b, spb, intro, root, triad, kick, snare, hat, bass, stab }) {
+    kick(t, b === 0 ? 1 : 0.8);
+    if (!intro && (b === 1 || b === 3)) snare(t);
+    hat(t + spb / 2, 0.6);
+    if (!intro) stab(t + spb / 2, spb * 0.25, triad, 0.9);
+    bass(t, spb * 0.8, root + [0, 3, 7, 10][b]);
+  },
+  // racing breakbeat: kick on 1 and the "and" of 2, snare on 2 and 4, eighth hats, rolling bass
+  rush({ t, b, spb, intro, root, kick, snare, hat, clap, bass }) {
+    if (b === 0) kick(t);
+    if (b === 1 && !intro) kick(t + spb / 2, 0.85);
+    if (b === 2 && intro) kick(t, 0.8);
+    if (!intro && (b === 1 || b === 3)) { snare(t); if (b === 3) clap(t); }
+    hat(t, 0.55); hat(t + spb / 2, 0.45);
+    bass(t, spb * 0.45, root); bass(t + spb / 2, spb * 0.45, root + (b === 3 ? 12 : 7), 0.75);
+  },
+};
 
 export function renderSong(id, sampleRate = 44100) {
   const song = PRACTICE_SONGS.find((s) => s.id === id) || PRACTICE_SONGS[0];
@@ -99,7 +181,19 @@ export function renderSong(id, sampleRate = 44100) {
     }, 1.1, 0.9);
   };
 
-  const scale = (deg, oct = 0) => song.key + MAJOR[((deg % 7) + 7) % 7] + 12 * (Math.floor(deg / 7) + oct);
+  const steps = song.minor ? MINOR : MAJOR;
+  const scale = (deg, oct = 0) => song.key + steps[((deg % 7) + 7) % 7] + 12 * (Math.floor(deg / 7) + oct);
+  // a short chord stab (offbeat skank, rock chug): sharp attack, quick fade
+  const stab = (t0, len, midis, g = 1) => add(t0, len, (t) => {
+    let s = 0;
+    for (const m of midis) {
+      const f = hz(m);
+      const ph = (f * t) % 1;
+      s += (ph < 0.5 ? 1 : -1) * 0.3 + Math.sin(2 * Math.PI * f * t) * 0.5;
+    }
+    const envA = Math.min(1, t / 0.003) * Math.exp(-t * 10) * Math.min(1, (len - t) / 0.01);
+    return (s / midis.length) * envA * 0.3 * g;
+  }, 0.95, 1.05);
   const beats = [], downbeats = [];
   // melody: a simple motif that walks the chord, varied per section
   const motifs = [[0, 2, 4, 2], [4, 2, 0, -1], [0, 4, 5, 4], [2, 0, 2, 4]];
@@ -118,6 +212,10 @@ export function renderSong(id, sampleRate = 44100) {
       const t = barT + b * spb;
       beats.push(t);
       if (b === 0) downbeats.push(t);
+      if (GROOVES[song.feel]) {
+        GROOVES[song.feel]({ t, b, spb, intro, section, root, triad, kick, snare, hat, clap, bass, stab });
+        continue;
+      }
       // drums
       if (!intro || b % 2 === 0) kick(t, b === 0 ? 1 : 0.85);
       if (song.feel === "dance" && !intro) kick(t, 0.9);
@@ -139,9 +237,10 @@ export function renderSong(id, sampleRate = 44100) {
     // melody after the intro, rests in the last two bars of each section
     if (!intro && !outro && bar % 8 < 6) {
       const motif = motifs[(section + bar) % motifs.length];
+      const slowLead = song.feel === "easy" || song.feel === "slowjam";
       for (let i = 0; i < 4; i++) {
-        const step = song.feel === "easy" ? 1 : 0.5;
-        const t = barT + i * spb * (song.feel === "easy" ? 1 : 0.5) + (song.feel === "easy" ? 0 : (bar % 2) * 2 * spb);
+        const step = slowLead ? 1 : 0.5;
+        const t = barT + i * spb * step + (slowLead ? 0 : (bar % 2) * 2 * spb);
         pluck(t, spb * step * 0.95, scale(chordDeg + motif[i], 1));
       }
     }
