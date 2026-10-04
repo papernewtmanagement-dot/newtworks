@@ -61,3 +61,4 @@ SELECT x.d, x.s, x.e, x.tier,
  ORDER BY x.s;
 $fn$;
 GRANT EXECUTE ON FUNCTION public.interview_slot_grid(uuid, date, date) TO authenticated, service_role;
+

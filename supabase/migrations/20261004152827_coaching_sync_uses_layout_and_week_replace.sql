@@ -201,3 +201,4 @@ BEGIN
   RETURN jsonb_build_object('ok', v_failed = 0, 'moved', v_moved, 'created', v_created, 'removed', v_removed, 'failed', v_failed,
                             'unplaced_minutes', COALESCE((v_lay->>'unplaced_minutes')::int, 0));
 END $function$;
+

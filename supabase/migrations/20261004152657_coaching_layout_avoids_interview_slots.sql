@@ -173,3 +173,4 @@ BEGIN
   RETURN jsonb_build_object('pieces', v_pieces, 'unplaced', v_carry,
     'unplaced_minutes', COALESCE((SELECT sum((x->>'minutes')::int) FROM jsonb_array_elements(v_carry) x), 0));
 END $function$;
+
