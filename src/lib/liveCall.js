@@ -1,25 +1,46 @@
 import {
   expandTransclusions, expandSelector, scanSelector, isPipeRow, isPipeSep, splitTableRow,
   buildIncludeLookup, makeIncludeResolver, buildExcerptLookup, makeExcerptResolver,
-  buildFaqLookup, makeFaqResolver, OPENER_MARK_RE, ENGAGED_MARK_RE, ENGAGED_END_RE,
+  buildFaqLookup, makeFaqResolver, extractTransclusionMarkers, excerptMarkerTitle,
+  OPENER_MARK_RE, ENGAGED_MARK_RE, ENGAGED_END_RE, ENGAGED_CHOICES, ENGAGED_TITLE,
 } from "./markdown.js";
 import { CARD_PARTS } from "./fitParts.js";
+import { RELATIONSHIPS, REVIEW_SITES } from "./logChoices.js";
 
 // ============================================================
 // Live tab — the call walker (Peter 2026-10-04).
 //
-// Every word the walker shows comes from the Processes manual: the FIT
-// Conversations pages and the Retention pages, through the same shared
-// fragments the manual pages embed. Nothing is copied. Edit a script in the
-// manual and the Live tab says the new words on the next call.
+// ONE SOURCE. Peter 2026-10-04: "Make sure the scripts can't drift. There
+// should be one source of scripts that is accessed by the processes manual and
+// the live tab." The Processes manual is that source. The walker holds no
+// script of its own:
+//   * it loads the manual's own rows through the manual's own loader
+//     (manualSources.js) and renders them with the manual's own renderer
+//     (markdown.js), every time the tab opens
+//   * every word a step shows is the manual's
+//   * every list a choice offers is the manual's, named the way the manual
+//     names it: the Outbound call types are the expanders on Retention >
+//     Outbound and Retention > Appointments, the Inbound call types are the
+//     sections of Inbound Calls, and the touches, late-pay counts, pivots,
+//     openers and products are whatever those scripts hold today
+//   * it only plays a shared script that some manual page shows, so it can
+//     never play one the manual has dropped
+// The walker's own words are its questions ("Did they say yes?") and the
+// answers that decide what gets logged. Nothing else.
 //
-// What lives here, and only here:
-//   * makeScriptLibrary — loads the manual rows into one object the walker reads
-//   * the step splitter — cuts a script into "the next thing to say": a step
-//     ends at every 🙊 (ask, then let them answer), a pair of "If …" expanders
-//     becomes a choice, and expanders that follow a question ride along with it
-//   * buildCall — turns the call so far (the choices made) into the list of
-//     steps and choices, and works out what the call has recorded: pivots,
+// Where the walker hooks into the manual is one short list (the LIVE SOURCES
+// block below). liveSourceProblems() checks every entry against the manual as
+// it stands. Anything that no longer resolves is named at the top of the Live
+// tab and at the top of every Processes page, and a call that reaches the gap
+// says so in place of the step. An edit to the manual can't break the Live
+// tab quietly.
+//
+// What else lives here:
+//   * the step splitter: a step ends at every 🙊 (ask, then let them answer),
+//     a pair of "If …" expanders becomes a choice, and expanders that follow a
+//     question ride along with it
+//   * buildCall: turns the call so far (the choices made) into the steps and
+//     choices to show, and works out what the call has recorded: pivots,
 //     quotes, sales, saves, reviews
 //
 // The walker never saves anything itself. The Live tab hands what it recorded
@@ -27,31 +48,82 @@ import { CARD_PARTS } from "./fitParts.js";
 // enforces holds here too, and rp_log_entry stays the one save.
 // ============================================================
 
-export const FIT_PAGE_ID = "2124251137";   // Processes > FIT Conversations: the ten parts, in order
+// Who sees the Live tab: Peter, until he says it is finished (2026-10-04). The
+// Dashboard tab, its open-call dot and the warning in the Processes manual all
+// ask this one question.
+export const canSeeLive = (userRole) => userRole === "owner";
+
+// ---------- LIVE SOURCES: where the walker hooks into the manual ----------
+// Pages by id (an id survives a rename); shared scripts by the title every
+// manual page embeds them by; sections of Inbound Calls by the manual's words.
+export const FIT_PAGE_ID = "2124251137";   // Processes > FIT Conversations: the ten parts, and every product page under it
+// The two checklists of calls we start. Their expanders are the Outbound list.
+const CALL_LISTS = [
+  { page: "newtworks-native-outbound-touches-2026-09-04", name: "Retention > Outbound" },
+  { page: "1747025922", name: "Retention > Appointments" },
+];
+// Shared scripts the walker builds a question around, and what is lost without each.
+const SCRIPT = {
+  inbound:  "Inbound Calls",
+  save:     "Save Household",
+  review:   "Review Policy",
+  claims:   "Claims Touches",
+  late:     "Late Pay Process",
+  referral: "Review & Referral",
+  schedule: "Appointments Set & Create",
+  car:      "Added/Replaced Auto Details",
+};
+const SCRIPT_NEED = {
+  inbound:  "Inbound calls have no script, and no call gets the wrap-up or the pivot question.",
+  save:     "Live can't ask whether a customer stayed, so saves and cancelations aren't logged from a call.",
+  review:   "Live can't run a policy review, so policy reviews aren't logged from a call.",
+  claims:   "The claim follow-up call can't pick a touch.",
+  late:     "The late-pay call can't pick how many times they've been late.",
+  referral: "Live can't ask for the review, so online reviews aren't logged from a call.",
+  schedule: "Live can't walk setting a time.",
+  car:      "Live can't log an added car from an inbound call.",
+};
+// Inside Inbound Calls, in the manual's own words.
+const INBOUND_MARK = {
+  sales: "sales",               // the section that leads to a quote or a cancelation
+  other: "other",               // the help steps and the wrap-up every call ends with
+  wrap: "wrap up the call",
+  byTheWay: "by the way",       // its labeled items are the pivots
+  fpp: "other pivots",          // so are the labeled parts of this expander
+  logCall: "log the call",      // shown on the finish screen
+};
+const PIVOT_KIND = [
+  ["fpp", /family protection/i],   // leads to HI, DI or Life
+  ["life", /\blife\b/i],           // leads to the Life FIT
+  ["review", /generic/i],          // an account review, nothing to log
+];
+// What each FIT product page sells, in the Log's own terms, by page id. A
+// "Simple … FIT" page that is not listed still walks; liveSourceProblems names
+// it until it is added here.
+const PRODUCT_BY_PAGE = {
+  "2583035905": { line: "auto", type: "private_passenger" },                        // Simple Auto FIT
+  "2514124801": { line: "fire", type: "home" },                                     // Simple Home FIT
+  "2588770314": { line: "fire", type: "plup" },                                     // Simple Liability FIT
+  "1975844866": { line: "fire", type: "pap" },                                      // Simple Valuables FIT
+  "1567227905": { line: "fire", type: "boat" },                                     // Simple Boatowners FIT
+  "1730674692": { line: "fire", type: "business_insurance" },                       // Simple Business FIT
+  "1702035459": { line: "life", type: "" },                                         // Simple Life FIT: the type is picked when it's logged
+  "2588246020": { line: "health", type: "hospital_income" },                        // Simple HI FIT
+  "2588770305": { line: "health", type: "disability_short_term" },                  // Simple DI FIT
+  "newtworks-native-simple-motorcycle-fit": { line: "auto", type: "motorcycle" },    // Simple Motorcycle FIT
+  "newtworks-native-simple-rv-fit": { line: "auto", type: "rv" },                    // Simple RV FIT
+  "newtworks-native-simple-classic-car-fit": { line: "auto", type: "classic" },      // Simple Classic Car FIT
+  // These never log a quote:
+  "1530134531": { line: "variable", type: "", quotable: false },                    // Simple Investing FIT: a meeting with Peter
+  "2588770324": { line: "", type: "", quotable: false },                            // Simple Retirement Insurance FIT: a meeting with Peter
+  "newtworks-native-simple-us-bank-fit": { line: "bank", type: "", quotable: false }, // Simple US Bank FIT: Bank counts when funded, not at the close (Peter 2026-09-11)
+};
+
 const MONKEY = "🙊";
 const LIST_RE = /^(\s*)([-*]|\d+\.)\s+/;
+const LABEL_LINE_RE = /^\s*\*\*([^*\n]+)\*\*\s*$/;   // a bold label alone on its line
 const SENTINEL_RE = /^\s*\[\[live:([a-z_:]+)\]\]\s*$/;
 const PART_BY_EXCERPT = new Map(CARD_PARTS.map((p) => [p.excerpt.toLowerCase(), p.key]));
-
-// What each FIT page quotes, keyed by the name in its title ("Simple <name> FIT").
-// A page whose name is not listed still walks; it just has nothing to quote.
-// Investing and Retirement Insurance set a meeting with Peter, so they never quote.
-const PRODUCT_LINES = {
-  "auto":                 { line: "auto",     type: "private_passenger" },
-  "home":                 { line: "fire",     type: "home" },
-  "liability":            { line: "fire",     type: "plup" },
-  "valuables":            { line: "fire",     type: "pap" },
-  "boatowners":           { line: "fire",     type: "boat" },
-  "business":             { line: "fire",     type: "business_insurance" },
-  "life":                 { line: "life",     type: "" },
-  "hi":                   { line: "health",   type: "hospital_income" },
-  "di":                   { line: "health",   type: "disability_short_term" },
-  "motorcycle":           { line: "auto",     type: "motorcycle" },
-  "rv":                   { line: "auto",     type: "rv" },
-  "classic car":          { line: "auto",     type: "classic" },
-  "investing":            { line: "variable", type: "", quotable: false },
-  "retirement insurance": { line: "",         type: "", quotable: false },
-};
 
 // ---------- text helpers ----------
 export function plainText(s) {
@@ -67,69 +139,87 @@ const matches = (text, test) => {
   const t = String(text || "").replace(/[:.\s]+$/, "").toLowerCase();
   return test instanceof RegExp ? test.test(t) : t.startsWith(String(test).toLowerCase());
 };
+const cleanTitle = (t) => plainText(t).replace(/[:\s]+$/, "");
+const slug = (s) => String(s || "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "x";
+// Keys that stay unique when two labels slug the same.
+const keyed = (items, keyOf) => {
+  const seen = new Map();
+  return items.map((it) => {
+    let k = keyOf(it);
+    const n = (seen.get(k) || 0) + 1;
+    seen.set(k, n);
+    if (n > 1) k = `${k}-${n}`;
+    return { ...it, key: k };
+  });
+};
 const indentOf = (l) => (/^(\s*)/.exec(l) || ["", ""])[1].length;
 const dedent = (lines, n) => lines.map((l) => (l.slice(0, n).trim() === "" ? l.slice(n) : l.trimStart()));
 const join = (...parts) => parts.filter((p) => p && String(p).trim()).join("\n\n");
-// A reference expander the walker made itself. data-live-ref keeps it from ever
-// being read as a choice, even when its label starts with "If".
+const linesOf = (md) => String(md || "").split(/\r?\n/);
+// A reference expander the walker folds manual text into, under the manual's
+// own label. data-live-ref keeps it from ever being read as a choice, even
+// when the label starts with "If".
 export const refDetails = (summary, md) => (md && String(md).trim()
   ? `<details data-live-ref>\n<summary>${summary}</summary>\n\n${String(md).trim()}\n\n</details>` : "");
 
-// ---------- pulling one piece out of a script (raw manual text) ----------
-// The section under a heading, up to the next heading of the same or a higher
-// level. Headings inside an expander are not section breaks.
-export function sectionByHeading(md, test) {
-  const lines = String(md || "").split(/\r?\n/);
-  let start = -1, level = 0, depth = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const h = depth === 0 ? /^(#{1,6})\s+(.*)$/.exec(lines[i]) : null;
-    if (h) {
-      if (start < 0) {
-        if (matches(plainText(h[2]), test)) { start = i; level = h[1].length; }
-      } else if (h[1].length <= level) {
-        return lines.slice(start + 1, i).join("\n").trim();
-      }
-    }
-    depth = Math.max(0, depth + (lines[i].match(/<details\b/gi) || []).length - (lines[i].match(/<\/details\s*>/gi) || []).length);
-  }
-  return start < 0 ? null : lines.slice(start + 1).join("\n").trim();
-}
-
-// Every top-level expander in a script: its label, what is inside it, and the whole block.
-function detailsBlocks(md) {
-  const lines = String(md || "").split(/\r?\n/);
+// ---------- reading a script's shape (raw manual text) ----------
+// The script line by line at the top level: plain lines, and whole expanders
+// (label, what is inside, the block) wherever one opens.
+function topLevel(md) {
+  const lines = linesOf(md);
   const out = [];
   for (let i = 0; i < lines.length; i++) {
-    if (!/^\s*<details\b/i.test(lines[i])) continue;
+    if (!/^\s*<details\b/i.test(lines[i])) { out.push({ kind: "line", text: lines[i], start: i, end: i }); continue; }
     let depth = 0, j = i;
     for (; j < lines.length; j++) {
       depth += (lines[j].match(/<details\b/gi) || []).length - (lines[j].match(/<\/details\s*>/gi) || []).length;
       if (depth <= 0) break;
     }
+    if (j >= lines.length) j = lines.length - 1;
     const block = lines.slice(i, j + 1).join("\n");
     const sm = /<summary\b[^>]*>([\s\S]*?)<\/summary\s*>/i.exec(block);
     let inner = block.replace(/^\s*<details\b[^>]*>/i, "").replace(/<\/details\s*>\s*$/i, "");
     if (sm) inner = inner.replace(sm[0], "");
-    out.push({ label: sm ? plainText(sm[1]) : "", inner: inner.trim(), block });
+    out.push({ kind: "details", label: sm ? plainText(sm[1]) : "", inner: inner.trim(), block, start: i, end: j });
     i = j;
   }
   return out;
 }
+const detailsBlocks = (md) => topLevel(md).filter((u) => u.kind === "details");
 export function detailsBySummary(md, test) {
   const hit = detailsBlocks(md).find((d) => matches(d.label, test));
   return hit ? hit.inner : null;
 }
-const detailsBlockBySummary = (md, test) => (detailsBlocks(md).find((d) => matches(d.label, test)) || {}).block || "";
 // A section that is nothing but one expander is that expander's content.
 export function unwrap(md) {
   const t = String(md || "").trim();
   const d = detailsBlocks(t);
   return d.length === 1 && t.startsWith(d[0].block.trim()) && t.endsWith(d[0].block.trim()) ? d[0].inner : t;
 }
-
+// A section that is nothing but two or more expanders: the expanders.
+function onlyExpanders(md) {
+  const units = topLevel(md);
+  const items = units.filter((u) => u.kind === "details");
+  return items.length >= 2 && !units.some((u) => u.kind === "line" && u.text.trim()) ? items : null;
+}
+// The sections under a script's top headings (headings inside an expander do
+// not count), in order, and what comes before the first one.
+export function sectionsOf(md) {
+  const lines = linesOf(md);
+  const heads = topLevel(md)
+    .filter((u) => u.kind === "line" && /^#{1,6}\s/.test(u.text))
+    .map((u) => ({ i: u.start, level: /^(#+)/.exec(u.text)[1].length, title: cleanTitle(u.text.replace(/^#+\s*/, "")) }));
+  if (!heads.length) return { intro: String(md || "").trim(), sections: [] };
+  const top = Math.min(...heads.map((h) => h.level));
+  const tops = heads.filter((h) => h.level === top);
+  return {
+    intro: lines.slice(0, tops[0].i).join("\n").trim(),
+    sections: tops.map((h, k) => ({ title: h.title, md: lines.slice(h.i + 1, k + 1 < tops.length ? tops[k + 1].i : lines.length).join("\n").trim() })),
+  };
+}
 // The list item whose text matches, with everything nested under it.
-export function listItem(md, test) {
-  const lines = String(md || "").split(/\r?\n/);
+function listItemRange(md, test) {
+  const lines = linesOf(md);
   for (let i = 0; i < lines.length; i++) {
     const m = LIST_RE.exec(lines[i]);
     if (!m || !matches(plainText(lines[i].slice(m[0].length)), test)) continue;
@@ -145,13 +235,17 @@ export function listItem(md, test) {
       if (indentOf(lines[j]) <= ind) break;
       j++;
     }
-    return dedent(lines.slice(i, j), ind).join("\n");
+    return { start: i, end: j, ind, lines };
   }
   return null;
 }
+export function listItem(md, test) {
+  const r = listItemRange(md, test);
+  return r ? dedent(r.lines.slice(r.start, r.end), r.ind).join("\n") : null;
+}
 // What is nested under a list item, stopping at the child that matches stopTest.
 function childrenOf(itemMd, stopTest) {
-  const lines = String(itemMd || "").split(/\r?\n/).slice(1);
+  const lines = linesOf(itemMd).slice(1);
   const real = lines.filter((l) => l.trim());
   if (!real.length) return "";
   const base = Math.min(...real.map(indentOf));
@@ -163,25 +257,68 @@ function childrenOf(itemMd, stopTest) {
   }
   return dedent(out, base).join("\n").trim();
 }
-const cutBefore = (md, re) => {
-  const lines = String(md || "").split(/\r?\n/);
-  const i = lines.findIndex((l) => re.test(l));
-  return i < 0 ? String(md || "") : lines.slice(0, i).join("\n").trim();
-};
-// A bold label on its own line ("**First time they're late:**") and what follows it.
-function labelSection(md, test) {
-  const lines = String(md || "").split(/\r?\n/);
-  const isLabel = (l) => /^\*\*[^*]+\*\*\s*$/.test(l.trim());
-  const i = lines.findIndex((l) => isLabel(l) && matches(plainText(l), test));
-  if (i < 0) return null;
-  let j = i + 1;
-  while (j < lines.length && !isLabel(lines[j]) && !/^\s*<details\b/i.test(lines[j])) j++;
-  return lines.slice(i, j).join("\n").trim();
+// The items directly under a list item, each with what is nested under it.
+function listChildren(itemMd) {
+  const out = [];
+  for (const l of linesOf(childrenOf(itemMd))) {
+    const m = LIST_RE.exec(l);
+    if (m && m[1].length === 0) out.push([l]);
+    else if (out.length) out[out.length - 1].push(l);
+  }
+  return out.map((x) => x.join("\n").trim());
+}
+// The bold label an item or line opens with ("**Life Pivot:** I noticed…" → "Life Pivot").
+function boldLabel(text) {
+  const m = /^\*\*([^*\n]+?)\*\*/.exec(String(text || "").replace(LIST_RE, "").trim());
+  return m ? cleanTitle(m[1]) : "";
+}
+// Bold labels alone on their lines ("**First time they're late:**"), each with
+// what follows it up to the next one. The last runs up to the first expander
+// after it; `tail` is from there to the end. `intro` comes before the first.
+function labelSections(md) {
+  const lines = linesOf(md);
+  const units = topLevel(md);
+  const labels = units.filter((u) => u.kind === "line" && LABEL_LINE_RE.test(u.text));
+  if (!labels.length) return { intro: String(md || "").trim(), sections: [], tail: "" };
+  const sections = labels.map((u, k) => {
+    let end = k + 1 < labels.length ? labels[k + 1].start : lines.length;
+    if (k + 1 === labels.length) {
+      const det = units.find((x) => x.kind === "details" && x.start > u.start);
+      if (det) end = det.start;
+    }
+    return { label: cleanTitle(LABEL_LINE_RE.exec(u.text)[1]), md: lines.slice(u.start, end).join("\n").trim(), end };
+  });
+  return {
+    intro: lines.slice(0, labels[0].start).join("\n").trim(),
+    sections,
+    tail: lines.slice(sections[sections.length - 1].end).join("\n").trim(),
+  };
+}
+// A script's expanders: what comes before the first (intro), and each expander
+// with any text that follows it before the next one.
+function expanderRun(md) {
+  const lines = linesOf(md);
+  const items = detailsBlocks(md);
+  if (!items.length) return { intro: String(md || "").trim(), items: [] };
+  return {
+    intro: lines.slice(0, items[0].start).join("\n").trim(),
+    items: items.map((d, k) => ({ ...d, more: lines.slice(d.end + 1, k + 1 < items.length ? items[k + 1].start : lines.length).join("\n").trim() })),
+  };
+}
+// The shared scripts a piece of text embeds directly, by lowercase title.
+const embedsIn = (md) => extractTransclusionMarkers(md).filter((m) => m.kind === "excerpt").map((m) => m.title.toLowerCase());
+// The text before and after the line that embeds one shared script.
+function aroundEmbed(md, title) {
+  const lines = linesOf(md);
+  const i = lines.findIndex((l) => (excerptMarkerTitle(l) || "").toLowerCase() === title.toLowerCase());
+  return i < 0 ? { before: String(md || "").trim(), after: "" }
+    : { before: lines.slice(0, i).join("\n").trim(), after: lines.slice(i + 1).join("\n").trim() };
 }
 
 // ---------- the FIT page split into its ten parts ----------
-// [Engaged: no] / [Engaged: yes] blocks become the same pair of "If …" expanders
-// the rest of the manual uses, so the walker asks it as one choice.
+// [Engaged: no] / [Engaged: yes] blocks become the same pair of "If …"
+// expanders the rest of the manual uses, labeled the way the page's own picker
+// labels them, so the walker asks it as one choice.
 function engagedToDetails(text) {
   if (text.indexOf("[Engaged:") === -1) return text;
   const out = [];
@@ -192,7 +329,8 @@ function engagedToDetails(text) {
     if (m) {
       if (open) out.push("", "</details>", "");
       else pair += 1;
-      out.push(`<details data-live-pair="e${pair}">`, `<summary>${m[1].toLowerCase() === "yes" ? "If they're engaged and have time" : "If they DON'T have time"}</summary>`, "");
+      const c = ENGAGED_CHOICES.find((x) => x.mark === m[1].toLowerCase()) || ENGAGED_CHOICES[0];
+      out.push(`<details data-live-pair="e${pair}">`, `<summary>If ${c.label}</summary>`, "");
       open = true;
       continue;
     }
@@ -225,7 +363,7 @@ function splitFitPage(raw, resolvers, { opener = null, mode = "pivot" } = {}) {
   text = engagedToDetails(text);
   const openers = scanSelector(text).groups;
   if (openers.length) text = markOpenerPick(text);
-  text = expandSelector(text, { openerState: { value: opener, mode, engaged: "notime" } });
+  text = expandSelector(text, { openerState: { value: opener, mode, engaged: ENGAGED_CHOICES[0].value } });
   const chunks = { _pre: [] };
   let cur = "_pre";
   for (const line of text.split(/\r?\n/)) {
@@ -314,9 +452,11 @@ function branchLabel(summary) {
   const s = String(summary || "").replace(/^if\s+/i, "").trim();
   return s ? s[0].toUpperCase() + s.slice(1) : String(summary || "");
 }
+// A pair about whether they have time is the page's own "how the call is
+// going" question, asked in the page picker's words.
 const TIME_RE = /time|engaged/i;
 function branchTitle(opts) {
-  return opts.every((o) => TIME_RE.test(o.label)) ? "Do they have time right now?" : "Which fits?";
+  return opts.every((o) => TIME_RE.test(o.label)) ? ENGAGED_TITLE : "Which fits?";
 }
 export function splitSteps(md) {
   const blocks = [];
@@ -423,16 +563,35 @@ export function makeScriptLibrary({ pages, excerpts, faqs }) {
     const c = String(p.content || "").trim();
     return /^this section contains/i.test(c) || (c.length < 120 && c.indexOf("[Embedded") === -1);
   };
-  // Every "Simple <name> FIT" page under FIT Conversations, in the manual's order.
+  const safe = (fn, title) => { try { return fn(title); } catch { return null; } };
+
+  // Every shared script some manual page shows, at any depth. The walker only
+  // plays a script from this set, so it can never play one the manual dropped.
+  const shown = new Set();
+  const shownPages = new Set();
+  const visit = (md) => {
+    for (const m of extractTransclusionMarkers(md)) {
+      const key = m.title.toLowerCase();
+      const seen = m.kind === "excerpt" ? shown : shownPages;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const r = safe(m.kind === "excerpt" ? resolveExcerpt : resolveInclude, m.title);
+      if (r && r.status === "ok") visit(r.md);
+    }
+  };
+  for (const p of pageRows) visit(p.content);
+
+  // Every product page under FIT Conversations, in the manual's order.
   const products = [];
   const walk = (id) => {
     for (const p of kids(id)) {
+      const known = PRODUCT_BY_PAGE[p.confluence_page_id];
       const m = /^Simple\s+(.+?)\s+FIT$/i.exec(String(p.title || "").trim());
-      if (m && !isFolder(p)) {
-        const name = m[1].trim();
-        const map = PRODUCT_LINES[name.toLowerCase()] || { line: "", type: "", quotable: false };
+      if ((known || m) && !isFolder(p)) {
+        const name = m ? m[1].trim() : String(p.title || "").trim();
+        const map = known || { line: "", type: "", quotable: false, unmapped: true };
         products.push({ page: p.confluence_page_id, name, label: name, line: map.line, type: map.type,
-          quotable: map.quotable !== false && !!map.line });
+          quotable: map.quotable !== false && !!map.line, unmapped: !!map.unmapped });
       }
       walk(p.confluence_page_id);
     }
@@ -440,21 +599,26 @@ export function makeScriptLibrary({ pages, excerpts, faqs }) {
   walk(FIT_PAGE_ID);
 
   const expand = (md) => expandTransclusions(String(md || ""), { resolveInclude, resolveExcerpt }, new Set(), 0);
-  const excerptRaw = (title) => { const r = resolveExcerpt(title); return r && r.status === "ok" ? r.md : ""; };
+  const script = (title) => {
+    if (!shown.has(String(title).toLowerCase())) return "";
+    const r = safe(resolveExcerpt, title);
+    return r && r.status === "ok" ? r.md : "";
+  };
   const fitCache = new Map();
   const stepCache = new Map();
-  let inboundCache = null;
+  let inboundCache;
+  let callListCache;
   const lib = {
-    inbound: () => inboundCache || (inboundCache = inboundParts(lib)),
     resolveFaq,
     products,
     product: (id) => products.find((p) => p.page === id) || null,
-    productByName: (n) => products.find((p) => p.name.toLowerCase() === String(n).toLowerCase()) || null,
     isProductPage: (id) => products.some((p) => p.page === id),
+    page: (id) => byId.get(id) || null,
+    pageTitle: (id) => String((byId.get(id) || {}).title || "").trim(),
     expand,
-    excerptRaw,
-    excerpt: (title) => expand(excerptRaw(title)),
-    pageRaw: (id) => (byId.get(id) || {}).content || "",
+    script,
+    inbound: () => (inboundCache === undefined ? (inboundCache = inboundParts(lib)) : inboundCache),
+    callList: () => callListCache || (callListCache = callList(lib)),
     fitPage(id, opts = {}) {
       const key = `${id}|${opts.opener || ""}|${opts.mode || "pivot"}`;
       if (!fitCache.has(key)) fitCache.set(key, splitFitPage((byId.get(id) || {}).content || "", { resolveInclude, resolveExcerpt }, opts));
@@ -469,39 +633,78 @@ export function makeScriptLibrary({ pages, excerpts, faqs }) {
   return lib;
 }
 
-// ---------- the call ----------
-export const INBOUND_TOPICS = [
-  { key: "claim",   label: "A claim" },
-  { key: "billing", label: "A billing question" },
-  { key: "payment", label: "Making a payment" },
-  { key: "car",     label: "Adding or replacing a car" },
-  { key: "cancel",  label: "Canceling" },
-  { key: "quote",   label: "A quote" },
-  { key: "other",   label: "Something else" },
-];
-export const OUTBOUND_TOPICS = [
-  { key: "quote",   label: "A quote" },
-  { key: "renewal", label: "Renewal or price change" },
-  { key: "claim",   label: "Claim follow-up" },
-  { key: "late",    label: "Late payment" },
-  { key: "save",    label: "Saving a cancelation" },
-  { key: "review",  label: "Policy review" },
-  { key: "appt",    label: "Another appointment" },
-  { key: "other",   label: "Something else" },
-];
-// Peter's three relationship values, the same ones the Log uses.
-const RELATIONSHIPS = [
-  { key: "new", label: "New" },
-  { key: "existing", label: "Existing" },
-  { key: "winback", label: "Winback" },
-];
-const REVIEW_SITES = [
-  { key: "google", label: "Google" },
-  { key: "facebook", label: "Facebook" },
-  { key: "yelp", label: "Yelp" },
-  { key: "no", label: "Not yet" },
-];
+// Inbound Calls, cut along its own headings. Its sections are the Inbound call
+// types; an "If …" section (another call coming in, a voicemail) folds under
+// the greeting. Returns null when the manual no longer shows the script.
+function inboundParts(L) {
+  const raw = L.script(SCRIPT.inbound);
+  if (!raw) return null;
+  const { intro, sections } = sectionsOf(raw);
+  const isRef = (s) => /^if\b/i.test(s.title);
+  const kindOf = (s) => (matches(s.title, INBOUND_MARK.other) ? "other"
+    : matches(s.title, INBOUND_MARK.sales) ? "sales"
+    : embedsIn(s.md).includes(SCRIPT.car.toLowerCase()) ? "car" : "plain");
+  const topics = keyed(sections.filter((s) => !isRef(s)).map((s) => ({ ...s, kind: kindOf(s) })), (s) => slug(s.title));
+  const other = (topics.find((t) => t.kind === "other") || {}).md || "";
+  // The wrap-up: the "Wrap up the call" item, the pivots under "By the way",
+  // and the expanders after it. The ones the walker plays itself (the review
+  // and referral, the other pivots, how to log the call) are not repeated as
+  // reference; the rest ride with the help steps.
+  const wr = listItemRange(other, INBOUND_MARK.wrap);
+  const wrap = wr ? dedent(wr.lines.slice(wr.start, wr.end), wr.ind).join("\n") : "";
+  const before = wr ? wr.lines.slice(0, wr.start).join("\n").trim() : other;
+  const after = wr ? detailsBlocks(wr.lines.slice(wr.end).join("\n")) : [];
+  const used = (d) => matches(d.label, INBOUND_MARK.fpp) || matches(d.label, INBOUND_MARK.logCall)
+    || embedsIn(d.inner).includes(SCRIPT.referral.toLowerCase());
+  const btw = wrap ? listItem(childrenOf(wrap), INBOUND_MARK.byTheWay) : null;
+  const fppMd = detailsBySummary(other, INBOUND_MARK.fpp);
+  const pivots = keyed([
+    ...(btw ? listChildren(btw).map((md) => ({ label: boldLabel(md), md })).filter((p) => p.label) : []),
+    ...(fppMd ? labelSections(fppMd).sections.map((s) => ({ label: s.label, md: s.md })) : []),
+  ].map((p) => ({ ...p, kind: (PIVOT_KIND.find(([, re]) => re.test(p.label)) || ["plain"])[0] })), (p) => slug(p.label));
+  return {
+    greet: join(intro, ...sections.filter(isRef).map((s) => refDetails(s.title, s.md))),
+    topics,
+    help: join(before, ...after.filter((d) => !used(d)).map((d) => d.block)),
+    wrapLines: wrap ? childrenOf(wrap, INBOUND_MARK.byTheWay) : "",
+    pivots,
+    logCall: detailsBySummary(other, INBOUND_MARK.logCall) || "",
+    found: { sales: topics.some((t) => t.kind === "sales"), other: !!other, wrap: !!wrap, byTheWay: !!btw, logCall: !!detailsBySummary(other, INBOUND_MARK.logCall) },
+  };
+}
 
+// Retention's checklists of calls we start, as the manual lists them: one per
+// expander, labeled the way the manual labels it, grouped under the page and
+// the bold line above it ("Outbound · Keeping the business").
+function callList(L) {
+  const tasks = [];
+  for (const cl of CALL_LISTS) {
+    const page = L.page(cl.page);
+    if (!page) continue;
+    const title = L.pageTitle(cl.page);
+    let group = "";
+    for (const u of topLevel(page.content)) {
+      if (u.kind === "line") {
+        const lab = LABEL_LINE_RE.exec(u.text);
+        if (lab) group = cleanTitle(lab[1]);
+        continue;
+      }
+      tasks.push({ label: u.label, group: group ? `${title} · ${group}` : title, md: u.inner, embeds: embedsIn(u.inner), page: slug(title) });
+    }
+  }
+  return keyed(tasks, (t) => `${t.page}-${slug(t.label)}`);
+}
+
+// FIT product pages a script names ("see **Simple Auto FIT**") or links to.
+function productsNamedIn(L, md) {
+  const text = plainText(md).toLowerCase();
+  return L.products.filter((p) => {
+    const t = L.pageTitle(p.page).toLowerCase();
+    return (t && text.includes(t)) || String(md || "").includes(`/processes/${p.page}`);
+  });
+}
+
+// ---------- the call ----------
 class Builder {
   constructor(st, lib) {
     this.st = st;
@@ -511,6 +714,7 @@ class Builder {
     this.part = null;
     this.fromParent = false;
     this.more = "";
+    this.moreFrom = lib.pageTitle(FIT_PAGE_ID);
     this.rec = { relationship: "", source: "", activities: [], policies: [], products: [], fit: false, allowCancel: false };
   }
   // A choice. The walk stops here until it is made.
@@ -529,7 +733,7 @@ class Builder {
     for (let i = 0; i < items.length && !this.stopped; i++) {
       const it = items[i];
       if (it.kind === "say") {
-        this.nodes.push({ id: `${id}.${i}`, kind: "step", md: it.md, olStart: it.olStart, part: this.part, fromParent: this.fromParent, more: this.more });
+        this.nodes.push({ id: `${id}.${i}`, kind: "step", md: it.md, olStart: it.olStart, part: this.part, fromParent: this.fromParent, more: this.more, moreFrom: this.moreFrom });
       } else if (it.kind === "branch") {
         const pick = this.ask(`${id}.${i}`, it.title, it.options.map((o, k) => ({ key: String(k), label: o.label })), { lead: it.lead });
         if (pick != null) this.say(`${id}.${i}.${pick}`, it.options[Number(pick)].md, ctx);
@@ -537,6 +741,18 @@ class Builder {
         this.ask(`op.${ctx.page}`, "Which opener?", (ctx.openers || []).map((g) => ({ key: g.slug, label: g.label })), { lead: it.lead, many: true });
       }
     }
+  }
+  // A shared script the walker needs is not in the manual any more: the call
+  // says so where the step would be, and carries on.
+  missing(id, what) {
+    if (this.stopped) return;
+    this.nodes.push({ id, kind: "missing", what, part: this.part });
+  }
+  // One of the shared scripts in SCRIPT, or the gap where it was.
+  script(id, name) {
+    const raw = this.lib.script(SCRIPT[name]);
+    if (raw) this.say(id, this.lib.expand(raw)); else this.missing(id, SCRIPT[name]);
+    return raw;
   }
 }
 
@@ -579,15 +795,8 @@ function fit(b, { first, via }) {
   const start = via === "quote"
     ? ["demeanor_score", "frogs_score", "intro_score", "eligibility_score", "setup_gnc_score"]
     : [...(p1.openers.length ? ["intro_score"] : []), "eligibility_score", "setup_gnc_score"];
-  // An existing customer called about a home: the manual's outreach script for
-  // auto customers with no home is the opener (Retention > Outbound).
-  const homeOutreach = via === "quote" && st.mode === "outbound" && b.rec.relationship === "existing"
-    && (L.product(first) || {}).type === "home" ? L.excerpt("Auto no Home") : "";
   if (p1.pre) { b.part = start[0]; b.say(`fit.${first}.pre`, p1.pre); }
-  for (const key of start) {
-    if (key === "intro_score" && homeOutreach) { b.part = key; b.say(`fit.${first}.${key}.home`, homeOutreach); continue; }
-    walk(key, `fit.${first}.${key}`, p1, { page: first, openers: p1.openers });
-  }
+  for (const key of start) walk(key, `fit.${first}.${key}`, p1, { page: first, openers: p1.openers });
   walk("uncover_gap_score", `fit.${first}.uncover`, p1, {}, false);
   walk("bridge_gap_score", `fit.${first}.bridge`, p1, {}, false);
   for (const id of pages.slice(1)) {
@@ -617,12 +826,13 @@ function fit(b, { first, via }) {
   b.part = null;
 }
 
+// Did they leave a review: the Log's own review sites, or not yet.
 function reviewLeft(b) {
-  const r = b.ask("rr.left", "Did they leave a review?", REVIEW_SITES);
+  const r = b.ask("rr.left", "Did they leave a review?", [...REVIEW_SITES, { key: "no", label: "Not yet" }]);
   if (r && r !== "no") addActivity(b, { key: "google_review", site: r });
 }
 function reviewAndReferral(b) {
-  b.say("rr", b.lib.excerpt("Review & Referral"));
+  b.script("rr", "referral");
   reviewLeft(b);
 }
 
@@ -640,187 +850,206 @@ function quote(b, pre) {
   fit(b, { first, via: "quote" });
 }
 
-// Inbound Calls, cut into the pieces the walker uses. Anything it cannot find
-// falls back to the whole section, so no words are ever dropped.
-function inboundParts(L) {
-  const raw = L.excerptRaw("Inbound Calls");
-  const other = sectionByHeading(raw, "other") || "";
-  const wrap = listItem(other, "wrap up the call");
-  const helpRaw = wrap ? cutBefore(other, /^\s*[-*]\s+Wrap up the call/i) : other;
-  const refs = ["authorize info/access", "referring a customer"].map((t) => detailsBlockBySummary(other, t)).filter(Boolean).join("\n\n");
-  const firstHeading = raw.split(/\r?\n/).findIndex((l) => /^#{1,6}\s/.test(l));
-  const greet = firstHeading < 0 ? raw : raw.split(/\r?\n/).slice(0, firstHeading).join("\n");
-  return {
-    raw,
-    greet: join(greet,
-      refDetails("If another call comes in", sectionByHeading(raw, "if another call comes in")),
-      refDetails("If we received a VM", sectionByHeading(raw, "if we received a vm"))),
-    claim: unwrap(sectionByHeading(raw, "claim") || ""),
-    billing: sectionByHeading(raw, "billing") || "",
-    sales: sectionByHeading(raw, "sales") || "",
-    car: unwrap(sectionByHeading(raw, "added/replaced auto") || ""),
-    help: wrap ? join(helpRaw, refs) : other,
-    wrapLines: wrap ? childrenOf(wrap, "by the way") : "",
-    generic: listItem(other, /^generic pivot/) || "",
-    life: listItem(other, /^life pivot/) || "",
-    fpp: detailsBySummary(other, "other pivots") || "",
-    logCall: detailsBySummary(other, "log the call") || "",
-    hasWrap: !!wrap,
-  };
+// A pivot into a product is recorded the moment it is chosen.
+function pivotTo(b, line) {
+  addActivity(b, { key: "pivot", line });
+  if (!b.rec.source) b.rec.source = "service_pivot";
+  if (!b.rec.relationship) b.rec.relationship = "existing";
 }
 
-// The end of every service call: anything else, the pivot, then the review and
-// referral. A pivot into a product is recorded the moment it is chosen.
+// The end of every call that isn't a FIT conversation: anything else, the
+// pivot, then the review and referral. The pivots offered are the ones the
+// manual lists, in its words, plus any product and no pivot at all.
 function wrapUp(b) {
   const L = b.lib;
   const ib = L.inbound();
-  if (ib.hasWrap) b.say("wrap", ib.wrapLines);
+  if (!ib) { reviewAndReferral(b); return; }
+  b.say("wrap", ib.wrapLines);
   const p = b.ask("wrap.pivot", "Any pivot?", [
-    { key: "life", label: "Life" },
-    { key: "fpp", label: "Family Protection Plan" },
-    { key: "product", label: "Another product" },
-    { key: "review", label: "Account review" },
-    { key: "none", label: "No pivot" },
+    ...ib.pivots.map((x) => ({ key: x.key, label: x.label })),
+    ...(L.products.some((x) => x.line) ? [{ key: "_product", label: "Another product" }] : []),
+    { key: "_none", label: "No pivot" },
   ]);
   if (!p) return;
-  const later = (id) => b.say(id, join("Now schedule a time", L.excerpt("Appointments Set & Create")));
-  const pivotTo = (line) => {
-    addActivity(b, { key: "pivot", line });
-    if (!b.rec.source) b.rec.source = "service_pivot";
-    if (!b.rec.relationship) b.rec.relationship = "existing";
-  };
-  if (p === "life") {
-    b.say("wrap.life", L.expand(ib.life));
-    pivotTo("life");
-    const w = b.ask("wrap.life.when", "Talk about it now?", [
-      { key: "now", label: "Yes, now" }, { key: "later", label: "Set a time" }, { key: "no", label: "Not interested" }]);
-    if (!w) return;
-    const life = L.productByName("life");
-    if (w === "now" && life) { fit(b, { first: life.page, via: "pivot" }); return; }
-    if (w === "later") later("wrap.life.later");
-    reviewAndReferral(b);
-    return;
-  }
-  if (p === "fpp") {
-    b.say("wrap.fpp", L.expand(ib.fpp));
-    const f = b.ask("wrap.fpp.which", "Where does it go from here?", [
-      { key: "hi", label: "HI" }, { key: "di", label: "DI" }, { key: "life", label: "Life" },
-      { key: "later", label: "Set a time" }, { key: "no", label: "Not interested" }]);
-    if (!f) return;
-    const pg = ["hi", "di", "life"].includes(f) ? L.productByName(f) : null;
-    pivotTo(pg ? pg.line : "health");
-    if (pg) { fit(b, { first: pg.page, via: "pivot" }); return; }
-    if (f === "later") later("wrap.fpp.later");
-    reviewAndReferral(b);
-    return;
-  }
-  if (p === "product") {
+  if (p === "_none") { reviewAndReferral(b); return; }
+  if (p === "_product") {
     const id = b.ask("wrap.product", "Which product?", productOptions(L, true));
     if (!id) return;
-    pivotTo(L.product(id).line);
+    pivotTo(b, L.product(id).line);
     fit(b, { first: id, via: "pivot" });
     return;
   }
-  if (p === "review") b.say("wrap.review", L.expand(ib.generic));
+  const pv = ib.pivots.find((x) => x.key === p);
+  b.say(`wrap.${p}`, L.expand(pv.md));
+  const later = (id) => b.script(id, "schedule");
+  if (pv.kind === "life") {
+    const life = L.products.find((x) => x.line === "life" && x.quotable);
+    pivotTo(b, "life");
+    const w = b.ask(`wrap.${p}.when`, "Talk about it now?", [
+      ...(life ? [{ key: "now", label: "Yes, now" }] : []), { key: "later", label: "Set a time" }, { key: "no", label: "Not interested" }]);
+    if (!w) return;
+    if (w === "now" && life) { fit(b, { first: life.page, via: "pivot" }); return; }
+    if (w === "later") later(`wrap.${p}.later`);
+    reviewAndReferral(b);
+    return;
+  }
+  if (pv.kind === "fpp") {
+    // The Family Protection Plan is hospital income, disability and life: the
+    // FIT pages that sell those.
+    const goes = [
+      L.products.find((x) => x.type === "hospital_income"),
+      L.products.find((x) => x.type === "disability_short_term"),
+      L.products.find((x) => x.line === "life" && x.quotable),
+    ].filter(Boolean);
+    const f = b.ask(`wrap.${p}.which`, "Where does it go from here?", [
+      ...goes.map((x) => ({ key: x.page, label: x.label })), { key: "later", label: "Set a time" }, { key: "no", label: "Not interested" }]);
+    if (!f) return;
+    const pg = L.product(f);
+    pivotTo(b, pg ? pg.line : "health");
+    if (pg) { fit(b, { first: pg.page, via: "pivot" }); return; }
+    if (f === "later") later(`wrap.${p}.later`);
+    reviewAndReferral(b);
+    return;
+  }
   reviewAndReferral(b);
 }
 
-function save(b) {
-  b.say("save", b.lib.excerpt("Save Household"));
-  const o = b.ask("save.outcome", "Are they staying?", [
+// ---------- the shared scripts the walker builds a question around ----------
+// Each plays its script, the text the task page puts after it, then its question.
+function saveFlow(b, id, after = "") {
+  if (!b.script(`${id}.save`, "save")) { wrapUp(b); return; }
+  b.say(`${id}.after`, after);
+  const o = b.ask(`${id}.stay`, "Are they staying?", [
     { key: "stay", label: "They're staying" }, { key: "cancel", label: "They're canceling" }, { key: "open", label: "Still deciding" }]);
   if (o === "stay") { addActivity(b, { key: "cancelation_saved" }); wrapUp(b); }
   if (o === "cancel") b.rec.allowCancel = true;
   if (o === "open") wrapUp(b);
 }
+// A policy review, then the Uncover and Bridge of the product the review
+// names ("Auto: see Simple Auto FIT").
+function reviewFlow(b, id, after = "") {
+  const L = b.lib;
+  const raw = b.script(`${id}.review`, "review");
+  b.say(`${id}.after`, after);
+  const named = productsNamedIn(L, raw);
+  if (raw && named.length) {
+    const pick = b.ask(`${id}.line`, "Which policy?", named.map((x) => ({ key: x.page, label: x.label })));
+    if (!pick) return;
+    const pg = L.product(pick);
+    addActivity(b, { key: "policy_review", line: pg.line, type: pg.type });
+    b.rec.source = "policy_review";   // anything quoted out of a review came from the review
+    const e = L.fitPage(pg.page, {});
+    b.say(`${id}.${pick}.uncover`, (e.parts.uncover_gap_score || {}).md);
+    b.say(`${id}.${pick}.bridge`, (e.parts.bridge_gap_score || {}).md);
+  }
+  wrapUp(b);
+}
+// A script made of a few expanders (the claim touches): its opening, then the
+// one that fits, walked step by step.
+function claimsFlow(b, id, after = "") {
+  pickOneOf(b, id, after, "claims", (raw) => {
+    const r = expanderRun(raw);
+    return { intro: r.intro, options: r.items.map((d) => ({ label: d.label, md: join(d.inner, d.more) })), tail: "" };
+  });
+}
+// A script made of labeled sections (first, second, third time late): its
+// opening, then the one that fits, with the expanders after them alongside.
+function lateFlow(b, id, after = "") {
+  pickOneOf(b, id, after, "late", (raw) => {
+    const r = labelSections(raw);
+    return { intro: r.intro, options: r.sections.map((s) => ({ label: s.label, md: s.md })), tail: r.tail };
+  });
+}
+function pickOneOf(b, id, after, name, shape) {
+  const L = b.lib;
+  const raw = L.script(SCRIPT[name]);
+  if (!raw) { b.missing(`${id}.${name}`, SCRIPT[name]); wrapUp(b); return; }
+  const s = shape(raw);
+  if (s.options.length < 2) {
+    b.say(`${id}.${name}`, L.expand(raw));
+  } else {
+    b.say(`${id}.${name}.about`, L.expand(s.intro));
+    const opts = keyed(s.options, (o) => slug(o.label));
+    const k = b.ask(`${id}.${name}.which`, "Which one?", opts.map((o) => ({ key: o.key, label: o.label })));
+    if (!k) return;
+    b.say(`${id}.${name}.${k}`, L.expand(join(opts.find((o) => o.key === k).md, s.tail)));
+  }
+  b.say(`${id}.after`, after);
+  wrapUp(b);
+}
+const FLOWS = [
+  { name: "save", run: saveFlow },
+  { name: "review", run: reviewFlow },
+  { name: "claims", run: claimsFlow },
+  { name: "late", run: lateFlow },
+];
+
+// One call off a Retention checklist: the expander's own text, step by step.
+// When it embeds one of the scripts above, that script's question comes in at
+// the point the page embeds it.
+function playTask(b, task) {
+  const L = b.lib;
+  const id = `out.${task.key}`;
+  const flow = FLOWS.find((f) => task.embeds.includes(SCRIPT[f.name].toLowerCase()) && L.script(SCRIPT[f.name]));
+  if (!flow) { b.say(id, L.expand(task.md)); wrapUp(b); return; }
+  const { before, after } = aroundEmbed(task.md, SCRIPT[flow.name]);
+  b.say(`${id}.pre`, L.expand(before));
+  flow.run(b, id, L.expand(after));
+}
 
 function inbound(b) {
   const L = b.lib;
   const ib = L.inbound();
+  if (!ib) { b.missing("in", SCRIPT.inbound); return; }
   b.say("in.greet", L.expand(ib.greet));
-  const topic = b.ask("in.topic", "What are they calling about?", INBOUND_TOPICS);
+  const topic = b.ask("in.topic", "What are they calling about?", ib.topics.map((t) => ({ key: t.key, label: t.title })));
   if (!topic) return;
-  if (topic !== "quote") b.rec.relationship = "existing";
-  switch (topic) {
-    case "claim": b.say("in.claim", L.expand(ib.claim)); wrapUp(b); break;
-    case "billing": b.say("in.billing", L.expand(detailsBySummary(ib.billing, "billing details") || ib.billing)); wrapUp(b); break;
-    case "payment": b.say("in.payment", L.expand(detailsBySummary(ib.billing, "taking a payment") || L.excerptRaw("Payment Script"))); wrapUp(b); break;
-    case "car": {
-      b.say("in.car", L.expand(ib.car));
-      const c = b.ask("in.car.kind", "Adding a car or replacing one?", [{ key: "add", label: "Adding a car" }, { key: "replace", label: "Replacing a car" }]);
-      if (c === "add") b.rec.policies.push({ line: "auto", type: "private_passenger", status: "sold", vehicles: "1", addedToExisting: true });
-      if (c === "replace") addActivity(b, { key: "service_task" });   // Policy Change: covers a replacement vehicle
-      if (c) wrapUp(b);
-      break;
-    }
-    case "cancel": b.say("in.cancel", L.expand(ib.sales)); save(b); break;
-    case "quote": b.say("in.quote", L.expand(ib.sales)); quote(b, "in"); break;
-    default: b.say("in.other", L.expand(ib.help)); wrapUp(b); break;
+  const t = ib.topics.find((x) => x.key === topic);
+  if (t.kind === "sales") {
+    b.say("in.sales", L.expand(t.md));
+    const want = b.ask("in.sales.want", "What do they want?", [{ key: "quote", label: "A quote" }, { key: "cancel", label: "To cancel" }]);
+    if (want === "quote") quote(b, "in");
+    if (want === "cancel") { b.rec.relationship = "existing"; saveFlow(b, "in"); }
+    return;
   }
+  b.rec.relationship = "existing";
+  if (t.kind === "other") { b.say("in.other", L.expand(ib.help)); wrapUp(b); return; }
+  // A section that is only expanders (Billing: the details, or taking a
+  // payment) asks which one; a section that is one expander is its content.
+  const opts = onlyExpanders(t.md);
+  if (opts) {
+    const items = keyed(opts, (d) => slug(d.label));
+    const k = b.ask(`in.${t.key}.which`, "Which one?", items.map((d) => ({ key: d.key, label: d.label })));
+    if (!k) return;
+    b.say(`in.${t.key}.${k}`, L.expand(items.find((d) => d.key === k).inner));
+  } else {
+    b.say(`in.${t.key}`, L.expand(unwrap(t.md)));
+  }
+  if (t.kind === "car") {
+    const c = b.ask("in.car.kind", "Adding a car or replacing one?", [{ key: "add", label: "Adding a car" }, { key: "replace", label: "Replacing a car" }]);
+    if (!c) return;
+    if (c === "add") b.rec.policies.push({ line: "auto", type: "private_passenger", status: "sold", vehicles: "1", addedToExisting: true });
+    if (c === "replace") addActivity(b, { key: "service_task" });   // Policy Change: covers a replacement vehicle
+  }
+  wrapUp(b);
 }
 
 function outbound(b) {
   const L = b.lib;
-  const topic = b.ask("out.topic", "Why are you calling?", OUTBOUND_TOPICS);
+  const ib = L.inbound();
+  const other = ib && ib.topics.find((t) => t.kind === "other");
+  const fitTitle = L.page(FIT_PAGE_ID) ? L.pageTitle(FIT_PAGE_ID) : "";
+  const tasks = L.callList();
+  const topic = b.ask("out.topic", "Why are you calling?", [
+    ...(fitTitle ? [{ key: "_fit", label: fitTitle }] : []),
+    ...tasks.map((t) => ({ key: t.key, label: t.label, group: t.group })),
+    ...(other ? [{ key: "_other", label: other.title }] : []),
+  ], { many: true });
   if (!topic) return;
-  if (topic !== "quote") b.rec.relationship = "existing";
-  switch (topic) {
-    case "quote": quote(b, "out"); break;
-    case "renewal":
-      b.say("out.renewal", join(L.excerpt("Premium Change Script"), refDetails("Renewal texts", L.excerpt("Renewal"))));
-      wrapUp(b);
-      break;
-    case "claim": {
-      const raw = L.excerptRaw("Claims Touches");
-      const t = b.ask("out.claim.touch", "Which check-in?", [{ key: "t2", label: "Seven days after" }, { key: "t3", label: "Thirty days after" }]);
-      if (!t) return;
-      const about = cutBefore(raw, /^\s*<details\b/i);
-      b.say(`out.claim.${t}`, L.expand(join(detailsBySummary(raw, t === "t2" ? "touch 2" : "touch 3") || raw, refDetails("About claim follow-ups", about))));
-      wrapUp(b);
-      break;
-    }
-    case "late": {
-      const raw = L.excerptRaw("Late Pay Process");
-      const n = b.ask("out.late.n", "How many times have they been late?", [
-        { key: "first", label: "First time" }, { key: "second", label: "Second time" }, { key: "third", label: "Third time" }]);
-      if (!n) return;
-      const about = cutBefore(raw, /^\*\*First time/i);
-      b.say(`out.late.${n}`, L.expand(join(labelSection(raw, `${n} time`) || raw, refDetails("How late pays work", about),
-        detailsBlockBySummary(raw, "late payment"))));
-      wrapUp(b);
-      break;
-    }
-    case "save": save(b); break;
-    case "review": {
-      b.say("out.review", L.excerpt("Review Policy"));
-      const which = b.ask("out.review.line", "Which policy?", [{ key: "auto", label: "Auto" }, { key: "home", label: "Home" }]);
-      if (!which) return;
-      const pg = L.productByName(which);
-      if (pg) {
-        addActivity(b, { key: "policy_review", line: pg.line, type: pg.type });
-        b.rec.source = "policy_review";   // anything quoted out of a review came from the review
-        const e = L.fitPage(pg.page, {});
-        b.say(`out.review.${which}.uncover`, (e.parts.uncover_gap_score || {}).md);
-        b.say(`out.review.${which}.bridge`, (e.parts.bridge_gap_score || {}).md);
-      }
-      wrapUp(b);
-      break;
-    }
-    case "appt": {
-      const k = b.ask("out.appt", "Which appointment?", [
-        { key: "welcome", label: "Welcome" }, { key: "young", label: "Young driver review" },
-        { key: "life", label: "Life review" }, { key: "set", label: "Setting one up" }]);
-      if (!k) return;
-      const md = k === "welcome" ? L.excerpt("Welcome")
-        : k === "young" ? L.excerpt("Review New Young Driver")
-        : k === "life" ? L.excerpt("Life Review")
-        : join(L.excerpt("Appointment Setting"), L.excerpt("Appointments Set & Create"));
-      b.say(`out.appt.${k}`, md);
-      wrapUp(b);
-      break;
-    }
-    default: b.say("out.other", L.expand(L.inbound().help)); wrapUp(b); break;
-  }
+  if (topic === "_fit") { quote(b, "out"); return; }
+  b.rec.relationship = "existing";
+  if (topic === "_other") { b.say("out.other", L.expand(ib.help)); wrapUp(b); return; }
+  playTask(b, tasks.find((t) => t.key === topic));
 }
 
 // The whole call so far: every step and choice in order (stopping at the first
@@ -829,5 +1058,49 @@ export function buildCall(st, lib) {
   const b = new Builder(st || {}, lib);
   if ((st || {}).mode === "outbound") outbound(b); else inbound(b);
   if (!b.stopped) b.nodes.push({ id: "finish", kind: "finish", part: null });
-  return { nodes: b.nodes, rec: b.rec, logCall: lib.inbound().logCall };
+  return { nodes: b.nodes, rec: b.rec, logCall: (lib.inbound() || {}).logCall || "" };
+}
+
+// ---------- is everything the walker hooks into still in the manual? ----------
+// Each problem names what is missing and what the Live tab can't do without it.
+// The Live tab shows the list, and so does every Processes page, for whoever
+// can see the Live tab.
+export function liveSourceProblems(lib) {
+  const out = [];
+  const miss = (what, why) => out.push({ what, why });
+  if (!lib.page(FIT_PAGE_ID)) {
+    miss("The FIT Conversations page", "Live can't walk a FIT conversation.");
+  } else {
+    const parts = lib.fitPage(FIT_PAGE_ID, {}).parts;
+    for (const p of CARD_PARTS) {
+      if (!(parts[p.key] || {}).md) miss(`"${p.excerpt}" on FIT Conversations`, `Live can't tell where ${p.label} starts, so that part's tag and score don't show.`);
+    }
+    for (const p of lib.products) {
+      if (p.unmapped) miss(lib.pageTitle(p.page), "Live doesn't know which Log product this page sells, so a yes on it isn't logged as a quote.");
+    }
+  }
+  for (const c of CALL_LISTS) {
+    if (!lib.page(c.page)) miss(`The ${c.name} page`, "Its calls are missing from Live's Outbound list.");
+  }
+  for (const [k, title] of Object.entries(SCRIPT)) {
+    if (!lib.script(title)) miss(`"${title}"`, SCRIPT_NEED[k]);
+  }
+  const ib = lib.inbound();
+  if (ib) {
+    const f = ib.found;
+    if (!f.sales) miss(`A section starting "Sales" in Inbound Calls`, "Inbound quote and cancel calls can't start.");
+    if (!f.other) miss(`An "Other" section in Inbound Calls`, "Calls have no help steps and no wrap-up.");
+    else {
+      if (!f.wrap) miss(`"Wrap up the call" in Inbound Calls`, "Calls end without the wrap-up or the pivot question.");
+      else if (!f.byTheWay) miss(`"By the way" under "Wrap up the call" in Inbound Calls`, "The manual's pivots are missing from the pivot question.");
+      if (!f.logCall) miss(`"Log the call" in Inbound Calls`, "The finish screen loses How to log it in ECRM.");
+    }
+  }
+  const claims = lib.script(SCRIPT.claims);
+  if (claims && expanderRun(claims).items.length < 2) miss(`The touches in "${SCRIPT.claims}"`, "Live can't offer a choice of touch; the whole script shows instead.");
+  const late = lib.script(SCRIPT.late);
+  if (late && labelSections(late).sections.length < 2) miss(`The bold labels in "${SCRIPT.late}"`, "Live can't offer a choice of how many times late; the whole script shows instead.");
+  const review = lib.script(SCRIPT.review);
+  if (review && !productsNamedIn(lib, review).length) miss(`A FIT page named in "${SCRIPT.review}"`, "Live can't carry a policy review into that product's Uncover and Bridge.");
+  return out;
 }

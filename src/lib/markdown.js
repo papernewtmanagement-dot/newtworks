@@ -372,6 +372,14 @@ export function extractTransclusionMarkers(md) {
   return out;
 }
 
+// The shared excerpt one line embeds ([Embedded excerpt from: X]), or null.
+// Same marker rule as the expander above; the Live tab uses it to find where
+// a script sits inside a page.
+export function excerptMarkerTitle(line) {
+  const m = new RegExp(EXCERPT_LINE_RE.source).exec(String(line || ""));
+  return m ? String(m[1]).replace(/\\\*/g, "*").trim() : null;
+}
+
 // ─── Excerpt preprocessing ────────────────────────────────────
 // [Embedded excerpt from: X] markers are Confluence's named-excerpt-include
 // macro. Semantically identical to [Included from: X] (title lookup + inline
@@ -881,6 +889,14 @@ export const OPENER_MARK_RE = /^[ \t]*\*?\[Opener:\s*([^\]|\n]+?)\s*\|\s*([^\]\n
 const OPENER_END_RE = /^[ \t]*\*?\[Openers end\]\*?[ \t]*$/i;
 export const ENGAGED_MARK_RE = /^[ \t]*\*?\[Engaged:\s*(yes|no)\s*\]\*?[ \t]*$/i;
 export const ENGAGED_END_RE = /^[ \t]*\*?\[Engaged end\]\*?[ \t]*$/i;
+// The two ways an [Engaged: …] block can go, named once. The page's own picker
+// (Manual.jsx) and the Live tab's question both read these, so the manual and
+// the Live tab always call them the same thing. `mark` is the marker's word.
+export const ENGAGED_TITLE = "How the call is going";
+export const ENGAGED_CHOICES = [
+  { value: "notime", mark: "no", label: "No time" },
+  { value: "engaged", mark: "yes", label: "Engaged" },
+];
 // Any section of the page can be tied to the choices at the top:
 //   [Engaged: yes] / [Engaged: no] … [Engaged end]
 //   [Mode: pivot] / [Mode: outbound] … [Mode end]

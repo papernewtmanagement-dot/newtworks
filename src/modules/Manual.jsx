@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "rea
 import { createPortal } from "react-dom";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
-import { fetchExcerptRows, fetchFaqRows } from "../lib/manualSources.js";
+import { fetchExcerptRows, fetchFaqRows, fetchManualPages, ADMIN_ROLES } from "../lib/manualSources.js";
 
 // ============================================================
 // NEWTWORKS MANUAL MODULE v1.0
@@ -36,6 +36,8 @@ import { fillLiveFormulas } from "../lib/liveFormulas.js";
 import { usesPractice, loadPractice, fillPractice } from "../lib/practiceCards.js";
 import { kickoffToday, pickCycleValue } from "../lib/kickoff.js";
 import CommitPicker, { CommitLine } from "../components/CommitPicker.jsx";
+import LiveSourceWarning from "../components/LiveSourceWarning.jsx";
+import { makeScriptLibrary, liveSourceProblems, canSeeLive } from "../lib/liveCall.js";
 
 // ─── Per-manual configuration ─────────────────────────────────
 // Every manual_type has one entry. To add a new manual:
@@ -124,6 +126,8 @@ import {
   buildFaqLookup,
   makeFaqResolver,
   extractTransclusionMarkers,
+  ENGAGED_CHOICES,
+  ENGAGED_TITLE,
 } from "../lib/markdown.js";
 
 // ─── Build tree from flat rows ────────────────────────────────
@@ -371,65 +375,9 @@ function GlossaryList({ manualType, parentId }) {
 
 
 // ─── Team-visibility gate ─────────────────────────────────────
-// Admin users see every row; non-admin users see rows only up to and
-// including the first root with divider_after=true. Everything after
-// that root (in the sorted root list) plus all their descendants is
-// filtered out. Root ordering matches buildTree's comparator so this
-// aligns with what the sidebar would render.
-const ADMIN_ROLES = ["owner", "admin"];
-
-function filterBelowDivider(rows, userRole) {
-  if (!Array.isArray(rows) || rows.length === 0) return rows || [];
-  if (ADMIN_ROLES.includes(userRole)) return rows;
-
-  const byId = new Map(rows.map((r) => [r.confluence_page_id, r]));
-  const roots = rows.filter(
-    (r) => !r.parent_page_id || !byId.has(r.parent_page_id),
-  );
-
-  const cmp = (a, b) => {
-    const ao = a?.sort_order;
-    const bo = b?.sort_order;
-    const aNull = ao == null;
-    const bNull = bo == null;
-    if (aNull && !bNull) return 1;
-    if (!aNull && bNull) return -1;
-    if (!aNull && !bNull && ao !== bo) return ao - bo;
-    return (a?.title || "").localeCompare(b?.title || "");
-  };
-  const sortedRoots = [...roots].sort(cmp);
-
-  const dividerIdx = sortedRoots.findIndex((r) => r?.divider_after);
-  if (dividerIdx === -1) return rows;
-
-  const belowLineRootIds = new Set(
-    sortedRoots.slice(dividerIdx + 1).map((r) => r.confluence_page_id),
-  );
-  if (belowLineRootIds.size === 0) return rows;
-
-  const childrenByParent = new Map();
-  for (const r of rows) {
-    if (!r.parent_page_id) continue;
-    if (!childrenByParent.has(r.parent_page_id)) {
-      childrenByParent.set(r.parent_page_id, []);
-    }
-    childrenByParent.get(r.parent_page_id).push(r.confluence_page_id);
-  }
-  const hiddenIds = new Set(belowLineRootIds);
-  const queue = [...belowLineRootIds];
-  while (queue.length) {
-    const pid = queue.shift();
-    const kids = childrenByParent.get(pid) || [];
-    for (const kid of kids) {
-      if (!hiddenIds.has(kid)) {
-        hiddenIds.add(kid);
-        queue.push(kid);
-      }
-    }
-  }
-
-  return rows.filter((r) => !hiddenIds.has(r.confluence_page_id));
-}
+// Who sees which pages (the divider rule, filterBelowDivider) lives with
+// the loader in src/lib/manualSources.js, so the Live tab applies the
+// same rule to the scripts it plays.
 
 // ─── Module ───────────────────────────────────────────────────
 export default function Manual({ manualType, userRole }) {
@@ -498,23 +446,14 @@ export default function Manual({ manualType, userRole }) {
           if (!cancelled) { setError("Supabase client not initialized."); setRows([]); }
           return;
         }
-        const { data, error: qErr } = await supabase
-          .from("manuals")
-          .select("id, title, content, content_format, source_url, confluence_page_id, parent_page_id, sort_order, version, is_active, icon, divider_after, fetched_at, updated_at")
-          .eq("agency_id", AGENCY_ID)
-          .eq("manual_type", manualType)
-          .eq("is_active", true);
+        // The same loader the Live tab reads scripts through (manualSources.js).
+        const list = await fetchManualPages(manualType, userRole);
         if (cancelled) return;
-        if (qErr) { setError(qErr.message); setRows([]); }
-        else {
-          const raw = Array.isArray(data) ? data : [];
-          const list = filterBelowDivider(raw, userRole);
-          setRows(list);
-          // Default selection: root (no parent), or first row if no root
-          // Default selection deferred to the auto-default useEffect below,
-          // which fires once rows are loaded AND selectedId is still null.
-          // This avoids stomping the URL-derived initial selectedId.
-        }
+        setRows(list);
+        // Default selection: root (no parent), or first row if no root
+        // Default selection deferred to the auto-default useEffect below,
+        // which fires once rows are loaded AND selectedId is still null.
+        // This avoids stomping the URL-derived initial selectedId.
       } catch (e) {
         if (!cancelled) { setError(e?.message || `Failed to load ${cfg.emptyLabel}.`); setRows([]); }
       } finally {
@@ -1174,10 +1113,11 @@ function ScriptPicker({ groups, hasEngaged, opener, openerMode, engaged, onOpene
             value={engaged}
             onChange={(e) => onEngaged(e.target.value)}
             style={selStyle}
-            title="How the call is going"
+            title={ENGAGED_TITLE}
           >
-            <option value="notime">No time</option>
-            <option value="engaged">Engaged</option>
+            {ENGAGED_CHOICES.map((c) => (
+              <option key={c.value} value={c.value}>{c.label}</option>
+            ))}
           </select>
         )}
       </div>
@@ -1768,6 +1708,14 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     () => makeFaqResolver(buildFaqLookup(faqRows || [])),
     [faqRows]
   );
+  // The Live tab plays this manual's scripts and nothing else (Peter
+  // 2026-10-04: one source, no drift). When an edit here breaks something it
+  // hooks into, the warning sits at the top of every Processes page, for
+  // whoever can see the Live tab. Same check the Live tab runs.
+  const liveProblems = useMemo(() => {
+    if (manualType !== "processes" || !canSeeLive(userRole) || !(excerptRows || []).length) return [];
+    return liveSourceProblems(makeScriptLibrary({ pages: allRows || [], excerpts: excerptRows, faqs: [] }));
+  }, [manualType, userRole, allRows, excerptRows]);
   // markTransclusions only turned on for admins actively viewing (not
   // editing raw markdown) — the pencil buttons it injects are an edit
   // affordance, not something a non-admin or the raw editor should see.
@@ -2096,6 +2044,10 @@ What I\'d like to discuss:
             {mode === "edit" ? `Editing v${page?.version ?? "—"} → v${(page?.version || 0) + 1}` : "New child page"}
           </div>
         </div>
+      )}
+
+      {liveProblems.length > 0 && (
+        <div style={{ marginBottom: 12 }}><LiveSourceWarning problems={liveProblems} where="manual" /></div>
       )}
 
       {/* Content */}

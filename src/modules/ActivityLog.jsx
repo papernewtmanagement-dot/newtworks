@@ -20,8 +20,10 @@ import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 import DeweyOwe from "../components/DeweyOwe.jsx";
 import { noPwManager } from "../lib/forms.js";
 import { CARD_PARTS, SCORE_MEANING } from "../lib/fitParts.js";
-import { makeScriptLibrary, buildCall, stackTables, FIT_PAGE_ID } from "../lib/liveCall.js";
-import { fetchExcerptRows, fetchFaqRows, fetchScriptPages } from "../lib/manualSources.js";
+import { makeScriptLibrary, buildCall, stackTables, FIT_PAGE_ID, canSeeLive, liveSourceProblems } from "../lib/liveCall.js";
+import { fetchExcerptRows, fetchFaqRows, fetchManualPages } from "../lib/manualSources.js";
+import { RELATIONSHIPS, REVIEW_SITES, relationshipLabel, reviewSiteLabel } from "../lib/logChoices.js";
+import LiveSourceWarning from "../components/LiveSourceWarning.jsx";
 
 // ============================================================
 // ActivityLog — the Production module (nav label "Production", route
@@ -104,11 +106,7 @@ const PRODUCTS = [
 const PRODUCT_LABEL = Object.fromEntries(PRODUCTS.map(p => [p.key, p.label]));
 const PRODUCT_SHORT = Object.fromEntries(PRODUCTS.map(p => [p.key, p.short]));
 const SERVICE_PREFIX = "service_task";
-const RELATIONSHIPS = [
-  { key: "new",      label: "New" },
-  { key: "existing", label: "Existing" },
-  { key: "winback",  label: "Winback" },
-];
+// RELATIONSHIPS and REVIEW_SITES are the Log's own choices, in src/lib/logChoices.js.
 // Peter 2026-10-03: a policy review names the policy reviewed (line, and type where
 // the line has types); a pivot names the line it pivoted to.
 const LINE_REQUIRED = { policy_review: "type", pivot: "line" };
@@ -622,8 +620,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const cardAvg = cardChosen ? CARD_PARTS.reduce((s, pt) => s + (scores[pt.key] != null ? Number(scores[pt.key]) : 0), 0) / cardChosen : null;   // x averages as 0
 
   // ---- what is in the entry right now ----
-  // Peter 2026-09-19: an Online Review has to say where it landed.
-  const REVIEW_SITES = [{ key: "google", label: "Google" }, { key: "facebook", label: "Facebook" }, { key: "yelp", label: "Yelp" }];
+  // Peter 2026-09-19: an Online Review has to say where it landed (REVIEW_SITES, src/lib/logChoices.js).
   const needsSite = (key) => !!(values || []).find(v => v.activity_key === key)?.requires_platform;
   const hasSave = activities.some(a => a.key === "cancelation_saved");
   const hasReview = activities.some(a => a.key === "policy_review");
@@ -2060,7 +2057,6 @@ const RECORD_KINDS = [
 const SALE_SELECT = "id, team_member_id, created_at, can_change:rp_sale_can_change, can_edit:rp_sale_edit_ok, can_note:rp_sale_can_note, submitted_date, week_end_date, customer_label, customer_first_name, customer_last_initial, customer_kind, phone_last4, household_status, marketing_source, vehicle_count, total_premium, note, ecrm_opportunity_url, on_file_answer, entry_source, sales_log_products(id, line_of_business, product_type, premium, policy_count, vehicle_count, is_new_line, is_added_to_existing, issued_date, issued_premium, autopay_enrolled, can_reissue:rp_issue_change_ok, can_autopay:rp_autopay_ok)";
 const APPT_SELECT = "id, team_member_id, created_at, can_change:rp_appt_can_change, can_mark:rp_appt_mark_ok, can_note:rp_appt_can_note, escalated_to_team_member_id, set_on, week_end_date, kept_on, no_show_on, sold_on, customer_label, customer_first_name, customer_last_initial, customer_kind, phone_last4, line_of_business, product_type, starts_at, duration_minutes, is_video, meet_url, calendar_error, note, ecrm_url";
 const ACT_SELECT = "id, team_member_id, created_at, can_change:rp_act_can_change, can_note:rp_act_can_note, activity_key, occurred_on, customer_label, customer_first_name, customer_last_initial, customer_kind, phone_last4, note, points, source, policy_line, product_type, premium, credit_available_on, ecrm_url";
-const relLabel = (k) => k === "new" ? "New" : k === "winback" ? "Winback" : "Existing";
 const onFileLabel = (k) => k === "replaces" ? "replaced old policy" : k === "added" ? "added to on-file" : "different household";
 const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000);
 const smallInput = { fontSize: 13, padding: "5px 7px", borderRadius: 7, border: `1px solid ${T.slate200}`, boxSizing: "border-box" };
@@ -2276,7 +2272,7 @@ function RecordsPanel({ scope, weekEnd, title, blurb, values, sources, types, ro
                     </td>
                     <td style={tableTd}><CustomerName label={r.customer_label} phone4={r.phone_last4} />{r.phone_last4 ? <div style={{ fontSize: 11, color: T.slate400 }}>·{r.phone_last4}</div> : null}</td>
                     <td style={tableTd}>
-                      {relLabel(r.household_status)}
+                      {relationshipLabel(r.household_status)}
                       {r.on_file_answer && <div style={{ fontSize: 11, color: T.amber }}>{onFileLabel(r.on_file_answer)}</div>}
                     </td>
                     <td style={tableTd}>
@@ -4429,8 +4425,14 @@ function ChecklistTab() {
 //
 // Pick Inbound or Outbound, say who's on the line, and the script shows only
 // the next thing to say or the next choice to make, never the whole page.
-// Every word comes from the Processes manual (FIT Conversations and Retention)
-// through src/lib/liveCall.js, so a script edited there changes here too.
+// Every word and every list of call types comes from the Processes manual
+// (FIT Conversations and Retention), loaded through the manual's own loader
+// and read by src/lib/liveCall.js, so a script edited there changes here too.
+// The manual is the one source; nothing is copied (Peter 2026-10-04). If an
+// edit to the manual breaks something the walker hooks into, the tab and the
+// Processes pages both name it.
+//
+// Only Peter sees this tab until he says it is finished (canSeeLive).
 //
 // While the call runs it records, without anyone picking from a list:
 //   * a Pivot, with its line, the moment a service call pivots to a product
@@ -4454,7 +4456,6 @@ const LIVE_TAB_CSS = `
 const LIVE_STORE = (uid) => `nw.live.v1.${uid || "me"}`;
 const LIVE_MODE_STORE = "nw.live.mode";
 const MODES = [["inbound", "Inbound"], ["outbound", "Outbound"]];
-const REVIEW_SITE_LABEL = { google: "Google", facebook: "Facebook", yelp: "Yelp" };
 function readStore(key) { try { return window.localStorage.getItem(key); } catch { return null; } }
 function writeStore(key, v) {
   try { if (v == null) window.localStorage.removeItem(key); else window.localStorage.setItem(key, v); } catch { /* storage off: the call just isn't kept */ }
@@ -4469,21 +4470,25 @@ function loadCall(uid) {
 }
 function liveCallOpen(uid) { const s = loadCall(uid); return !!(s && s.started && !s.logged); }
 
-// Everything the walker reads, loaded once each time the tab opens.
-function useScriptLibrary() {
+// Everything the walker reads, loaded once each time the tab opens, through
+// the same loader the Processes manual uses, with the same who-sees-what rule.
+// The Daily Kickoff is skipped: a third of a megabyte no call script pulls from.
+function useScriptLibrary(userRole) {
   const [lib, setLib] = useState(null);
   const [err, setErr] = useState("");
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const [pages, excerpts, faqs] = await Promise.all([fetchScriptPages(), fetchExcerptRows(), fetchFaqRows().catch(() => [])]);
+        const [pages, excerpts, faqs] = await Promise.all([
+          fetchManualPages("processes", userRole, { skip: ["daily-kickoff"] }), fetchExcerptRows(), fetchFaqRows().catch(() => [])]);
         if (alive) setLib(makeScriptLibrary({ pages, excerpts, faqs }));
       } catch (e) { if (alive) setErr(errText(e)); }
     })();
     return () => { alive = false; };
-  }, []);
-  return { lib, err };
+  }, [userRole]);
+  const problems = useMemo(() => (lib ? liveSourceProblems(lib) : []), [lib]);
+  return { lib, err, problems };
 }
 
 // A script step as HTML: the manual's own renderer, tables stacked on a phone,
@@ -4525,7 +4530,7 @@ function liveRecorded(rec, values, types) {
   const label = (k) => ((values || []).find(v => v.activity_key === k) || {}).label || k;
   for (const a of rec.activities || []) {
     if (a.key === "pivot") out.push(`Pivot to ${PRODUCT_LABEL[a.line] || a.line}`);
-    else if (a.key === "google_review") out.push(`${label(a.key)} · ${REVIEW_SITE_LABEL[a.site] || a.site}`);
+    else if (a.key === "google_review") out.push(`${label(a.key)} · ${reviewSiteLabel(a.site)}`);
     else if (a.key === "policy_review") out.push(`${label(a.key)} · ${PRODUCT_LABEL[a.line] || a.line}`);
     else out.push(label(a.key));
   }
@@ -4581,9 +4586,16 @@ function LiveNode({ node, lib, isPhone, inCall, onPick, onProduct }) {
         <div style={{ fontSize: 17, fontWeight: 800, color: T.slate900, marginBottom: node.note ? 4 : 12 }}>{node.title}</div>
         {node.note && <div style={{ fontSize: 13, color: T.slate500, marginBottom: 12 }}>{node.note}</div>}
         {node.many ? (
-          <select style={{ ...inputBase, maxWidth: 360 }} value={node.pick || ""} onChange={e => e.target.value && onPick(e.target.value)}>
+          <select style={{ ...inputBase, maxWidth: 560 }} value={node.pick || ""} onChange={e => e.target.value && onPick(e.target.value)}>
             <option value="">Pick one</option>
-            {node.options.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+            {/* Options that share a group (the manual's own heading for them) sit under it. */}
+            {node.options.reduce((runs, o) => {
+              const last = runs[runs.length - 1];
+              if (o.group && last && last.group === o.group) last.items.push(o); else runs.push({ group: o.group || "", items: [o] });
+              return runs;
+            }, []).map((run, i) => (run.group
+              ? <optgroup key={`g${i}`} label={run.group}>{run.items.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}</optgroup>
+              : run.items.map(o => <option key={o.key} value={o.key}>{o.label}</option>)))}
           </select>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8 }}>
@@ -4597,12 +4609,21 @@ function LiveNode({ node, lib, isPhone, inCall, onPick, onProduct }) {
       </div>
     );
   }
+  // A script the walker needs is gone from the manual: say so here, and let
+  // the call carry on.
+  if (node.kind === "missing") {
+    return (
+      <div style={{ padding: "12px 16px", borderRadius: 10, border: `1px solid ${T.amber}`, background: T.amberLt, color: T.slate800, fontSize: 14, lineHeight: 1.5 }}>
+        ⚠️ <strong>{node.what}</strong> isn't in the Processes manual right now, so this step has no script. The rest of the call carries on.
+      </div>
+    );
+  }
   return (
     <div>
       <div className="newtworks-handbook-body" onClick={click} dangerouslySetInnerHTML={{ __html: html }} />
       {moreHtml && (
         <details className="nw-live-more" style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${T.slate100}` }}>
-          <summary>More from FIT Conversations</summary>
+          <summary>More from {node.moreFrom || "the FIT page"}</summary>
           <div className="newtworks-handbook-body" style={{ marginTop: 10 }} dangerouslySetInnerHTML={{ __html: moreHtml }} />
         </details>
       )}
@@ -4678,10 +4699,10 @@ function LiveTag({ part, scores, onScore, rec, lib, values, types, partsIn, onJu
   );
 }
 
-function LiveTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, onLogged, refreshKey, userId }) {
+function LiveTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, onLogged, refreshKey, userId, userRole }) {
   const vp = useViewport();
   const narrow = vp.isPhone || vp.isTablet;
-  const { lib, err: libErr } = useScriptLibrary();
+  const { lib, err: libErr, problems } = useScriptLibrary(userRole);
   const [st, setSt] = useState(() => loadCall(userId) || freshCall(readStore(LIVE_MODE_STORE)));
   useEffect(() => { writeStore(LIVE_STORE(userId), JSON.stringify(st)); }, [st, userId]);
   const built = useMemo(() => (lib && st.started ? buildCall(st, lib) : null), [lib, st]);
@@ -4689,6 +4710,8 @@ function LiveTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, n
   let pos = nodes.findIndex(n => n.id === st.at);
   if (pos < 0) pos = 0;
   const node = nodes[pos] || null;
+  // Next moves on from a step, from a gap where a script is missing, or from a choice already made.
+  const canNext = !!node && (node.kind === "step" || node.kind === "missing" || node.pick != null);
   const rec = built ? built.rec : null;
   const [justLogged, setJustLogged] = useState(false);
   const [finishKey, setFinishKey] = useState(0);
@@ -4746,7 +4769,7 @@ function LiveTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, n
     if (!st.started || st.finishing || !node || node.kind === "finish") return undefined;
     const onKey = (e) => {
       if (e.target?.closest?.("input, textarea, select, [contenteditable]")) return;
-      if (e.key === "ArrowRight" && (node.kind === "step" || node.pick != null)) { e.preventDefault(); next(); }
+      if (e.key === "ArrowRight" && canNext) { e.preventDefault(); next(); }
       if (e.key === "ArrowLeft") { e.preventDefault(); back(); }
     };
     window.addEventListener("keydown", onKey);
@@ -4766,6 +4789,7 @@ function LiveTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, n
     return (
       <div className="nw-live" style={{ display: "grid", gap: 16 }}>
         {modeBar}
+        <LiveSourceWarning problems={problems} />
         {st.plain && !st.at
           ? <LogTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={onLogged} refreshKey={refreshKey} />
           : <LiveStart who={st.who} resuming={!!st.at}
@@ -4801,6 +4825,7 @@ function LiveTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, n
       <ManualBodyStyles />
       <style>{LIVE_CSS}</style>
       {modeBar}
+      <LiveSourceWarning problems={problems} />
       <div style={{ ...cardStyle, padding: "10px 14px", display: "flex", flexWrap: "wrap", gap: "6px 14px", alignItems: "center" }}>
         <span style={{ fontWeight: 800, color: T.slate900 }}>{label}</span>
         <span style={{ fontSize: 13, color: T.slate500 }}>·{who.phone}{who.age ? ` · ${who.age}` : ""}{who.gender ? ` · ${who.gender === "male" ? "Male" : "Female"}` : ""}</span>
@@ -4850,7 +4875,7 @@ function LiveTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, n
             <LiveNode node={node} lib={lib} isPhone={vp.isPhone} inCall={inCall} onPick={(k) => pick(node.id, k)} onProduct={(id, href) => addProduct(id, href)} />
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginTop: 20 }}>
               <button type="button" style={{ ...btnGhost, padding: "9px 14px", fontSize: 13, opacity: pos === 0 ? 0.4 : 1 }} disabled={pos === 0} onClick={back}>‹ Back</button>
-              {(node.kind === "step" || node.pick != null) && <button type="button" style={btnPrimary(false)} onClick={next}>Next ›</button>}
+              {canNext && <button type="button" style={btnPrimary(false)} onClick={next}>Next ›</button>}
             </div>
           </div>
           {!narrow && tag}
@@ -5241,7 +5266,7 @@ function CustomerAccount({ token, values, sources, types, isOwner, roster, onLog
 
           <div style={{ ...cardStyle, padding: 14, display: "grid", gap: 10 }}>
             <div style={{ fontSize: 13, color: T.slate600 }}>
-              {c.relationship ? relLabel(c.relationship) : "Not set"}
+              {c.relationship ? relationshipLabel(c.relationship) : "Not set"}
               {c.marketing_source ? ` · came from ${plain(c.marketing_source)}` : ""}
               {c.first_seen ? ` · first on file ${fmtDate(c.first_seen)}` : ""}
               {c.last_seen ? ` · last touched ${fmtDate(c.last_seen)}` : ""}
@@ -5424,7 +5449,10 @@ function HistoryGroup({ values, sources, types, isOwner, isAdmin, myTeamId, rost
 export default function ActivityLog({ userRole, userId }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
-  const [tab, setTab, tabHref] = useTabParam("tab", "log", [...TABS, "earnings", "history"]);
+  // The Live tab is Peter's alone until he says it is finished (2026-10-04): for
+  // anyone else it is not in the row, and a link to ?tab=live opens Log.
+  const liveOn = canSeeLive(userRole);
+  const [tab, setTab, tabHref] = useTabParam("tab", "log", [...TABS.filter(t => liveOn || t !== "live"), "earnings", "history"]);
   const [acct, setAcct] = useTabParam("acct", "");   // the customer account popup, open from any tab
   // Changes, Spot-check and Backfill live under History now (Peter 2026-09-25).
   // A link to one of the old tabs opens History on that sub-tab instead.
@@ -5501,14 +5529,14 @@ export default function ActivityLog({ userRole, userId }) {
 
   const bump = () => setRefreshKey(k => k + 1);
   // A call left open on the Live tab keeps a ring on its dot from any other tab.
-  const callOpen = tab !== "live" && liveCallOpen(userId);
+  const callOpen = liveOn && tab !== "live" && liveCallOpen(userId);
   // Peter 2026-09-15: the production run of tabs first — what you log, how it
   // scored, what it could earn, what is waiting, what changed, and the whole
   // record behind it. Then a divider, then everything else.
   // Peter 2026-10-04: Live sits first. It walks a call one step at a time and will
   // take over from Log; until then Log stays as it is.
   const tabs = [
-    { id: "live", label: "Live" },
+    ...(liveOn ? [{ id: "live", label: "Live" }] : []),
     { id: "log", label: "Log" },
     { id: "week", label: "Score" },
     { id: "earnings", label: "Earnings" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
@@ -5583,7 +5611,7 @@ export default function ActivityLog({ userRole, userId }) {
         ))}
       </div>
 
-      {tab === "live" && <LiveTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} userId={userId} />}
+      {tab === "live" && liveOn && <LiveTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} userId={userId} userRole={userRole} />}
       {tab === "log" && <LogTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "checklist" && <ChecklistTab />}
       {tab === "issued" && <IssuedTab values={values} sources={sources} types={types} roster={roster} nameOf={nameOf} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={bump} />}
