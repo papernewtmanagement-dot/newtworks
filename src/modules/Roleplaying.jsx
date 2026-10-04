@@ -844,7 +844,7 @@ function ObjectsTab({ onError }) {
 // grids inside them (v.detail: every cell of the grid one level down), so the world is the largest map.
 // The drawing has two styles (MAP_ART). From the world down to a district it is a fantasy map: an inked coast,
 // little trees, hills and peaks, and names written on the land. The battle grid is seen from above: grass, tree
-// trunks under their crowns, rocks, water. Every ground has one color at every level: the fantasy map paints it in
+// trunks under their crowns, rocks, water, and the roofs of houses (mapRoofs). Every ground has one color at every level: the fantasy map paints it in
 // the color the battle grid gives it, lightened toward the paper (mapWash), so open land is grassland on every grid
 // and never bare paper. The drawing is decoration only; what a cell is, and what it costs to enter, comes from the
 // function. The same cell always draws the same way (mapRand).
@@ -1678,6 +1678,78 @@ function mapTop(cols, rows, x0, y0, what, washes, show, hard, slope, cliff) {
   });
   return layers;
 }
+// The houses of a village, town or city seen from above (rpg_map_view: houses; step 8c), each a roof over its walls:
+// x, y = its middle and len, wide = its length and width, all in thousandths of a square from the grid's top-left
+// corner; ridge = the way its ridge runs. Thatch (a village) is hipped, its straw combed down the slopes; clay tiles (a
+// town or city) are gabled, laid in courses along the ridge. The sun is in the north-west, as for the trees: the slopes
+// that face it are lit, the house casts its shadow south-east, longer the higher its eaves (eaves, in metres). unit =
+// drawing units a square.
+const MAP_ROOFS = {
+  thatch: { lit: "#D9B972", dark: "#8C6C36", grain: "#6E5329", ridge: "#5F4622", edge: "#3E2E18" },
+  tile: { lit: "#C46C4B", dark: "#7C3826", grain: "#5E2A1B", ridge: "#4C2014", edge: "#36180F" },
+};
+function mapRoofs(houses, unit) {
+  const sink = {};
+  const add = (k, d) => { sink[k] = (sink[k] || "") + d; };
+  const sun = [-0.55, -0.83];
+  (Array.isArray(houses) ? houses : []).forEach((h, n) => {
+    const style = MAP_ROOFS[h.roof] ? h.roof : "tile";
+    const r = Array.isArray(h.ridge) ? h.ridge : [1000, 0];
+    const rl = Math.hypot(r[0], r[1]) || 1;
+    const ux = r[0] / rl, uy = r[1] / rl, vx = -uy, vy = ux;
+    const X = (Number(h.x) || 0) * unit / 1000, Y = (Number(h.y) || 0) * unit / 1000;
+    const hl = (Number(h.len) || 0) * unit / 2000, hw = (Number(h.wide) || 0) * unit / 2000;
+    if (!(hl > 0 && hw > 0)) return;
+    const pt = (a, b) => [X + a * ux + b * vx, Y + a * uy + b * vy];
+    const foot = [pt(-hl, -hw), pt(hl, -hw), pt(hl, hw), pt(-hl, hw)];
+    // the shadow, cast south-east: a twentieth of a square for every metre to the eaves
+    const k = unit * 0.05 * (Number(h.eaves) || 2.5);
+    add("shadow", mapPoly(foot.map(([x, y]) => [x + k * 0.55, y + k * 0.83])));
+    // the slopes: each lit by how squarely it faces the sun
+    const hip = style === "thatch" ? Math.max(hl - hw, 0) : hl;
+    const faces = style === "thatch"
+      ? [[[pt(-hip, 0), pt(hip, 0), pt(hl, hw), pt(-hl, hw)], [vx, vy]], [[pt(-hip, 0), pt(hip, 0), pt(hl, -hw), pt(-hl, -hw)], [-vx, -vy]],
+         [[pt(hip, 0), pt(hl, hw), pt(hl, -hw)], [ux, uy]], [[pt(-hip, 0), pt(-hl, hw), pt(-hl, -hw)], [-ux, -uy]]]
+      : [[[pt(-hl, 0), pt(hl, 0), pt(hl, hw), pt(-hl, hw)], [vx, vy]], [[pt(-hl, 0), pt(hl, 0), pt(hl, -hw), pt(-hl, -hw)], [-vx, -vy]]];
+    // the two long slopes always differ, so a roof whose ridge runs toward the sun still reads as a roof: the one that
+    // faces more west is the lit one
+    faces.forEach(([poly, [nx, ny]], f) => {
+      let d = nx * sun[0] + ny * sun[1];
+      if (f < 2 && Math.abs(d) < 0.5) d = (Math.abs(d) > 1e-6 ? Math.sign(d) : nx <= 0 ? 1 : -1) * 0.5;
+      add(`${style}:${Math.round((d + 1) * 2)}`, mapPoly(poly));
+    });
+    // the grain: straw down each long slope, or courses of tiles along it with their joints
+    const rnd = (q) => mapRand(12, Math.round(X), Math.round(Y), q + n);
+    if (style === "thatch") {
+      const step = unit * 0.14;
+      for (const side of [1, -1]) for (let a = -hip + step / 2; a < hip; a += step) {
+        const j = (rnd(Math.round(a)) - 0.5) * step * 0.6;
+        add(`${style}:grain`, mapLine([pt(a + j, side * hw * 0.12), pt(a + j, side * hw * 0.94)]));
+      }
+    } else {
+      const step = unit * 0.22, joint = unit * 0.3;
+      for (const side of [1, -1]) for (let b = step; b < hw; b += step) {
+        add(`${style}:grain`, mapLine([pt(-hl, side * b), pt(hl, side * b)]));
+        const shift = (Math.round(b / step) % 2) * joint / 2;
+        for (let a = -hl + joint / 2 + shift; a < hl; a += joint) add(`${style}:grain`, mapLine([pt(a, side * b), pt(a, side * Math.max(b - step, 0))]));
+      }
+    }
+    // the ridge and, on a hipped roof, the hips down to the corners; the eaves round the edge
+    add(`${style}:ridge`, mapLine([pt(-hip, 0), pt(hip, 0)]));
+    if (style === "thatch") [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(([a, b]) => add(`${style}:ridge`, mapLine([pt(a * hip, 0), pt(a * hl, b * hw)])));
+    add(`${style}:edge`, mapPoly(foot));
+  });
+  const out = [];
+  if (sink.shadow) out.push({ d: sink.shadow, fill: "#000000", o: 0.22 });
+  Object.keys(MAP_ROOFS).forEach(s => {
+    const c = MAP_ROOFS[s];
+    for (let t = 0; t <= 4; t++) if (sink[`${s}:${t}`]) out.push({ d: sink[`${s}:${t}`], fill: mapMix(c.dark, c.lit, t / 4) });
+    if (sink[`${s}:grain`]) out.push({ d: sink[`${s}:grain`], line: c.grain, w: 0.7, o: 0.45 });
+    if (sink[`${s}:ridge`]) out.push({ d: sink[`${s}:ridge`], line: c.ridge, w: 1.8, o: 0.9 });
+    if (sink[`${s}:edge`]) out.push({ d: sink[`${s}:edge`], line: c.edge, w: 1.1, o: 0.85 });
+  });
+  return out;
+}
 // The battle grid: every square seen from above, with a light wash of each place's color and the lines of the grid.
 function mapBattle(v, byId) {
   const cols = Number(v.cols) || 12, rows = Number(v.rows) || 12;
@@ -1708,6 +1780,8 @@ function mapBattle(v, byId) {
   }
   if (!slope && cells.some(c => c.kind === "mountains" || c.kind === "hills")) { const t = mapRand(7, m ? Number(m[2]) : 0, m ? Number(m[3]) : 0, 800) * 2 * Math.PI; slope = { ux: Math.cos(t), uy: Math.sin(t) }; }
   const layers = mapTop(cols, rows, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0, (i, j) => get(i, j).what, washes, false, (i, j) => get(i, j).h, slope, (i, j) => (inGrid(i, j) ? get(i, j).cliff : null));
+  // the houses stand on the ground (step 8c)
+  layers.push(...mapRoofs(v.houses, 100));
   const fog = mapFog(cols, rows, 100, (i, j) => get(i, j).what === "unknown", 0.3, cols, rows, 7, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0);
   return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat([{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }], fog), names: [], blocks: [] };
 }
@@ -1792,6 +1866,8 @@ function MapArt({ art, px }) {
 function MapSwatch({ what, color, size = 24, top }) {
   const layers = useMemo(() => {
     if (what === "unknown") return mapFog(1, 1, 100, () => true, 0, 1, 1, 0, 3, 5);
+    // a house seen from above (step 8c), on a village street
+    if (what === "house") return mapTop(1, 1, 3, 5, () => "village", [], true).concat(mapRoofs([{ x: 470, y: 470, ridge: [1000, 0], len: 840, wide: 500, roof: "thatch", eaves: 1.2 }], 100));
     if (top) return mapTop(1, 1, 3, 5, () => (MAP_ART.top[what] ? what : "plain"), color ? [{ d: "M0 0H100V100H0Z", fill: color, o: 0.14 }] : [], true);
     const out = [{ d: "M0 0H100V100H0Z", fill: mapWash(what) }];
     if (color) out.push({ d: "M0 0H100V100H0Z", fill: color, o: 0.3 });
@@ -2058,7 +2134,11 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
     const marks = (Array.isArray(c.marks) ? c.marks : []).map(id => byId[id]).filter(Boolean);
     if (p) drawn.add(p.id);
     marks.forEach(k => drawn.add(k.id));
-    const title = `${c.name} · ${p ? [p.name, p.ground].filter(Boolean).join(" · ") : ground(c.kind)}${c.cost != null ? ` · this ${top ? "square" : "cell"}: +${c.cost}% time a square` : ""}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
+    // a square a house stands on (step 8c): its wall or roof, climbed (climb: part, metres, degrees, difficulty)
+    const climb = Array.isArray(c.climb)
+      ? (c.climb[0] === "wall" ? `the wall of a house, ${c.climb[1]} m up, climbed (Climbing against ${c.climb[3]})` : `a ${c.climb[2]}-degree roof, ${c.climb[1]} m up a square, climbed (Climbing against ${c.climb[3]})`)
+      : null;
+    const title = `${c.name} · ${climb ? `${climb} · ` : ""}${p ? [p.name, p.ground].filter(Boolean).join(" · ") : ground(c.kind)}${c.cost != null ? ` · this ${top ? "square" : "cell"}: +${c.cost}% time a square` : ""}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
     const style = { aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, boxSizing: "border-box", position: "relative", display: "block", cursor: c.open || onCell ? "pointer" : "default" };
     grid.push(onCell
       ? <button key={c.name} type="button" onClick={() => onCell(c)} title={title} aria-label={title} className="rpg-map-cell" style={{ ...style, background: "none", border: "none" }} />
@@ -2134,6 +2214,11 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
           </span>
         ))}
         {townKinds.length > 0 && townKinds[0].ground && <span>Their streets and yards: {townKinds[0].ground}.</span>}
+        {Array.isArray(v.houses) && v.houses.length > 0 && (
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <MapSwatch what="house" size={20} />Houses: their walls and roofs are climbed (see Climbing); a walk goes round them.
+          </span>
+        )}
         {ways.map(r => (
           <span key={r.k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <MapSwatch what={"way" + r.k} size={20} />{r.name}
