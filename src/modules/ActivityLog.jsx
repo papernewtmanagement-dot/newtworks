@@ -3486,6 +3486,15 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
       rows.push(<div key="lh0"><NoteLine>No life or health issued this quarter.</NoteLine></div>);
     }
 
+    // Life, all in (Peter 2026-10-04): its own rate plus what it added to the P&C rate,
+    // and what the next life step pays. Read straight off the board.
+    const lf = s.life || {};
+    if (lf.next_step_pay != null) {
+      rows.push(<div key="lf"><Divider /><HeadLine label="Life, all in" value={fmtPts(lf.pay)} /></div>);
+      if (n(lf.premium)) rows.push(<div key="lf1"><NoteLine>{`${lf.pct}% of ${fmtMoney(lf.premium)} life: ${fmtMoney(lf.own)} at the life rate + ${fmtMoney(lf.bump)} it added to your P&C rate`}</NoteLine></div>);
+      rows.push(<div key="lf2"><NoteLine>{`Next $${lf.step_dollars ?? 200} of life pays ${fmtMoney(lf.next_step_pay)} today, and adds ${ratePct(rt.pc_step_pct)} to your rate on every auto and fire dollar you write the rest of the quarter.`}</NoteLine></div>);
+    }
+
     rows.push(<div key="qtd"><Divider /><HeadLine label="Quarter to date" value={fmtPts(s.qtd_points)} /></div>);
     return rows;
   };
@@ -3530,7 +3539,7 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
           renderItems={quoteItems} open={open.q} onToggle={toggle("q")} />}
         <ScoreCard title="Sales Points" total={fmtWk(team.sales)} note="Counted the week a policy issues." people={people}
           rankOf={p => Number(p.sales?.points || 0)} valueOf={p => fmtWk(p.sales?.points)}
-          subOf={p => `${fmtPts(p.sales?.qtd_points)} this quarter`}
+          subOf={p => `${fmtPts(p.sales?.qtd_points)} this quarter${p.sales?.life?.next_step_pay != null ? ` \u00b7 next $${p.sales.life.step_dollars ?? 200} of life: +${fmtMoney(p.sales.life.next_step_pay)} so far` : ""}`}
           renderItems={salesSummary} open={open.s} onToggle={toggle("s")} />
         {show.retention && <ScoreCard title="Retention Points" total={fmtWk(team.retention_net)} note="Net, after the team missed-call reduction." people={people}
           rankOf={p => Number(p.retention?.net || 0)} valueOf={p => fmtWk(p.retention?.net)}
