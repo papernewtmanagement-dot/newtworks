@@ -10532,11 +10532,14 @@ async function processOneReferenceMessage(
 //      0059 and 0061).
 //   4. Idempotency: skip if reference_number PAYPAL-INV-<n> already exists
 //      in ledger.
-//   5. Resolve the PaperNewt Print Sales income account (code 4300 on
-//      entity b1111111) and insert ONE ledger row crediting it — this
-//      agency's ledger is single-entry per transaction (see
-//      statement_gl_writer output), not double-entry; there is no
-//      offsetting "cash" leg to write here.
+//   5. Resolve the PaperNewt accounts and insert up to three ledger rows
+//      (single-entry per leg, like statement_gl_writer — no cash leg):
+//        - 4300 Print Sales, credit = amount paid MINUS the invoice's
+//          "Sales Tax (x%)" line. Sales tax is never income.
+//        - 2050 Sales Tax Payable (PaperNewt), credit = that tax line.
+//          Owed to the Texas Comptroller; cleared by the annual return.
+//        - 6940 Bank Fees & Charges, debit = "Fee/tax collected by PayPal".
+//      (Peter 2026-10-03: "handle PaperNewt sales tax the correct way".)
 //   6. Best-effort, non-fatal: save the notification's HTML body to the
 //      Print Sales Drive folder.
 //   7. Label Operations/Print Sales + archive (strip INBOX/UNREAD) — ONLY
@@ -10559,6 +10562,8 @@ const PAYPAL_LABEL_ID = "Label_33"; // Gmail label "Operations/Print Sales" (pap
 const PRINTSALES_DRIVE_FOLDER_ID = "1YUlKCgCVgKy0jEWH0sRnCbdjp6Zo-oyl"; // Drive: Operations/Print Sales
 const PAPERNEWT_ENTITY_ID = "b1111111-1111-1111-1111-111111111111";
 const PRINT_SALES_ACCOUNT_CODE = "4300"; // "Print Sales" (shared_concept code), display-named "PaperNewt Print Sales" for this entity
+const SALES_TAX_PAYABLE_CODE = "2050"; // PaperNewt "Sales Tax Payable" (liability) — tax collected is owed, not earned
+const BANK_FEES_CODE = "6940"; // PaperNewt "Bank Fees & Charges" — PayPal's fee on each payment
 
 export interface PaypalCtx {
   agencyId: string;
@@ -10655,7 +10660,8 @@ async function processOnePaypalMessage(ctx: PaypalCtx, messageId: string): Promi
 
   const bodyText = ppExtractBestBody(msg, "text/plain");
   const bodyHtml = ppExtractBestBody(msg, "text/html");
-  const combined = `${subject}\n${bodyText}`;
+  const htmlAsText = bodyHtml.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
+  const combined = `${subject}\n${bodyText}\n${htmlAsText}`;
 
   if (!/paid for your invoice/i.test(combined)) {
     await ppLabelAndArchive(ctx, messageId);
@@ -10671,6 +10677,16 @@ async function processOnePaypalMessage(ctx: PaypalCtx, messageId: string): Promi
     combined.match(/\$([\d,]+\.\d{2})\s*USD\s*payment/i) ||
     combined.match(/Amount paid\D*\$([\d,]+\.\d{2})/i);
   const amount = amtMatch ? parseFloat(amtMatch[1].replace(/,/g, "")) : null;
+
+  // "Sales Tax (8.25%)   $37.13 USD" and "Fee/tax collected by PayPal   $15.06 USD"
+  const money = (re: RegExp): number => {
+    const m = combined.match(re);
+    return m ? parseFloat(m[1].replace(/,/g, "")) : 0;
+  };
+  const salesTax = money(/Sales\s+Tax[^$\n]*\$([\d,]+\.\d{2})/i);
+  const paypalFee = money(/Fee\/tax\s+collected\s+by\s+PayPal\D*\$([\d,]+\.\d{2})/i);
+  const txnMatch = combined.match(/Transaction\s+ID\s*([0-9A-Z]{12,20})/i);
+  const transactionId = txnMatch ? txnMatch[1] : null;
 
   // "Matt Friess paid for your invoice" (subject)
   const payerMatch = subject.match(/^(?:Fwd:\s*)?(.+?)\s+paid for your invoice/i);
@@ -10688,43 +10704,86 @@ async function processOnePaypalMessage(ctx: PaypalCtx, messageId: string): Promi
 
   const referenceNumber = `PAYPAL-INV-${invoiceNumber}`;
 
-  const { data: existing } = await sb.from("ledger").select("id").eq("reference_number", referenceNumber).maybeSingle();
+  // Already booked either by this parser (PAYPAL-INV-n) or by hand from a
+  // PayPal paid-invoice statement (PAYPAL-TXN-<transaction id>).
+  const refsToCheck = [referenceNumber, ...(transactionId ? [`PAYPAL-TXN-${transactionId}`] : [])];
+  const { data: existingRows } = await sb.from("ledger").select("id").in("reference_number", refsToCheck).limit(1);
+  const existing = existingRows && existingRows.length > 0;
   if (existing) {
     await ppLabelAndArchive(ctx, messageId);
     return { status: "skipped", message_id: messageId, invoice_number: invoiceNumber, amount, reference_number: referenceNumber, error: "already booked" };
   }
 
-  const { data: acct, error: acctErr } = await sb
+  const { data: accts, error: acctErr } = await sb
     .from("chart_of_accounts")
-    .select("id")
+    .select("id, account_code")
     .eq("agency_id", ctx.agencyId)
-    .eq("account_code", PRINT_SALES_ACCOUNT_CODE)
     .eq("business_entity_id", PAPERNEWT_ENTITY_ID)
-    .maybeSingle();
-  if (acctErr || !acct) {
+    .eq("is_active", true)
+    .in("account_code", [PRINT_SALES_ACCOUNT_CODE, SALES_TAX_PAYABLE_CODE, BANK_FEES_CODE]);
+  const acctId = (code: string) => (accts ?? []).find((a: any) => a.account_code === code)?.id ?? null;
+  const salesAcctId = acctId(PRINT_SALES_ACCOUNT_CODE);
+  const taxAcctId = acctId(SALES_TAX_PAYABLE_CODE);
+  const feeAcctId = acctId(BANK_FEES_CODE);
+  if (acctErr || !salesAcctId || (salesTax > 0 && !taxAcctId) || (paypalFee > 0 && !feeAcctId)) {
     return {
       status: "error", message_id: messageId, invoice_number: invoiceNumber, amount, reference_number: referenceNumber,
-      error: `Print Sales account (code ${PRINT_SALES_ACCOUNT_CODE}) not found on PaperNewt entity`,
+      error: `PaperNewt account missing (need ${PRINT_SALES_ACCOUNT_CODE}${salesTax > 0 ? ", " + SALES_TAX_PAYABLE_CODE : ""}${paypalFee > 0 ? ", " + BANK_FEES_CODE : ""})`,
+    };
+  }
+  if (salesTax >= amount) {
+    return {
+      status: "error", message_id: messageId, invoice_number: invoiceNumber, amount, reference_number: referenceNumber,
+      error: `sales tax ${salesTax} is not less than amount paid ${amount}`,
     };
   }
 
   const entryDate = receivedAtISO.slice(0, 10);
   const description = `PayPal print sale — invoice #${invoiceNumber} — ${payerFirst}${payerLastInitial ? " " + payerLastInitial + "." : ""}`.trim();
 
-  const { error: insErr } = await sb.from("ledger").insert({
+  const nowIso = new Date().toISOString();
+  const base = {
     agency_id: ctx.agencyId,
-    account_id: acct.id,
-    debit: 0,
-    credit: amount,
     entry_date: entryDate,
     entry_type: "manual",
     source: "paypal_print_sales",
-    reference_number: referenceNumber,
-    description,
     classification_status: "classified",
     classified_by: "document-processor:paypal_print_sales",
-    classified_at: new Date().toISOString(),
-  });
+    classified_at: nowIso,
+  };
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const rows: any[] = [{
+    ...base,
+    account_id: salesAcctId,
+    debit: 0,
+    credit: round2(amount - salesTax),
+    reference_number: referenceNumber,
+    description,
+    memo: salesTax > 0 ? `Net of $${salesTax.toFixed(2)} sales tax (booked to ${SALES_TAX_PAYABLE_CODE}).` : null,
+  }];
+  if (salesTax > 0) {
+    rows.push({
+      ...base,
+      account_id: taxAcctId,
+      debit: 0,
+      credit: salesTax,
+      reference_number: `PAYPAL-TAX-INV-${invoiceNumber}`,
+      description: description.replace("PayPal print sale", "Sales tax collected on print sale"),
+      memo: "Sales Tax line on the paid PayPal invoice; owed to the Texas Comptroller.",
+    });
+  }
+  if (paypalFee > 0) {
+    rows.push({
+      ...base,
+      account_id: feeAcctId,
+      debit: paypalFee,
+      credit: 0,
+      reference_number: `PAYPAL-FEE-${transactionId ?? "INV-" + invoiceNumber}`,
+      description: description.replace("PayPal print sale", "PayPal fee on print sale"),
+      memo: "Fee/tax collected by PayPal on this payment.",
+    });
+  }
+  const { error: insErr } = await sb.from("ledger").insert(rows);
   if (insErr) {
     return {
       status: "error", message_id: messageId, invoice_number: invoiceNumber, amount, reference_number: referenceNumber,
