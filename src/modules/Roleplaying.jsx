@@ -1236,11 +1236,15 @@ function mapFantasy(v, byId) {
     const marks = detail.marks && typeof detail.marks === "object" ? detail.marks : {};
     // how hard each square is inside its ground, one digit a square (detail.hard; - for none)
     const hard = Array.isArray(detail.hard) ? detail.hard : [];
-    // the rivers drawn as lines, one digit a square (detail.rivers; 0 for none)
+    // the rivers drawn as lines, one digit a square (detail.rivers; 0 for none), and where in the square the river's
+    // line runs (detail.river_x, river_y: 0 the west or north edge to 9 the east or south edge)
     const rivers = Array.isArray(detail.rivers) ? detail.rivers : [];
-    detail.cells.forEach((row, j) => { for (let i = 0; i < C; i++) { const code = String(row || "").charCodeAt(i); const mk = marks[i + "," + j]; const hd = String(hard[j] || "").charAt(i); const rv = Number(String(rivers[j] || "").charAt(i)) || 0; grid[j * C + i] = { ...(kinds[code] ? { k: kinds[code] } : { k: "place", id: (detail.places || [])[code - 256] }), marks: Array.isArray(mk) ? mk : [], h: hd >= "0" && hd <= "9" ? Number(hd) : null, rv }; } });
+    const rxs = Array.isArray(detail.river_x) ? detail.river_x : [], rys = Array.isArray(detail.river_y) ? detail.river_y : [];
+    const at9 = (list, i, j) => (Number(String(list[j] || "").charAt(i)) || 0) / 9 - 0.5;
+    detail.cells.forEach((row, j) => { for (let i = 0; i < C; i++) { const code = String(row || "").charCodeAt(i); const mk = marks[i + "," + j]; const hd = String(hard[j] || "").charAt(i); const rv = Number(String(rivers[j] || "").charAt(i)) || 0; grid[j * C + i] = { ...(kinds[code] ? { k: kinds[code] } : { k: "place", id: (detail.places || [])[code - 256] }), marks: Array.isArray(mk) ? mk : [], h: hd >= "0" && hd <= "9" ? Number(hd) : null, rv, rx: rv ? at9(rxs, i, j) : 0, ry: rv ? at9(rys, i, j) : 0 }; } });
   } else {
-    cells.forEach(c => { grid[(c.y - 1) * C + (c.x - 1)] = { k: c.kind, id: c.place || null, marks: Array.isArray(c.marks) ? c.marks : [], h: c.hard == null ? null : Number(c.hard), rv: Number(c.river) || 0 }; });
+    // a cell's river: [its size, where its line runs from the cell's middle in thousandths of a cell, east, south]
+    cells.forEach(c => { const r = Array.isArray(c.river) ? c.river : null; grid[(c.y - 1) * C + (c.x - 1)] = { k: c.kind, id: c.place || null, marks: Array.isArray(c.marks) ? c.marks : [], h: c.hard == null ? null : Number(c.hard), rv: r ? Number(r[0]) || 0 : 0, rx: r ? (Number(r[1]) || 0) / 1000 : 0, ry: r ? (Number(r[2]) || 0) / 1000 : 0 }; });
   }
   const none = { k: "sea" };
   const get = (i, j) => grid[(j < 0 ? 0 : j >= R ? R - 1 : j) * C + (wrap ? ((i % C) + C) % C : (i < 0 ? 0 : i >= C ? C - 1 : i))] || none;
@@ -1261,20 +1265,30 @@ function mapFantasy(v, byId) {
   // water darker blue
   layers.push(...mapHardShade(C, R, (i, j) => (mapWet(get(i, j).k) ? null : get(i, j).h), unit, 0.45));
   layers.push(...mapHardShade(C, R, (i, j) => (mapWet(get(i, j).k) ? get(i, j).h : null), unit, 0.45, "#123A5A"));
-  // rivers too narrow for this grid's cells: a line from cell to cell along them, thinner for smaller rivers; a
-  // diagonal step only where no straight one joins the two
+  // rivers too narrow for this grid's cells: a line through the point of each cell where the river truly runs, so it
+  // lies where the next zoom shows it; thinner for smaller rivers; a diagonal step only where no straight one joins the
+  // two and never across a corner of sea; a scrap of fewer than three cells that does not run off the grid is left out
   const runs = {};
   const flow = (i, j) => (i >= 0 && j >= 0 && i < C && j < R && grid[j * C + i] && grid[j * C + i].rv > 0 ? grid[j * C + i].rv : 0);
+  const wet = (i, j) => { const k = get(i, j).k; return k === "sea" || k === "unknown"; };
+  const pt = (i, j) => { const g = grid[j * C + i]; return [(i + 0.5 + g.rx) * unit, (j + 0.5 + g.ry) * unit]; };
+  const links = (i, j) => {
+    const to = [[1, 0], [0, 1], [-1, 0], [0, -1]].filter(([a, b]) => flow(i + a, j + b));
+    [[1, 1], [-1, 1], [1, -1], [-1, -1]].forEach(([a, b]) => { if (flow(i + a, j + b) && !flow(i + a, j) && !flow(i, j + b) && !wet(i + a, j) && !wet(i, j + b)) to.push([a, b]); });
+    return to;
+  };
+  const seen = new Set(), keep = new Set();
+  for (let j = 0; j < R; j++) for (let i = 0; i < C; i++) {
+    if (!flow(i, j) || seen.has(j * C + i)) continue;
+    const part = [], todo = [[i, j]];
+    seen.add(j * C + i);
+    while (todo.length) { const [a, b] = todo.pop(); part.push([a, b]); links(a, b).forEach(([da, db]) => { const n = (b + db) * C + a + da; if (!seen.has(n)) { seen.add(n); todo.push([a + da, b + db]); } }); }
+    if (part.length >= 3 || part.some(([a, b]) => a === 0 || b === 0 || a === C - 1 || b === R - 1)) part.forEach(([a, b]) => keep.add(b * C + a));
+  }
   for (let j = 0; j < R; j++) for (let i = 0; i < C; i++) {
     const k = flow(i, j);
-    if (!k) continue;
-    const cx = (i + 0.5) * unit, cy = (j + 0.5) * unit;
-    const to = [[1, 0], [0, 1]].filter(([a, b]) => flow(i + a, j + b));
-    if (flow(i + 1, j + 1) && !flow(i + 1, j) && !flow(i, j + 1)) to.push([1, 1]);
-    if (flow(i - 1, j + 1) && !flow(i - 1, j) && !flow(i, j + 1)) to.push([-1, 1]);
-    const alone = !to.length && ![[-1, 0], [0, -1], [-1, -1], [1, -1]].some(([a, b]) => flow(i + a, j + b));
-    to.forEach(([a, b]) => { const w = Math.max(k, flow(i + a, j + b)); runs[w] = (runs[w] || "") + mapLine([[cx, cy], [cx + a * unit, cy + b * unit]]); });
-    if (alone) runs[k] = (runs[k] || "") + mapLine([[cx - unit * 0.3, cy], [cx + unit * 0.3, cy]]);
+    if (!k || !keep.has(j * C + i)) continue;
+    links(i, j).filter(([a, b]) => b > 0 || (b === 0 && a > 0)).forEach(([a, b]) => { const w = Math.max(k, flow(i + a, j + b)); runs[w] = (runs[w] || "") + mapLine([pt(i, j), pt(i + a, j + b)]); });
   }
   Object.keys(runs).sort().reverse().forEach(k => layers.push({ d: runs[k], line: MAP_RIVER, w: MAP_RIVER_W[k] || 1 }));
   layers.push({ d: land, line: MAP_INK, w: 1.25 });
