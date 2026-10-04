@@ -30,7 +30,7 @@ import InfoDot from "../components/InfoDot.jsx";
 import {
   Card, Pill, Button, fieldLabel, inputBase, trackHeadStyle,
   CATEGORY_COLORS, STAGE_LABELS, STATUS_COLORS,
-  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, formIdOf, FormPopupProvider, ItemInfo, AfterText, asksForReply, InstructionsModal,
+  subGroups, subProgress, trackColumns, wrapLongText, LabelText, GroupHead, tickingFormOf, FormPopupProvider, ItemInfo, AfterText, asksForReply, InstructionsModal,
   splitIndent, columnStyle, bannerStyle, dayColumns, dayColumnsStyle, fmtDate, setStepDone, setSubstepDone, ORIENTATION_KIND,
   isNewCurriculum, newCurriculumCard,
 } from "../lib/onboardingUi.jsx";
@@ -575,8 +575,8 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                     ? altGroups.filter(a => a.altFor === label).flatMap(a => a.items)
                                     : [label]).map((label, ix) => {
                                     const sd = subsDone.includes(label);
-                                    // A line that links to a site form ticks itself.
-                                    const byForm = !!formIdOf(label);
+                                    // A line that links to a form they fill in ticks itself.
+                                    const byForm = !!tickingFormOf(label);
                                     // leading spaces nest the line under the one above
                                     const { level, text: shown } = splitIndent(label);
                                     const instr = instructions[shown];
@@ -1181,7 +1181,7 @@ export default function Onboarding({ userRole, userId }) {
   // A reply line (What's one takeaway?) passes what was typed as answer.
   // Returns the error message, or null.
   const handleToggleSubstep = async (step, label, answer = null) => {
-    if (formIdOf(label)) return null; // follows the form, not a click
+    if (tickingFormOf(label)) return null; // follows the form, not a click
     setActionError("");
     const cur = Array.isArray(step.substeps_done) ? step.substeps_done : [];
     const { error: err } = await setSubstepDone(step, label, !cur.includes(label), userId, answer);

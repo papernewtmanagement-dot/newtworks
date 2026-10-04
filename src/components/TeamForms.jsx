@@ -24,7 +24,9 @@ import { useTabParam } from "../lib/routing.jsx";
 // Exported so the onboarding template can link each form without keeping a
 // second list of them.
 export const FORMS = [
-  { id: "login_packet", label: "Login Packet",
+  // Read-only: the new hire reads it and follows along. Nothing is submitted,
+  // so it stays off the list below and opens from its line on the Login card.
+  { id: "login_packet", label: "Login Packet", readOnly: true,
     blurb: "Your State Farm sign-in details and first-day setup steps." },
   { id: "combined_onboarding", label: "Onboarding",
     blurb: "Your details, your story, and payroll setup." },
@@ -155,7 +157,7 @@ const RANKABLE = [
 ];
 const EMPTY_BANK = { bank_name: "", routing_number: "", account_number: "", account_type: "checking", percent: "" };
 
-function CombinedForm({ data, setData, secure, setSecure }) {
+function CombinedForm({ data, setData, secure, setSecure, needs = {} }) {
   const set = (k) => (v) => setData({ ...data, [k]: v });
   const banks = secure.banks && secure.banks.length ? secure.banks : [{ ...EMPTY_BANK }];
   const setBank = (i, k, v) => {
@@ -167,6 +169,11 @@ function CombinedForm({ data, setData, secure, setSecure }) {
     <div>
       <Section title="About you">
         <Grid>
+          {needs.birthday && (
+            <Field label="Date of birth">
+              <Text type="date" value={secure.dob} onChange={v => setSecure({ ...secure, dob: v })} />
+            </Field>
+          )}
           <Field label="Where were you born and raised?">
             <Text value={data.born_raised} onChange={set("born_raised")} />
           </Field>
@@ -240,6 +247,13 @@ function CombinedForm({ data, setData, secure, setSecure }) {
 
       <Section title="Payroll"
         note="This goes straight into SurePayroll and is then destroyed. It is never shown back to you, and nobody but Peter and a manager can read it.">
+        {needs.ssn && (
+          <Grid min={220}>
+            <Field label="Social Security number">
+              <Text value={secure.ssn} onChange={v => setSecure({ ...secure, ssn: v })} />
+            </Field>
+          </Grid>
+        )}
         {banks.map((b, i) => (
           <div key={i} style={{
             marginTop: 16, padding: 14, border: `1px solid ${T.slate200}`,
@@ -491,7 +505,8 @@ function I9EmployerSection({ data, setData, canEdit, locked }) {
 // (sf_alias and the sf_* packet columns). Admins type them in at the top;
 // the new hire sees them filled in. Team rows are readable only by admins and
 // the person themselves, so nobody else sees the password or the pass. The
-// template preview shows the blanks.
+// template preview shows the blanks. Nothing here is submitted: the new hire
+// reads it and follows along.
 
 const PACKET_COLS = "first_name, last_name, sf_alias, sf_registration_number, sf_initial_password, sf_mfa_temp_pass, sf_mfa_temp_pass_from, sf_mfa_temp_pass_until";
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
@@ -552,7 +567,7 @@ function PacketLink({ href }) {
   );
 }
 
-function LoginPacketForm({ teamId, isAdmin, preview, data, setData }) {
+function LoginPacketForm({ teamId, isAdmin, preview }) {
   const [rec, setRec] = useState(null);
   const [draft, setDraft] = useState(packetDraft(null));
   const [loading, setLoading] = useState(!preview);
@@ -730,12 +745,6 @@ function LoginPacketForm({ teamId, isAdmin, preview, data, setData }) {
           </li>
         </ol>
       </div>
-
-      <div style={{ marginTop: 16 }}>
-        <Check checked={data.done} onChange={x => setData({ ...data, done: x })}>
-          I completed all steps on this page.
-        </Check>
-      </div>
     </div>
   );
 }
@@ -854,14 +863,15 @@ function W4Form({ data, setData }) {
   );
 }
 
-function readyToSubmit(formType, data, secure) {
-  if (formType === "login_packet") return !!data.done;
+function readyToSubmit(formType, data, secure, needs = {}) {
   if (formType === "non_compete" || formType === "handbook_ack") return !!data.agreed;
   if (formType === "i9") return !!data.attested && !!data.signature && !!data.status;
   if (formType === "w4") return !!data.filing_status;
   if (formType === "combined_onboarding") {
     return !!data.why_statement &&
-      (secure.banks || []).some(b => b.bank_name && b.account_number && b.routing_number);
+      (secure.banks || []).some(b => b.bank_name && b.account_number && b.routing_number) &&
+      (!needs.ssn || String(secure.ssn || "").replace(/[^0-9]/g, "").length === 9) &&
+      (!needs.birthday || !!secure.dob);
   }
   return false;
 }
@@ -869,13 +879,35 @@ function readyToSubmit(formType, data, secure) {
 function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBack, backLabel = "Back to forms", preview = false }) {
   const [data, setData] = useState(submission?.data || {});
   const [employer, setEmployer] = useState(submission?.employer_section || {});
-  const [secure, setSecure] = useState({ ssn: "", banks: [{ ...EMPTY_BANK }] });
+  const [secure, setSecure] = useState({ ssn: "", dob: "", banks: [{ ...EMPTY_BANK }] });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   // The template page shows a blank preview: nothing loaded, nothing saved.
   const locked = !preview && !!submission?.locked_at;
+  // A read-only form (the login packet) is read and followed, never submitted.
+  const readOnly = !!form.readOnly;
   const doc = form.id === "non_compete" ? docs.non_compete
             : form.id === "handbook_ack" ? docs.handbook : null;
+
+  // The offer form is where the Social Security number and birthday are asked.
+  // Someone hired without it gets those two boxes on the Onboarding form, and
+  // only while they are missing.
+  const [needs, setNeeds] = useState({ ssn: false, birthday: false });
+  useEffect(() => {
+    let alive = true;
+    if (preview || locked || form.id !== "combined_onboarding" || !supabase || !teamId) {
+      return () => { alive = false; };
+    }
+    (async () => {
+      const [{ data: onFile }, { data: row }] = await Promise.all([
+        supabase.rpc("onboarding_ssn_on_file", { p_team_id: teamId }),
+        supabase.from("team").select("date_of_birth").eq("id", teamId).maybeSingle(),
+      ]);
+      if (!alive) return;
+      setNeeds({ ssn: onFile === false, birthday: !!row && !row.date_of_birth });
+    })();
+    return () => { alive = false; };
+  }, [form.id, teamId, preview, locked]);
 
   const save = async (submit) => {
     if (!supabase) return;
@@ -919,6 +951,19 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
       // database (save_onboarding_secure) so the hire can write it without
       // being able to read the table, and it reuses a number already on file.
       if (lockLast && saved) {
+        // A birthday asked here goes on the team record, where everything reads it.
+        if (needs.birthday && secure.dob) {
+          const { data: dobRows, error: de } = await supabase
+            .from("team")
+            .update({ date_of_birth: secure.dob })
+            .eq("id", teamId)
+            .eq("agency_id", AGENCY_ID)
+            .select("id");
+          if (de) throw de;
+          if (!dobRows || dobRows.length === 0) {
+            throw new Error("Your birthday did not save. Press Submit again.");
+          }
+        }
         const { error: se } = await supabase.rpc("save_onboarding_secure", {
           p_submission_id: saved.id,
           p_ssn: secure.ssn || null,
@@ -955,7 +1000,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
 
   const canSubmit = form.id === "i9" && isAdmin && submission?.employee_submitted_at
     ? !!employer.attested
-    : readyToSubmit(form.id, data, secure);
+    : readyToSubmit(form.id, data, secure, needs);
 
   return (
     <div>
@@ -983,7 +1028,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
         </div>
       )}
 
-      {preview && (
+      {preview && !readOnly && (
         <div style={{
           marginTop: 12, padding: "10px 14px", background: T.blueLt, color: T.slate700,
           borderRadius: 8, fontSize: 13, boxSizing: "border-box",
@@ -994,9 +1039,9 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
 
       <div style={locked && form.id !== "i9" ? { pointerEvents: "none", opacity: 0.65 } : null}>
         {form.id === "login_packet" &&
-          <LoginPacketForm teamId={teamId} isAdmin={isAdmin} preview={preview} data={data} setData={setData} />}
+          <LoginPacketForm teamId={teamId} isAdmin={isAdmin} preview={preview} />}
         {form.id === "combined_onboarding" &&
-          <CombinedForm data={data} setData={setData} secure={secure} setSecure={setSecure} />}
+          <CombinedForm data={data} setData={setData} secure={secure} setSecure={setSecure} needs={needs} />}
         {form.id === "w4" && <W4Form data={data} setData={setData} />}
         {form.id === "non_compete" && <NonCompeteForm doc={doc} data={data} setData={setData} />}
         {form.id === "handbook_ack" && <HandbookForm doc={doc} data={data} setData={setData} />}
@@ -1016,7 +1061,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
         }}>{err}</div>
       )}
 
-      {!locked && !preview && (
+      {!locked && !preview && !readOnly && (
         <div style={{ marginTop: 24, display: "flex", gap: 10, flexWrap: "wrap" }}>
           <Button onClick={() => save(true)} disabled={busy || !canSubmit}>
             {busy ? "Saving..." : "Submit"}
@@ -1026,7 +1071,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
           )}
         </div>
       )}
-      {!locked && !canSubmit && (
+      {!locked && !canSubmit && !readOnly && (
         <div style={{ fontSize: 12, color: T.slate500, marginTop: 10 }}>
           Fill in everything above to submit.
         </div>
@@ -1164,8 +1209,8 @@ export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, em
             {FORMS.map(f => {
               const r = rows.find(x => x.form_type === f.id) || {};
               const s = r.state || "action_needed";
-              // The login packet only matters while someone is onboarding.
-              if (f.id === "login_packet" && s === "waived") return null;
+              // Read-only forms open from their onboarding line, not from here.
+              if (f.readOnly) return null;
               return (
                 <div key={f.id} style={{
                   display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap",

@@ -16,7 +16,7 @@ import { supabase, AGENCY_ID } from "./supabase.js";
 import InfoDot from "../components/InfoDot.jsx";
 import { mdToHtml, withRoleplayBlocks } from "./markdown.js";
 import { wireRoleplayPickers } from "./roleplayPickers.js";
-import TeamForms from "../components/TeamForms.jsx";
+import TeamForms, { FORMS } from "../components/TeamForms.jsx";
 
 // A link to a site form opens that form in a pop-up over the page instead of
 // leaving it. FormPopupProvider supplies the opener; LabelText uses it.
@@ -443,11 +443,21 @@ export const inputBase = {
   outline: "none",
 };
 
-// A sub-item that links to a site form (…?form=<id>) ticks itself when that
-// form is done. Mirrors onboarding_substep_form_id() in the database.
+// The site form a sub-item links to (…?form=<id>). Clicking the link opens it.
 export function formIdOf(label) {
   const m = /[?&]form=([a-z0-9_]+)/.exec(String(label || ""));
   return m ? m[1] : null;
+}
+
+// Forms that are only read, like the login packet. Their line opens the form
+// and is ticked by hand.
+const READ_ONLY_FORMS = new Set(FORMS.filter(f => f.readOnly).map(f => f.id));
+
+// The form whose status ticks this sub-item: the line ticks itself when that
+// form is done. Mirrors onboarding_substep_form_id() in the database.
+export function tickingFormOf(label) {
+  const id = formIdOf(label);
+  return id && !READ_ONLY_FORMS.has(id) ? id : null;
 }
 
 // ─── sub-item text ───────────────────────────────────
