@@ -33,25 +33,18 @@ export function createDancer(seed = 1) {
   };
 }
 
-// Air in the tube: the blower's steady push, plus puffs, plus flutter. Real tube
-// dancers keep losing air out the top, so pressure wobbles on its own and the
-// tube folds over and pops back up even in steady wind.
-// What the blower and puffs are pushing in right now.
-function airIn(d) {
-  return Math.max(0, Math.min(1.15, d.base + d.surge + (d.flutter || 0)));
-}
-// What is actually in the tube. It fills fast (about a tenth of a second) and
-// leaks out through the fabric and the top, quickly when full and more slowly as
-// it empties. Tapping once a bar, he bends to about a right angle by the fourth
-// beat and only reaches the ground if you wait a couple of beats longer.
+// Air in the tube: the blower's steady push plus puffs. 2026-10-04: back to the
+// first build's motion, eased a little looser (softer tube, more ripple, puffs
+// last longer). Tapping once a bar at 92 a minute he bends to about a right
+// angle by the fourth beat and doesn't reach the ground until about the eighth.
 export function pressure(d) {
-  return d.air ?? airIn(d);
+  return Math.max(0, Math.min(1.15, d.base + d.surge));
 }
 
 // A puff of air. strength 0..1.5; dir -1 / 1 picks the side it whips toward (0 = random).
 export function puff(d, strength = 1, dir = 0) {
   const side = dir || (d.rnd() < 0.5 ? -1 : 1);
-  d.surge = Math.min(0.95, d.surge + 0.68 * strength);
+  d.surge = Math.min(0.95, d.surge + 0.75 * strength);
   for (let i = 0; i < N; i++) {
     const wave = Math.sin((i / N) * Math.PI * 1.5 + d.rnd());
     d.om[i] += strength * (side * (1.2 + (i / N) * 2.5) * wave + (d.rnd() - 0.5) * 1.5);
@@ -64,20 +57,12 @@ export function stepDancer(d, dt) {
   const sub = 4, h = dt / sub;
   for (let k = 0; k < sub; k++) {
     d.t += h;
-    d.surge *= Math.exp(-h * 2.9);
-    // slow, uneven air loss: two drifting waves plus the odd sudden gulp
-    d.flutter = 0.12 * Math.sin(d.t * 1.7 + d.phA[0]) * Math.sin(d.t * 0.63 + d.phB[0]) - (d.gulp || 0);
-    if (d.gulp) d.gulp = Math.max(0, d.gulp - h * 0.8);
-    else if (d.rnd() < h * 0.15) d.gulp = 0.15 + d.rnd() * 0.2;
-    const want = airIn(d);
-    if (d.air === undefined) d.air = want;
-    d.air += (want - d.air) * (1 - Math.exp(-h / (want > d.air ? 0.1 : 0.25 + 1.5 * Math.max(0, 1 - d.air))));
-    const P = d.air;
-    const stiff = 2 + 16 * P + 34 * P * P;
-    // the emptier the tube, the more the fabric drags, so the last part of a fall is slow
-    const damp = 8.2 + 4.5 * P + 60 * Math.pow(Math.max(0, 1 - P), 5);
-    const grav = 48 * Math.pow(Math.max(0, 1 - P), 1.7);
-    const gust = 2.2 + 3 * Math.min(1, P);
+    d.surge *= Math.exp(-h * 1.35);
+    const P = pressure(d);
+    const stiff = 3 + 66 * P * P;
+    const damp = 2.5 + 5 * P;
+    const grav = 34 * Math.pow(Math.max(0, 1 - P), 2);
+    const gust = 2.6 + 3.2 * Math.min(1, P);
     // heights of each point, in segment lengths above the blower top
     let phi = 0, ht = 0;
     const phis = d._phis || (d._phis = new Float64Array(N));
@@ -90,7 +75,7 @@ export function stepDancer(d, dt) {
       const above = (N - i) / N;
       // air rushing up the tube: a ripple travelling upward
       const turb = gust * (Math.sin(d.t * 3.1 - i * 0.55 + d.phA[i]) + 0.6 * Math.sin(d.t * 5.3 - i * 0.9 + d.phB[i])) * (0.4 + 0.6 * (i / N));
-      let tq = -stiff * (1.25 - 0.5 * i / N) * d.th[i] - damp * d.om[i] + grav * above * Math.sin(phi) + turb + floorPush[i];
+      let tq = -stiff * d.th[i] - damp * d.om[i] + grav * above * Math.sin(phi) + turb + floorPush[i];
       if (i < 3) tq += 18 * P * (d.lean * 0.35 - phi) * (i === 0 ? 1 : 0.5);
       d.om[i] += tq * h;
     }

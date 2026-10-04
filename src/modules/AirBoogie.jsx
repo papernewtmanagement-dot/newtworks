@@ -314,7 +314,7 @@ export default function AirBoogie() {
           }
         }
         r.missCheck = now - MISS_AFTER;
-        d.base = r.mode === "watch" ? 0.36 + 0.24 * Math.min(1, r.loudNow || 0) : 0.2;
+        d.base = r.mode === "watch" ? 0.36 + 0.24 * Math.min(1, r.loudNow || 0) : 0.37;
       } else {
         d.base = 0.5;
         if (Math.random() < dt * 0.5) puff(d, 0.4, 0);
