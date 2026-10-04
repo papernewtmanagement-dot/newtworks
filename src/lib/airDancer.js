@@ -36,8 +36,15 @@ export function createDancer(seed = 1) {
 // Air in the tube: the blower's steady push, plus puffs, plus flutter. Real tube
 // dancers keep losing air out the top, so pressure wobbles on its own and the
 // tube folds over and pops back up even in steady wind.
-export function pressure(d) {
+// What the blower and puffs are pushing in right now.
+function airIn(d) {
   return Math.max(0, Math.min(1.15, d.base + d.surge + (d.flutter || 0)));
+}
+// What is actually in the tube. It fills fast (about a tenth of a second) but
+// leaks out slowly through the fabric and the top (about two-thirds of a second),
+// so the dancer holds his height between beats and sags gradually.
+export function pressure(d) {
+  return d.air ?? airIn(d);
 }
 
 // A puff of air. strength 0..1.5; dir -1 / 1 picks the side it whips toward (0 = random).
@@ -61,7 +68,10 @@ export function stepDancer(d, dt) {
     d.flutter = 0.12 * Math.sin(d.t * 1.7 + d.phA[0]) * Math.sin(d.t * 0.63 + d.phB[0]) - (d.gulp || 0);
     if (d.gulp) d.gulp = Math.max(0, d.gulp - h * 0.8);
     else if (d.rnd() < h * 0.15) d.gulp = 0.15 + d.rnd() * 0.2;
-    const P = pressure(d);
+    const want = airIn(d);
+    if (d.air === undefined) d.air = want;
+    d.air += (want - d.air) * (1 - Math.exp(-h / (want > d.air ? 0.1 : 0.65)));
+    const P = d.air;
     const stiff = 2.3 + 58 * P * P;
     const damp = 2.2 + 4.5 * P;
     const grav = 40 * Math.pow(Math.max(0, 1 - P), 1.7);
