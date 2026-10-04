@@ -310,7 +310,7 @@ export function textToSubsteps(text) {
 // each time work moves on to the next week. One place decides it for the
 // template and for every plan. T.blue is the sage primary, not a blue, so
 // this uses the real blue from the Great band.
-const TINT_FROM_WEEK = 24;
+const TINT_FROM_WEEK = 25;
 export const isNewCurriculum = (key) => {
   if (typeof key !== "string" || !key.startsWith("cur_")) return false;
   const week = /_w(\d+)_/.exec(key);
