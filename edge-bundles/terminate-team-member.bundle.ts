@@ -324,7 +324,10 @@ async function requireCallerRole(
 //      tab, public.termination_checklist).
 //   2. Composes an HTML notification email with identity, contact (incl. physical
 //      address), SF identifiers (alias + ext), and the verbatim AAO checklist
-//      pre-filled with name/alias/extension.
+//      pre-filled with name/alias/extension. State Farm's System Access/
+//      Termination link leads the email, and the reply hands the same link back
+//      so the site opens it in a new tab (Peter 2026-10-04). SF_TERMINATION_URL
+//      below is the one place that address is kept.
 //   3. Updates team: archived_at, end_date, is_active=false, termination_reason,
 //      final_paycheck_date.
 //   4. Deactivates the linked users row if present.
@@ -357,6 +360,11 @@ async function requireCallerRole(
 const AGENCY_ID = "126794dd-25ff-47d2-a436-724499733365";
 const COMPOSIO_GMAIL_URL = "https://backend.composio.dev/api/v3/tools/execute/GMAIL_SEND_EMAIL";
 const NOTICE_RECIPIENT = "peter.story.yrru@statefarm.com";
+// State Farm's System Access/Termination page, where their access is taken
+// away. Same State Farm tool as the Request Access link on onboarding, its own
+// address. The path is printed too in case the link ever moves.
+const SF_TERMINATION_URL = "https://app.asp.ic1.statefarm/system-access-termination";
+const SF_TERMINATION_PATH = "ABS → Manage the Business → Team Management → State Farm System Access/Termination";
 
 // Every reply carries the CORS headers. The site calls this from the browser,
 // and without them the browser throws the reply away.
@@ -522,6 +530,12 @@ Deno.serve(async (req: Request) => {
 
 <h2 style="color:#a00;margin:0 0 4px 0;font-size:22px;">Team Member Termination</h2>
 <p style="color:#666;margin:0 0 24px 0;font-size:13px;">Termination notice for <strong>${htmlEscape(fullName)}</strong> — effective ${htmlEscape(fmtDate(body.termination_date))}.</p>
+
+<div style="background:#fff5f5;border:1px solid #f1c4c4;border-radius:6px;padding:14px 16px;margin:0 0 24px 0;">
+<p style="margin:0 0 10px 0;font-size:14px;font-weight:700;color:#a00;">Take away their State Farm system access</p>
+<p style="margin:0 0 10px 0;"><a href="${SF_TERMINATION_URL}" style="display:inline-block;background:#a00;color:#ffffff;text-decoration:none;font-weight:600;font-size:13px;padding:9px 16px;border-radius:5px;">Open State Farm System Access/Termination</a></p>
+<p style="margin:0;font-size:12px;color:#666;line-height:1.55;">Alias: <strong>${htmlEscape(aliasFill)}</strong><br>Link: <a href="${SF_TERMINATION_URL}" style="color:#0b5394;">${SF_TERMINATION_URL}</a><br>Or go to ${htmlEscape(SF_TERMINATION_PATH)}</p>
+</div>
 
 <h3 style="border-bottom:2px solid #a00;padding-bottom:4px;font-size:14px;margin-top:0;">Identity</h3>
 <table cellpadding="6" style="border-collapse:collapse;width:100%;font-size:13px;">
@@ -763,6 +777,8 @@ Sent by the Newtworks on ${new Date().toLocaleString("en-US", { timeZone: "Ameri
       email_sent: emailSent,
       telegram_kicked: telegramKicked,
       calendar_removed: calendarRemoved,
+      // The site opens this in a new tab once the termination is through.
+      sf_termination_url: SF_TERMINATION_URL,
       audit_log: auditLog,
       warnings,
     });

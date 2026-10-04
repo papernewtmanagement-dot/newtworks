@@ -511,9 +511,11 @@ function I9EmployerSection({ data, setData, canEdit, locked }) {
 // that differ for each person, from his Fill in Login Packet Info card. They
 // live on the team record (sf_alias and the sf_* packet columns), which only
 // admins and the person themselves can read, so nobody else sees the password
-// or the pass. The template preview shows the blanks.
+// or the pass. The template preview shows the blanks. Former State Farm and
+// fully remote hires get no packet: Peter ticks No packet for this hire
+// (sf_no_login_packet), which checks his line off the same way.
 
-const PACKET_COLS = "first_name, last_name, sf_alias, sf_registration_number, sf_initial_password, sf_mfa_temp_pass, sf_mfa_temp_pass_from, sf_mfa_temp_pass_until";
+const PACKET_COLS = "first_name, last_name, sf_alias, sf_registration_number, sf_initial_password, sf_mfa_temp_pass, sf_mfa_temp_pass_from, sf_mfa_temp_pass_until, sf_no_login_packet";
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 
 // "10/05/2026 08:30 AM" in Central time, the way the packet prints it.
@@ -546,6 +548,7 @@ function fromLocalInput(v) {
 
 function packetDraft(row) {
   return {
+    sf_no_login_packet: !!row?.sf_no_login_packet,
     sf_alias: row?.sf_alias || "",
     sf_registration_number: row?.sf_registration_number || "",
     sf_initial_password: row?.sf_initial_password || "",
@@ -596,7 +599,8 @@ function usePacketRecord(teamId, preview) {
 }
 
 // Peter's side: the boxes. Saving puts them on the new hire's team record,
-// which fills in their Login Packet and checks off his card once all six are in.
+// which fills in their Login Packet and checks off his card once all six are
+// in, or once No packet for this hire is ticked.
 function LoginPacketInfoForm({ teamId, preview }) {
   const { rec, setRec, loading, err } = usePacketRecord(teamId, preview);
   const [draft, setDraft] = useState(packetDraft(null));
@@ -612,6 +616,7 @@ function LoginPacketInfoForm({ teamId, preview }) {
     if (!supabase || !teamId) return;
     setSaving(true); setMsg(null);
     const payload = {
+      sf_no_login_packet: !!draft.sf_no_login_packet,
       sf_alias: draft.sf_alias.trim() || null,
       sf_registration_number: draft.sf_registration_number.trim() || null,
       sf_initial_password: draft.sf_initial_password.trim() || null,
@@ -634,7 +639,13 @@ function LoginPacketInfoForm({ teamId, preview }) {
 
   return (
     <Section title={name ? `For ${name}` : "For the new hire"}
-      note="These fill in the new hire's Login Packet. Only admins and the new hire can see them. Your card checks this off once every box is filled.">
+      note="These fill in the new hire's Login Packet. Only admins and the new hire can see them. Your card checks this off once every box is filled, or once No packet for this hire is ticked and saved.">
+      <div style={{ marginBottom: 14 }}>
+        <Check checked={draft.sf_no_login_packet} onChange={set("sf_no_login_packet")}>
+          <strong>No packet for this hire</strong>
+          <span style={{ color: T.slate500 }}> (former State Farm and fully remote hires get none)</span>
+        </Check>
+      </div>
       <Grid min={220}>
         <Field label="Alias (User ID)">
           <Text value={draft.sf_alias} onChange={set("sf_alias")} />
@@ -686,6 +697,15 @@ function LoginPacketForm({ teamId, preview }) {
         color: T.slate800, boxSizing: "border-box", minWidth: 0,
       }}>
         {loading && <div style={{ color: T.slate500, marginBottom: 10 }}>Loading...</div>}
+        {v?.sf_no_login_packet && (
+          <div style={{
+            marginBottom: 16, padding: "10px 12px", borderRadius: 8,
+            background: T.blueLt, color: T.slate800, fontSize: 13, lineHeight: 1.55,
+          }}>
+            You won't get a printed packet. Call 1-877-889-2294 with your alias, and Peter
+            joins the call to confirm you work here.
+          </div>
+        )}
         <div style={{ fontWeight: 700, color: T.slate900 }}>New Agent/Agent Team Member Onboarding Packet</div>
         <div style={{ fontWeight: 700, color: T.slate900 }}>CONFIDENTIAL</div>
         <div>- Distribution on a Business Need to Know Basis Only -</div>

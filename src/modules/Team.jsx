@@ -706,6 +706,43 @@ const DeclinedTable = ({ declined, onUpdate, emptyLabel = "No declined candidate
 // Archived is the only thing that means they have left.
 const isIncoming = (s) => !!s && s.is_active === false && !s.archived_at;
 
+// A new tab opened during the click itself, because a browser blocks a tab
+// opened after a wait. It shows a holding line until the page it is for is
+// known: go(url) sends it there, close() shuts it when there is nowhere to go.
+function openPendingTab(message) {
+  let tab = null;
+  try { tab = window.open("", "_blank"); } catch { tab = null; }
+  if (tab) {
+    try {
+      tab.document.title = "One moment…";
+      const p = tab.document.createElement("p");
+      p.textContent = message;
+      p.style.cssText = "font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:15px;color:#444;padding:32px;line-height:1.5;";
+      tab.document.body.appendChild(p);
+    } catch { /* the holding line is only a courtesy */ }
+  }
+  // Whichever of go() or close() runs first wins, so a later error can never
+  // shut the page that has already opened.
+  let settled = false;
+  const close = () => {
+    if (settled) return;
+    settled = true;
+    try { if (tab && !tab.closed) tab.close(); } catch { /* already gone */ }
+  };
+  return {
+    close,
+    go(url) {
+      if (settled) return;
+      if (!url) { close(); return; }
+      settled = true;
+      if (tab && !tab.closed) {
+        try { tab.opener = null; tab.location.replace(url); return; } catch { /* fall through */ }
+      }
+      window.open(url, "_blank", "noopener");
+    },
+  };
+}
+
 const StaffDirectory = ({ staff }) => {
   const [expanded, setExpanded] = useState(null);
   const [editingId, setEditingId] = useState(null);
@@ -1077,6 +1114,13 @@ const StaffDirectory = ({ staff }) => {
     }
     if (!supabase) { setTermError("No database connection."); return; }
 
+    // Peter 2026-10-04: State Farm's System Access/Termination page opens in a
+    // new tab once the termination goes through. The address comes back from
+    // terminate-team-member, the one place it is kept.
+    const sfTab = openPendingTab(
+      `Ending ${expectedName}'s employment in Newtworks. State Farm's System Access/Termination page opens here when that's done.`
+    );
+
     setTerminating(true);
     setTermError("");
 
@@ -1105,15 +1149,19 @@ const StaffDirectory = ({ staff }) => {
         },
       });
       if (fnErr) {
+        sfTab.close();
         setTermError(`Termination edge fn failed: ${fnErr.message}`);
         setTerminating(false);
         return;
       }
       if (!result || result.success !== true) {
+        sfTab.close();
         setTermError(`Termination failed: ${result?.error || "unknown error from edge fn"}`);
         setTerminating(false);
         return;
       }
+      // Before anything that can pause the page (the warnings box below).
+      sfTab.go(result.sf_termination_url);
 
       // Write the audit row to team_behavioral_notes (principle 500). Non-blocking;
       // the canonical record of WHAT happened is the edge fn's automation_run_log row,
@@ -1157,6 +1205,7 @@ const StaffDirectory = ({ staff }) => {
       setTermForm({});
       setExpanded(null);
     } catch (e) {
+      sfTab.close();
       setTermError(e?.message || "Unexpected error during termination.");
     } finally {
       setTerminating(false);
@@ -2555,7 +2604,7 @@ const StaffDirectory = ({ staff }) => {
                   ⚠ End Employment — {member.first_name} {member.last_name}
                 </div>
                 <div style={{ fontSize:11, color:T.slate600, marginBottom:12, lineHeight:1.55 }}>
-                  This is the documented record of the termination decision (core principle 500). It archives the team row, deactivates the linked user login, strips the person from the Team List page, marks them excluded from Telegram check-ins, kicks them from the team Telegram group, and emails the termination notice (with the AAO checklist pre-filled) to Peter's State Farm address.
+                  This is the documented record of the termination decision (core principle 500). It archives the team row, deactivates the linked user login, strips the person from the Team List page, marks them excluded from Telegram check-ins, kicks them from the team Telegram group, and emails the termination notice (with the AAO checklist pre-filled and the State Farm System Access/Termination link) to Peter's State Farm address. That State Farm page then opens in a new tab.
                 </div>
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))", gap:10, marginBottom:10 }}>
                   <div>
