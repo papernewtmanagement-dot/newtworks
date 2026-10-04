@@ -7,8 +7,10 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 // open (available to candidates), scheduled (booked, candidate shown), or
 // removed (taken off the table). You can add an extra one-off slot to any
 // day, delete an individual open slot if something comes up, or stop a
-// standing weekday slot going forward. The hiring-interview-scheduler edge
-// function reads the same removed/manual tables when it computes offers.
+// standing weekday slot going forward. The slots themselves come from the
+// database function interview_slot_grid — the same one the
+// hiring-interview-scheduler edge function and the coaching blocks read — so
+// this page never keeps its own copy of the slot times.
 
 function isoDayLocal(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -33,43 +35,12 @@ function buildMonthGrid(monthDate) {
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DOW_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-// Mirrors PRIMARY_TIMES_BY_WEEKDAY / SECONDARY_TIMES_BY_WEEKDAY in the
-// hiring-interview-scheduler edge function — the actual predefined interview
-// times (Peter directive 2026-09-11). Keep these in sync if the schedule
-// ever changes. Backup (secondary) times are only offered to candidates once
-// the primary times in the next 7 days are booked.
-const PRIMARY_TIMES_BY_WEEKDAY = {
-  1: [{ h: 10, m: 0, label: "10:00 AM" }, { h: 13, m: 0, label: "1:00 PM" }, { h: 15, m: 30, label: "3:30 PM" }], // Mon
-  2: [{ h: 10, m: 0, label: "10:00 AM" }, { h: 13, m: 0, label: "1:00 PM" }, { h: 15, m: 30, label: "3:30 PM" }], // Tue
-  3: [{ h: 10, m: 0, label: "10:00 AM" }, { h: 13, m: 0, label: "1:00 PM" }],                                     // Wed
-  4: [{ h: 13, m: 0, label: "1:00 PM" }, { h: 15, m: 30, label: "3:30 PM" }],                                     // Thu
-  5: [{ h: 10, m: 0, label: "10:00 AM" }, { h: 13, m: 0, label: "1:00 PM" }, { h: 15, m: 30, label: "3:30 PM" }], // Fri
-};
-const SECONDARY_TIMES_BY_WEEKDAY = {
-  1: [{ h: 10, m: 45, label: "10:45 AM" }, { h: 16, m: 15, label: "4:15 PM" }], // Mon
-  2: [{ h: 10, m: 45, label: "10:45 AM" }, { h: 16, m: 15, label: "4:15 PM" }], // Tue
-  3: [{ h: 10, m: 45, label: "10:45 AM" }],                                     // Wed (no afternoon backup)
-  4: [{ h: 16, m: 15, label: "4:15 PM" }],                                      // Thu (no morning backup)
-  5: [{ h: 10, m: 45, label: "10:45 AM" }, { h: 16, m: 15, label: "4:15 PM" }], // Fri
-};
-const FIXED_TIMES_BY_WEEKDAY = Object.fromEntries(
-  [1, 2, 3, 4, 5].map((d) => [d, [
-    ...PRIMARY_TIMES_BY_WEEKDAY[d].map((t) => ({ ...t, tier: "primary" })),
-    ...SECONDARY_TIMES_BY_WEEKDAY[d].map((t) => ({ ...t, tier: "secondary" })),
-  ]])
-);
+// Length of a slot written from this page (manual slots, blackouts).
 const INTERVIEW_MINUTES = 30;
 const TZ = "America/Chicago";
 
-// Mirrors fridayTimeAllowed in the edge function: first Friday of the month
-// has no morning times; third Friday has no midday or end-of-day times.
+// Explains the Friday rule in the day view; the rule itself lives in interview_slot_grid.
 function fridayOrdinal(d) { return d.getDay() === 5 ? Math.ceil(d.getDate() / 7) : null; }
-function fridayTimeAllowed(d, hour) {
-  const nth = fridayOrdinal(d);
-  if (nth === 1 && hour < 12) return false;
-  if (nth === 3 && hour >= 12) return false;
-  return true;
-}
 function fridayRuleNote(d) {
   const nth = fridayOrdinal(d);
   if (nth === 1) return "First Friday of the month — no morning times.";
@@ -87,30 +58,6 @@ function addDaysIso(dateISO, n) {
   d.setDate(d.getDate() + n);
   return isoDayLocal(d);
 }
-// Every vacation week (Sunday key) that lands inside [fromISO, toISO],
-// honoring per-occurrence moves. Returns Map<weekStart, {seriesId, originalWeekStart, label}>.
-function vacationWeeksInRange(series, moves, fromISO, toISO) {
-  const out = new Map();
-  const fromMs = Date.parse(weekStartIso(fromISO) + "T12:00:00") - 7 * 86400000;
-  const toMs = Date.parse(weekStartIso(toISO) + "T12:00:00") + 7 * 86400000;
-  for (const sr of series) {
-    if (sr.is_active === false) continue;
-    const moved = new Map(moves.filter((m) => m.series_id === sr.id).map((m) => [m.original_week_start, m.moved_to_week_start]));
-    const anchorMs = Date.parse(sr.anchor_week_start + "T12:00:00");
-    const step = Math.max(1, Number(sr.interval_weeks) || 13) * 7 * 86400000;
-    let k = Math.floor((fromMs - anchorMs) / step); if (k < 0) k = 0;
-    for (let ms = anchorMs + k * step; ms <= toMs; ms += step) {
-      const key = isoDayLocal(new Date(ms));
-      const target = moved.get(key) || key;
-      out.set(target, { seriesId: sr.id, originalWeekStart: key, label: sr.label, moved: target !== key });
-    }
-    for (const [orig, to] of moved) {
-      const toMsX = Date.parse(to + "T12:00:00");
-      if (toMsX >= fromMs && toMsX <= toMs && !out.has(to)) out.set(to, { seriesId: sr.id, originalWeekStart: orig, label: sr.label, moved: true });
-    }
-  }
-  return out;
-}
 function pad2(n) { return String(n).padStart(2, "0"); }
 function timeToHHMMSS(h, m) { return `${pad2(h)}:${pad2(m)}:00`; }
 function addMinutesToTime(h, m, mins) {
@@ -118,14 +65,9 @@ function addMinutesToTime(h, m, mins) {
   return { h: Math.floor(total / 60) % 24, m: total % 60 };
 }
 function labelForTime(h, m) {
-  const match = Object.values(FIXED_TIMES_BY_WEEKDAY).flat().find((s) => s.h === h && s.m === m);
-  if (match) return match.label;
   const period = h < 12 ? "AM" : "PM";
   const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${h12}:${pad2(m)} ${period}`;
-}
-function recurringAppliesOn(r, dateISO, weekday) {
-  return r.weekday === weekday && dateISO >= r.starts_on && (!r.ends_on || dateISO <= r.ends_on);
 }
 // Chicago-local "YYYY-MM-DD|HH:MM" key for matching a scheduled interview's
 // UTC timestamp back to a slot instance's local date+time.
@@ -136,26 +78,20 @@ function chicagoKey(isoUtc) {
   return `${parts.year}-${parts.month}-${parts.day}|${hh}:${parts.minute}`;
 }
 
-// Build the effective list of slot instances for one date: fixed schedule +
-// manual additions, each tagged open / scheduled / removed.
-function slotsForDate(dateISO, dateObj, { manualByDate, blackoutsByDate, recurring, scheduledByKey, vacationByWeek, busyEvents }) {
-  const weekday = dateObj.getDay();
-  const vacation = vacationByWeek.get(weekStartIso(dateISO)) || null;
-  const fixed = (FIXED_TIMES_BY_WEEKDAY[weekday] || [])
-    .filter((s) => weekday !== 5 || fridayTimeAllowed(dateObj, s.h))
-    .map((s) => ({ h: s.h, m: s.m, label: s.label, source: "fixed", tier: s.tier }));
-  const manual = (manualByDate.get(dateISO) || []).map((r) => {
-    const [h, m] = r.start_time.split(":").map(Number);
-    return { h, m, label: labelForTime(h, m), source: "manual", manualId: r.id, note: r.note };
+// The slot instances for one date: every row interview_slot_grid returned
+// for it, tagged open / scheduled / removed, plus any booked interview that
+// sits off the grid.
+function slotsForDate(dateISO, { gridByDate, scheduledByKey, busyEvents }) {
+  const templated = (gridByDate.get(dateISO) || []).map((r) => {
+    const [h, m] = chicagoKey(r.start_at).split("|")[1].split(":").map(Number);
+    return {
+      h, m, label: labelForTime(h, m), source: r.source, tier: r.source === "manual" ? null : r.tier,
+      manualId: r.manual_slot_id, note: r.manual_note, startAt: r.start_at, endAt: r.end_at, row: r,
+    };
   });
-  const oneOffRemovals = blackoutsByDate.get(dateISO) || [];
-  const wholeDayRemoved = oneOffRemovals.some((r) => !r.start_time) ||
-    recurring.some((r) => !r.start_time && recurringAppliesOn(r, dateISO, weekday));
-
-  const templated = [...fixed, ...manual];
   const templatedKeys = new Set(templated.map((s) => timeToHHMMSS(s.h, s.m).slice(0, 5)));
 
-  // Any booked interview whose time doesn't match a fixed/manual slot
+  // Any booked interview whose time doesn't match a slot
   // (e.g. booked before the schedule was fixed) still needs to show up.
   const extraScheduled = [];
   for (const [key, candidate] of scheduledByKey) {
@@ -166,17 +102,16 @@ function slotsForDate(dateISO, dateObj, { manualByDate, blackoutsByDate, recurri
     extraScheduled.push({ h, m, label: labelForTime(h, m), source: "scheduled-only", status: "scheduled", candidate });
   }
 
-  const resolved = templated.map((slot) => {
+  const resolved = templated.map(({ row, ...slot }) => {
     const key = `${dateISO}|${timeToHHMMSS(slot.h, slot.m).slice(0, 5)}`;
     const scheduled = scheduledByKey.get(key);
     if (scheduled) return { ...slot, status: "scheduled", candidate: scheduled };
-    if (vacation) return { ...slot, status: "removed", removedWhole: true, reason: vacation.label };
-    if (wholeDayRemoved) return { ...slot, status: "removed", removedWhole: true };
-    const oneOffMatch = oneOffRemovals.find((r) => r.start_time === timeToHHMMSS(slot.h, slot.m));
-    if (oneOffMatch) return { ...slot, status: "removed", blackoutId: oneOffMatch.id };
-    const recurringMatch = recurring.find((r) => r.start_time === timeToHHMMSS(slot.h, slot.m) && recurringAppliesOn(r, dateISO, weekday));
-    if (recurringMatch) return { ...slot, status: "removed", recurringId: recurringMatch.id };
-    const busy = busyOverlap(dateISO, slot, busyEvents);
+    if (row.blacked_out) {
+      if (row.removed_whole) return { ...slot, status: "removed", removedWhole: true, reason: row.vacation_label || undefined };
+      if (row.blackout_id) return { ...slot, status: "removed", blackoutId: row.blackout_id };
+      return { ...slot, status: "removed", recurringId: row.recurring_blackout_id };
+    }
+    const busy = busyOverlap(slot, busyEvents);
     if (busy) return { ...slot, status: "removed", removedWhole: true, reason: `busy: ${busy}` };
     return { ...slot, status: "open" };
   });
@@ -204,10 +139,10 @@ async function callSchedulerAdmin(mode, extra = {}) {
   }
 }
 
-function busyOverlap(dateISO, slot, busyEvents) {
+function busyOverlap(slot, busyEvents) {
   if (!busyEvents || busyEvents.length === 0) return null;
-  const start = new Date(`${dateISO}T${timeToHHMMSS(slot.h, slot.m)}`);
-  const end = new Date(start.getTime() + INTERVIEW_MINUTES * 60000);
+  const start = new Date(slot.startAt);
+  const end = new Date(slot.endAt);
   for (const e of busyEvents) {
     const es = new Date(e.start), ee = new Date(e.end);
     if (es < end && ee > start) return e.summary;
@@ -345,12 +280,8 @@ function DayModal({ dateISO, slots, vacation, onRemoveSlot, onRestoreSlot, onDel
 
 export default function InterviewSlotsManager() {
   const [monthDate, setMonthDate] = useState(() => startOfMonth(new Date()));
-  const [blackouts, setBlackouts] = useState([]);
-  const [recurring, setRecurring] = useState([]);
-  const [manualSlots, setManualSlots] = useState([]);
+  const [grid, setGrid] = useState([]);
   const [scheduled, setScheduled] = useState([]);
-  const [vacationSeries, setVacationSeries] = useState([]);
-  const [vacationMoves, setVacationMoves] = useState([]);
   const [busyEvents, setBusyEvents] = useState([]);
   const [moveMode, setMoveMode] = useState(null); // { seriesId, originalWeekStart, label } while picking the new week
   const [movingMsg, setMovingMsg] = useState("");
@@ -368,29 +299,16 @@ export default function InterviewSlotsManager() {
     const gridEndIso = isoDayLocal(gridEnd);
     const gridEndPlus1 = new Date(gridEnd); gridEndPlus1.setDate(gridEndPlus1.getDate() + 1);
 
-    const [bo, rec, man, sched, vs, vm] = await Promise.all([
-      supabase.from("hiring_interview_blackouts").select("id, blackout_date, start_time, end_time, note")
-        .eq("agency_id", AGENCY_ID).gte("blackout_date", gridStartIso).lte("blackout_date", gridEndIso),
-      supabase.from("hiring_interview_recurring_blackouts").select("id, weekday, start_time, end_time, note, starts_on, ends_on")
-        .eq("agency_id", AGENCY_ID),
-      supabase.from("hiring_interview_manual_slots").select("id, slot_date, start_time, end_time, note")
-        .eq("agency_id", AGENCY_ID).gte("slot_date", gridStartIso).lte("slot_date", gridEndIso),
+    const [gr, sched] = await Promise.all([
+      supabase.rpc("interview_slot_grid", { p_agency_id: AGENCY_ID, p_from: gridStartIso, p_to: gridEndIso, p_include_vacation: true }),
       supabase.from("hiring_candidates").select("candidate_name, first_name, interview_scheduled_start, interview_confirmed_at")
         .eq("agency_id", AGENCY_ID).eq("is_test_candidate", false)
         .not("interview_booked_at", "is", null)
         .gte("interview_scheduled_start", gridStart.toISOString())
         .lt("interview_scheduled_start", gridEndPlus1.toISOString()),
-      supabase.from("hiring_interview_vacation_series").select("id, label, anchor_week_start, interval_weeks, is_active")
-        .eq("agency_id", AGENCY_ID),
-      supabase.from("hiring_interview_vacation_moves").select("id, series_id, original_week_start, moved_to_week_start")
-        .eq("agency_id", AGENCY_ID),
     ]);
-    if (!bo.error) setBlackouts(bo.data || []);
-    if (!rec.error) setRecurring(rec.data || []);
-    if (!man.error) setManualSlots(man.data || []);
+    if (!gr.error) setGrid(Array.isArray(gr.data) ? gr.data : []);
     if (!sched.error) setScheduled(sched.data || []);
-    if (!vs.error) setVacationSeries(vs.data || []);
-    if (!vm.error) setVacationMoves(vm.data || []);
     setLoading(false);
 
     // Busy events on the Google Calendar for the visible grid — fetched
@@ -402,23 +320,14 @@ export default function InterviewSlotsManager() {
 
   useEffect(() => { load(); }, [load]);
 
-  const blackoutsByDate = useMemo(() => {
+  const gridByDate = useMemo(() => {
     const m = new Map();
-    for (const r of blackouts) {
-      if (!m.has(r.blackout_date)) m.set(r.blackout_date, []);
-      m.get(r.blackout_date).push(r);
-    }
-    return m;
-  }, [blackouts]);
-
-  const manualByDate = useMemo(() => {
-    const m = new Map();
-    for (const r of manualSlots) {
+    for (const r of grid) {
       if (!m.has(r.slot_date)) m.set(r.slot_date, []);
       m.get(r.slot_date).push(r);
     }
     return m;
-  }, [manualSlots]);
+  }, [grid]);
 
   const scheduledByKey = useMemo(() => {
     const m = new Map();
@@ -429,13 +338,18 @@ export default function InterviewSlotsManager() {
     return m;
   }, [scheduled]);
 
+  // Vacation weeks (Sun–Sat, keyed by the Sunday), from the grid's labeled rows.
   const vacationByWeek = useMemo(() => {
-    const gridStart = new Date(monthDate); gridStart.setDate(1 - gridStart.getDay());
-    const gridEnd = new Date(gridStart); gridEnd.setDate(gridStart.getDate() + 41);
-    return vacationWeeksInRange(vacationSeries, vacationMoves, isoDayLocal(gridStart), isoDayLocal(gridEnd));
-  }, [vacationSeries, vacationMoves, monthDate]);
+    const m = new Map();
+    for (const r of grid) {
+      if (!r.vacation_series_id) continue;
+      const wk = weekStartIso(r.slot_date);
+      if (!m.has(wk)) m.set(wk, { seriesId: r.vacation_series_id, originalWeekStart: r.vacation_original_week_start, label: r.vacation_label, moved: !!r.vacation_moved });
+    }
+    return m;
+  }, [grid]);
 
-  const ctx = { manualByDate, blackoutsByDate, recurring, scheduledByKey, vacationByWeek, busyEvents };
+  const ctx = { gridByDate, scheduledByKey, busyEvents };
 
   // Move a vacation occurrence to the week containing the clicked day. The
   // week it leaves opens back up; the week it lands on closes, and anyone
@@ -527,7 +441,7 @@ export default function InterviewSlotsManager() {
         {days.map((d) => {
           const iso = isoDayLocal(d);
           const inMonth = d.getMonth() === thisMonth;
-          const slots = slotsForDate(iso, d, ctx);
+          const slots = slotsForDate(iso, ctx);
           return (
             <div
               key={iso}
@@ -581,7 +495,7 @@ export default function InterviewSlotsManager() {
       {openDay && (
         <DayModal
           dateISO={openDay}
-          slots={slotsForDate(openDay, new Date(openDay + "T12:00:00"), ctx)}
+          slots={slotsForDate(openDay, ctx)}
           vacation={vacationByWeek.get(weekStartIso(openDay)) || null}
           onMoveVacation={(v) => { setMoveMode(v); setOpenDay(null); }}
           onRemoveSlot={handleRemoveSlot}
