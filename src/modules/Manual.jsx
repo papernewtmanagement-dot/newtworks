@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "rea
 import { createPortal } from "react-dom";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
+import { fetchExcerptRows, fetchFaqRows } from "../lib/manualSources.js";
 
 // ============================================================
 // NEWTWORKS MANUAL MODULE v1.0
@@ -1719,14 +1720,8 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     let cancelled = false;
     (async () => {
       try {
-        const { data, error: e } = await supabase
-          .from("manuals")
-          .select("id, title, content, is_active, version")
-          .eq("agency_id", AGENCY_ID)
-          .eq("manual_type", "excerpt")
-          .eq("is_active", true);
-        if (cancelled) return;
-        if (!e) setExcerptRows(Array.isArray(data) ? data : []);
+        const rows = await fetchExcerptRows();
+        if (!cancelled) setExcerptRows(rows);
       } catch (_err) { /* silent — inline excerpts are optional */ }
     })();
     return () => { cancelled = true; };
@@ -1744,12 +1739,8 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     let cancelled = false;
     (async () => {
       try {
-        const { data, error: e } = await supabase
-          .from("v_knowledge_faqs_resolved")
-          .select("topic_key, question:question_resolved, answer:answer_resolved, tag_label, product_line, sort_order, status, is_active")
-          .eq("agency_id", AGENCY_ID);
-        if (cancelled) return;
-        if (!e) setFaqRows(Array.isArray(data) ? data : []);
+        const rows = await fetchFaqRows();
+        if (!cancelled) setFaqRows(rows);
       } catch (_err) { /* silent — inline FAQ is optional */ }
     })();
     return () => { cancelled = true; };

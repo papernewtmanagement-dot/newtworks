@@ -19,6 +19,9 @@ import { checklistBands } from "../lib/checklist.js";
 import EarningPotentialTab from "../components/EarningPotentialTab.jsx";
 import DeweyOwe from "../components/DeweyOwe.jsx";
 import { noPwManager } from "../lib/forms.js";
+import { CARD_PARTS, SCORE_MEANING } from "../lib/fitParts.js";
+import { makeScriptLibrary, buildCall, stackTables, FIT_PAGE_ID } from "../lib/liveCall.js";
+import { fetchExcerptRows, fetchFaqRows, fetchScriptPages } from "../lib/manualSources.js";
 
 // ============================================================
 // ActivityLog — the Production module (nav label "Production", route
@@ -113,19 +116,9 @@ const LINE_REQUIRED = { policy_review: "type", pivot: "line" };
 // these sets the relationship to Existing. Not autopay: it can ride on a new sale.
 const EXISTING_ONLY = new Set(["pivot", "policy_review", "service_task", "service_task_company",
   "service_task_coi", "cancelation_saved"]);
-const TABS = ["log", "checklist", "hours", "deposits", "week", "issued", "development", "changes", "spotcheck", "backfill", "history", "billing"];
-const CARD_PARTS = [
-  { key: "demeanor_score",        label: "Demeanor",              short: "Demeanor" },
-  { key: "frogs_score",           label: "FROGS",                 short: "FROGS" },
-  { key: "intro_score",           label: "Intro",                 short: "Intro" },
-  { key: "eligibility_score",     label: "Determine Eligibility", short: "Eligibility" },
-  { key: "setup_gnc_score",       label: "Setup GNC",             short: "Setup GNC" },
-  { key: "uncover_gap_score",     label: "Uncover the Gap",       short: "Uncover" },
-  { key: "bridge_gap_score",      label: "Bridge the Gap",        short: "Bridge" },
-  { key: "customize_close_score", label: "Customize & Close",     short: "Close" },
-  { key: "set_followup_score",    label: "Set FU",                short: "Set FU" },
-  { key: "review_referral_score", label: "Review & Referral",     short: "Rev & Ref" },
-];
+const TABS = ["live", "log", "checklist", "hours", "deposits", "week", "issued", "development", "changes", "spotcheck", "backfill", "history", "billing"];
+// The ten scorecard parts live in src/lib/fitParts.js (CARD_PARTS), shared with the Live tab.
+const GENDERS = [["male", "Male"], ["female", "Female"]];
 
 // ---------- styles ----------
 const inputBase = {
@@ -193,14 +186,14 @@ const wrapRow = { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-
 const linkBtn = { background: "none", border: "none", padding: 0, color: T.blue, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };
 const field = (min = 150) => ({ flex: `1 1 ${min}px`, minWidth: 0 });
 
-// The person / organization switch. ONE component, used by the logging form,
-// the appointment form and the edit form. Do not write this markup out again.
-function KindToggle({ value, onChange }) {
+// A two-or-three-way switch. ONE component: person / organization, gender,
+// and inbound / outbound all use it. Do not write this markup out again.
+function SegToggle({ value, onChange, options, big = false }) {
   return (
-    <div style={{ display: "flex", border: `1px solid ${T.slate200}`, borderRadius: 8, overflow: "hidden" }}>
-      {[["person", "Person"], ["org", "Organization"]].map(([k, lbl]) => (
+    <div style={{ display: "flex", border: `1px solid ${T.slate200}`, borderRadius: 8, overflow: "hidden", width: "fit-content" }}>
+      {options.map(([k, lbl]) => (
         <button key={k} type="button" onClick={() => onChange(k)}
-          style={{ padding: "9px 12px", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13,
+          style={{ padding: big ? "10px 18px" : "9px 12px", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: big ? 14 : 13,
                    background: value === k ? T.blue : T.white,
                    color: value === k ? T.white : T.slate600,
                    fontWeight: value === k ? 700 : 400 }}>{lbl}</button>
@@ -208,6 +201,100 @@ function KindToggle({ value, onChange }) {
     </div>
   );
 }
+// The person / organization switch, used by the logging form, the appointment
+// form, the edit form and the Live tab.
+function KindToggle({ value, onChange }) {
+  return <SegToggle value={value} onChange={onChange} options={[["person", "Person"], ["org", "Organization"]]} />;
+}
+// The customer name box, with names already on file suggested under it (two
+// letters in, a quarter-second pause, at most eight back). ONE component: the
+// entry form and the Live tab's start card both use it.
+function CustomerNameBox({ first, initial, isOrg, onChange, onPick, autoFocus = false }) {
+  const [suggest, setSuggest] = useState([]);
+  const [open, setOpen] = useState(false);   // closes on a pick, on Escape, or on a click away
+  const boxRef = useRef(null);
+  useEffect(() => {
+    const q = String(first || "").trim();
+    if (q.length < 2) { setSuggest([]); return undefined; }
+    let alive = true;
+    const t = setTimeout(async () => {
+      const { data } = await supabase.rpc("rp_customer_suggest2", { p_prefix: q });
+      if (alive) setSuggest(Array.isArray(data) ? data : []);
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [first]);
+  // A click or tap anywhere off the name box closes the list. Without this it
+  // sat over the fields below until a name was picked.
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("touchstart", away);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("touchstart", away); };
+  }, [open]);
+  const f = String(first || "").trim();
+  const show = open && suggest.length > 0 && !(suggest.length === 1 && suggest[0].customer_first_name === f && (suggest[0].customer_last_initial || "") === String(initial || "").trim().toUpperCase());
+  return (
+    <div ref={boxRef} style={{ ...field(isOrg ? 228 : 150), position: "relative" }}>
+      <label style={labelStyle}>{isOrg ? "Organization" : "First name"}</label>
+      <input {...noPwManager("a1")} style={inputBase} value={first} placeholder={isOrg ? "Premier Online Marketing LLC" : "Anna"} autoFocus={autoFocus}
+        onChange={e => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } }} />
+      {show && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 5, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 8, boxShadow: "0 6px 16px rgba(0,0,0,0.08)", marginTop: 4, overflow: "hidden" }}>
+          {suggest.map(c => (
+            <button key={c.customer_label} type="button" onClick={() => { setSuggest([]); setOpen(false); onPick(c); }}
+              style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", background: "transparent", fontSize: 14, color: T.slate800, cursor: "pointer", fontFamily: "inherit" }}>
+              {c.customer_label}{c.phone_last4 ? <span style={{ color: T.slate500 }}> ·{c.phone_last4}</span> : null} <span style={{ color: T.slate400, fontSize: 12 }}>{Number(c.policies_on_file) > 0 ? plural(c.policies_on_file, "policy").replace("policys", "policies") + " on file" : "on file"}{c.last_seen ? ` · ${fmtDate(c.last_seen)}` : ""}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Who the customer is: person or organization, name, initial, phone last four,
+// and on the Live tab their age and gender. ONE set of fields for the entry
+// form and the Live tab's start card. onChange gets just what changed.
+function CustomerFields({ kind, first, initial, phone, age, gender, withAgeGender = false, onChange, onPick, autoFocus = false }) {
+  const isOrg = kind === "org";
+  return (
+    <>
+      <div style={{ flex: "0 0 auto" }}>
+        <label style={labelStyle}>Customer</label>
+        <KindToggle value={kind} onChange={k => onChange(k === "org" ? { kind: k, initial: "" } : { kind: k })} />
+      </div>
+      <CustomerNameBox first={first} initial={initial} isOrg={isOrg} onChange={v => onChange({ first: v })} onPick={onPick} autoFocus={autoFocus} />
+      {!isOrg && (
+        <div style={{ flex: "0 0 78px" }}>
+          <label style={labelStyle}>Initial</label>
+          <input style={{ ...inputBase, textAlign: "center" }} value={initial} maxLength={1} onChange={e => onChange({ initial: e.target.value })} placeholder="S" {...noPwManager("a2")} />
+        </div>
+      )}
+      <div style={{ flex: "0 0 126px" }}>
+        <label style={labelStyle}>Phone last 4</label>
+        <input {...noPwManager("a3")} inputMode="numeric" style={{ ...inputBase, textAlign: "center" }} value={phone} maxLength={4} onChange={e => onChange({ phone: e.target.value.replace(/\D/g, "").slice(0, 4) })} placeholder="4417" />
+      </div>
+      {withAgeGender && !isOrg && (
+        <div style={{ flex: "0 0 74px" }}>
+          <label style={labelStyle}>Age</label>
+          <input {...noPwManager("a4")} inputMode="numeric" style={{ ...inputBase, textAlign: "center" }} value={age} maxLength={3} onChange={e => onChange({ age: e.target.value.replace(/\D/g, "").slice(0, 3) })} placeholder="34" />
+        </div>
+      )}
+      {withAgeGender && !isOrg && (
+        <div style={{ flex: "0 0 auto" }}>
+          <label style={labelStyle}>Gender</label>
+          <SegToggle value={gender} onChange={g => onChange({ gender: g })} options={GENDERS} />
+        </div>
+      )}
+    </>
+  );
+}
+// The same age rule the database holds (rp_log_entry): a whole number, 15 to 110.
+const ageOk = (a) => /^\d{1,3}$/.test(String(a ?? "").trim()) && Number(a) >= 15 && Number(a) <= 110;
+
 const addSelect = {
   ...inputBase, width: 190, flex: "0 0 190px", color: T.blue, fontWeight: 700,
   border: `1px dashed ${T.blue}`, background: T.blueLt, cursor: "pointer",
@@ -333,37 +420,45 @@ function summarizeEntry(data) {
 // Entry page — one customer, one contact, everything that happened, on
 // one flat page. One Log button; one RPC that saves all of it or none.
 // =====================================================================
-function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshKey, allowCancel = false, presetFirst = "", editing = null, onCloseEdit, appointment = null }) {
+// Live tab (Peter 2026-10-04): the end of a call opens this same form with what
+// the call recorded already filled in (prefill), asks the customer's age and
+// gender (withAgeGender), and wants the conversation scored whenever a FIT
+// conversation happened (requireCard). onSaved fires once per successful log.
+function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshKey, allowCancel = false, presetFirst = "", editing = null, onCloseEdit, appointment = null,
+  prefill = null, withAgeGender = false, requireCard = false, hidePending = false, heading = "", subheading = "", onSaved }) {
   const today = todayCentral();
-  const [first, setFirst] = useState(appointment?.customer_first_name || presetFirst || "");
+  const pf = prefill || {};
+  const [first, setFirst] = useState(appointment?.customer_first_name || pf.first || presetFirst || "");
   const statuses = allowCancel ? STATUSES : STATUSES.filter(st => st.key !== "canceled");
   const [dupQuotes, setDupQuotes] = useState([]);   // this week's quotes already on file for this household
   const [onFileAnswer, setOnFileAnswer] = useState({}); // policy id -> "replaces" | "added" | "different" when the household already has that line
-  const [initial, setInitial] = useState(appointment?.customer_last_initial || "");
+  const [initial, setInitial] = useState(appointment?.customer_last_initial || pf.initial || "");
   // Peter 2026-09-20: a customer is a person or an organization. A person is
   // first name plus last initial; an organization is one name, no initial.
-  const [custKind, setCustKind] = useState(appointment?.customer_kind || "person");
-  const [phone, setPhone] = useState(appointment?.phone_last4 || "");   // customer phone, last four digits: part of the household key
+  const [custKind, setCustKind] = useState(appointment?.customer_kind || pf.custKind || "person");
+  const [phone, setPhone] = useState(appointment?.phone_last4 || pf.phone || "");   // customer phone, last four digits: part of the household key
+  const [age, setAge] = useState(pf.age == null ? "" : String(pf.age));      // Live tab only
+  const [gender, setGender] = useState(pf.gender || "");                      // Live tab only
   const [date, setDate] = useState(today);
   const [dateOpen, setDateOpen] = useState(false);
   const [logFor, setLogFor] = useState(null);
-  const [suggest, setSuggest] = useState([]);      // customer names on file that match what's typed
-  const [suggestOpen, setSuggestOpen] = useState(false); // the list closes on a pick, on Escape, or on a click away
-  const nameBoxRef = useRef(null);
   const [onFile, setOnFile] = useState([]);        // this customer's active sold policies (rp_sold_on_file)
-  const [relationship, setRelationship] = useState("");
-  const [source, setSource] = useState("");
-  const [activities, setActivities] = useState([]);  // [{id, key, line, type, premium, reason}]
+  const [relationship, setRelationship] = useState(pf.relationship || "");
+  const [source, setSource] = useState(pf.source || "");
+  const [activities, setActivities] = useState(() => (pf.activities || []).map(a => ({   // [{id, key, line, type, premium, reason}]
+    id: newPolicyId(), key: a.key, line: a.line || "", type: a.type || "", premium: "", reason: "", site: a.site || "" })));
   const [sourcedBy, setSourcedBy] = useState("");   // quotes only: who sourced the referral
-  const [policies, setPolicies] = useState([]);      // [{id, line, type, status, premium, vehicles, isNewLine}]
+  const [policies, setPolicies] = useState(() => (pf.policies || []).map(p => ({   // [{id, line, type, status, premium, vehicles, isNewLine}]
+    id: newPolicyId(), line: p.line, type: p.type || "", status: p.status || "", premium: "",
+    vehicles: p.vehicles || "1", isNewLine: true, addedToExisting: !!p.addedToExisting, insured: "" })));
   const [activePolicy, setActivePolicy] = useState(null);   // id of the policy pill being edited
-  const [scores, setScores] = useState({});                 // scorecard parts scored on this entry (blank = didn't come up)
+  const [scores, setScores] = useState(() => ({ ...(pf.scores || {}) }));   // scorecard parts scored on this entry (blank = didn't come up)
   const [ecrm, setEcrm] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
-  const [attempted, setAttempted] = useState(false); // show what's missing only after a Log tap
+  const [attempted, setAttempted] = useState(!!prefill); // show what's missing only after a Log tap (at the end of a Live call, right away)
   const [last, setLast] = useState(null);            // {result, first, initial, date} of the entry just logged, for Undo / Log another
 
   // every Retention Points item, least expensive first
@@ -392,7 +487,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       setRelationship(d.relationship || (d.kind === "activity" && EXISTING_ONLY.has(d.activity_key) ? "existing" : "")); setSource(d.marketing_source || "");
       setSourcedBy(d.sourced_by_team_member_id || ""); setEcrm(d.ecrm_url || "");
       setNote(d.note || "");
-      setSuggest([]); setSuggestOpen(false); setOk(""); setErr(""); setAttempted(false); setLast(null);
+      setOk(""); setErr(""); setAttempted(false); setLast(null);
       setActivities([]); setPolicies([]); setActivePolicy(null); setScores({});
       setOnFileAnswer({});
       if (d.kind === "sale" || d.kind === "quote") {
@@ -433,27 +528,16 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const showBottomRow     = !isEdit || editRec.kind !== "scorecard";
   const showCardBlock     = !isEdit || editRec.kind === "scorecard";
 
-  // name suggestions: two letters in, a quarter-second pause, at most eight back
-  useEffect(() => {
-    const q = first.trim();
-    if (q.length < 2) { setSuggest([]); return undefined; }
-    let alive = true;
-    const t = setTimeout(async () => {
-      const { data } = await supabase.rpc("rp_customer_suggest2", { p_prefix: q });
-      if (alive) setSuggest(Array.isArray(data) ? data : []);
-    }, 250);
-    return () => { alive = false; clearTimeout(t); };
-  }, [first]);
-  // A click or tap anywhere off the name box closes the list. Without this it
-  // sat over the fields below until a name was picked.
-  useEffect(() => {
-    if (!suggestOpen) return undefined;
-    const away = (e) => { if (nameBoxRef.current && !nameBoxRef.current.contains(e.target)) setSuggestOpen(false); };
-    document.addEventListener("mousedown", away);
-    document.addEventListener("touchstart", away);
-    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("touchstart", away); };
-  }, [suggestOpen]);
-  const pickCustomer = (c) => { setCustKind(c.customer_kind || "person"); setFirst(c.customer_first_name || ""); setInitial(c.customer_last_initial || ""); if (c.phone_last4) setPhone(c.phone_last4); setSuggest([]); setSuggestOpen(false); };
+  // Name suggestions live in CustomerNameBox; picking one fills the household key.
+  const pickCustomer = (c) => { setCustKind(c.customer_kind || "person"); setFirst(c.customer_first_name || ""); setInitial(c.customer_last_initial || ""); if (c.phone_last4) setPhone(c.phone_last4); };
+  const onCustomer = (p) => {
+    if ("kind" in p) setCustKind(p.kind);
+    if ("first" in p) setFirst(p.first);
+    if ("initial" in p) setInitial(p.initial);
+    if ("phone" in p) setPhone(p.phone);
+    if ("age" in p) setAge(p.age);
+    if ("gender" in p) setGender(p.gender);
+  };
   const phoneOk = /^\d{4}$/.test(phone);
   // One place decides whether the name is complete and what the household is
   // called. The household key is still that name plus the phone last four.
@@ -584,7 +668,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     if (hasCxl && !note.trim()) out.push("A cancelation needs a note on why it canceled.");
     return out;
   };
-  const needsCard = hasQuote || hasSale || cardChosen > 0;
+  const needsCard = requireCard || hasQuote || hasSale || cardChosen > 0;
   const hasAnything = hasActivity || hasQuote || hasSale || hasCxl || hasCard;
   const customerOk = nameOk;
   const isReferral = source === "referral";
@@ -601,7 +685,6 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const autoReplaced = isEdit ? [] : sold.filter(p => onePerHousehold(p) && sameTypeOnFile(p));
   const flagged = isEdit ? [] : sold.filter(p => oldOnFile(p) && !autoReplaced.includes(p));   // a record being edited would match itself
   const replaces = flagged.filter(p => onFileAnswer[p.id] === "replaces");
-  const showSuggest = suggestOpen && suggest.length > 0 && !(suggest.length === 1 && suggest[0].customer_first_name === first.trim() && (suggest[0].customer_last_initial || "") === initial.trim().toUpperCase());
 
   // Line, then type where the line has types: the one pair of pickers wherever an
   // activity names a policy (autopay, save, policy review, pivot).
@@ -631,6 +714,11 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   // an edit checks only the ones it adds.
   const activityChecks = (list) => {
     const out = [];
+    // The server refuses an activity marked requires_note without a note (a save's
+    // reason counts). Say so here, before the Log tap, instead of after it.
+    const noteFor = list.filter(a => byKey[a.key]?.requires_note && a.key !== "policy_review"
+      && !(a.key === "cancelation_saved" && (a.reason || "").trim()));
+    if (noteFor.length && !note.trim()) out.push(`A note on what you did (${[...new Set(noteFor.map(a => byKey[a.key].label))].join(", ")}).`);
     if (list.some(a => a.key === "cancelation_saved" && (!a.line || (needsType(a.line) && !a.type) || !(a.reason || "").trim()))) out.push("Each save needs the policy line, its type, and the reason the customer gave.");
     if (list.some(a => a.key === "policy_review") && !note.trim()) out.push("The policy review needs a note on what you covered.");
     if (list.some(a => a.key === "policy_review" && lineMissing(a))) out.push("The policy review needs the policy reviewed: its line and type.");
@@ -642,6 +730,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const problems = [];
   if (!customerOk) problems.push(isOrg ? "The organization name." : "Customer first name and last initial.");
   if (!phoneOk) problems.push("Customer phone, last four digits.");
+  if (withAgeGender && !isOrg && !ageOk(age)) problems.push("Customer age, 15 to 110.");
+  if (withAgeGender && !isOrg && !gender) problems.push("Customer gender.");
   if (!hasAnything) problems.push("Add an activity or a policy, or score the conversation.");
   if (policies.some(p => !p.status)) problems.push("Each policy needs Quoted, Sold, or Canceled.");
   if (policies.some(p => needsType(p.line) && !p.type)) problems.push("Each Auto or Fire policy needs its type.");
@@ -665,8 +755,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   if (ecrm.trim() && !/^https?:\/\//i.test(ecrm.trim())) problems.push("The ECRM link must start with http.");
 
   const reset = (keep) => {
-    if (!keep) { setCustKind("person"); setFirst(""); setInitial(""); setPhone(""); setDate(today); setDateOpen(false); }
-    setSuggest([]);
+    if (!keep) { setCustKind("person"); setFirst(""); setInitial(""); setPhone(""); setAge(""); setGender(""); setDate(today); setDateOpen(false); }
     setRelationship(""); setSource(""); setSourcedBy("");
     setActivities([]);
     setPolicies([]); setActivePolicy(null); setScores({}); setEcrm(""); setNote(""); setOnFileAnswer({});
@@ -793,12 +882,15 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     setAttempted(true);
     if (busy || problems.length > 0) return;
     setBusy(true);
+    // The Live tab's customer age and gender ride on every record this entry writes.
+    const ageGender = withAgeGender && !isOrg ? { customer_age: ageOk(age) ? Number(age) : null, customer_gender: gender || null } : {};
     try {
       const row = (p) => ({ line_of_business: p.line, product_type: p.type || null });
       const money = (p) => ({ premium: Number(p.premium), vehicle_count: hasCars(p.line, p.type) ? Number(p.vehicles) : null });
       const matched = (p) => ({ matched_sale_product_id: p.matchedId || null });
       const payload = {
         customer_first: first.trim(), customer_last_initial: initial.trim(), customer_kind: custKind, phone_last4: phone, occurred_on: date,
+        ...ageGender,
         ecrm_url: ecrm.trim() || null, note: note.trim() || null, team_member_id: logFor,
         relationship_type: relationship || null,
         marketing_source: source || null,
@@ -838,6 +930,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           vehicle_count: hasCars(o.line_of_business, o.product_type) ? Number(o.vehicle_count || 1) : null, matched_sale_product_id: o.sale_product_id, replacement: true }; });
         const c = await supabase.rpc("rp_log_entry", { p_payload: {
           customer_first: first.trim(), customer_last_initial: initial.trim(), customer_kind: custKind, phone_last4: phone, occurred_on: date, team_member_id: logFor, relationship_type: "existing",
+          ...ageGender,
           ecrm_url: ecrm.trim(), note: "Replaced by the new policy logged with the sale",
           cancelation: { items },
         } });
@@ -845,8 +938,9 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         else { cxlResult = c.data; summary += ` Old policy ${summarizeEntry(c.data).replace(/^Logged for [^:]*: /, "")}`; }
       }
       setOk(summary);
-      setLast({ result: data, cxlResult, first: first.trim(), initial: initial.trim(), kind: custKind, label: householdLabel, phone, date });
+      setLast({ result: data, cxlResult, first: first.trim(), initial: initial.trim(), kind: custKind, label: householdLabel, phone, age, gender, date });
       reset();
+      onSaved?.(data);
       onLogged?.();
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
   };
@@ -871,7 +965,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   };
   const logAnother = () => {
     if (!last) return;
-    setCustKind(last.kind || "person"); setFirst(last.first); setInitial(last.initial); setPhone(last.phone || ""); setDate(last.date);
+    setCustKind(last.kind || "person"); setFirst(last.first); setInitial(last.initial); setPhone(last.phone || ""); setAge(last.age || ""); setGender(last.gender || ""); setDate(last.date);
     setOk(""); setLast(null);
   };
 
@@ -892,10 +986,10 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     <div>
       <div style={cardStyle}>
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>
-          {isEdit ? `Editing this ${editRec.kind === "scorecard" ? "conversation score" : editRec.kind}` : "What happened with this customer?"}
+          {isEdit ? `Editing this ${editRec.kind === "scorecard" ? "conversation score" : editRec.kind}` : (heading || "What happened with this customer?")}
         </div>
         <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-          <span>{isEdit ? "Change what needs changing and save." : "Add what happened. One button saves it all."}</span>
+          <span>{isEdit ? "Change what needs changing and save." : (subheading || "Add what happened. One button saves it all.")}</span>
           {isEdit && editRec.entry_source === "historical_backfill" && (
             <span style={{ padding: "3px 9px", borderRadius: 999, background: T.amberLt, color: T.amber, fontSize: 12, fontWeight: 700 }}>
               Saving moves this out of the historical load and into the production log
@@ -915,37 +1009,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </select>
             </div>
           )}
-          <div style={{ flex: "0 0 auto" }}>
-            <label style={labelStyle}>Customer</label>
-            <KindToggle value={custKind} onChange={k => { setCustKind(k); if (k === "org") setInitial(""); }} />
-          </div>
-          <div ref={nameBoxRef} style={{ ...field(isOrg ? 228 : 150), position: "relative" }}>
-            <label style={labelStyle}>{isOrg ? "Organization" : "First name"}</label>
-            <input {...noPwManager("a1")} style={inputBase} value={first} placeholder={isOrg ? "Premier Online Marketing LLC" : "Anna"}
-              onChange={e => { setFirst(e.target.value); setSuggestOpen(true); }}
-              onFocus={() => setSuggestOpen(true)}
-              onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setSuggestOpen(false); } }} />
-            {showSuggest && (
-              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 5, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 8, boxShadow: "0 6px 16px rgba(0,0,0,0.08)", marginTop: 4, overflow: "hidden" }}>
-                {suggest.map(c => (
-                  <button key={c.customer_label} type="button" onClick={() => pickCustomer(c)}
-                    style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", background: "transparent", fontSize: 14, color: T.slate800, cursor: "pointer", fontFamily: "inherit" }}>
-                    {c.customer_label}{c.phone_last4 ? <span style={{ color: T.slate500 }}> ·{c.phone_last4}</span> : null} <span style={{ color: T.slate400, fontSize: 12 }}>{Number(c.policies_on_file) > 0 ? plural(c.policies_on_file, "policy").replace("policys", "policies") + " on file" : "on file"}{c.last_seen ? ` · ${fmtDate(c.last_seen)}` : ""}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          {!isOrg && (
-            <div style={{ flex: "0 0 78px" }}>
-              <label style={labelStyle}>Initial</label>
-              <input style={{ ...inputBase, textAlign: "center" }} value={initial} maxLength={1} onChange={e => setInitial(e.target.value)} placeholder="S" {...noPwManager("a2")} />
-            </div>
-          )}
-          <div style={{ flex: "0 0 126px" }}>
-            <label style={labelStyle}>Phone last 4</label>
-            <input {...noPwManager("a3")} inputMode="numeric" style={{ ...inputBase, textAlign: "center" }} value={phone} maxLength={4} onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="4417" />
-          </div>
+          <CustomerFields kind={custKind} first={first} initial={initial} phone={phone} age={age} gender={gender}
+            withAgeGender={withAgeGender} onChange={onCustomer} onPick={pickCustomer} />
           <div style={{ flex: "0 1 150px", minWidth: 0 }}>
             <label style={labelStyle}>Relationship</label>
             <select style={inputBase} value={relationship} onChange={e => setRelationship(e.target.value)}>
@@ -1253,7 +1318,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           </div>
         )}
       </div>
-      {!isEdit && <PendingSaves refreshKey={refreshKey} />}
+      {!isEdit && !hidePending && <PendingSaves refreshKey={refreshKey} />}
     </div>
   );
 }
@@ -4360,6 +4425,442 @@ function ChecklistTab() {
 }
 
 // =====================================================================
+// Live — the call, one step at a time (Peter 2026-10-04).
+//
+// Pick Inbound or Outbound, say who's on the line, and the script shows only
+// the next thing to say or the next choice to make, never the whole page.
+// Every word comes from the Processes manual (FIT Conversations and Retention)
+// through src/lib/liveCall.js, so a script edited there changes here too.
+//
+// While the call runs it records, without anyone picking from a list:
+//   * a Pivot, with its line, the moment a service call pivots to a product
+//   * the quote, once the close attempt is made ("Did they say yes?")
+//   * the sale (quoted and sold) when they say yes; a save, an added car, a
+//     policy review or an online review when the script reaches it
+// A small tag on the side names the part of the FIT conversation the call is
+// in and takes its score. At the end the call opens the Log tab's own form
+// with all of it filled in. The ECRM link, premiums and anything else still
+// needed go in there, so the Log's rules and its one save (rp_log_entry) apply.
+//
+// The call in progress is kept in this browser, so a refresh or a closed tab
+// picks it back up. It is cleared once the call is logged or ended.
+// =====================================================================
+const LIVE_TAB_CSS = `
+  .nw-live-dot { width: 8px; height: 8px; border-radius: 50%; background: ${T.red}; flex-shrink: 0; animation: nwLivePulse 1.5s ease-out 3; }
+  .nw-live-dot.open { box-shadow: 0 0 0 3px ${T.red}40; animation: none; }
+  @keyframes nwLivePulse { 0% { box-shadow: 0 0 0 0 ${T.red}99; } 70% { box-shadow: 0 0 0 7px ${T.red}00; } 100% { box-shadow: 0 0 0 0 ${T.red}00; } }
+  @media (prefers-reduced-motion: reduce) { .nw-live-dot { animation: none; } }
+`;
+const LIVE_STORE = (uid) => `nw.live.v1.${uid || "me"}`;
+const LIVE_MODE_STORE = "nw.live.mode";
+const MODES = [["inbound", "Inbound"], ["outbound", "Outbound"]];
+const REVIEW_SITE_LABEL = { google: "Google", facebook: "Facebook", yelp: "Yelp" };
+function readStore(key) { try { return window.localStorage.getItem(key); } catch { return null; } }
+function writeStore(key, v) {
+  try { if (v == null) window.localStorage.removeItem(key); else window.localStorage.setItem(key, v); } catch { /* storage off: the call just isn't kept */ }
+}
+function freshCall(mode) {
+  return { v: 1, mode: mode === "outbound" ? "outbound" : "inbound", started: false,
+    who: { kind: "person", first: "", initial: "", phone: "", age: "", gender: "" },
+    picks: {}, order: [], extra: [], scores: {}, at: null, finishing: false, logged: false, onFile: 0, plain: false };
+}
+function loadCall(uid) {
+  try { const s = JSON.parse(readStore(LIVE_STORE(uid)) || "null"); return s && s.v === 1 ? s : null; } catch { return null; }
+}
+function liveCallOpen(uid) { const s = loadCall(uid); return !!(s && s.started && !s.logged); }
+
+// Everything the walker reads, loaded once each time the tab opens.
+function useScriptLibrary() {
+  const [lib, setLib] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [pages, excerpts, faqs] = await Promise.all([fetchScriptPages(), fetchExcerptRows(), fetchFaqRows().catch(() => [])]);
+        if (alive) setLib(makeScriptLibrary({ pages, excerpts, faqs }));
+      } catch (e) { if (alive) setErr(errText(e)); }
+    })();
+    return () => { alive = false; };
+  }, []);
+  return { lib, err };
+}
+
+// A script step as HTML: the manual's own renderer, tables stacked on a phone,
+// numbering kept when a numbered list is split into steps, and links to other
+// FIT pages turned into buttons that add that product to the conversation.
+function liveHtml(md, lib, { isPhone = false, olStart = null, inCall = null } = {}) {
+  let html = mdToHtml(isPhone ? stackTables(md) : md, { resolveFaq: lib.resolveFaq });
+  if (olStart && olStart > 1) html = html.replace("<ol>", `<ol start="${olStart}">`);
+  if (inCall) {
+    html = html.replace(/<a href="\/processes\/([^"?#]+)((?:\?[^"]*)?)"([^>]*)>/g, (m, id, q, rest) =>
+      (lib.isProductPage(id) ? `<a href="/processes/${id}${q}" data-live-product="${id}" class="nw-live-prod${inCall.includes(id) ? " on" : ""}"${rest}>` : m));
+  }
+  return html;
+}
+
+const LIVE_CSS = `
+  .nw-live .newtworks-handbook-body { font-size: 16px; line-height: 1.65; }
+  .nw-live .newtworks-handbook-body h2, .nw-live .newtworks-handbook-body h3 { font-size: 15px; margin: 2px 0 10px 0; }
+  .nw-live .newtworks-handbook-body > :first-child { margin-top: 0; }
+  .nw-live .newtworks-handbook-body > :last-child { margin-bottom: 0; }
+  .nw-live a.nw-live-prod { display: inline-block; padding: 3px 12px; margin: 2px 0; border-radius: 999px; border: 1px solid ${T.blue}; background: ${T.blueLt}; color: ${T.blue}; text-decoration: none; font-weight: 700; font-size: 14px; }
+  .nw-live a.nw-live-prod.on { background: ${T.blue}; color: ${T.white}; }
+  .nw-live a.nw-live-prod.on::after { content: " \\2713"; }
+  .nw-live details.nw-live-more > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: ${T.slate500}; }
+`;
+const choiceBtn = (on) => ({
+  padding: "12px 14px", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+  border: `1px solid ${on ? T.blue : T.slate300}`, background: on ? T.blue : T.white, color: on ? T.white : T.slate800,
+});
+const scoreBtn = (on, v) => ({
+  width: 34, height: 32, borderRadius: 8, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", boxSizing: "border-box",
+  border: `1px solid ${on ? (v === 0 ? T.slate500 : T.blue) : T.slate300}`,
+  background: on ? (v === 0 ? T.slate500 : T.blue) : T.white, color: on ? T.white : T.slate600,
+});
+
+// What the call has recorded so far, in plain words, for the tag.
+function liveRecorded(rec, values, types) {
+  const out = [];
+  const label = (k) => ((values || []).find(v => v.activity_key === k) || {}).label || k;
+  for (const a of rec.activities || []) {
+    if (a.key === "pivot") out.push(`Pivot to ${PRODUCT_LABEL[a.line] || a.line}`);
+    else if (a.key === "google_review") out.push(`${label(a.key)} · ${REVIEW_SITE_LABEL[a.site] || a.site}`);
+    else if (a.key === "policy_review") out.push(`${label(a.key)} · ${PRODUCT_LABEL[a.line] || a.line}`);
+    else out.push(label(a.key));
+  }
+  for (const p of rec.policies || []) {
+    const st = STATUSES.find(x => x.key === p.status);
+    out.push(`${typeLabel(types, p.line, p.type) || PRODUCT_LABEL[p.line] || p.line} · ${st ? st.label : p.status}`);
+  }
+  if (rec.allowCancel) out.push("Canceled: pick the policy at the end");
+  return out;
+}
+
+function LiveStart({ who, resuming, onWho, onPick, onStart }) {
+  const [tried, setTried] = useState(false);
+  const isOrg = who.kind === "org";
+  const need = [];
+  if (!String(who.first || "").trim() || (!isOrg && !/^[A-Za-z]$/.test(String(who.initial || "").trim()))) need.push(isOrg ? "the organization name" : "first name and last initial");
+  if (!/^\d{4}$/.test(who.phone || "")) need.push("phone last 4");
+  return (
+    <div style={cardStyle}>
+      <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>Who's on the line?</div>
+      <div style={{ fontSize: 13, color: T.slate500, marginBottom: 16 }}>Age and gender can wait until the end of the call.</div>
+      <div style={wrapRow}>
+        <CustomerFields kind={who.kind} first={who.first} initial={who.initial} phone={who.phone} age={who.age} gender={who.gender}
+          withAgeGender onChange={onWho} onPick={onPick} autoFocus={!resuming} />
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 16 }}>
+        <button type="button" style={btnPrimary(false)} onClick={() => { setTried(true); if (!need.length) onStart(); }}>
+          {resuming ? "Back to the call" : "Start the call"}
+        </button>
+        {tried && need.length > 0 && <span style={{ fontSize: 12, color: T.slate600 }}>Still needed: {need.join(" and ")}.</span>}
+      </div>
+    </div>
+  );
+}
+
+// One step of the script, or one choice.
+function LiveNode({ node, lib, isPhone, inCall, onPick, onProduct }) {
+  const html = useMemo(() => (node.kind === "step" ? liveHtml(node.md, lib, { isPhone, olStart: node.olStart, inCall }) : ""), [node, lib, isPhone, inCall]);
+  const leadHtml = useMemo(() => (node.lead ? liveHtml(node.lead, lib, { isPhone, inCall }) : ""), [node, lib, isPhone, inCall]);
+  const moreHtml = useMemo(() => (node.more ? liveHtml(node.more, lib, { isPhone }) : ""), [node, lib, isPhone]);
+  // A product link adds that product to the conversation. A right-click, a
+  // middle-click or a click with a modifier key still opens the manual page.
+  const click = (e) => {
+    const a = e.target?.closest?.("a[data-live-product]");
+    if (!a || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    onProduct(a.getAttribute("data-live-product"), a.getAttribute("href"));
+  };
+  if (node.kind === "decide") {
+    return (
+      <div>
+        {leadHtml && <div className="newtworks-handbook-body" style={{ marginBottom: 12 }} dangerouslySetInnerHTML={{ __html: leadHtml }} />}
+        <div style={{ fontSize: 17, fontWeight: 800, color: T.slate900, marginBottom: node.note ? 4 : 12 }}>{node.title}</div>
+        {node.note && <div style={{ fontSize: 13, color: T.slate500, marginBottom: 12 }}>{node.note}</div>}
+        {node.many ? (
+          <select style={{ ...inputBase, maxWidth: 360 }} value={node.pick || ""} onChange={e => e.target.value && onPick(e.target.value)}>
+            <option value="">Pick one</option>
+            {node.options.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8 }}>
+            {node.options.map(o => (
+              <button key={o.key} type="button" onClick={() => onPick(o.key)} style={choiceBtn(node.pick === o.key)}>
+                {o.label}{o.hint ? <span style={{ fontWeight: 500, opacity: 0.75 }}> · {o.hint}</span> : null}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div className="newtworks-handbook-body" onClick={click} dangerouslySetInnerHTML={{ __html: html }} />
+      {moreHtml && (
+        <details className="nw-live-more" style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${T.slate100}` }}>
+          <summary>More from FIT Conversations</summary>
+          <div className="newtworks-handbook-body" style={{ marginTop: 10 }} dangerouslySetInnerHTML={{ __html: moreHtml }} />
+        </details>
+      )}
+    </div>
+  );
+}
+
+// The tag on the side: which part of the FIT conversation this is, its score,
+// the products being talked about, and what the call has recorded.
+function LiveTag({ part, scores, onScore, rec, lib, values, types, partsIn, onJump, onAdd, onRemove }) {
+  const p = CARD_PARTS.find(x => x.key === part);
+  const caption = p ? ((lib.fitPage(FIT_PAGE_ID, {}).parts[p.key] || {}).caption || "") : "";
+  const recorded = liveRecorded(rec, values, types);
+  const first = (rec.products || [])[0];
+  const products = rec.fit ? (rec.products || []).map(id => lib.product(id)).filter(Boolean) : [];
+  const addable = rec.fit ? lib.products.filter(x => !(rec.products || []).includes(x.page)) : [];
+  const small = { fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4 };
+  if (!p && !products.length && !recorded.length) return null;
+  return (
+    <div style={{ ...cardStyle, padding: 14, display: "grid", gap: 14 }}>
+      {p && (
+        <div>
+          <div style={small}>Conversation · {CARD_PARTS.indexOf(p) + 1} of 10</div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900, marginTop: 2 }}>{p.label}</div>
+          {caption && <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>{caption}</div>}
+          <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+            {[0, 1, 2, 3].map(v => (
+              <button key={v} type="button" title={SCORE_MEANING[v]} onClick={() => onScore(p.key, v)} style={scoreBtn(scores[p.key] === v, v)}>{v === 0 ? "x" : v}</button>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 5, marginTop: 10, flexWrap: "wrap" }}>
+            {CARD_PARTS.map(x => {
+              const sc = scores[x.key];
+              const here = x.key === p.key;
+              return (
+                <span key={x.key} title={`${x.label}: ${sc == null ? "not scored yet" : sc === 0 ? "x" : sc}`}
+                  onClick={() => partsIn.includes(x.key) && onJump(x.key)}
+                  style={{ width: 12, height: 12, borderRadius: "50%", boxSizing: "border-box", cursor: partsIn.includes(x.key) ? "pointer" : "default",
+                    background: sc != null ? T.blue : T.white, border: `2px solid ${here ? T.slate900 : sc != null ? T.blue : T.slate300}` }} />
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {products.length > 0 && (
+        <div>
+          <div style={small}>Talking about</div>
+          <div style={{ ...chipRow, gap: 6, marginTop: 6 }}>
+            {products.map(x => (
+              <span key={x.page} style={{ ...pill, padding: x.page === first ? "6px 12px" : "6px 6px 6px 12px", fontSize: 12 }}>
+                {x.label}
+                {x.page !== first && <button type="button" style={pillX} onClick={() => onRemove(x.page)} aria-label={`Take ${x.label} out`}>×</button>}
+              </span>
+            ))}
+          </div>
+          {addable.length > 0 && (
+            <select style={{ ...inputBase, marginTop: 8, fontSize: 13, padding: "8px 10px" }} value="" onChange={e => e.target.value && onAdd(e.target.value)}>
+              <option value="">+ Add a product</option>
+              {addable.map(x => <option key={x.page} value={x.page}>{x.label}</option>)}
+            </select>
+          )}
+        </div>
+      )}
+      {recorded.length > 0 && (
+        <div>
+          <div style={small}>Recorded</div>
+          <div style={{ display: "grid", gap: 4, marginTop: 6, fontSize: 13, color: T.slate700 }}>
+            {recorded.map((r, i) => <div key={i}>✓ {r}</div>)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LiveTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, onLogged, refreshKey, userId }) {
+  const vp = useViewport();
+  const narrow = vp.isPhone || vp.isTablet;
+  const { lib, err: libErr } = useScriptLibrary();
+  const [st, setSt] = useState(() => loadCall(userId) || freshCall(readStore(LIVE_MODE_STORE)));
+  useEffect(() => { writeStore(LIVE_STORE(userId), JSON.stringify(st)); }, [st, userId]);
+  const built = useMemo(() => (lib && st.started ? buildCall(st, lib) : null), [lib, st]);
+  const nodes = built ? built.nodes : [];
+  let pos = nodes.findIndex(n => n.id === st.at);
+  if (pos < 0) pos = 0;
+  const node = nodes[pos] || null;
+  const rec = built ? built.rec : null;
+  const [justLogged, setJustLogged] = useState(false);
+  const [finishKey, setFinishKey] = useState(0);
+  const savedRef = useRef(false);
+
+  const setMode = (m) => { writeStore(LIVE_MODE_STORE, m); setSt(s => ({ ...s, mode: m })); };
+  const goTo = (id) => setSt(s => ({ ...s, at: id, finishing: false }));
+  const next = () => { if (nodes[pos + 1]) goTo(nodes[pos + 1].id); };
+  const back = () => {
+    if (st.finishing) { setSt(s => ({ ...s, finishing: false })); return; }
+    if (pos > 0) goTo(nodes[pos - 1].id);
+  };
+  // A choice. Changing an earlier answer clears every answer given after it,
+  // so the call never carries on down a path it has left.
+  const pick = (id, key) => {
+    let picks = { ...st.picks };
+    let order = [...(st.order || [])];
+    if (picks[id] !== key) {
+      const i = order.indexOf(id);
+      if (i >= 0) { for (const later of order.slice(i)) delete picks[later]; order = order.slice(0, i); }
+      picks[id] = key;
+      order.push(id);
+    }
+    const s1 = { ...st, picks, order, finishing: false };
+    const nb = buildCall(s1, lib).nodes;
+    const i = nb.findIndex(n => n.id === id);
+    setSt({ ...s1, at: (nb[i + 1] || nb[i] || {}).id || id });
+  };
+  const score = (key, v) => setSt(s => ({ ...s, scores: { ...s.scores, [key]: s.scores[key] === v ? null : v } }));
+  // A product joins the conversation: from a link in the script (its Uncover and
+  // Bridge follow the step you are on) or from the tag (the call goes there now).
+  const addProduct = (id, href, jump = false) => {
+    const first = rec?.products?.[0];
+    if (!id || id === first || (st.extra || []).includes(id)) return;
+    const op = /[?&]opener=([^&#]+)/.exec(href || "");
+    const s1 = { ...st, extra: [...(st.extra || []), id] };
+    if (op) { s1.picks = { ...st.picks, [`op.${id}`]: decodeURIComponent(op[1]) }; s1.order = [...(st.order || []), `op.${id}`]; }
+    if (jump) {
+      const nb = buildCall(s1, lib).nodes;
+      const hit = nb.find(n => n.id.startsWith(`fit.${id}.`) || n.id === `op.${id}`);
+      if (hit) s1.at = hit.id;
+    }
+    setSt(s1);
+  };
+  const removeProduct = (id) => setSt(s => ({ ...s, extra: (s.extra || []).filter(x => x !== id) }));
+  const endCall = () => {
+    if (!window.confirm("End this call without logging it?")) return;
+    setJustLogged(false);
+    setSt(freshCall(st.mode));
+  };
+  const nextCall = () => { setJustLogged(false); setSt(freshCall(st.mode)); };
+
+  // Arrow keys move through the script when nobody is typing.
+  useEffect(() => {
+    if (!st.started || st.finishing || !node || node.kind === "finish") return undefined;
+    const onKey = (e) => {
+      if (e.target?.closest?.("input, textarea, select, [contenteditable]")) return;
+      if (e.key === "ArrowRight" && (node.kind === "step" || node.pick != null)) { e.preventDefault(); next(); }
+      if (e.key === "ArrowLeft") { e.preventDefault(); back(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const modeBar = (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
+      <SegToggle value={st.mode} onChange={setMode} options={MODES} big />
+      {!st.started && !st.at && (
+        <button type="button" style={linkBtn} onClick={() => setSt(s => ({ ...s, plain: !s.plain }))}>{st.plain ? "Back to calls" : "Log without a script"}</button>
+      )}
+    </div>
+  );
+
+  if (!st.started) {
+    return (
+      <div className="nw-live" style={{ display: "grid", gap: 16 }}>
+        {modeBar}
+        {st.plain && !st.at
+          ? <LogTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={onLogged} refreshKey={refreshKey} />
+          : <LiveStart who={st.who} resuming={!!st.at}
+              onWho={(p) => setSt(s => ({ ...s, who: { ...s.who, ...p } }))}
+              onPick={(c) => setSt(s => ({ ...s, onFile: Number(c.policies_on_file || 0),
+                who: { ...s.who, kind: c.customer_kind || "person", first: c.customer_first_name || "", initial: c.customer_last_initial || "", phone: c.phone_last4 || s.who.phone } }))}
+              onStart={() => setSt(s => ({ ...s, started: true, plain: false }))} />}
+      </div>
+    );
+  }
+  if (libErr) return <Notice kind="error">The scripts did not load: {libErr}</Notice>;
+  if (!lib || !built || !node) return <div style={{ ...cardStyle, color: T.slate500, fontSize: 13 }}>Loading the scripts…</div>;
+
+  const finishing = st.finishing || node.kind === "finish";
+  const who = st.who;
+  const label = who.kind === "org" ? who.first : `${who.first} ${String(who.initial || "").toUpperCase()}.`;
+  const inCall = rec.fit && (rec.products || []).length ? rec.products : null;
+  const partsIn = [...new Set(nodes.filter(n => n.part).map(n => n.part))];
+  const jumpToPart = (key) => { const hit = nodes.find(n => n.part === key); if (hit) goTo(hit.id); };
+  const prefill = {
+    custKind: who.kind, first: who.first, initial: who.initial, phone: who.phone, age: who.age, gender: who.gender,
+    relationship: rec.relationship, source: rec.source, activities: rec.activities, policies: rec.policies, scores: st.scores,
+  };
+  const requireCard = !!rec.fit || Object.values(st.scores || {}).some(v => v != null);
+  const logCallHtml = built.logCall ? liveHtml(built.logCall, lib, { isPhone: vp.isPhone }) : "";
+  const tag = !finishing ? (
+    <LiveTag part={node.part} scores={st.scores || {}} onScore={score} rec={rec} lib={lib} values={values} types={types}
+      partsIn={partsIn} onJump={jumpToPart} onAdd={(id) => addProduct(id, "", true)} onRemove={removeProduct} />
+  ) : null;
+
+  return (
+    <div className="nw-live" style={{ display: "grid", gap: 16 }}>
+      <ManualBodyStyles />
+      <style>{LIVE_CSS}</style>
+      {modeBar}
+      <div style={{ ...cardStyle, padding: "10px 14px", display: "flex", flexWrap: "wrap", gap: "6px 14px", alignItems: "center" }}>
+        <span style={{ fontWeight: 800, color: T.slate900 }}>{label}</span>
+        <span style={{ fontSize: 13, color: T.slate500 }}>·{who.phone}{who.age ? ` · ${who.age}` : ""}{who.gender ? ` · ${who.gender === "male" ? "Male" : "Female"}` : ""}</span>
+        {!st.logged && <button type="button" style={linkBtn} onClick={() => setSt(s => ({ ...s, started: false }))}>Edit</button>}
+        <span style={{ marginLeft: "auto", display: "flex", flexWrap: "wrap", gap: 16 }}>
+          {!finishing && <button type="button" style={linkBtn} onClick={() => setSt(s => ({ ...s, finishing: true }))}>Finish the call</button>}
+          {!st.logged && <button type="button" style={{ ...linkBtn, color: T.red }} onClick={endCall}>End without logging</button>}
+        </span>
+      </div>
+
+      {finishing ? (
+        st.logged && !justLogged ? (
+          <div style={cardStyle}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>This call is logged.</div>
+            <button type="button" style={{ ...btnPrimary(false), marginTop: 12 }} onClick={nextCall}>Start the next call</button>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            {justLogged && (
+              <div style={{ ...cardStyle, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>Logged.</span>
+                <button type="button" style={btnPrimary(false)} onClick={nextCall}>Start the next call</button>
+              </div>
+            )}
+            {!justLogged && logCallHtml && (
+              <details className="nw-live-more" style={{ ...cardStyle, padding: "12px 16px" }}>
+                <summary>How to log it in ECRM</summary>
+                <div className="newtworks-handbook-body" style={{ marginTop: 10 }} dangerouslySetInnerHTML={{ __html: logCallHtml }} />
+              </details>
+            )}
+            <EntryPage key={finishKey} values={values} sources={sources} types={types} isOwner={isOwner} roster={roster} refreshKey={refreshKey}
+              prefill={prefill} withAgeGender={who.kind !== "org"} requireCard={requireCard} hidePending allowCancel={!!rec.allowCancel}
+              heading="Finish the call" subheading="Fill in what's left. One button saves it all."
+              onSaved={() => { savedRef.current = true; setJustLogged(true); setSt(s => ({ ...s, logged: true })); }}
+              onLogged={() => {
+                if (savedRef.current) { savedRef.current = false; onLogged?.(); return; }
+                // Undo: the call is open again, with everything it recorded.
+                setJustLogged(false); setSt(s => ({ ...s, logged: false })); setFinishKey(k => k + 1); onLogged?.();
+              }} />
+            {!justLogged && <button type="button" style={{ ...linkBtn, justifySelf: "start" }} onClick={back}>‹ Back to the script</button>}
+          </div>
+        )
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: narrow ? "minmax(0, 1fr)" : "minmax(0, 1fr) 250px", gap: 16, alignItems: "start" }}>
+          {narrow && tag}
+          <div style={cardStyle}>
+            <LiveNode node={node} lib={lib} isPhone={vp.isPhone} inCall={inCall} onPick={(k) => pick(node.id, k)} onProduct={(id, href) => addProduct(id, href)} />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginTop: 20 }}>
+              <button type="button" style={{ ...btnGhost, padding: "9px 14px", fontSize: 13, opacity: pos === 0 ? 0.4 : 1 }} disabled={pos === 0} onClick={back}>‹ Back</button>
+              {(node.kind === "step" || node.pick != null) && <button type="button" style={btnPrimary(false)} onClick={next}>Next ›</button>}
+            </div>
+          </div>
+          {!narrow && tag}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =====================================================================
 // Log tab — opens with "Canceling something?" (Peter 2026-09-12). The
 // Canceled tab is gone: No keeps today's entry page, Yes drops the
 // cancelation search in its place, same code as before, no popup.
@@ -4999,10 +5500,15 @@ export default function ActivityLog({ userRole, userId }) {
   }, [refreshKey, myTeamId]);
 
   const bump = () => setRefreshKey(k => k + 1);
+  // A call left open on the Live tab keeps a ring on its dot from any other tab.
+  const callOpen = tab !== "live" && liveCallOpen(userId);
   // Peter 2026-09-15: the production run of tabs first — what you log, how it
   // scored, what it could earn, what is waiting, what changed, and the whole
   // record behind it. Then a divider, then everything else.
+  // Peter 2026-10-04: Live sits first. It walks a call one step at a time and will
+  // take over from Log; until then Log stays as it is.
   const tabs = [
+    { id: "live", label: "Live" },
     { id: "log", label: "Log" },
     { id: "week", label: "Score" },
     { id: "earnings", label: "Earnings" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
@@ -5063,17 +5569,21 @@ export default function ActivityLog({ userRole, userId }) {
         ) : null}
         </div>
       </div>
+      <style>{LIVE_TAB_CSS}</style>
       <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap", borderBottom: `1px solid ${T.slate200}`, paddingBottom: 6 }}>
         {tabs.map(t => (
           t.type === "divider"
             ? <span key={t.id} aria-hidden="true" style={{ flexShrink: 0, alignSelf: "stretch", width: 1, background: T.slate200, margin: "2px 6px" }} />
-            : <TabLink key={t.id} href={tabHref(t.id)} onSelect={() => setTab(t.id)} style={{
+            : <TabLink key={t.id} href={tabHref(t.id)} onSelect={() => setTab(t.id)} title={t.id === "live" && callOpen ? "A call is in progress" : undefined} style={{
                 flexShrink: 0, padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 700, textDecoration: "none",
                 background: tab === t.id ? T.blueLt : "transparent", color: tab === t.id ? T.blue : T.slate600,
-              }}>{t.label}</TabLink>
+              }}>{t.id === "live"
+                ? <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}><span aria-hidden="true" className={`nw-live-dot${callOpen ? " open" : ""}`} />{t.label}</span>
+                : t.label}</TabLink>
         ))}
       </div>
 
+      {tab === "live" && <LiveTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} userId={userId} />}
       {tab === "log" && <LogTab values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} roster={roster} nameOf={nameOf} onLogged={bump} refreshKey={refreshKey} />}
       {tab === "checklist" && <ChecklistTab />}
       {tab === "issued" && <IssuedTab values={values} sources={sources} types={types} roster={roster} nameOf={nameOf} isOwner={isOwner} isAdmin={isAdmin} myTeamId={myTeamId} refreshKey={refreshKey} onChanged={bump} />}

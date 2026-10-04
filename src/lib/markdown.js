@@ -311,7 +311,7 @@ function transclusionEditButton(kind, title) {
 // content was never expanded and rendered as literal text. The cycle guard
 // keys on kind + title so the same title can legitimately exist in both
 // namespaces.
-function expandTransclusions(md, ctx, visited, depth) {
+export function expandTransclusions(md, ctx, visited, depth) {
   if (depth > MAX_INCLUDE_DEPTH) return md;
   const { resolveInclude, resolveExcerpt, markEdit } = ctx || {};
   const replaceOne = (kind, resolver) => (_match, rawTarget) => {
@@ -877,10 +877,10 @@ function expandCharts(md) {
 // Manual.jsx. When it is missing (the content editor preview) the first
 // opener shows and the dropdowns render disabled.
 
-const OPENER_MARK_RE = /^[ \t]*\*?\[Opener:\s*([^\]|\n]+?)\s*\|\s*([^\]\n]+?)\s*\]\*?[ \t]*$/;
+export const OPENER_MARK_RE = /^[ \t]*\*?\[Opener:\s*([^\]|\n]+?)\s*\|\s*([^\]\n]+?)\s*\]\*?[ \t]*$/;
 const OPENER_END_RE = /^[ \t]*\*?\[Openers end\]\*?[ \t]*$/i;
-const ENGAGED_MARK_RE = /^[ \t]*\*?\[Engaged:\s*(yes|no)\s*\]\*?[ \t]*$/i;
-const ENGAGED_END_RE = /^[ \t]*\*?\[Engaged end\]\*?[ \t]*$/i;
+export const ENGAGED_MARK_RE = /^[ \t]*\*?\[Engaged:\s*(yes|no)\s*\]\*?[ \t]*$/i;
+export const ENGAGED_END_RE = /^[ \t]*\*?\[Engaged end\]\*?[ \t]*$/i;
 // Any section of the page can be tied to the choices at the top:
 //   [Engaged: yes] / [Engaged: no] … [Engaged end]
 //   [Mode: pivot] / [Mode: outbound] … [Mode end]
@@ -955,7 +955,7 @@ function sortOpeners(groups) {
   return groups;
 }
 
-function expandSelector(md, options) {
+export function expandSelector(md, options) {
   const src = String(md || "");
   const hasOpeners = src.indexOf("[Opener:") !== -1;
   const hasEngaged = src.indexOf("[Engaged:") !== -1;
@@ -1345,6 +1345,24 @@ function applyRoleplaySlots(html, slots) {
   return html.replace(/(?:<p>\s*)?NWRPSLOT(\d+)END(?:\s*<\/p>)?/g, (_m, n) => slots[Number(n)] || "");
 }
 
+// ─── Pipe-table rows ──────────────────────────────────────────
+// One copy, shared: the table renderer below and the Live tab's phone layout
+// (src/lib/liveCall.js stackTables) both read tables through these.
+export const isPipeRow = (s) => /^\s*\|.*\|\s*$/.test(s);
+export const isPipeSep = (s) => /^\s*\|[\s\-:|]+\|\s*$/.test(s);
+export function splitTableRow(s) {
+  const inner = String(s).trim().replace(/^\|/, "").replace(/\|$/, "");
+  const parts = [];
+  let buf = "";
+  for (let k = 0; k < inner.length; k++) {
+    if (inner[k] === "\\" && inner[k + 1] === "|") { buf += "|"; k++; continue; }
+    if (inner[k] === "|") { parts.push(buf.trim()); buf = ""; continue; }
+    buf += inner[k];
+  }
+  parts.push(buf.trim());
+  return parts;
+}
+
 // ─── Markdown → HTML ──────────────────────────────────────────
 export function mdToHtml(md, options = {}) {
   let src = String(md || "");
@@ -1504,23 +1522,12 @@ export function mdToHtml(md, options = {}) {
     }
 
     // Markdown pipe table (GFM-style)
-    const _isPipeRow = (s) => /^\s*\|.*\|\s*$/.test(s);
-    const _isPipeSep = (s) => /^\s*\|[\s\-:|]+\|\s*$/.test(s);
+    const _isPipeRow = isPipeRow;
+    const _isPipeSep = isPipeSep;
     if (_isPipeRow(line) && i + 1 < lines.length && _isPipeSep(lines[i + 1])) {
       flushPara(); flushList();
 
-      const splitRow = (s) => {
-        const inner = s.trim().replace(/^\|/, "").replace(/\|$/, "");
-        const parts = [];
-        let buf = "";
-        for (let k = 0; k < inner.length; k++) {
-          if (inner[k] === "\\" && inner[k + 1] === "|") { buf += "|"; k++; continue; }
-          if (inner[k] === "|") { parts.push(buf.trim()); buf = ""; continue; }
-          buf += inner[k];
-        }
-        parts.push(buf.trim());
-        return parts;
-      };
+      const splitRow = splitTableRow;
 
       const sepCells = splitRow(lines[i + 1]);
       const align = sepCells.map(c => {
