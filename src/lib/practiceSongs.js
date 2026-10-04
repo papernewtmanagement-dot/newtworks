@@ -1,5 +1,5 @@
 // =========================================================================
-// practiceSongs.js — three original songs for Noodle Boogie, made from math.
+// practiceSongs.js — three original songs for Air Boogie, made from math.
 // No recordings, so nothing to license. Each song knows its exact beat
 // times, so the game never has to guess the beat for these.
 // renderSong(id, sampleRate) → { left, right, beats, downbeats, duration, bpm }

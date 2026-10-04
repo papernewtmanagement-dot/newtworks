@@ -7,9 +7,9 @@ import { analyzeSong, gradeOffset, MAX_POINTS, MISS_AFTER, starsFor, createLiveB
 import { createDancer, stepDancer, puff, drawScene, drawDancer } from "../lib/airDancer.js";
 
 // =========================================================================
-// NoodleBoogie.jsx — test build of the air dancer game (Family area). Named
-// Private Dancer until 2026-10-04; the browser storage keys keep the old name so
-// best scores and the timing setting carry over.
+// AirBoogie.jsx — test build of the air dancer game (Family area). Named
+// Private Dancer, then Noodle Boogie, until 2026-10-04; the browser storage keys
+// keep the first name so best scores and the timing setting carry over.
 // Play: tap the screen on the beat; each tap is a puff of air. Every tap is
 // graded against the nearest beat (Perfect / Good / OK), streaks raise a multiplier.
 // Any pattern counts: every beat, every other beat, once a bar. Skipped beats are
@@ -58,7 +58,7 @@ function newScore() {
   };
 }
 
-export default function NoodleBoogie() {
+export default function AirBoogie() {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
   const [mode, setMode, modeHref] = useTabParam("mode", "play", MODES);
@@ -314,7 +314,7 @@ export default function NoodleBoogie() {
           }
         }
         r.missCheck = now - MISS_AFTER;
-        d.base = r.mode === "watch" ? 0.36 + 0.24 * Math.min(1, r.loudNow || 0) : 0.35;
+        d.base = r.mode === "watch" ? 0.36 + 0.24 * Math.min(1, r.loudNow || 0) : 0.2;
       } else {
         d.base = 0.5;
         if (Math.random() < dt * 0.5) puff(d, 0.4, 0);
@@ -361,7 +361,7 @@ export default function NoodleBoogie() {
   return (
     <div style={{ padding: _pad, maxWidth: 760, margin: "0 auto", boxSizing: "border-box" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
-        <div style={{ fontSize: 22, fontWeight: 800, color: T.slate900 }}>Noodle Boogie</div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: T.slate900 }}>Air Boogie</div>
         <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap" }}>
           {MODES.map((m) => (
             <TabLink key={m} href={modeHref(m)} onSelect={() => { finish(false); setResult(null); setMode(m); }}

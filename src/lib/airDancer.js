@@ -1,6 +1,6 @@
 // =========================================================================
 // airDancer.js — the inflatable tube dancer: how it moves and how it's drawn.
-// Used by the Noodle Boogie game. No browser needed for the motion, so it
+// Used by the Air Boogie game. No browser needed for the motion, so it
 // can be tested in Node; drawDancer takes any canvas 2D context.
 //
 // How it moves: the tube is a chain of joints standing on a blower.
@@ -40,9 +40,10 @@ export function createDancer(seed = 1) {
 function airIn(d) {
   return Math.max(0, Math.min(1.15, d.base + d.surge + (d.flutter || 0)));
 }
-// What is actually in the tube. It fills fast (about a tenth of a second) but
-// leaks out slowly through the fabric and the top (about two-thirds of a second),
-// so the dancer holds his height between beats and sags gradually.
+// What is actually in the tube. It fills fast (about a tenth of a second) and
+// leaks out through the fabric and the top, quickly when full and more slowly as
+// it empties. Tapping once a bar, he bends to about a right angle by the fourth
+// beat and only reaches the ground if you wait a couple of beats longer.
 export function pressure(d) {
   return d.air ?? airIn(d);
 }
@@ -70,11 +71,12 @@ export function stepDancer(d, dt) {
     else if (d.rnd() < h * 0.15) d.gulp = 0.15 + d.rnd() * 0.2;
     const want = airIn(d);
     if (d.air === undefined) d.air = want;
-    d.air += (want - d.air) * (1 - Math.exp(-h / (want > d.air ? 0.1 : 0.65)));
+    d.air += (want - d.air) * (1 - Math.exp(-h / (want > d.air ? 0.1 : 0.25 + 1.5 * Math.max(0, 1 - d.air))));
     const P = d.air;
-    const stiff = 2.3 + 58 * P * P;
-    const damp = 2.2 + 4.5 * P;
-    const grav = 40 * Math.pow(Math.max(0, 1 - P), 1.7);
+    const stiff = 2 + 16 * P + 34 * P * P;
+    // the emptier the tube, the more the fabric drags, so the last part of a fall is slow
+    const damp = 8.2 + 4.5 * P + 60 * Math.pow(Math.max(0, 1 - P), 5);
+    const grav = 48 * Math.pow(Math.max(0, 1 - P), 1.7);
     const gust = 2.2 + 3 * Math.min(1, P);
     // heights of each point, in segment lengths above the blower top
     let phi = 0, ht = 0;

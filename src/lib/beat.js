@@ -1,6 +1,6 @@
 // =========================================================================
 // beat.js — finds the beat in a song, and grades a tap against it.
-// Used by the Noodle Boogie game. Pure functions, no browser needed, so
+// Used by the Air Boogie game. Pure functions, no browser needed, so
 // they can be tested in Node.
 //
 // Method: Ellis (2007), "Beat Tracking by Dynamic Programming",
