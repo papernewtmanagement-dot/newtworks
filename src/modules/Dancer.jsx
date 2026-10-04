@@ -3,13 +3,15 @@ import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 import { useTabParam, TabLink } from "../lib/routing.jsx";
 import { PRACTICE_SONGS, renderSong } from "../lib/practiceSongs.js";
-import { analyzeSong, gradeOffset, MAX_POINTS, MISS_AFTER, starsFor, createLiveBeat } from "../lib/beat.js";
+import { analyzeSong, gradeOffset, MAX_POINTS, MISS_AFTER, starsFor, createLiveBeat, secondsPerBeat } from "../lib/beat.js";
 import { createDancer, stepDancer, puff, drawScene, drawDancer } from "../lib/airDancer.js";
 
 // =========================================================================
-// AirBoogie.jsx — test build of the air dancer game (Family area). Named
-// Private Dancer, then Noodle Boogie, until 2026-10-04; the browser storage keys
-// keep the first name so best scores and the timing setting carry over.
+// Dancer.jsx — test build of the air dancer game (Family area), "Dancer: dance
+// with the air". Named Private Dancer, Noodle Boogie, then Air Boogie on
+// 2026-10-04; the browser storage keys keep the first name so best scores and the
+// timing setting carry over. The dancer's sag is timed in beats of the song
+// playing (src/lib/airDancer.js), so fast songs need faster taps.
 // Play: tap the screen on the beat; each tap is a puff of air. Every tap is
 // graded against the nearest beat (Perfect / Good / OK), streaks raise a multiplier.
 // Any pattern counts: every beat, every other beat, once a bar. Skipped beats are
@@ -58,7 +60,7 @@ function newScore() {
   };
 }
 
-export default function AirBoogie() {
+export default function Dancer() {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
   const [mode, setMode, modeHref] = useTabParam("mode", "play", MODES);
@@ -222,7 +224,7 @@ export default function AirBoogie() {
     src.start(startAt);
     src.onended = () => { if (eng.current.src === src) finish(true); };
     e.src = src;
-    e.run = { ...base, kind: source.kind, id: song.id, title: song.title, t0: startAt, beats: song.beats, downbeats: new Set(song.downbeats || []), loud: song.loud };
+    e.run = { ...base, kind: source.kind, id: song.id, title: song.title, t0: startAt, beats: song.beats, beatSec: secondsPerBeat(song.beats), downbeats: new Set(song.downbeats || []), loud: song.loud };
     setStatus("");
     setRunning(true);
   }, [source, fileSong, getCtx, finish]);
@@ -314,9 +316,11 @@ export default function AirBoogie() {
           }
         }
         r.missCheck = now - MISS_AFTER;
-        d.base = r.mode === "watch" ? 0.36 + 0.24 * Math.min(1, r.loudNow || 0) : 0.37;
+        d.base = r.mode === "watch" ? 0.3 + 0.2 * Math.min(1, r.loudNow || 0) : 0.26;
+        d.beatSec = r.kind === "mic" ? (r.live.period || d.beatSec || 0.6) : r.beatSec;
       } else {
         d.base = 0.5;
+        d.beatSec = 0.6;
         if (Math.random() < dt * 0.5) puff(d, 0.4, 0);
       }
       stepDancer(d, dt);
@@ -361,7 +365,10 @@ export default function AirBoogie() {
   return (
     <div style={{ padding: _pad, maxWidth: 760, margin: "0 auto", boxSizing: "border-box" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
-        <div style={{ fontSize: 22, fontWeight: 800, color: T.slate900 }}>Air Boogie</div>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: T.slate900, lineHeight: 1.1 }}>Dancer</div>
+          <div style={{ fontSize: 13, color: T.slate500, fontStyle: "italic" }}>Dance with the air</div>
+        </div>
         <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap" }}>
           {MODES.map((m) => (
             <TabLink key={m} href={modeHref(m)} onSelect={() => { finish(false); setResult(null); setMode(m); }}

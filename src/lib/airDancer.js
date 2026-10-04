@@ -1,6 +1,6 @@
 // =========================================================================
 // airDancer.js — the inflatable tube dancer: how it moves and how it's drawn.
-// Used by the Air Boogie game. No browser needed for the motion, so it
+// Used by the Dancer game. No browser needed for the motion, so it
 // can be tested in Node; drawDancer takes any canvas 2D context.
 //
 // How it moves: the tube is a chain of joints standing on a blower.
@@ -14,6 +14,14 @@ const N = 12;          // body joints
 const ARM_N = 4;       // joints per arm
 const ARM_AT = 8;      // arms come out of joint 8 of 12
 const FLOOR = -1.0;    // the ground, in segment lengths below the blower top (the tube can't go lower)
+// Tempo. Air from a puff leaks out per beat, not per second, so on a fast song he
+// sags in less time and you tap faster; on a slow song he holds up longer.
+// d.beatSec is the song's seconds per beat (the game sets it; 0.6 = 100 a minute).
+const AIR_LOSS_PER_BEAT = 0.5;
+// While a puff's air is still in him, it holds his head up off the ground: fully at
+// LIFT_FULL of puff air left, not at all at LIFT_NONE. Tapping every 4th beat keeps
+// him off the ground at any tempo; wait about 6 beats or more and he can hit it.
+const LIFT_MAX = 4, LIFT_FULL = 0.1, LIFT_NONE = 0.03;
 
 export function createDancer(seed = 1) {
   let s = seed >>> 0;
@@ -33,10 +41,9 @@ export function createDancer(seed = 1) {
   };
 }
 
-// Air in the tube: the blower's steady push plus puffs. 2026-10-04: back to the
-// first build's motion, eased a little looser (softer tube, more ripple, puffs
-// last longer). Tapping once a bar at 92 a minute he bends to about a right
-// angle by the fourth beat and doesn't reach the ground until about the eighth.
+// Air in the tube: the blower's steady push plus puffs. The first build's motion,
+// loosened (softer tube, more ripple), with puff air timed in beats (see
+// AIR_LOSS_PER_BEAT). Tapping every 4th beat he folds deep but stays off the ground.
 export function pressure(d) {
   return Math.max(0, Math.min(1.15, d.base + d.surge));
 }
@@ -57,9 +64,11 @@ export function stepDancer(d, dt) {
   const sub = 4, h = dt / sub;
   for (let k = 0; k < sub; k++) {
     d.t += h;
-    d.surge *= Math.exp(-h * 1.35);
+    d.surge *= Math.exp(-h * AIR_LOSS_PER_BEAT / (d.beatSec || 0.6));
+    const liftT = Math.max(0, Math.min(1, (d.surge - LIFT_NONE) / (LIFT_FULL - LIFT_NONE)));
+    const lift = LIFT_MAX * liftT * liftT * (3 - 2 * liftT);
     const P = pressure(d);
-    const stiff = 3 + 66 * P * P;
+    const stiff = 2.5 + 42 * P * P;
     const damp = 2.5 + 5 * P;
     const grav = 34 * Math.pow(Math.max(0, 1 - P), 2);
     const gust = 2.6 + 3.2 * Math.min(1, P);
@@ -68,7 +77,7 @@ export function stepDancer(d, dt) {
     const phis = d._phis || (d._phis = new Float64Array(N));
     const floorPush = d._fp || (d._fp = new Float64Array(N));
     floorPush.fill(0);
-    for (let i = 0; i < N; i++) { phi += d.th[i]; phis[i] = phi; ht += Math.cos(phi); if (ht < FLOOR) { const pen = FLOOR - ht; for (let j = 0; j <= i; j++) floorPush[j] -= 70 * pen * Math.sign(phis[i]) * (0.4 + 0.6 * (j / (i + 1))); } }
+    for (let i = 0; i < N; i++) { phi += d.th[i]; phis[i] = phi; ht += Math.cos(phi); const fl = FLOOR + lift * ((i + 1) / N); if (ht < fl) { const pen = fl - ht; for (let j = 0; j <= i; j++) floorPush[j] -= 70 * pen * Math.sign(phis[i]) * (0.4 + 0.6 * (j / (i + 1))); } }
     phi = 0;
     for (let i = 0; i < N; i++) {
       phi += d.th[i];
@@ -86,7 +95,7 @@ export function stepDancer(d, dt) {
       if (d.th[i] < -1.4) { d.th[i] = -1.4; d.om[i] *= -0.3; }
       phi += d.th[i];
       // can't go through the ground: limit how far this segment can point down
-      const need = FLOOR - ht; // lowest cos(phi) that keeps the next point above ground
+      const need = FLOOR + lift * ((i + 1) / N) - ht; // lowest cos(phi) that keeps the next point above the ground (or above the lift)
       const maxAbs = need <= -1 ? Math.PI : need >= 1 ? 0 : Math.acos(need);
       if (Math.abs(phi) > maxAbs) { const over = phi - Math.sign(phi) * maxAbs; d.th[i] -= over; phi -= over; d.om[i] *= -0.2; }
       ht += Math.cos(phi);

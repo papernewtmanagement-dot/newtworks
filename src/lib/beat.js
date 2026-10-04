@@ -1,6 +1,6 @@
 // =========================================================================
 // beat.js — finds the beat in a song, and grades a tap against it.
-// Used by the Air Boogie game. Pure functions, no browser needed, so
+// Used by the Dancer game. Pure functions, no browser needed, so
 // they can be tested in Node.
 //
 // Method: Ellis (2007), "Beat Tracking by Dynamic Programming",
@@ -368,4 +368,14 @@ export function createLiveBeat() {
     },
     bpm() { return this.period > 0 ? 60 / this.period : 0; },
   };
+}
+
+// Seconds per beat for a list of beat times: the middle gap, so a few odd gaps
+// (a missed or extra beat) don't move it. 0.6 (100 a minute) when there is no list.
+export function secondsPerBeat(beats) {
+  const gaps = [];
+  for (let i = 1; i < (beats || []).length; i++) gaps.push(beats[i] - beats[i - 1]);
+  if (!gaps.length) return 0.6;
+  gaps.sort((a, b) => a - b);
+  return gaps[gaps.length >> 1];
 }
