@@ -155,10 +155,20 @@ function dayBlock(data, weeks, day, md) {
 export function fillPractice(md, data) {
   const src = String(md || "");
   if (!usesPractice(src)) return src;
-  let out = src.replace(WEEK_TOKEN_RE, (_m, n) => {
-    const w = data?.weeks?.[Number(n)];
-    return w ? `Week ${Number(n)} — ${w.title}` : `Week ${Number(n)}`;
-  });
+  // The header shows the kickoff week's own number, from the [Week: K] block it
+  // sits in, with the onboarding week's name: kickoff 9 draws on onboarding 16
+  // and reads "Week 9 — Life Reviews", not "Week 16".
+  let headerWeek = null;
+  let out = src.split("\n").map((line) => {
+    const open = WEEK_OPEN_RE.exec(line);
+    if (open) { headerWeek = open[1].trim(); return line; }
+    if (WEEK_END_RE.test(line)) { headerWeek = null; return line; }
+    return line.replace(WEEK_TOKEN_RE, (_m, n) => {
+      const w = data?.weeks?.[Number(n)];
+      const k = /^\d+$/.test(headerWeek || "") ? Number(headerWeek) : Number(n);
+      return w ? `Week ${k} — ${w.title}` : `Week ${k}`;
+    });
+  }).join("\n");
   out = out.replace(VIDEO_TOKEN_RE, (_m, n, day) => (data ? videoBlock(data, weekList(n), day) : ""));
   // The kickoff weeks whose day blocks hold a {{practice:}} token. Their label
   // can differ from the onboarding weeks the token names (kickoff 5 ← 7,8).
