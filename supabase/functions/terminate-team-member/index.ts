@@ -303,19 +303,19 @@ Sent by the Newtworks on ${new Date().toLocaleString("en-US", { timeZone: "Ameri
 
     // 6) Telegram group. The removal already ran inside the database when the
     //    step 4 update was saved (team_telegram_offboard -> telegram_group_remove_member).
-    //    Read back what it recorded for this departure.
+    //    Read back the removal that covers this departure, by the same rule the
+    //    removal skips on (telegram_departure_removal): the one it just made, or
+    //    an earlier one when this departure was already handled, as when someone
+    //    is ended again with their original end date (Rodney, 2026-10-04).
     let telegramKicked = false;
     let telegramErrMsg: string | null = null;
     const telegramUserId: number | null = member.telegram_user_id ?? null;
     {
-      const { data: rem, error: remErr } = await sb.from("telegram_group_removals")
-        .select("telegram_user_id, removed_at, api_result")
-        .eq("agency_id", AGENCY_ID).eq("team_id", body.team_id).eq("route_key", "team")
-        .order("removed_at", { ascending: false }).limit(1).maybeSingle();
-      const fresh = rem && new Date(rem.removed_at).getTime() >= new Date(nowIso).getTime() - 10 * 60_000;
+      const { data: rows, error: remErr } = await sb.rpc("telegram_departure_removal", { p_team_id: body.team_id });
+      const rem = Array.isArray(rows) ? (rows[0] ?? null) : (rows ?? null);
       if (remErr) {
         telegramErrMsg = `telegram removal lookup: ${remErr.message}`;
-      } else if (!fresh) {
+      } else if (!rem) {
         telegramErrMsg = "no Telegram group removal was recorded for this termination";
       } else if (!rem.telegram_user_id) {
         auditLog.push("No Telegram account on file; any group invite link was pulled");

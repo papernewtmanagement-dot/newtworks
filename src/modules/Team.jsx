@@ -1134,11 +1134,11 @@ const StaffDirectory = ({ staff }) => {
 
     try {
       // Delegate the whole termination to the terminate-team-member edge fn.
-      // It orchestrates: team archive + linked user deactivation,
-      // team_telegram_map exclusion, Team List processes strip, the
-      // termination-notice email to Peter's SF address, and the Telegram
-      // group kick. Email + Telegram are best-effort and surface as
-      // warnings; the DB state is always consistent on the function's return.
+      // It orchestrates: team archive + linked user deactivation, both
+      // Telegram bots blocked, meeting invite removal, the termination-notice
+      // email to Peter's SF address, and the Telegram group removal. Email,
+      // invites and Telegram are best-effort and surface as warnings; the DB
+      // state is always consistent on the function's return.
       const { data: result, error: fnErr } = await supabase.functions.invoke("terminate-team-member", {
         body: {
           team_id: member.id,
@@ -1163,9 +1163,9 @@ const StaffDirectory = ({ staff }) => {
       // Before anything that can pause the page (the warnings box below).
       sfTab.go(result.sf_termination_url);
 
-      // Write the audit row to team_behavioral_notes (principle 500). Non-blocking;
-      // the canonical record of WHAT happened is the edge fn's automation_run_log row,
-      // this is the local HR-pattern view.
+      // Add the audit entry to their notes log, team_profile.behavioral_log
+      // (principle 500), through team_log_append. Non-blocking; the canonical
+      // record of WHAT happened is the edge fn's automation_run_log row.
       const warnings = Array.isArray(result.warnings) ? result.warnings : [];
       const obsText = [
         `TERMINATION — ${reasonLabel}`,
@@ -1176,14 +1176,13 @@ const StaffDirectory = ({ staff }) => {
         `Telegram group kick: ${result.telegram_kicked ? "done" : "not done"}`,
         warnings.length > 0 ? `Edge fn warnings: ${warnings.join("; ")}` : null,
       ].filter(Boolean).join("\n");
-      const noteIns = await supabase.from("team_behavioral_notes").insert({
-        agency_id: AGENCY_ID,
-        team_member_id: member.id,
-        observation_date: endDate,
-        pattern_type: "termination",
-        source: "termination_action",
-        observation_text: obsText,
-      }).select("id");
+      const noteIns = await supabase.rpc("team_log_append", {
+        p_team_id: member.id,
+        p_date: endDate,
+        p_kind: "termination",
+        p_text: obsText,
+        p_source: "termination_action",
+      });
       if (noteIns.error) console.error("[terminate] audit note failed:", noteIns.error.message);
 
       // Surface partial-success warnings without rolling back. The DB state is
@@ -1232,29 +1231,18 @@ const StaffDirectory = ({ staff }) => {
     (async () => {
       const { data: teamRows, error: teamErr } = await supabase
         .from("team")
-        .select("id, first_name, last_name, role, role_level, role_category, category, employment_type, start_date, end_date, archived_at, performance_status, pay_type, pay_rate, license_pc, license_lh, license_ips, license_states, email_personal, email_sf, phone_personal, phone_extension, notes, user_id, photo_storage_path, address_line1, address_line2, city, state, zip_code")
+        .select("id, first_name, last_name, role, role_level, role_category, category, employment_type, start_date, end_date, archived_at, performance_status, pay_type, pay_rate, license_pc, license_lh, license_ips, license_states, email_personal, email_sf, phone_personal, phone_extension, notes, termination_reason, user_id, photo_storage_path, address_line1, address_line2, city, state, zip_code")
         .eq("agency_id", AGENCY_ID)
         .eq("is_active", false)
         .not("archived_at", "is", null)
         .order("archived_at", { ascending: false, nullsFirst: false });
       if (cancelled) return;
       if (teamErr) { setArchivedError(teamErr.message || "Failed to load archived staff."); setArchivedLoading(false); return; }
+      // Why they left comes from their own record (termination_reason, the
+      // notes typed when their employment was ended).
       const rows = teamRows || [];
-      let notes = [];
-      if (rows.length) {
-        const { data: noteRows } = await supabase
-          .from("team_behavioral_notes")
-          .select("team_member_id, observation_text, observation_date, pattern_type, source")
-          .eq("agency_id", AGENCY_ID)
-          .in("team_member_id", rows.map(r => r.id))
-          .eq("pattern_type", "termination")
-          .order("observation_date", { ascending: false });
-        notes = noteRows || [];
-      }
-      const latestNote = {};
-      notes.forEach(n => { if (!latestNote[n.team_member_id]) latestNote[n.team_member_id] = n; });
       if (cancelled) return;
-      setArchivedStaff(rows.map(t => ({ ...t, _termNote: latestNote[t.id] || null })));
+      setArchivedStaff(rows);
       setArchivedLoading(false);
     })();
     return () => { cancelled = true; };
@@ -1316,26 +1304,17 @@ const StaffDirectory = ({ staff }) => {
         `Prior end date: ${member.end_date || "unknown"}.`,
         note && note.trim() ? `Notes: ${note.trim()}` : null,
       ].filter(Boolean).join("\n");
-      const reactNoteIns = await supabase.from("team_behavioral_notes").insert({
-        agency_id: AGENCY_ID,
-        team_member_id: member.id,
-        observation_date: today,
-        pattern_type: "reactivation",
-        source: "reactivation_action",
-        observation_text: obsText,
-      }).select("id");
+      const reactNoteIns = await supabase.rpc("team_log_append", {
+        p_team_id: member.id,
+        p_date: today,
+        p_kind: "reactivation",
+        p_text: obsText,
+        p_source: "reactivation_action",
+      });
       if (reactNoteIns.error) warnings.push(`reactivation audit note: ${reactNoteIns.error.message}`);
 
-      // 4) Resolve the related termination note. 0 rows is OK (no prior termination note).
-      const resolveNote = await supabase
-        .from("team_behavioral_notes")
-        .update({ is_resolved: true, resolved_date: today, updated_at: nowIso })
-        .eq("agency_id", AGENCY_ID)
-        .eq("team_member_id", member.id)
-        .eq("pattern_type", "termination")
-        .eq("is_resolved", false)
-        .select("id");
-      if (resolveNote.error) warnings.push(`resolve termination note: ${resolveNote.error.message}`);
+      // 4) Nothing to mark resolved: the reactivation entry sits on top of the
+      //    termination entry in the same notes log.
 
       // 5) Close any still-open offboarding follow-up task for this person.
       //    0 rows is OK (no open task to close). Status vocabulary on tasks is
@@ -1972,8 +1951,7 @@ const StaffDirectory = ({ staff }) => {
       {view === "archived" && archivedStaff.filter(s => !reactivatedIds.has(s.id)).map(member => {
         const expectedName = `${member.first_name || ""} ${member.last_name || ""}`.trim();
         const isReactivating = reactivatingId === member.id;
-        const term = member._termNote;
-        const reasonLine = term && term.observation_text ? term.observation_text.split("\n")[0] : "";
+        const reasonLine = (member.termination_reason || "").split("\n")[0];
         return (
           <Card key={member.id} style={{ border:`1px solid ${T.slate200}`, background:T.slate50, opacity:0.95 }}>
             <div style={{ display:"flex", alignItems:"center", gap:14 }}>
@@ -2015,7 +1993,7 @@ const StaffDirectory = ({ staff }) => {
                   Reactivate {expectedName}?
                 </div>
                 <div style={{ fontSize:11, color:T.slate600, marginBottom:10, lineHeight:1.55 }}>
-                  Sets the team row back to active, clears the end date and archived stamp, and restores the linked user login if one exists. Cancels any open offboarding follow-up task. Writes a reactivation audit note and marks the prior termination note as resolved.
+                  Sets the team row back to active, clears the end date and archived stamp, and restores the linked user login if one exists. Cancels any open offboarding follow-up task. Adds a reactivation entry to their notes log.
                 </div>
                 <div style={{ marginBottom:10 }}>
                   <label style={labelStyle}>Reason / context (optional)</label>
