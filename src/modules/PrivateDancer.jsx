@@ -9,7 +9,11 @@ import { createDancer, stepDancer, puff, drawScene, drawDancer } from "../lib/ai
 // =========================================================================
 // PrivateDancer.jsx — test build of the air dancer game (Family area).
 // Play: tap the screen on the beat; each tap is a puff of air. Every tap is
-// graded against the beat (Perfect / Good / OK), streaks raise a multiplier.
+// graded against the nearest beat (Perfect / Good / OK), streaks raise a multiplier.
+// Any pattern counts: every beat, every other beat, once a bar. Skipped beats are
+// never a miss (dancers move at whatever beat level they feel; Drake, Jones & Baruch
+// 2000, Cognition 77). What counts is each tap's timing and keeping the dancer going:
+// stars = timing x the share of bars (4 beats) with at least one on-beat tap.
 // Watch: the dancer dances to the music by itself.
 // Music: three original practice songs (exact beats known), a song file from
 // the phone (beat found by src/lib/beat.js), or Listen, which hears whatever is
@@ -44,7 +48,11 @@ const chip = (on) => ({
 });
 
 function newScore() {
-  return { score: 0, streak: 0, bestStreak: 0, base: 0, judged: 0, counts: { Perfect: 0, Good: 0, OK: 0, Miss: 0, Off: 0 }, claims: [], started: false };
+  return {
+    score: 0, streak: 0, bestStreak: 0, base: 0, judged: 0,
+    counts: { Perfect: 0, Good: 0, OK: 0, Off: 0 }, claims: [], started: false,
+    beatsPassed: 0, barHit: false, bars: 0, barsDanced: 0, quietBeats: 0,
+  };
 }
 
 export default function PrivateDancer() {
@@ -150,11 +158,12 @@ export default function PrivateDancer() {
     setRunning(false);
     if (!showResult || r.mode !== "play") return;
     const s = r.score;
-    const judged = s.judged + s.counts.Miss;
+    const judged = s.judged + s.counts.Off;
     const accuracy = judged ? s.base / (judged * MAX_POINTS) : 0;
+    const danced = s.bars ? s.barsDanced / s.bars : 0;
     const prevBest = Number(store.get(bestKey(r.id))) || 0;
     if (s.score > prevBest) store.set(bestKey(r.id), String(s.score));
-    setResult({ title: r.title, score: s.score, accuracy, stars: starsFor(accuracy), counts: s.counts, bestStreak: s.bestStreak, best: Math.max(prevBest, s.score), newBest: s.score > prevBest && s.score > 0 });
+    setResult({ title: r.title, score: s.score, accuracy, stars: starsFor(accuracy * danced), danced, bars: s.bars, barsDanced: s.barsDanced, counts: s.counts, bestStreak: s.bestStreak, best: Math.max(prevBest, s.score), newBest: s.score > prevBest && s.score > 0 });
   }, []);
 
   // ─── start ────────────────────────────────────────────────────────────────
@@ -284,14 +293,19 @@ export default function PrivateDancer() {
           if (r.mode === "watch") puff(d, 0.55 + 0.45 * Math.min(1, r.loudNow || 0) + (r.downbeats?.has(bt) ? 0.25 : 0), 0);
         }
         r.passed = now;
-        // beats that went by without a tap
-        if (r.mode === "play" && (r.kind !== "mic" || r.score.started)) {
+        // beats now past tapping: count bars danced, and end a streak after two quiet bars
+        if (r.mode === "play" && r.score.started) {
           const s = r.score;
           for (const bt of beatsBetween(r.missCheck, now - MISS_AFTER)) {
-            if (!claimed(s, bt)) { s.counts.Miss += 1; s.streak = 0; e.popups.push({ text: "Miss", color: "rgba(255,255,255,0.7)", age: 0 }); }
+            const hit = claimed(s, bt);
+            s.barHit = s.barHit || hit;
+            s.quietBeats = hit ? 0 : s.quietBeats + 1;
+            if (s.quietBeats === 8 && s.streak) s.streak = 0;
+            s.beatsPassed += 1;
+            if (s.beatsPassed % 4 === 0) { s.bars += 1; if (s.barHit) s.barsDanced += 1; s.barHit = false; }
           }
-          r.missCheck = now - MISS_AFTER;
-        } else r.missCheck = now - MISS_AFTER;
+        }
+        r.missCheck = now - MISS_AFTER;
         d.base = r.mode === "watch" ? 0.42 + 0.35 * Math.min(1, r.loudNow || 0) : 0.36;
       } else {
         d.base = 0.5;
@@ -372,7 +386,8 @@ export default function PrivateDancer() {
               </div>
               <div style={{ fontSize: 13, color: T.slate600, lineHeight: 1.6 }}>
                 Perfect {result.counts.Perfect} · Good {result.counts.Good} · OK {result.counts.OK}<br />
-                Missed {result.counts.Miss} · Off beat {result.counts.Off} · Longest streak {result.bestStreak}
+                Off beat {result.counts.Off} · Longest streak {result.bestStreak}<br />
+                Danced {result.barsDanced} of {result.bars} bars
               </div>
               <button type="button" style={{ ...btn("primary"), width: "100%", marginTop: 14 }} onClick={start}>Play again</button>
             </div>
@@ -391,7 +406,7 @@ export default function PrivateDancer() {
       {status && <div style={{ fontSize: 13, color: T.slate600, marginTop: 8 }}>{status}</div>}
       {!running && !status && (
         <div style={{ fontSize: 13, color: T.slate500, marginTop: 8 }}>
-          {mode === "play" ? "Tap the dancer on every beat. Each tap is a puff of air." : "Sit back. The dancer moves to the music on its own."}
+          {mode === "play" ? "Tap on the beat: every beat, every other beat, or once a bar. Each tap is a puff of air." : "Sit back. The dancer moves to the music on its own."}
         </div>
       )}
       {showSync && mode === "play" && (
