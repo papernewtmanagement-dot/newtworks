@@ -19,10 +19,12 @@ import { RELATIONSHIPS, REVIEW_SITES } from "./logChoices.js";
 //     (markdown.js), every time the tab opens
 //   * every word a step shows is the manual's
 //   * every list a choice offers is the manual's, named the way the manual
-//     names it: the Outbound call types are the expanders on Retention >
-//     Outbound and Retention > Appointments, the Inbound call types are the
-//     sections of Inbound Calls, and the touches, late-pay counts, pivots,
-//     openers and products are whatever those scripts hold today
+//     names it: the FIT pages are every page under FIT Conversations, in its
+//     order and under its folders, the Outbound call types are those pages
+//     and the expanders on Retention > Outbound and Retention > Appointments,
+//     the Inbound call types are the sections of Inbound Calls, and the
+//     touches, late-pay counts, pivots, openers, lead contacts and products
+//     are whatever those scripts hold today
 //   * it only plays a shared script that some manual page shows, so it can
 //     never play one the manual has dropped
 // The walker's own words are its questions ("Did they say yes?") and the
@@ -56,7 +58,7 @@ export const canSeeLive = (userRole) => userRole === "owner";
 // ---------- LIVE SOURCES: where the walker hooks into the manual ----------
 // Pages by id (an id survives a rename); shared scripts by the title every
 // manual page embeds them by; sections of Inbound Calls by the manual's words.
-export const FIT_PAGE_ID = "2124251137";   // Processes > FIT Conversations: the ten parts, and every product page under it
+export const FIT_PAGE_ID = "2124251137";   // Processes > FIT Conversations: the ten parts, and every page under it
 // The two checklists of calls we start. Their expanders are the Outbound list.
 const CALL_LISTS = [
   { page: "newtworks-native-outbound-touches-2026-09-04", name: "Retention > Outbound" },
@@ -140,6 +142,15 @@ const matches = (text, test) => {
   return test instanceof RegExp ? test.test(t) : t.startsWith(String(test).toLowerCase());
 };
 const cleanTitle = (t) => plainText(t).replace(/[:\s]+$/, "");
+// An expander's label as the manual shows it: tags and paired markup gone, a
+// lone "*" or "#" kept ("*Contact 01a: text, 2x dial, text", "#Quotes Missing Data").
+const labelText = (s) => String(s || "")
+  .replace(/<[^>]+>/g, "")
+  .replace(/\{\{(?:say|them):\s*([\s\S]*?)\s*\}\}/g, "$1")
+  .replace(/(\*\*|__|\*|_|`)(?=\S)([\s\S]*?\S)\1/g, "$2")
+  .replace(/&amp;/g, "&")
+  .replace(/\s+/g, " ")
+  .trim();
 const slug = (s) => String(s || "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "x";
 // Keys that stay unique when two labels slug the same.
 const keyed = (items, keyOf) => {
@@ -180,7 +191,7 @@ function topLevel(md) {
     const sm = /<summary\b[^>]*>([\s\S]*?)<\/summary\s*>/i.exec(block);
     let inner = block.replace(/^\s*<details\b[^>]*>/i, "").replace(/<\/details\s*>\s*$/i, "");
     if (sm) inner = inner.replace(sm[0], "");
-    out.push({ kind: "details", label: sm ? plainText(sm[1]) : "", inner: inner.trim(), block, start: i, end: j });
+    out.push({ kind: "details", label: sm ? labelText(sm[1]) : "", inner: inner.trim(), block, start: i, end: j });
     i = j;
   }
   return out;
@@ -305,6 +316,22 @@ function expanderRun(md) {
     items: items.map((d, k) => ({ ...d, more: lines.slice(d.end + 1, k + 1 < items.length ? items[k + 1].start : lines.length).join("\n").trim() })),
   };
 }
+// A page of expanders under bold lines, read the way the manual lays it out:
+// each expander is one item, under the bold line above it ("**Day 1:**",
+// "**Keeping the business**"). `prose` says the page has other text at the
+// top level too, so it reads as a script rather than as a list.
+function expanderList(md) {
+  let group = "";
+  let prose = false;
+  const items = [];
+  for (const u of topLevel(md)) {
+    if (u.kind === "details") { items.push({ label: u.label, group, md: u.inner }); continue; }
+    const lab = LABEL_LINE_RE.exec(u.text);
+    if (lab) group = cleanTitle(lab[1]);
+    else if (u.text.trim()) prose = true;
+  }
+  return { items, prose };
+}
 // The shared scripts a piece of text embeds directly, by lowercase title.
 const embedsIn = (md) => extractTransclusionMarkers(md).filter((m) => m.kind === "excerpt").map((m) => m.title.toLowerCase());
 // The text before and after the line that embeds one shared script.
@@ -393,7 +420,7 @@ function toBlock(lines) {
   if (/^\s*<details\b/i.test(first)) {
     b.details = true;
     const sm = /<summary\b[^>]*>([\s\S]*?)<\/summary\s*>/i.exec(text);
-    b.summary = sm ? plainText(sm[1]) : "";
+    b.summary = sm ? labelText(sm[1]) : "";
     let inner = text.replace(/^\s*<details\b[^>]*>/i, "").replace(/<\/details\s*>\s*$/i, "");
     if (sm) inner = inner.replace(sm[0], "");
     b.inner = inner.trim();
@@ -516,7 +543,12 @@ export function splitSteps(md) {
 }
 
 // On a phone a table becomes stacked text, so nothing scrolls sideways. A table
-// with column headings reads down each column; one without reads row by row.
+// of side-by-side choices (bold headings, the way the FIT pages set out "First
+// Chance | Last Chance", or a single row) reads down each column. A table of
+// records (plain headings over several rows: one objection or one apartment
+// complex to a row) reads row by row, each cell under its heading. A table
+// without headings reads row by row.
+const BOLD_RE = /^\*\*.*\*\*$/;
 export function stackTables(md) {
   const lines = String(md || "").split(/\r?\n/);
   const isRow = isPipeRow, isSep = isPipeSep, cells = splitTableRow;
@@ -529,17 +561,22 @@ export function stackTables(md) {
     while (i < lines.length && isRow(lines[i]) && !isSep(lines[i])) { rows.push(cells(lines[i])); i++; }
     i--;
     out.push("");
-    if (head.some((h) => h)) {
+    const named = head.filter(Boolean);
+    if (named.length && (rows.length <= 1 || named.every((h) => BOLD_RE.test(h)))) {
       head.forEach((h, c) => {
         const col = rows.map((r) => r[c] || "").filter(Boolean);
         if (!h && !col.length) return;
-        if (h) out.push(/^\*\*.*\*\*$/.test(h) ? h : `**${h}**`, "");
+        if (h) out.push(BOLD_RE.test(h) ? h : `**${h}**`, "");
         col.forEach((x) => out.push(x, ""));
       });
     } else {
       rows.forEach((r, n) => {
         if (n) out.push("---", "");
-        r.filter(Boolean).forEach((x) => out.push(x, ""));
+        r.forEach((x, c) => {
+          if (!x) return;
+          const h = String(head[c] || "").replace(/^\*\*|\*\*$/g, "").replace(/:\s*$/, "").trim();
+          out.push(h ? `**${h}:** ${x}` : x, "");
+        });
       });
     }
   }
@@ -559,9 +596,11 @@ export function makeScriptLibrary({ pages, excerpts, faqs }) {
     if (ao != null && ao !== bo) return ao - bo;
     return String(a.title || "").localeCompare(String(b.title || ""));
   });
+  // A folder holds pages and says nothing of its own ("This section contains: …").
   const isFolder = (p) => {
     const c = String(p.content || "").trim();
-    return /^this section contains/i.test(c) || (c.length < 120 && c.indexOf("[Embedded") === -1);
+    return kids(p.confluence_page_id).length > 0
+      && (/^this section contains/i.test(c) || (c.length < 120 && c.indexOf("[Embedded") === -1));
   };
   const safe = (fn, title) => { try { return fn(title); } catch { return null; } };
 
@@ -581,22 +620,30 @@ export function makeScriptLibrary({ pages, excerpts, faqs }) {
   };
   for (const p of pageRows) visit(p.content);
 
-  // Every product page under FIT Conversations, in the manual's order.
+  // Every page under FIT Conversations, in the manual's order: the product
+  // pages (each walks as a FIT conversation) and every other page there (the
+  // lead process, the specifications, the mortgage sales process). A folder
+  // is not a page to open; its name heads the pages inside it.
   const products = [];
-  const walk = (id) => {
+  const fitPages = [];
+  const walk = (id, group, path) => {
     for (const p of kids(id)) {
-      const known = PRODUCT_BY_PAGE[p.confluence_page_id];
-      const m = /^Simple\s+(.+?)\s+FIT$/i.exec(String(p.title || "").trim());
-      if ((known || m) && !isFolder(p)) {
-        const name = m ? m[1].trim() : String(p.title || "").trim();
+      const pid = p.confluence_page_id;
+      const title = String(p.title || "").trim();
+      if (isFolder(p)) { walk(pid, title, [...path, pid]); continue; }
+      const known = PRODUCT_BY_PAGE[pid];
+      const m = /^Simple\s+(.+?)\s+FIT$/i.exec(title);
+      if (known || m) {
+        const name = m ? m[1].trim() : title;
         const map = known || { line: "", type: "", quotable: false, unmapped: true };
-        products.push({ page: p.confluence_page_id, name, label: name, line: map.line, type: map.type,
+        products.push({ page: pid, name, label: name, line: map.line, type: map.type,
           quotable: map.quotable !== false && !!map.line, unmapped: !!map.unmapped });
       }
-      walk(p.confluence_page_id);
+      fitPages.push({ key: pid, label: title, group, parent: id, path, product: !!(known || m) });
+      walk(pid, group, [...path, pid]);
     }
   };
-  walk(FIT_PAGE_ID);
+  walk(FIT_PAGE_ID, String((byId.get(FIT_PAGE_ID) || {}).title || "").trim(), [FIT_PAGE_ID]);
 
   const expand = (md) => expandTransclusions(String(md || ""), { resolveInclude, resolveExcerpt }, new Set(), 0);
   const script = (title) => {
@@ -611,6 +658,7 @@ export function makeScriptLibrary({ pages, excerpts, faqs }) {
   const lib = {
     resolveFaq,
     products,
+    fitPages,
     product: (id) => products.find((p) => p.page === id) || null,
     isProductPage: (id) => products.some((p) => p.page === id),
     page: (id) => byId.get(id) || null,
@@ -682,14 +730,8 @@ function callList(L) {
     const page = L.page(cl.page);
     if (!page) continue;
     const title = L.pageTitle(cl.page);
-    let group = "";
-    for (const u of topLevel(page.content)) {
-      if (u.kind === "line") {
-        const lab = LABEL_LINE_RE.exec(u.text);
-        if (lab) group = cleanTitle(lab[1]);
-        continue;
-      }
-      tasks.push({ label: u.label, group: group ? `${title} · ${group}` : title, md: u.inner, embeds: embedsIn(u.inner), page: slug(title) });
+    for (const it of expanderList(page.content).items) {
+      tasks.push({ label: it.label, group: it.group ? `${title} · ${it.group}` : title, md: it.md, embeds: embedsIn(it.md), page: slug(title) });
     }
   }
   return keyed(tasks, (t) => `${t.page}-${slug(t.label)}`);
@@ -836,18 +878,59 @@ function reviewAndReferral(b) {
   reviewLeft(b);
 }
 
-function productOptions(L, onlyWithLine) {
-  return L.products.filter((p) => !onlyWithLine || p.line).map((p) => ({ key: p.page, label: p.label }));
+// The products a pivot can go to: the FIT pages that sell something the Log knows.
+function productOptions(L) {
+  return L.products.filter((p) => p.line).map((p) => ({ key: p.page, label: p.label }));
 }
 
+// The FIT section as a list to pick from: every page under FIT Conversations,
+// under the folder it sits in.
+const fitOptions = (items) => items.map(({ key, label, group }) => ({ key, label, group }));
+
+// A sales call: anything in the FIT section.
 function quote(b, pre) {
-  const st = b.st;
-  const rel = b.ask(`${pre}.rel`, "Relationship", RELATIONSHIPS.map((r) => ({ ...r, hint: r.key === "existing" && st.onFile > 0 ? "on file" : "" })));
-  if (!rel) return;
-  b.rec.relationship = rel;
-  const first = b.ask("fit.product", "Which product?", productOptions(b.lib));
-  if (!first) return;
-  fit(b, { first, via: "quote" });
+  const id = b.ask(`${pre}.fit`, "Which one?", fitOptions(b.lib.fitPages), { many: true });
+  if (id) fitEntry(b, id);
+}
+
+// One page of the FIT section. A product page asks the relationship and walks
+// the FIT conversation. Any other page is its own script (a page that is a
+// list of expanders, the way the lead process lists its contacts, asks which
+// one first). Then the call goes on: to the pages under it or after it in the
+// same folder or page, into a FIT conversation, or nowhere. It only ever moves
+// forward, so it can't come back round to a page it has played.
+function fitEntry(b, id) {
+  const L = b.lib;
+  const all = L.fitPages;
+  const at = all.findIndex((m) => m.key === id);
+  if (at < 0) return;
+  const item = all[at];
+  if (item.product) {
+    const rel = b.ask(`fit.${id}.rel`, "Relationship", RELATIONSHIPS.map((r) => ({ ...r, hint: r.key === "existing" && b.st.onFile > 0 ? "on file" : "" })));
+    if (!rel) return;
+    b.rec.relationship = rel;
+    fit(b, { first: id, via: "quote" });
+    return;
+  }
+  const md = L.expand((L.page(id) || {}).content);
+  const list = expanderList(md);
+  if (!list.prose && list.items.length >= 2) {
+    const items = keyed(list.items, (it) => slug(it.label));
+    const k = b.ask(`fit.${id}.which`, "Which one?", items.map(({ key, label, group }) => ({ key, label, group })), { many: true });
+    if (!k) return;
+    b.say(`fit.${id}.${k}`, items.find((it) => it.key === k).md);
+  } else {
+    b.say(`fit.${id}`, md);
+  }
+  const later = all.slice(at + 1).filter((m) => !m.product);
+  const beside = later.filter((m) => m.parent === item.parent);
+  const onward = later.filter((m) => m.parent === item.parent || m.path.includes(id) || beside.some((s) => m.path.includes(s.key)));
+  const next = b.ask(`fit.${id}.next`, "Where does it go from here?", [
+    ...fitOptions(onward),
+    ...fitOptions(all.filter((m) => m.product)),
+    { key: "_done", label: "Nothing more" },
+  ], { many: true });
+  if (next && next !== "_done") fitEntry(b, next);
 }
 
 // A pivot into a product is recorded the moment it is chosen.
@@ -873,7 +956,7 @@ function wrapUp(b) {
   if (!p) return;
   if (p === "_none") { reviewAndReferral(b); return; }
   if (p === "_product") {
-    const id = b.ask("wrap.product", "Which product?", productOptions(L, true));
+    const id = b.ask("wrap.product", "Which product?", productOptions(L));
     if (!id) return;
     pivotTo(b, L.product(id).line);
     fit(b, { first: id, via: "pivot" });
@@ -1038,15 +1121,14 @@ function outbound(b) {
   const L = b.lib;
   const ib = L.inbound();
   const other = ib && ib.topics.find((t) => t.kind === "other");
-  const fitTitle = L.page(FIT_PAGE_ID) ? L.pageTitle(FIT_PAGE_ID) : "";
   const tasks = L.callList();
   const topic = b.ask("out.topic", "Why are you calling?", [
-    ...(fitTitle ? [{ key: "_fit", label: fitTitle }] : []),
+    ...fitOptions(L.fitPages),
     ...tasks.map((t) => ({ key: t.key, label: t.label, group: t.group })),
     ...(other ? [{ key: "_other", label: other.title }] : []),
   ], { many: true });
   if (!topic) return;
-  if (topic === "_fit") { quote(b, "out"); return; }
+  if (L.fitPages.some((m) => m.key === topic)) { fitEntry(b, topic); return; }
   b.rec.relationship = "existing";
   if (topic === "_other") { b.say("out.other", L.expand(ib.help)); wrapUp(b); return; }
   playTask(b, tasks.find((t) => t.key === topic));
