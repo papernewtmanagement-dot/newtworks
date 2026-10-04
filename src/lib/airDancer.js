@@ -19,9 +19,10 @@ const FLOOR = -1.0;    // the ground, in segment lengths below the blower top (t
 // d.beatSec is the song's seconds per beat (the game sets it; 0.6 = 100 a minute).
 const AIR_LOSS_PER_BEAT = 0.5;
 // While a puff's air is still in him, it holds his head up off the ground: fully at
-// LIFT_FULL of puff air left, not at all at LIFT_NONE. Tapping every 4th beat keeps
-// him off the ground at any tempo; wait about 6 beats or more and he can hit it.
-const LIFT_MAX = 4, LIFT_FULL = 0.1, LIFT_NONE = 0.03;
+// LIFT_FULL of puff air left, not at all at LIFT_NONE. Tapping every 4th beat he
+// dips close to the ground by the 4th beat but never touches it, at any tempo; wait
+// about 5 beats or more and he can hit it.
+const LIFT_MAX = 2.2, LIFT_FULL = 0.1, LIFT_NONE = 0.03;
 
 export function createDancer(seed = 1) {
   let s = seed >>> 0;
@@ -42,8 +43,9 @@ export function createDancer(seed = 1) {
 }
 
 // Air in the tube: the blower's steady push plus puffs. The first build's motion,
-// loosened (softer tube, more ripple), with puff air timed in beats (see
-// AIR_LOSS_PER_BEAT). Tapping every 4th beat he folds deep but stays off the ground.
+// loosened (softer tube, more ripple, less damping so he keeps moving between
+// beats), with puff air timed in beats (see AIR_LOSS_PER_BEAT). Tapping every 4th
+// beat he folds deep and nearly reaches the ground but stays off it.
 export function pressure(d) {
   return Math.max(0, Math.min(1.15, d.base + d.surge));
 }
@@ -68,10 +70,10 @@ export function stepDancer(d, dt) {
     const liftT = Math.max(0, Math.min(1, (d.surge - LIFT_NONE) / (LIFT_FULL - LIFT_NONE)));
     const lift = LIFT_MAX * liftT * liftT * (3 - 2 * liftT);
     const P = pressure(d);
-    const stiff = 2.5 + 42 * P * P;
-    const damp = 2.5 + 5 * P;
+    const stiff = 2.5 + 36 * P * P;
+    const damp = 1.8 + 3.5 * P;
     const grav = 34 * Math.pow(Math.max(0, 1 - P), 2);
-    const gust = 2.6 + 3.2 * Math.min(1, P);
+    const gust = 4 + 4.8 * Math.min(1, P);
     // heights of each point, in segment lengths above the blower top
     let phi = 0, ht = 0;
     const phis = d._phis || (d._phis = new Float64Array(N));

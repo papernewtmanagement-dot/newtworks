@@ -8,9 +8,7 @@ import { createDancer, stepDancer, puff, drawScene, drawDancer } from "../lib/ai
 
 // =========================================================================
 // Dancer.jsx — test build of the air dancer game (Family area), "Dancer: dance
-// with the air". Named Private Dancer, Noodle Boogie, then Air Boogie on
-// 2026-10-04; the browser storage keys keep the first name so best scores and the
-// timing setting carry over. The dancer's sag is timed in beats of the song
+// with the air". The dancer's sag is timed in beats of the song
 // playing (src/lib/airDancer.js), so fast songs need faster taps.
 // Play: tap the screen on the beat; each tap is a puff of air. Every tap is
 // graded against the nearest beat (Perfect / Good / OK), streaks raise a multiplier.
@@ -29,8 +27,8 @@ import { createDancer, stepDancer, puff, drawScene, drawDancer } from "../lib/ai
 
 const MODES = ["play", "watch"];
 const MODE_LABEL = { play: "Play", watch: "Watch" };
-const SYNC_KEY = "privateDancer.syncMs";
-const bestKey = (id) => `privateDancer.best.${id}`;
+const SYNC_KEY = "dancer.syncMs";
+const bestKey = (id) => `dancer.best.${id}`;
 const store = {
   get(k) { try { return window.localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { window.localStorage.setItem(k, v); } catch { /* private mode */ } },
