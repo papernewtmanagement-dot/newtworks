@@ -24,6 +24,8 @@ import { useTabParam } from "../lib/routing.jsx";
 // Exported so the onboarding template can link each form without keeping a
 // second list of them.
 export const FORMS = [
+  { id: "login_packet", label: "Login Packet",
+    blurb: "Your State Farm sign-in details and first-day setup steps." },
   { id: "combined_onboarding", label: "Onboarding",
     blurb: "Your details, your story, and payroll setup." },
   { id: "w4", label: "W-4",
@@ -483,6 +485,261 @@ function I9EmployerSection({ data, setData, canEdit, locked }) {
   );
 }
 
+// ─── login packet ───────────────────────────────────────────────────────
+// State Farm's New Agent/Agent Team Member Onboarding Packet, word for word.
+// The lines that are different for each person live on their team record
+// (sf_alias and the sf_* packet columns). Admins type them in at the top;
+// the new hire sees them filled in. Team rows are readable only by admins and
+// the person themselves, so nobody else sees the password or the pass. The
+// template preview shows the blanks.
+
+const PACKET_COLS = "first_name, last_name, sf_alias, sf_registration_number, sf_initial_password, sf_mfa_temp_pass, sf_mfa_temp_pass_from, sf_mfa_temp_pass_until";
+const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+
+// "10/05/2026 08:30 AM" in Central time, the way the packet prints it.
+function packetTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = {};
+  new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: true,
+  }).formatToParts(d).forEach(x => { p[x.type] = x.value; });
+  return `${p.month}/${p.day}/${p.year} ${p.hour}:${p.minute} ${p.dayPeriod}`;
+}
+
+// A stored time as the value a date-and-time box expects, in the browser's time.
+function toLocalInput(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fromLocalInput(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function packetDraft(row) {
+  return {
+    sf_alias: row?.sf_alias || "",
+    sf_registration_number: row?.sf_registration_number || "",
+    sf_initial_password: row?.sf_initial_password || "",
+    sf_mfa_temp_pass: row?.sf_mfa_temp_pass || "",
+    sf_mfa_temp_pass_from: toLocalInput(row?.sf_mfa_temp_pass_from),
+    sf_mfa_temp_pass_until: toLocalInput(row?.sf_mfa_temp_pass_until),
+  };
+}
+
+function PacketValue({ value, mono = false }) {
+  if (!value) return <span style={{ color: T.slate400 }}>—</span>;
+  return (
+    <strong style={{ color: T.slate900, fontFamily: mono ? MONO : "inherit", wordBreak: "break-all" }}>
+      {value}
+    </strong>
+  );
+}
+
+function PacketLink({ href }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" style={{
+      color: T.blue, fontWeight: 700, textDecoration: "none", wordBreak: "break-all",
+    }}>{href}</a>
+  );
+}
+
+function LoginPacketForm({ teamId, isAdmin, preview, data, setData }) {
+  const [rec, setRec] = useState(null);
+  const [draft, setDraft] = useState(packetDraft(null));
+  const [loading, setLoading] = useState(!preview);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    if (preview || !supabase || !teamId) { setLoading(false); return () => { alive = false; }; }
+    (async () => {
+      const { data: row, error } = await supabase
+        .from("team").select(PACKET_COLS).eq("id", teamId).maybeSingle();
+      if (!alive) return;
+      if (error) setMsg(error.message || "Could not load the packet details.");
+      setRec(row || null);
+      setDraft(packetDraft(row));
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [teamId, preview]);
+
+  const set = (k) => (v) => setDraft({ ...draft, [k]: v });
+
+  const saveDetails = async () => {
+    if (!supabase || !teamId) return;
+    setSaving(true); setMsg(null);
+    const payload = {
+      sf_alias: draft.sf_alias.trim() || null,
+      sf_registration_number: draft.sf_registration_number.trim() || null,
+      sf_initial_password: draft.sf_initial_password.trim() || null,
+      sf_mfa_temp_pass: draft.sf_mfa_temp_pass.trim() || null,
+      sf_mfa_temp_pass_from: fromLocalInput(draft.sf_mfa_temp_pass_from),
+      sf_mfa_temp_pass_until: fromLocalInput(draft.sf_mfa_temp_pass_until),
+    };
+    const { data: rows, error } = await supabase
+      .from("team").update(payload)
+      .eq("id", teamId).eq("agency_id", AGENCY_ID)
+      .select(PACKET_COLS);
+    setSaving(false);
+    if (error) { setMsg(error.message || "Could not save that."); return; }
+    if (!rows || rows.length === 0) { setMsg("That did not save. The record may be blocked from changes."); return; }
+    setRec(rows[0]);
+    setDraft(packetDraft(rows[0]));
+    setMsg("Saved.");
+  };
+
+  const v = preview ? null : rec;
+  const name = v ? `${v.first_name || ""} ${v.last_name || ""}`.trim() : "";
+  const sub = { paddingLeft: 22, margin: "6px 0 0" };
+  const item = { marginTop: 4 };
+
+  return (
+    <div>
+      {isAdmin && !preview && (
+        <Section title="From the State Farm packet"
+          note="These fill in the packet below. Only admins and this person can see them.">
+          <Grid min={220}>
+            <Field label="Alias (User ID)">
+              <Text value={draft.sf_alias} onChange={set("sf_alias")} />
+            </Field>
+            <Field label="Registration Number">
+              <Text value={draft.sf_registration_number} onChange={set("sf_registration_number")} />
+            </Field>
+            <Field label="Initial computer/workstation password">
+              <Text value={draft.sf_initial_password} onChange={set("sf_initial_password")} />
+            </Field>
+            <Field label="Initial MFA Temporary Access Pass">
+              <Text value={draft.sf_mfa_temp_pass} onChange={set("sf_mfa_temp_pass")} />
+            </Field>
+            <Field label="Good from">
+              <Text type="datetime-local" value={draft.sf_mfa_temp_pass_from} onChange={set("sf_mfa_temp_pass_from")} />
+            </Field>
+            <Field label="Until">
+              <Text type="datetime-local" value={draft.sf_mfa_temp_pass_until} onChange={set("sf_mfa_temp_pass_until")} />
+            </Field>
+          </Grid>
+          <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <Button tone="quiet" onClick={saveDetails} disabled={saving || loading}>
+              {saving ? "Saving..." : "Save details"}
+            </Button>
+            {msg && <span style={{ fontSize: 12.5, color: T.slate600 }}>{msg}</span>}
+          </div>
+        </Section>
+      )}
+
+      <div style={{
+        marginTop: 18, padding: "18px 20px", border: `1px solid ${T.slate200}`,
+        borderRadius: 10, background: T.white, fontSize: 13.5, lineHeight: 1.65,
+        color: T.slate800, boxSizing: "border-box", minWidth: 0,
+      }}>
+        {loading && <div style={{ color: T.slate500, marginBottom: 10 }}>Loading...</div>}
+        <div style={{ fontWeight: 700, color: T.slate900 }}>New Agent/Agent Team Member Onboarding Packet</div>
+        <div style={{ fontWeight: 700, color: T.slate900 }}>CONFIDENTIAL</div>
+        <div>- Distribution on a Business Need to Know Basis Only -</div>
+
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 700, color: T.slate900 }}>
+            This document should only be given to {name || <span style={{ color: T.slate400 }}>—</span>}
+          </div>
+          <div>Your alias (User ID) is: <PacketValue value={v?.sf_alias} /></div>
+          <div>Your Registration Number is: <PacketValue value={v?.sf_registration_number} /></div>
+          <div>Your initial computer/workstation password: <PacketValue value={v?.sf_initial_password} mono /></div>
+          <div>
+            Your initial MFA Temporary Access Pass: <PacketValue value={v?.sf_mfa_temp_pass} mono />
+            {" "}Good from: <PacketValue value={packetTime(v?.sf_mfa_temp_pass_from)} />
+            {" "}Until: <PacketValue value={packetTime(v?.sf_mfa_temp_pass_until)} />
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16, fontWeight: 700, color: T.slate900 }}>
+          Compliance with State Farm’s Enterprise Information Security Policy (EISP) is mandatory for
+          all Agents and Team Members. COMPLETE ALL STEPS ON THIS PAGE. Call the New Team Member
+          Support Hotline: 1-833-572-0397 for assistance
+        </div>
+
+        <p style={{ margin: "16px 0 0" }}>
+          If you have a new team member who will be working in office on a previously used or shared
+          workstation, please visit: <PacketLink href="http://s.f/yubikeyinoffice" />
+        </p>
+        <p style={{ margin: "12px 0 0" }}>
+          If new user is logging into a new workstation remotely, follow the instructions found
+          at <PacketLink href="http://s.f/remoteuserabs" />
+        </p>
+
+        <ol style={{ paddingLeft: 22, margin: "16px 0 0" }}>
+          <li style={item}>
+            <strong style={{ color: T.slate900 }}>Logon instructions for in-office users with a new workstation:</strong>
+            <ol type="a" style={sub}>
+              <li style={item}>At the workstation logon screen enter the alias and password provided above</li>
+              <li style={item}>
+                When prompted to change your password, create a new password following these standards:
+                <ul style={sub}>
+                  <li style={item}>The password should be a minimum of 16 characters</li>
+                  <li style={item}>
+                    The password must contain at least one of each of the following: a capital letter,
+                    a lower case letter, a numeric character, and a special character (no blank spaces allowed)
+                  </li>
+                  <li style={item}>
+                    <strong>Do not</strong> use a name, a dictionary word, or your State Farm alias as part
+                    of your password.
+                  </li>
+                </ul>
+              </li>
+            </ol>
+          </li>
+          <li style={{ marginTop: 14 }}>
+            <strong style={{ color: T.slate900 }}>Setup of ABS Password:</strong>
+            <ol type="a" style={sub}>
+              <li style={item}>
+                Once logged in, open a web browser and enter the following URL: <PacketLink href="https://s.f/spc" />
+              </li>
+              <li style={item}>Sign in and select <strong>Change ABS/Dial-in password</strong> option</li>
+              <li style={item}>
+                Create a new password in the <strong>Enter new password</strong> field then enter again to confirm
+              </li>
+              <li style={item}>A Success confirmation pop up should be displayed</li>
+            </ol>
+          </li>
+          <li style={{ marginTop: 14 }}>
+            <strong style={{ color: T.slate900 }}>Additional items:</strong>
+            <ol type="a" style={sub}>
+              <li style={item}>
+                Open Web Browser and navigate to: <PacketLink href="https://s.f/agencysecuritycheckpoint" />
+                <ul style={sub}>
+                  <li style={item}>
+                    Select <strong>New Agent/Agent team member Onboarding Packet</strong> on the left side of the screen
+                  </li>
+                  <li style={item}><strong>Complete all tasks in the Onboarding Packet to be compliant</strong></li>
+                </ul>
+              </li>
+              <li style={item}>
+                Visit <PacketLink href="https://s.f/yubikeyagency" /> for further assistance with YubiKeys and MFA technology
+              </li>
+            </ol>
+          </li>
+        </ol>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <Check checked={data.done} onChange={x => setData({ ...data, done: x })}>
+          I completed all steps on this page.
+        </Check>
+      </div>
+    </div>
+  );
+}
+
 // ─── the form shell ─────────────────────────────────────────────────────
 
 // ─── W-4 (2026) ─────────────────────────────────────────────────────────
@@ -598,6 +855,7 @@ function W4Form({ data, setData }) {
 }
 
 function readyToSubmit(formType, data, secure) {
+  if (formType === "login_packet") return !!data.done;
   if (formType === "non_compete" || formType === "handbook_ack") return !!data.agreed;
   if (formType === "i9") return !!data.attested && !!data.signature && !!data.status;
   if (formType === "w4") return !!data.filing_status;
@@ -627,6 +885,11 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
         (form.id === "non_compete" || form.id === "handbook_ack") && doc ? `v${doc.version}`
         : "";
 
+      // The Onboarding form locks last. Its Social Security number and bank
+      // details save first, so a failed save leaves the form open with
+      // nothing lost, instead of locked with no bank details on file.
+      const lockLast = submit && form.id === "combined_onboarding";
+
       const row = {
         agency_id: AGENCY_ID,
         team_id: teamId,
@@ -634,7 +897,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
         cycle_key: cycleKey,
         document_id: doc ? doc.id : null,
         data: form.id === "w4" ? { ...data, step3_total: w4Step3Total(data) } : data,
-        status: submit ? "submitted" : "in_progress",
+        status: submit && !lockLast ? "submitted" : "in_progress",
       };
       if (form.id === "i9" && isAdmin && employer && employer.attested) {
         row.employer_section = employer;
@@ -655,13 +918,22 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
       // never read back to the person who typed them. The save runs in the
       // database (save_onboarding_secure) so the hire can write it without
       // being able to read the table, and it reuses a number already on file.
-      if (submit && form.id === "combined_onboarding" && saved) {
+      if (lockLast && saved) {
         const { error: se } = await supabase.rpc("save_onboarding_secure", {
           p_submission_id: saved.id,
           p_ssn: secure.ssn || null,
           p_banks: (secure.banks || []).filter(b => b.bank_name && b.account_number),
         });
         if (se) throw se;
+        const { data: lockedRows, error: le } = await supabase
+          .from("team_form_submissions")
+          .update({ status: "submitted" })
+          .eq("id", saved.id)
+          .select("id");
+        if (le) throw le;
+        if (!lockedRows || lockedRows.length === 0) {
+          throw new Error("Your answers saved, but the form did not lock. Press Submit again.");
+        }
       }
 
       if (submission?.id) {
@@ -721,6 +993,8 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
       )}
 
       <div style={locked && form.id !== "i9" ? { pointerEvents: "none", opacity: 0.65 } : null}>
+        {form.id === "login_packet" &&
+          <LoginPacketForm teamId={teamId} isAdmin={isAdmin} preview={preview} data={data} setData={setData} />}
         {form.id === "combined_onboarding" &&
           <CombinedForm data={data} setData={setData} secure={secure} setSecure={setSecure} />}
         {form.id === "w4" && <W4Form data={data} setData={setData} />}
@@ -890,6 +1164,8 @@ export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, em
             {FORMS.map(f => {
               const r = rows.find(x => x.form_type === f.id) || {};
               const s = r.state || "action_needed";
+              // The login packet only matters while someone is onboarding.
+              if (f.id === "login_packet" && s === "waived") return null;
               return (
                 <div key={f.id} style={{
                   display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap",
