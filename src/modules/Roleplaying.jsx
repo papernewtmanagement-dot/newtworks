@@ -59,12 +59,14 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //                                            (Rootstep, Briar Shift)
 //   rpg_place / rpg_set_square               the game master moves a fighter by hand or sets fire; the ground itself
 //                                            is the world map under the fight (rpg_fight_squares)
-//   rpg_map_view(level, x, y)                the Maps tab in one read (game master only): one grid of the world map,
-//                                            from the place cards and fixed-seed rolls for unnamed ground (sea, open
-//                                            land, forest, hills, mountains), with the list that grid shows (the
-//                                            places one level down), the lands it lies in and, for the world, every
-//                                            cell of the Continent grids to draw it fine; and the open journey (its
-//                                            clock in words, whose turn, the pieces and where they stand on this grid)
+//   rpg_map_view(level, x, y)                the Maps tab in one read: one grid of the world map, from the place
+//                                            cards and fixed-seed rolls for unnamed ground (sea, open land, forest,
+//                                            hills, mountains), with the list that grid shows (the places one level
+//                                            down), the lands it lies in and, for the world, every cell of the
+//                                            Continent grids to draw it fine; and the open journey (its clock in
+//                                            words, whose turn, the pieces and where they stand on this grid)
+//   rpg_map_place_view(place)                the same read for a place shown whole: the block of cells that holds
+//                                            all of it, drawn one level finer (Westerwold on 5 by 6 world cells)
 //   rpg_session_new(name, on_map) / rpg_map_walk(piece, x, y) / rpg_map_camp(piece)   a journey: the group walks
 //                                            the world map on the fight clock (a tick is 1/6 of a second, 8 hours of
 //                                            walking a day, then 16 of camp; nobody walks into the sea)
@@ -829,10 +831,12 @@ function ObjectsTab({ onError }) {
 // grid. Ground comes from the place cards (Old Forest, Haven, ...) and, where no place is, from fixed-seed rolls
 // (land and sea, then forest, hills and mountains); nothing is stored per square. The function sends every cell,
 // name, size, symbol name and link, and the page only draws them. A cell opens the grid inside it; the open grid
-// lives in the URL (map=level-x-y, none = the world). The lists sit in a sidebar on the left (under the map when the
-// tab is narrow) and the map takes the rest of the screen. Each grid lists the places one level down (v.list: the
-// world lists continents, a continent countries, a country regions, and so on). The world is drawn as fine as the
-// grids inside it (v.detail: every cell of the Continent grids), so it is the largest map.
+// lives in the URL (map=level-x-y, none = the world). A place opens where its link says: the grid inside one cell
+// when it fits in one, else the place shown whole (map=p-<its id>, rpg_map_place_view: Westerwold on the 5 by 6
+// world cells that hold it). The lists sit in a sidebar on the left (under the map when the tab is narrow) and the
+// map takes the rest of the screen. Each grid lists the places one level down (v.list: the world lists continents,
+// a continent countries, a country regions, and so on). The world and a place shown whole are drawn as fine as the
+// grids inside them (v.detail: every cell of the grid one level down), so the world is the largest map.
 // The drawing has two styles (MAP_ART). From the world down to a district it is a fantasy map: an inked coast,
 // little trees, hills and peaks, and names written on the land. The battle grid is seen from above: grass, tree
 // trunks under their crowns, rocks, water. Every ground has one color at every level: the fantasy map paints it in
@@ -1112,6 +1116,23 @@ const mapMix = (a, b, t) => "#" + [1, 3, 5].map(n => Math.round(parseInt(a.slice
 // (MAP_ART.top), so a cell and the squares inside it are one color family at every level. A ground the battle grid
 // has no look of its own for is open land.
 const mapWash = (what) => (what === "sea" ? MAP_PAPER.sea : mapMix(MAP_PAPER.land, (MAP_ART.top[what] || MAP_ART.top.land).tones[0], MAP_TINT));
+// Where to set a symbol s wide near x, y so it does not cover one already set: at x, y when that is free, else the
+// first free spot on the rings round it, one symbol apart. The same symbols in the same order always land the same.
+function mapAside() {
+  const placed = [];
+  const free = (x, y, s) => placed.every(([px, py, ps]) => Math.hypot(px - x, py - y) >= (ps + s) * 0.5);
+  return (x, y, s) => {
+    let at = [x, y];
+    if (!free(x, y, s)) {
+      search: for (let ring = 1; ring <= 3; ring++) for (let a = 0; a < 8; a++) {
+        const t = (a + ring * 0.5) * Math.PI / 4, px = x + Math.cos(t) * s * ring, py = y + Math.sin(t) * s * ring;
+        if (free(px, py, s)) { at = [px, py]; break search; }
+      }
+    }
+    placed.push([at[0], at[1], s]);
+    return at;
+  };
+}
 // One grid in the fantasy style: the strokes to paint, bottom first, and the names to write.
 function mapFantasy(v, byId) {
   const level = Number(v.level) || 1, cols = Number(v.cols) || 12, rows = Number(v.rows) || 12;
@@ -1119,20 +1140,28 @@ function mapFantasy(v, byId) {
   const places = Array.isArray(v.places) ? v.places : [];
   const detail = v.detail && Array.isArray(v.detail.cells) ? v.detail : null;
   const m = /^(\d+)-(\d+)-(\d+)$/.exec(v.view || "");
-  // The squares being drawn: the world draws the finer cells of its detail, every other grid its own cells.
+  // The squares being drawn: the world and a place shown whole draw the finer cells of their detail, every other
+  // grid its own cells. sub = squares drawn across one cell of the grid.
   const C = detail ? Number(detail.cols) || cols : cols, R = detail ? Number(detail.rows) || rows : rows;
   const unit = cols * 100 / C;
+  const sub = C / cols;
   const lvl = detail ? level + 1 : level;
-  const x0 = m ? Number(m[2]) * cols : 0, y0 = m ? Number(m[3]) * rows : 0;
+  // where the first square drawn sits in the world (v.origin: the first cell of the grid)
+  const origin = Array.isArray(v.origin) ? v.origin.map(Number) : null;
+  const x0 = origin ? origin[0] * sub : m ? Number(m[2]) * cols : 0, y0 = origin ? origin[1] * sub : m ? Number(m[3]) * rows : 0;
+  // the world's east edge meets its west edge; a place shown whole stops at its own edges
+  const wrap = !!detail && detail.wrap !== false;
   const grid = new Array(C * R).fill(null);
   if (detail) {
     const kinds = { 126: "sea", 46: "land", 116: "forest", 104: "hills", 109: "mountains", 63: "unknown" };
-    detail.cells.forEach((row, j) => { for (let i = 0; i < C; i++) { const code = String(row || "").charCodeAt(i); grid[j * C + i] = kinds[code] ? { k: kinds[code] } : { k: "place", id: (detail.places || [])[code - 256] }; } });
+    // the smaller places reaching into a square of the detail, by "i,j" from the top-left corner
+    const marks = detail.marks && typeof detail.marks === "object" ? detail.marks : {};
+    detail.cells.forEach((row, j) => { for (let i = 0; i < C; i++) { const code = String(row || "").charCodeAt(i); const mk = marks[i + "," + j]; grid[j * C + i] = { ...(kinds[code] ? { k: kinds[code] } : { k: "place", id: (detail.places || [])[code - 256] }), marks: Array.isArray(mk) ? mk : [] }; } });
   } else {
     cells.forEach(c => { grid[(c.y - 1) * C + (c.x - 1)] = { k: c.kind, id: c.place || null, marks: Array.isArray(c.marks) ? c.marks : [] }; });
   }
   const none = { k: "sea" };
-  const get = (i, j) => grid[(j < 0 ? 0 : j >= R ? R - 1 : j) * C + (detail ? ((i % C) + C) % C : (i < 0 ? 0 : i >= C ? C - 1 : i))] || none;
+  const get = (i, j) => grid[(j < 0 ? 0 : j >= R ? R - 1 : j) * C + (wrap ? ((i % C) + C) % C : (i < 0 ? 0 : i >= C ? C - 1 : i))] || none;
   const layers = [{ d: `M0 0H${cols * 100}V${rows * 100}H0Z`, fill: MAP_PAPER.sea }];
   const land = mapOutline(C, R, (i, j) => { const k = get(i, j).k; return k !== "sea" && k !== "unknown"; }, unit, 0.45);
   // the land is open land (grass) from coast to coast; every other ground is painted over it in its own color
@@ -1153,6 +1182,7 @@ function mapFantasy(v, byId) {
   const names = [];
   const roads = new Map();
   const road = (id, n, full) => { if (!roads.has(id)) roads.set(id, { cells: new Set(), full }); roads.get(id).cells.add(n); };
+  const aside = mapAside();
   for (let j = 0; j < R; j++) for (let i = 0; i < C; i++) {
     const g = grid[j * C + i];
     if (!g) continue;
@@ -1164,15 +1194,17 @@ function mapFantasy(v, byId) {
     // the smaller places in this cell: a road runs through it; any other is drawn once, in the cell its center is in
     const marks = (g.marks || []).map(id => byId[id]).filter(Boolean);
     marks.filter(k => k.icon === "road").forEach(k => road(k.id, j * C + i, false));
-    const here = marks.filter(k => k.icon !== "road" && Array.isArray(k.spot) && Math.floor(k.spot[0] / 1000) === i && Math.floor(k.spot[1] / 1000) === j);
+    const here = marks.filter(k => k.icon !== "road" && Array.isArray(k.spot) && Math.floor(k.spot[0] * sub / 1000) === i && Math.floor(k.spot[1] * sub / 1000) === j);
     if (here.length > 3) {
-      pads.push({ d: mapCircle((i + 0.5) * unit, (j + 0.5) * unit, unit * 0.26), fill: MAP_INK });
+      pads.push({ d: mapCircle((i + 0.5) * unit, (j + 0.5) * unit, detail ? 12 : unit * 0.26), fill: MAP_INK });
       names.push({ text: String(here.length), x: (i + 0.5) * unit, y: (j + 0.5) * unit, count: true });
     } else {
-      const s = unit * [0, 0.62, 0.46, 0.42][here.length];
+      // a grid drawn fine puts each smaller place at its own middle, a twentieth of the long side of the map wide,
+      // stepping round any it would cover (mapAside); any other grid sets them side by side in their cell
+      const s = detail ? Math.max(cols, rows) * 5 : unit * [0, 0.62, 0.46, 0.42][here.length];
       const spots = [[], [[0.5, 0.5]], [[0.27, 0.5], [0.73, 0.5]], [[0.27, 0.29], [0.73, 0.29], [0.5, 0.73]]][here.length];
       here.forEach((k, n) => {
-        const cx = (i + spots[n][0]) * unit, cy = (j + spots[n][1]) * unit;
+        const [cx, cy] = detail ? aside(k.spot[0] / 10, k.spot[1] / 10, s) : [(i + spots[n][0]) * unit, (j + spots[n][1]) * unit];
         if (p) pads.push({ d: mapCircle(cx, cy, s * 0.56), fill: MAP_PAPER.land, o: 0.82 });
         if (MAP_ART.fantasy[k.icon]) MAP_ART.fantasy[k.icon](marked.add, cx - s / 2, cy - s / 2, s, (q) => mapRand(lvl, x0 + i, y0 + j, q + 100 * (n + 1)), true);
         else pads.push({ d: mapCircle(cx, cy, s * 0.2), fill: k.color || MAP_INK, line: MAP_INK, w: 1 });
@@ -1216,7 +1248,9 @@ function mapFantasy(v, byId) {
   });
   // a compass rose in the first corner that is open sea
   const rose = [];
-  const reach = detail ? 0.62 : 1.02, edge = detail ? 0.72 : 1.1;
+  // on a place shown whole the rose shrinks with the grid (the world is 12 by 6 cells)
+  const fit = detail ? Math.min(1, Math.sqrt(cols * rows / 72)) : 1;
+  const reach = (detail ? 0.62 : 1.02) * fit, edge = (detail ? 0.72 : 1.1) * fit;
   const corner = [[cols - edge, rows - edge], [edge, rows - edge], [cols - edge, edge], [edge, edge]].find(([cx, cy]) => {
     for (let j = Math.floor((cy - reach) * 100 / unit); j <= Math.floor((cy + reach) * 100 / unit - 0.001); j++) for (let i = Math.floor((cx - reach) * 100 / unit); i <= Math.floor((cx + reach) * 100 / unit - 0.001); i++) if (i < 0 || j < 0 || i >= C || j >= R || (grid[j * C + i] || none).k !== "sea") return false;
     return true;
@@ -1427,8 +1461,10 @@ function MapsTab({ isParent, onError, onFight }) {
     const key = at || "";
     if (seen.current.has(key)) { setV(seen.current.get(key)); return undefined; }
     const m = /^(\d+)-(\d+)-(\d+)$/.exec(key);
+    const place = /^p-([0-9a-f-]{36})$/.exec(key);
     (async () => {
-      const { data, error } = await supabase.rpc("rpg_map_view", m ? { p_level: Number(m[1]), p_x: Number(m[2]), p_y: Number(m[3]) } : {});
+      const { data, error } = place ? await supabase.rpc("rpg_map_place_view", { p_place: place[1] })
+        : await supabase.rpc("rpg_map_view", m ? { p_level: Number(m[1]), p_x: Number(m[2]), p_y: Number(m[3]) } : {});
       if (!alive) return;
       if (error) { onError(error.message); if (at) setAt(null); return; }
       if (data) seen.current.set(key, data);
@@ -1641,6 +1677,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
   const px = width > 16 ? (width - 16) / (cols * 100) : 1;
   const ground = (k) => { const g = grounds[k]; return g && typeof g === "object" ? [g.name, g.penalty].filter(Boolean).join(" · ") : String(g || k); };
   const drawn = new Set(detail && Array.isArray(detail.places) ? detail.places : []);
+  if (detail && detail.marks && typeof detail.marks === "object") Object.values(detail.marks).forEach(l => (Array.isArray(l) ? l : []).forEach(id => drawn.add(id)));
   const axis = { fontSize: 10, color: T.slate500, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" };
   const grid = [<div key="corner" />];
   for (let x = 1; x <= cols; x++) grid.push(<div key={`c${x}`} style={axis}>{String.fromCharCode(64 + x)}</div>);
@@ -1702,7 +1739,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
           </div>
         )}
       </div>
-      <div ref={boxRef} style={{ width: `min(100%, max(340px, calc((100dvh - 300px) * ${detail ? 2 : 1} + 16px)))`, margin: "0 auto", userSelect: "none" }}>
+      <div ref={boxRef} style={{ width: `min(100%, max(340px, calc((100dvh - 300px) * ${cols / (Number(v.rows) || 12)} + 16px)))`, margin: "0 auto", userSelect: "none" }}>
         <div style={{ position: "relative", display: "grid", gridTemplateColumns: `16px repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: "16px" }}>
           <MapArt art={art} px={px} />
           {grid}
