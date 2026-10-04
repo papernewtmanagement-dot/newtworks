@@ -700,84 +700,15 @@ const BOOKING_BASE_URL = "https://newtworks.vercel.app/schedule";
 const MEET_GREET_DEFAULT_MINUTES = 30;
 const OFFICE_ADDRESS = "28120 US Hwy 281 N, Suite 125, San Antonio, TX 78260";
 
-// Weekly interview schedule (Chicago local time), Peter directive 2026-09-11.
-// getUTCDay()-style weekday numbering (0=Sun..6=Sat) applied to a date built
-// from Chicago-local Y/M/D — same convention isWeekend() uses.
-//
-// PRIMARY times are always offered. SECONDARY times are backups: they are
-// only offered once the primary times inside the 7-day offer window are
-// booked (see pickOffers). No Thursday-morning backup, no Wednesday-afternoon
-// backup — both Peter's call. Fridays: first Friday of the month has no
-// morning times; third Friday has no midday or end-of-day times (backups
-// included). See fridayTimeAllowed.
+// The interview slot schedule (weekly times, backup times, Friday rules, vacation weeks, manual slots, blackouts)
+// lives in one place: SQL public.interview_slot_grid. This function, the Interview Slots page and the onboarding
+// coaching blocks all read it there (Peter 2026-10-04: one function per job). Backup (secondary) times are only
+// offered once the main times inside the 7-day offer window are booked (see pickOffers).
 type SlotTier = "primary" | "secondary";
-const PRIMARY_TIMES_BY_WEEKDAY: Record<number, { h: number; m: number }[]> = {
-  1: [{ h: 10, m: 0 }, { h: 13, m: 0 }, { h: 15, m: 30 }], // Monday
-  2: [{ h: 10, m: 0 }, { h: 13, m: 0 }, { h: 15, m: 30 }], // Tuesday
-  3: [{ h: 10, m: 0 }, { h: 13, m: 0 }],                   // Wednesday
-  4: [{ h: 13, m: 0 }, { h: 15, m: 30 }],                  // Thursday
-  5: [{ h: 10, m: 0 }, { h: 13, m: 0 }, { h: 15, m: 30 }], // Friday (see fridayTimeAllowed)
-};
-const SECONDARY_TIMES_BY_WEEKDAY: Record<number, { h: number; m: number }[]> = {
-  1: [{ h: 10, m: 45 }, { h: 16, m: 15 }], // Monday
-  2: [{ h: 10, m: 45 }, { h: 16, m: 15 }], // Tuesday
-  3: [{ h: 10, m: 45 }],                   // Wednesday (no afternoon backup)
-  4: [{ h: 16, m: 15 }],                   // Thursday (no morning backup)
-  5: [{ h: 10, m: 45 }, { h: 16, m: 15 }], // Friday (see fridayTimeAllowed)
-};
 const OFFER_COUNT = 4;        // how many open times a candidate is shown
 const OFFER_WINDOW_DAYS = 7;  // ... drawn from the next 7 days
 
-// nth Friday of the month for a Chicago-local Y/M/D (1 = first Friday).
-function fridayOrdinal(y: number, m: number, d: number): number | null {
-  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-  if (dow !== 5) return null;
-  return Math.ceil(d / 7);
-}
-// Peter directive 2026-09-11: first Friday of the month -> no morning
-// times; third Friday -> no midday or end-of-day times (backups included).
-function fridayTimeAllowed(y: number, m: number, d: number, hour: number): boolean {
-  const nth = fridayOrdinal(y, m, d);
-  if (nth === 1 && hour < 12) return false;
-  if (nth === 3 && hour >= 12) return false;
-  return true;
-}
 
-// Vacation weeks: a series (anchor Sunday + every N weeks) with per-occurrence
-// moves. Any date whose week (Sun–Sat) is a vacation week has no slots.
-function weekStartKey(dateKey: string): string {
-  const [y, m, d] = dateKey.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCDate(dt.getUTCDate() - dt.getUTCDay());
-  return dt.toISOString().slice(0, 10);
-}
-async function fetchVacationWeeks(agencyId: string, fromDateKey: string, throughDateKey: string): Promise<Set<string>> {
-  const out = new Set<string>();
-  const [{ data: series }, { data: moves }] = await Promise.all([
-    sb.from("hiring_interview_vacation_series").select("id, anchor_week_start, interval_weeks").eq("agency_id", agencyId).eq("is_active", true),
-    sb.from("hiring_interview_vacation_moves").select("series_id, original_week_start, moved_to_week_start").eq("agency_id", agencyId),
-  ]);
-  const fromMs = Date.parse(weekStartKey(fromDateKey)) - 7 * 86400000;
-  const toMs = Date.parse(weekStartKey(throughDateKey)) + 7 * 86400000;
-  for (const sr of series ?? []) {
-    const anchorMs = Date.parse(sr.anchor_week_start);
-    const step = Math.max(1, Number(sr.interval_weeks) || 13) * 7 * 86400000;
-    const moved = new Map<string, string>();
-    for (const mv of moves ?? []) if (mv.series_id === sr.id) moved.set(mv.original_week_start, mv.moved_to_week_start);
-    let k = Math.floor((fromMs - anchorMs) / step); if (k < 0) k = 0;
-    for (let ms = anchorMs + k * step; ms <= toMs; ms += step) {
-      const key = new Date(ms).toISOString().slice(0, 10);
-      const target = moved.get(key) ?? key;
-      out.add(target);
-    }
-    // a move can point into the window from an occurrence outside it
-    for (const [, to] of moved) if (Date.parse(to) >= fromMs && Date.parse(to) <= toMs) out.add(to);
-  }
-  return out;
-}
-function isVacationDate(dateKey: string, vacationWeeks: Set<string>): boolean {
-  return vacationWeeks.has(weekStartKey(dateKey));
-}
 
 function newToken(): string {
   const bytes = new Uint8Array(24);
@@ -814,70 +745,28 @@ function isWeekend(y: number, m: number, d: number): boolean {
 // -------------------------------------------------------------------------
 // Slot computation
 // -------------------------------------------------------------------------
-interface Slot { start: string; end: string; dateKey: string; tier?: SlotTier; } // dateKey = Chicago YYYY-MM-DD
+interface Slot { start: string; end: string; dateKey: string; tier?: SlotTier; blackedOut?: boolean; } // dateKey = Chicago YYYY-MM-DD
 
-interface ManualSlot { slot_date: string; start_time: string; end_time: string; }
-
-async function fetchManualSlots(agencyId: string, fromDateKey: string, throughDateKey: string): Promise<ManualSlot[]> {
-  const { data, error } = await sb
-    .from("hiring_interview_manual_slots")
-    .select("slot_date, start_time, end_time")
-    .eq("agency_id", agencyId)
-    .gte("slot_date", fromDateKey)
-    .lte("slot_date", throughDateKey);
-  if (error) return [];
-  return (data ?? []) as ManualSlot[];
+// Every slot between two Chicago dates from SQL public.interview_slot_grid, blacked-out ones flagged. Null when the
+// database can't be read.
+async function slotGrid(agencyId: string, fromDateKey: string, throughDateKey: string): Promise<Slot[] | null> {
+  const { data, error } = await sb.rpc("interview_slot_grid", { p_agency_id: agencyId, p_from: fromDateKey, p_to: throughDateKey });
+  if (error) { console.error("interview_slot_grid failed:", error.message); return null; }
+  return (data ?? []).map((r: any) => ({
+    start: new Date(r.start_at).toISOString(),
+    end: new Date(r.end_at).toISOString(),
+    dateKey: String(r.slot_date),
+    tier: r.tier as SlotTier,
+    blackedOut: !!r.blacked_out,
+  }));
 }
 
-// Every fixed-schedule slot across the lookahead window, before filtering
-// for blackouts or calendar busy — one row per (eligible day x fixed time),
-// plus any manually-added one-off slots in the same window.
+// Every slot across the lookahead window, starting tomorrow (Chicago), before filtering for calendar busy.
 async function fixedScheduleGrid(startFrom: Date, agencyId: string): Promise<Slot[]> {
-  const grid: Slot[] = [];
-  const nowChicago = new Intl.DateTimeFormat("en-US", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" })
-    .formatToParts(startFrom).reduce((acc: any, p) => { acc[p.type] = p.value; return acc; }, {});
-  const y0 = +nowChicago.year, m0 = +nowChicago.month, d0 = +nowChicago.day;
-  let cursor = new Date(Date.UTC(y0, m0 - 1, d0 + 1)); // start tomorrow, local
-  const firstKey = cursor.toISOString().slice(0, 10);
-  const lastKey = new Date(cursor.getTime() + LOOKAHEAD_DAYS * 86400000).toISOString().slice(0, 10);
-  const vacationWeeks = await fetchVacationWeeks(agencyId, firstKey, lastKey);
-  for (let i = 0; i < LOOKAHEAD_DAYS; i++) {
-    const cy = cursor.getUTCFullYear(), cm = cursor.getUTCMonth() + 1, cd = cursor.getUTCDate();
-    const dow = cursor.getUTCDay();
-    const dateKey = `${cy}-${String(cm).padStart(2, "0")}-${String(cd).padStart(2, "0")}`;
-    if (!isVacationDate(dateKey, vacationWeeks)) {
-      const tiers: [SlotTier, { h: number; m: number }[]][] = [
-        ["primary", PRIMARY_TIMES_BY_WEEKDAY[dow] ?? []],
-        ["secondary", SECONDARY_TIMES_BY_WEEKDAY[dow] ?? []],
-      ];
-      for (const [tier, times] of tiers) {
-        for (const t of times) {
-          if (dow === 5 && !fridayTimeAllowed(cy, cm, cd, t.h)) continue;
-          const start = chicagoLocalToUtc(cy, cm, cd, t.h, t.m);
-          const end = new Date(start.getTime() + INTERVIEW_MINUTES * 60000);
-          grid.push({ start: start.toISOString(), end: end.toISOString(), dateKey, tier });
-        }
-      }
-    }
-    cursor = new Date(cursor.getTime() + 24 * 3600 * 1000);
-  }
-
-  if (grid.length > 0) {
-    const fromKey = grid[0].dateKey;
-    const throughKey = grid[grid.length - 1].dateKey;
-    const manual = await fetchManualSlots(agencyId, fromKey, throughKey);
-    for (const m of manual) {
-      const [h, min] = m.start_time.split(":").map(Number);
-      const [eh, emin] = m.end_time.split(":").map(Number);
-      const [y, mo, d] = m.slot_date.split("-").map(Number);
-      const start = chicagoLocalToUtc(y, mo, d, h, min);
-      const end = chicagoLocalToUtc(y, mo, d, eh, emin);
-      grid.push({ start: start.toISOString(), end: end.toISOString(), dateKey: m.slot_date, tier: "primary" });
-    }
-    grid.sort((a, b) => a.start.localeCompare(b.start));
-  }
-
-  return grid;
+  const [y0, m0, d0] = chicagoDateKey(startFrom).split("-").map(Number);
+  const first = new Date(Date.UTC(y0, m0 - 1, d0 + 1));
+  const last = new Date(first.getTime() + (LOOKAHEAD_DAYS - 1) * 86400000);
+  return (await slotGrid(agencyId, first.toISOString().slice(0, 10), last.toISOString().slice(0, 10))) ?? [];
 }
 
 function overlapsBusy(slot: { start: string; end: string }, busy: { start: string; end: string }[]): boolean {
@@ -890,57 +779,6 @@ function overlapsBusy(slot: { start: string; end: string }, busy: { start: strin
   });
 }
 
-interface Blackout { blackout_date: string; start_time: string | null; end_time: string | null; }
-interface RecurringBlackout { weekday: number; start_time: string | null; end_time: string | null; starts_on: string; ends_on: string | null; }
-
-async function fetchBlackouts(agencyId: string, fromDateKey: string, throughDateKey: string): Promise<Blackout[]> {
-  const { data, error } = await sb
-    .from("hiring_interview_blackouts")
-    .select("blackout_date, start_time, end_time")
-    .eq("agency_id", agencyId)
-    .gte("blackout_date", fromDateKey)
-    .lte("blackout_date", throughDateKey);
-  if (error) return [];
-  return (data ?? []) as Blackout[];
-}
-
-async function fetchRecurringBlackouts(agencyId: string, throughDateKey: string): Promise<RecurringBlackout[]> {
-  const { data, error } = await sb
-    .from("hiring_interview_recurring_blackouts")
-    .select("weekday, start_time, end_time, starts_on, ends_on")
-    .eq("agency_id", agencyId)
-    .lte("starts_on", throughDateKey);
-  if (error) return [];
-  return (data ?? []) as RecurringBlackout[];
-}
-
-function matchesTimeWindow(slotLocalTimeStr: string, startTime: string | null, endTime: string | null): boolean {
-  if (!startTime || !endTime) return true; // whole-day rule
-  const [sh, sm] = slotLocalTimeStr.split(":").map(Number);
-  const slotMin = sh * 60 + sm;
-  const [bsh, bsm] = startTime.split(":").map(Number);
-  const [beh, bem] = endTime.split(":").map(Number);
-  return slotMin >= bsh * 60 + bsm && slotMin < beh * 60 + bem;
-}
-
-function isBlackedOut(slot: Slot, blackouts: Blackout[], recurring: RecurringBlackout[]): boolean {
-  const slotLocalTime = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour12: false, hour: "2-digit", minute: "2-digit" }).format(new Date(slot.start));
-  for (const b of blackouts) {
-    if (b.blackout_date !== slot.dateKey) continue;
-    if (matchesTimeWindow(slotLocalTime, b.start_time, b.end_time)) return true;
-  }
-  const weekday = ((): number => {
-    const [y, m, d] = slot.dateKey.split("-").map(Number);
-    return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-  })();
-  for (const r of recurring) {
-    if (r.weekday !== weekday) continue;
-    if (slot.dateKey < r.starts_on) continue;
-    if (r.ends_on && slot.dateKey > r.ends_on) continue;
-    if (matchesTimeWindow(slotLocalTime, r.start_time, r.end_time)) return true;
-  }
-  return false;
-}
 
 // Peter directive 2026-09-11: offer the next four open times inside seven
 // days. Primary times first; backup (secondary) times only once the primary
@@ -1003,15 +841,8 @@ async function computeFreeSlots(agencyId: string): Promise<Slot[] | null> {
   const grid = await fixedScheduleGrid(now, agencyId);
   if (grid.length === 0) return [];
 
-  const timeMin = grid[0].start;
-  const timeMax = grid[grid.length - 1].end;
-  const [busy, blackouts, recurring] = await Promise.all([
-    fetchBusy(creds, timeMin, timeMax),
-    fetchBlackouts(agencyId, grid[0].dateKey, grid[grid.length - 1].dateKey),
-    fetchRecurringBlackouts(agencyId, grid[grid.length - 1].dateKey),
-  ]);
-
-  return grid.filter((s) => !overlapsBusy(s, busy) && !isBlackedOut(s, blackouts, recurring));
+  const busy = await fetchBusy(creds, grid[0].start, grid[grid.length - 1].end);
+  return grid.filter((s) => !s.blackedOut && !overlapsBusy(s, busy));
 }
 
 async function computeOfferedSlots(agencyId: string): Promise<Slot[] | null> {
@@ -1358,14 +1189,11 @@ async function claimSlot(agencyId: string, token: string, chosenStart: string): 
 }
 
 async function slotStillOpen(agencyId: string, creds: { apiKey: string; userId: string; accountId: string }, slot: Slot): Promise<boolean> {
-  const dateKey = slot.dateKey || slot.start.slice(0, 10);
-  const [busy, blackouts, recurring, vacation] = await Promise.all([
-    fetchBusy(creds, slot.start, slot.end),
-    fetchBlackouts(agencyId, dateKey, dateKey),
-    fetchRecurringBlackouts(agencyId, dateKey),
-    fetchVacationWeeks(agencyId, dateKey, dateKey),
-  ]);
-  return !overlapsBusy(slot, busy) && !isBlackedOut({ ...slot, dateKey }, blackouts, recurring) && !isVacationDate(dateKey, vacation);
+  const dateKey = slot.dateKey || chicagoDateKey(new Date(slot.start));
+  const [busy, grid] = await Promise.all([fetchBusy(creds, slot.start, slot.end), slotGrid(agencyId, dateKey, dateKey)]);
+  const at = new Date(slot.start).getTime();
+  const live = (grid ?? []).find((g) => new Date(g.start).getTime() === at);
+  return !!live && !live.blackedOut && !overlapsBusy(slot, busy);
 }
 
 // Creates the calendar event with a Meet link, writes the booking, emails
