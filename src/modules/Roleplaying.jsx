@@ -858,7 +858,7 @@ const MAP_SERIF = "Georgia, 'Times New Roman', serif";
 const MAP_PAPER = { sea: "#B4CACB", shallow: "#C6D9D6", shore: "#D6E4DD", land: "#EFE5C8" };
 // The kinds of unnamed ground, in the order the key lists them, each with its letter in a grid drawn fine (v.detail;
 // the same letters as rpg_map_grounds).
-const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["forest", "t"], ["pine", "p"], ["jungle", "j"], ["hills", "h"], ["mountains", "m"], ["desert", "d"], ["tundra", "u"], ["ice", "i"], ["swamp", "s"], ["water", "w"], ["deep", "k"]];
+const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["forest", "t"], ["pine", "p"], ["jungle", "j"], ["hills", "h"], ["mountains", "m"], ["desert", "d"], ["tundra", "u"], ["ice", "i"], ["swamp", "s"], ["town", "n"], ["water", "w"], ["deep", "k"]];
 // Rivers drawn as lines on a grid too coarse to hold them as water (rpg_map_view: cells' river, detail.rivers): the
 // line's width in screen pixels by its size, 2 a great river down to 5 a brook.
 const MAP_RIVER_W = { 2: 4.6, 3: 3.3, 4: 2.2, 5: 1.4 };
@@ -867,6 +867,10 @@ const MAP_RIVER = "#5E93AB";
 const MAP_TINT = 0.42;
 // The ground the group has not found yet (the kids login): dark, with specks of light, like nothing else on the map.
 const MAP_FOG = { dark: "#1F2029", speck: "#EDE6D3", line: "#FFFFFF" };
+// A village, town or city marked on a grid (rpg_map_view: towns; step 8): how big its symbol is drawn, as a share of
+// the room its cell gives a mark, and the size of its name. A village a little smaller, a city a little bigger.
+const MAP_MARK_SIZE = { village: 0.8, town: 0.95, city: 1.1 };
+const MAP_MARK_TEXT = { village: 10.5, town: 12, city: 13 };
 // A steady number from 0 to 1 for a spot on the map, so the same cell always draws the same way.
 const mapRand = (a, b, c, d) => {
   let h = Math.imul((a | 0) + 0x9E3779B9, 0x85EBCA6B);
@@ -1027,6 +1031,18 @@ const mapHouse = (add, x, base, s) => {
   add(base, "roof", mapPoly([[x - s * 0.42, base - s * 0.4], [x, base - s * 0.88], [x + s * 0.42, base - s * 0.4]]));
   add(base, "door", mapLine([[x, base], [x, base - s * 0.22]]));
 };
+// A church: a tall narrow wall under a steep spire.
+const mapSpire = (add, x, base, s) => {
+  add(base, "wall", mapPoly([[x - s * 0.15, base], [x - s * 0.15, base - s * 0.6], [x + s * 0.15, base - s * 0.6], [x + s * 0.15, base]]));
+  add(base, "roof", mapPoly([[x - s * 0.21, base - s * 0.58], [x, base - s * 1.2], [x + s * 0.21, base - s * 0.58]]));
+  add(base, "door", mapLine([[x, base], [x, base - s * 0.2]]));
+};
+// A stone tower with battlements and a window.
+const mapTower = (add, x, base, s) => {
+  const w = s * 0.17, h = s * 0.72, q = w * 2 / 5, top = base - h;
+  add(base, "stone", mapPoly([[x - w, base], [x - w, top - q], [x - w + q, top - q], [x - w + q, top], [x - w + 2 * q, top], [x - w + 2 * q, top - q], [x - w + 3 * q, top - q], [x - w + 3 * q, top], [x - w + 4 * q, top], [x - w + 4 * q, top - q], [x + w, top - q], [x + w, base]]));
+  add(base, "hole", mapPoly([[x - w * 0.22, top + h * 0.3], [x + w * 0.22, top + h * 0.3], [x + w * 0.22, top + h * 0.48], [x - w * 0.22, top + h * 0.48]]));
+};
 // MAP_ART: the drawing for each kind of ground and each symbol a place card can name (rpg_map_icons), in both
 // styles. fantasy[name](add, x, y, s, rnd, few) draws it in the square at x, y of side s; few = a small or crowded
 // spot, so one or two strokes of it and not a full cell's worth. top[name] says how a battle square of it looks.
@@ -1074,6 +1090,32 @@ const MAP_ART = {
     village(add, x, y, s, rnd, few) {
       if (few) { [[0.3, 0.62, 0.34], [0.68, 0.56, 0.4], [0.5, 0.9, 0.36]].forEach(([u, v, w]) => mapHouse(add, x + u * s, y + v * s, s * w)); return; }
       [[0.26, 0.46], [0.72, 0.4], [0.5, 0.88]].forEach(([u, v], k) => { if (k === 0 || rnd(k) < 0.55) mapHouse(add, x + (u + (rnd(5 + k) - 0.5) * 0.2) * s, y + (v + (rnd(10 + k) - 0.5) * 0.14) * s, s * (0.28 + rnd(15 + k) * 0.14)); });
+    },
+    // a town (step 8): houses round a church; a cell of its ground, houses closer together and now and then a church
+    town(add, x, y, s, rnd, few) {
+      if (few) { mapSpire(add, x + 0.5 * s, y + 0.66 * s, s * 0.62); mapHouse(add, x + 0.22 * s, y + 0.92 * s, s * 0.36); mapHouse(add, x + 0.78 * s, y + 0.9 * s, s * 0.38); return; }
+      [[0.25, 0.42], [0.72, 0.38], [0.3, 0.86], [0.74, 0.84]].forEach(([u, v], k) => {
+        if (k > 1 && rnd(k) > 0.65) return;
+        const px = x + (u + (rnd(5 + k) - 0.5) * 0.12) * s, py = y + (v + (rnd(10 + k) - 0.5) * 0.1) * s;
+        if (k === 0 && rnd(20) < 0.18) mapSpire(add, px, py, s * 0.42); else mapHouse(add, px, py, s * (0.24 + rnd(15 + k) * 0.1));
+      });
+    },
+    // a city (step 8): houses and a church behind a wall with towers and a gate; a cell of its ground, houses packed
+    // close and now and then a tower
+    city(add, x, y, s, rnd, few) {
+      if (few) {
+        mapHouse(add, x + 0.27 * s, y + 0.6 * s, s * 0.34); mapSpire(add, x + 0.53 * s, y + 0.56 * s, s * 0.52); mapHouse(add, x + 0.77 * s, y + 0.62 * s, s * 0.32);
+        const b = y + 0.94 * s, t = y + 0.75 * s;
+        add(b, "stone", mapPoly([[x + 0.14 * s, b], [x + 0.14 * s, t], [x + 0.44 * s, t], [x + 0.44 * s, b]]) + mapPoly([[x + 0.56 * s, b], [x + 0.56 * s, t], [x + 0.86 * s, t], [x + 0.86 * s, b]]));
+        add(b, "hole", `M${mapPt([x + 0.44 * s, b])}L${mapPt([x + 0.44 * s, t + 0.06 * s])}Q${mapPt([x + 0.5 * s, t - 0.01 * s])} ${mapPt([x + 0.56 * s, t + 0.06 * s])}L${mapPt([x + 0.56 * s, b])}Z`);
+        mapTower(add, x + 0.14 * s, b, s * 0.5); mapTower(add, x + 0.86 * s, b, s * 0.5);
+        return;
+      }
+      [[0.22, 0.36], [0.55, 0.32], [0.82, 0.4], [0.3, 0.72], [0.64, 0.7], [0.48, 0.98]].forEach(([u, v], k) => {
+        if (k > 3 && rnd(k) > 0.6) return;
+        const px = x + (u + (rnd(5 + k) - 0.5) * 0.1) * s, py = y + (v + (rnd(10 + k) - 0.5) * 0.08) * s;
+        if (k === 1 && rnd(20) < 0.12) mapTower(add, px, py, s * 0.5); else mapHouse(add, px, py, s * (0.22 + rnd(15 + k) * 0.08));
+      });
     },
     ruins(add, x, y, s, rnd, few) {
       if (!few && rnd(1) > 0.3) { if (rnd(2) < 0.4) mapTuft(add, x + (0.3 + rnd(3) * 0.4) * s, y + (0.4 + rnd(4) * 0.4) * s, s * 0.11); return; }
@@ -1162,6 +1204,8 @@ const MAP_ART = {
     hills:     { tones: ["#A9AE6A", "#A6AB67", "#ACB16D"], blade: 0.5, rock: 0.14, pebble: 0.3 },
     mountains: { tones: ["#A29C91", "#9E988D", "#A6A095"], crack: 0.5, slab: 0.4, rock: 0.22, pebble: 0.45 },
     village:   { tones: ["#CBB78C", "#C8B489", "#CEBA8F"], cobble: 0.45, pebble: 0.2, blade: 0.08 },
+    town:      { tones: ["#C8B48A", "#C5B187", "#CBB78D"], cobble: 0.6, pebble: 0.16, blade: 0.05 },
+    city:      { tones: ["#C3B69E", "#C0B39B", "#C6B9A1"], cobble: 0.85, pebble: 0.1, block: 0.03 },
     road:      { tones: ["#B99C6C", "#B69969", "#BC9F6F"], streak: 0.7, pebble: 0.25 },
     ruins:     { tones: ["#AEAA6E", "#ABA76B", "#B1AD71"], block: 0.17, pebble: 0.3, blade: 0.45 },
     valley:    { tones: ["#86B45C", "#83B159", "#89B75F"], blade: 0.85, flower: 0.32 },
@@ -1362,12 +1406,13 @@ function mapFantasy(v, byId) {
       const s = detail ? Math.max(cols, rows) * 5 : unit * [0, 0.62, 0.46, 0.42][here.length];
       const spots = [[], [[0.5, 0.5]], [[0.27, 0.5], [0.73, 0.5]], [[0.27, 0.29], [0.73, 0.29], [0.5, 0.73]]][here.length];
       here.forEach((k, n) => {
-        const [cx, cy] = detail ? aside(k.spot[0] / 10, k.spot[1] / 10, s) : [(i + spots[n][0]) * unit, (j + spots[n][1]) * unit];
-        if (p) pads.push({ d: mapCircle(cx, cy, s * 0.56), fill: MAP_PAPER.land, o: 0.82 });
-        if (MAP_ART.fantasy[k.icon]) MAP_ART.fantasy[k.icon](marked.add, cx - s / 2, cy - s / 2, s, (q) => mapRand(lvl, x0 + i, y0 + j, q + 100 * (n + 1)), true);
-        else pads.push({ d: mapCircle(cx, cy, s * 0.2), fill: k.color || MAP_INK, line: MAP_INK, w: 1 });
-        blocks.push([cx - s / 2, cy - s / 2, cx + s / 2, cy + s / 2]);
-        names.push({ text: k.name, x: cx, y: cy, r: s / 2, size: 11.5 });
+        const sk = s * (MAP_MARK_SIZE[k.icon] || 1);
+        const [cx, cy] = detail ? aside(k.spot[0] / 10, k.spot[1] / 10, sk) : [(i + spots[n][0]) * unit, (j + spots[n][1]) * unit];
+        if (p) pads.push({ d: mapCircle(cx, cy, sk * 0.56), fill: MAP_PAPER.land, o: 0.82 });
+        if (MAP_ART.fantasy[k.icon]) MAP_ART.fantasy[k.icon](marked.add, cx - sk / 2, cy - sk / 2, sk, (q) => mapRand(lvl, x0 + i, y0 + j, q + 100 * (n + 1)), true);
+        else pads.push({ d: mapCircle(cx, cy, sk * 0.2), fill: k.color || MAP_INK, line: MAP_INK, w: 1 });
+        blocks.push([cx - sk / 2, cy - sk / 2, cx + sk / 2, cy + sk / 2]);
+        names.push({ text: k.name, x: cx, y: cy, r: sk / 2, size: MAP_MARK_TEXT[k.icon] || 11.5 });
       });
     }
   }
@@ -1919,9 +1964,11 @@ function MapJourney({ j, busy, note, mode, setMode, act, atHref, setAt, onFight,
 // The sidebar: what this grid lists (the places one level down that reach into it), every other place, the grids.
 function MapSide({ v, atHref, setAt, order }) {
   const places = Array.isArray(v.places) ? v.places : [];
+  // the villages, towns and cities this grid shows (rpg_map_view: towns); the Region grid lists its towns and cities
+  const towns = Array.isArray(v.towns) ? v.towns : [];
   const ladder = Array.isArray(v.ladder) ? v.ladder : [];
   const list = v.list && typeof v.list === "object" ? v.list : null;
-  const listed = places.filter(p => p.listed);
+  const listed = places.filter(p => p.listed).concat(towns.filter(t => t.listed));
   const others = places.filter(p => !p.listed);
   const row = (p, kind) => (
     <TabLink key={p.id} href={atHref(p.view || null)} onSelect={() => setAt(p.view || null)}
@@ -1970,7 +2017,9 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
   const detail = v.detail && Array.isArray(v.detail.cells) ? v.detail : null;
   // the last grid of the ladder is the battle grid, seen from above
   const top = Array.isArray(v.ladder) && v.ladder.length > 0 && level === v.ladder.length;
-  const byId = useMemo(() => { const all = {}; (Array.isArray(v.places) ? v.places : []).forEach(p => { all[p.id] = p; }); return all; }, [v]);
+  // the place cards and the villages, towns and cities (rpg_map_view: towns), by id: cells name both the same way
+  const towns = Array.isArray(v.towns) ? v.towns : [];
+  const byId = useMemo(() => { const all = {}; (Array.isArray(v.places) ? v.places : []).concat(Array.isArray(v.towns) ? v.towns : []).forEach(p => { all[p.id] = p; }); return all; }, [v]);
   const art = useMemo(() => (top ? mapBattle : mapFantasy)(v, byId), [v, byId, top]);
   // how many screen pixels one unit of the drawing takes (a cell is 100 units)
   const px = width > 16 ? (width - 16) / (cols * 100) : 1;
@@ -2016,7 +2065,9 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
   });
   const kinds = MAP_GROUNDS.filter(([k, ch]) => cells.some(c => c.kind === k) || (detail && detail.cells.some(row => String(row).includes(ch)))).map(([k]) => k);
   const shown = places.filter(p => drawn.has(p.id) && !p.listed);
-  const costly = kinds.some(k => grounds[k] && grounds[k].penalty) || shown.some(p => /%/.test(p.ground || ""));
+  // each kind of village, town and city drawn here, once in the key, then what their streets cost
+  const townKinds = ["city", "town", "village"].map(k => towns.find(t => t.kind === k && drawn.has(t.id))).filter(Boolean);
+  const costly = kinds.some(k => grounds[k] && grounds[k].penalty) || shown.some(p => /%/.test(p.ground || "")) || townKinds.length > 0;
   return (
     <div style={{ ...card, order: 1, minWidth: 0, display: "grid", gap: 10 }}>
       <style>{".rpg-map-cell:hover{box-shadow:inset 0 0 0 2px rgba(75,59,42,.6);border-radius:3px}"}</style>
@@ -2052,6 +2103,12 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
             <MapSwatch what={p.icon} color={p.color} size={20} top={top} />{p.name}{p.ground && <span style={{ fontWeight: 400, color: T.slate600 }}>· {p.ground}</span>}
           </TabLink>
         ))}
+        {townKinds.map(t => (
+          <span key={t.kind} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <MapSwatch what={t.icon} color={t.color} size={20} top={top} />{t.level}
+          </span>
+        ))}
+        {townKinds.length > 0 && townKinds[0].ground && <span>Their streets and yards: {townKinds[0].ground}.</span>}
         {kinds.map(k => (
           <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <MapSwatch what={k} size={20} top={top} />{ground(k)}
