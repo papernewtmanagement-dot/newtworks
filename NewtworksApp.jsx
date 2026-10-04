@@ -28,6 +28,7 @@ import ActivityLog from "./src/modules/ActivityLog.jsx";
 import Family from "./src/modules/Family.jsx";
 import Inventory from "./src/modules/Inventory.jsx";
 import Roleplaying from "./src/modules/Roleplaying.jsx";
+import PrivateDancer from "./src/modules/PrivateDancer.jsx";
 import MealPlan from "./src/modules/MealPlan.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
@@ -127,6 +128,7 @@ const NAV_ITEMS = [
   { id: "inventory",   label: "Inventory",   icon: "package",       roles: FAMILY_ROLES },
   { id: "meals",       label: "Meal Plan",   icon: "utensils",      roles: FAMILY_ROLES },
   { id: "roleplaying", label: "Roleplaying", icon: "dice",          roles: FAMILY_ROLES },
+  { id: "dancer",      label: "Private Dancer", icon: "music",     roles: FAMILY_ROLES },
   { id: "course",      label: "Course",      icon: "graduation",    roles: FAMILY_ROLES },
 ];
 
@@ -169,6 +171,7 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     package:    <svg style={s} viewBox="0 0 24 24" {...p}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
     utensils:   <svg style={s} viewBox="0 0 24 24" {...p}><path d="M7 3v8"/><path d="M5 3v4a2 2 0 0 0 4 0V3"/><path d="M7 11v10"/><path d="M17 3c-2 0-3 2-3 5v4h3v9"/></svg>,
     dice:       <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.2" fill={color}/><circle cx="16" cy="8" r="1.2" fill={color}/><circle cx="12" cy="12" r="1.2" fill={color}/><circle cx="8" cy="16" r="1.2" fill={color}/><circle cx="16" cy="16" r="1.2" fill={color}/></svg>,
+    music:      <svg style={s} viewBox="0 0 24 24" {...p}><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
     briefcase:<svg style={s} viewBox="0 0 24 24" {...p}><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
   };
   return icons[name] || null;
@@ -696,6 +699,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     family:      <ErrorBoundary name="Family"><Family userRole={userRole} /></ErrorBoundary>,
     inventory:   <ErrorBoundary name="Inventory"><Inventory userRole={userRole} /></ErrorBoundary>,
     roleplaying: <ErrorBoundary name="Roleplaying"><Roleplaying userRole={userRole} /></ErrorBoundary>,
+    dancer:      <ErrorBoundary name="Private Dancer"><PrivateDancer /></ErrorBoundary>,
     meals:       <ErrorBoundary name="Meal Plan"><MealPlan userRole={userRole} /></ErrorBoundary>,
     course:      <ErrorBoundary key="course" name="Course"><Manual manualType="financial_literacy" userRole={userRole} /></ErrorBoundary>,
   };
