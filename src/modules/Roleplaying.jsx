@@ -1466,7 +1466,9 @@ function mapContours(cols, rows, f, levels) {
 // grid, where the nearest square answers, so a crown rooted just off the grid still hangs over it.
 // slope = { ux, uy }: which way is uphill on the mountains and hills of this grid (a unit step east, south); mountain
 // squares are then drawn as a mountainside (Peter 2026-10-04: the mountain battle grid should look like a mountain side).
-function mapTop(cols, rows, x0, y0, what, washes, show, hard, slope) {
+// cliff(i, j) = how steep a square of bare rock is, in degrees, when it is a cliff that has to be climbed (rpg_map_view:
+// cells' cliff, step 7c); nothing for any other square.
+function mapTop(cols, rows, x0, y0, what, washes, show, hard, slope, cliff) {
   const U = 100;
   const layers = [];
   const bases = new Map();
@@ -1525,6 +1527,29 @@ function mapTop(cols, rows, x0, y0, what, washes, show, hard, slope) {
     if (face.ledge) layers.push({ d: face.ledge, line: "#2A2620", units: U * 0.12, o: 0.2 });
     if (face.lit) layers.push({ d: face.lit, line: "#EEE9DE", w: 1.2, o: 0.6 });
     if (face.lip) layers.push({ d: face.lip, line: "#4F4A42", w: 1.3, o: 0.8 });
+  }
+  // cliffs: bare rock too steep to walk, a darker face streaked straight down the slope, the streaks closer the steeper
+  // the rock (two at 40 degrees, seven at 85), with light along its top edge and its shadow below
+  if (cliff) {
+    const ux = slope ? slope.ux : 0, uy = slope ? slope.uy : -1, vx = -uy, vy = ux;
+    const rock = { face: "", streak: "", lit: "", foot: "" };
+    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+      const a = cliff(i, j);
+      if (a == null) continue;
+      const cx = (i + 0.5) * U, cy = (j + 0.5) * U, rnd = (n) => mapRand(7, x0 + i, y0 + j, 700 + n);
+      rock.face += `M${i * U} ${j * U}h${U}v${U}h${-U}Z`;
+      const n = 2 + Math.round((a - 40) / 9);
+      for (let k = 0; k < n; k++) {
+        const t = ((k + 0.5) / n - 0.5) * 0.86 * U, l = U * (0.28 + rnd(k) * 0.16), o = (rnd(k + 20) - 0.5) * 0.2 * U;
+        const px = cx + vx * t + ux * o, py = cy + vy * t + uy * o;
+        rock.streak += mapLine([[px - ux * l, py - uy * l], [px + ux * l, py + uy * l]]);
+      }
+      // the top edge (uphill side) catches the light; the foot (downhill side) is in shadow
+      const edge = (k, w) => mapLine([[cx + ux * k * U - vx * w * U, cy + uy * k * U - vy * w * U], [cx + ux * k * U + vx * w * U, cy + uy * k * U + vy * w * U]]);
+      rock.lit += edge(0.44, 0.48);
+      rock.foot += edge(-0.44, 0.48);
+    }
+    if (rock.face) layers.push({ d: rock.face, fill: "#2E2A24", o: 0.3 }, { d: rock.streak, line: "#26221C", w: 1.2, o: 0.6 }, { d: rock.foot, line: "#1E1B16", units: U * 0.1, o: 0.35, cap: "butt" }, { d: rock.lit, line: "#F2EEE4", w: 1.6, o: 0.8 });
   }
   const dry = (i, j) => what(i, j) !== "sea" && !mapWet(what(i, j));
   let wet = false;
@@ -1594,7 +1619,7 @@ function mapBattle(v, byId) {
   const cells = Array.isArray(v.cells) ? v.cells : [];
   const m = /^(\d+)-(\d+)-(\d+)$/.exec(v.view || "");
   const grid = new Array(cols * rows).fill(null);
-  cells.forEach(c => { const p = c.place && !mapWet(c.kind) ? byId[c.place] : null; grid[(c.y - 1) * cols + (c.x - 1)] = { what: p ? (MAP_ART.top[p.icon] ? p.icon : "plain") : c.kind, id: c.place || null, h: c.hard == null ? null : Number(c.hard) }; });
+  cells.forEach(c => { const p = c.place && !mapWet(c.kind) ? byId[c.place] : null; grid[(c.y - 1) * cols + (c.x - 1)] = { what: p ? (MAP_ART.top[p.icon] ? p.icon : "plain") : c.kind, id: c.place || null, h: c.hard == null ? null : Number(c.hard), cliff: c.cliff == null ? null : Number(c.cliff) }; });
   const get = (i, j) => grid[(j < 0 ? 0 : j >= rows ? rows - 1 : j) * cols + (i < 0 ? 0 : i >= cols ? cols - 1 : i)] || { what: "plain" };
   const washes = [];
   Array.from(new Set(grid.filter(g => g && g.id).map(g => g.id))).forEach(id => { const p = byId[id]; if (p && p.color) washes.push({ d: mapOutline(cols, rows, (i, j) => get(i, j).id === id, 100, 0.3), fill: p.color, o: 0.14 }); });
@@ -1617,7 +1642,7 @@ function mapBattle(v, byId) {
     if (len > 0) slope = { ux: gx / len, uy: gy / len };
   }
   if (!slope && cells.some(c => c.kind === "mountains" || c.kind === "hills")) { const t = mapRand(7, m ? Number(m[2]) : 0, m ? Number(m[3]) : 0, 800) * 2 * Math.PI; slope = { ux: Math.cos(t), uy: Math.sin(t) }; }
-  const layers = mapTop(cols, rows, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0, (i, j) => get(i, j).what, washes, false, (i, j) => get(i, j).h, slope);
+  const layers = mapTop(cols, rows, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0, (i, j) => get(i, j).what, washes, false, (i, j) => get(i, j).h, slope, (i, j) => (inGrid(i, j) ? get(i, j).cliff : null));
   const fog = mapFog(cols, rows, 100, (i, j) => get(i, j).what === "unknown", 0.3, cols, rows, 7, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0);
   return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat([{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }], fog), names: [], blocks: [] };
 }
