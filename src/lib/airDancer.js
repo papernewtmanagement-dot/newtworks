@@ -17,7 +17,11 @@ const FLOOR = -1.0;    // the ground, in segment lengths below the blower top (t
 // Tempo. Air from a puff leaks out per beat, not per second, so on a fast song he
 // sags in less time and you tap faster; on a slow song he holds up longer.
 // d.beatSec is the song's seconds per beat (the game sets it; 0.6 = 100 a minute).
+// His body moves on the same beat clock: sway, ripple and arms run faster on a fast
+// song and slower on a slow one (TEMPO_REF = the beat length the motion was tuned at),
+// so each beat looks the same at any tempo, only quicker or slower.
 const AIR_LOSS_PER_BEAT = 0.5;
+const TEMPO_REF = 0.6, TEMPO_MIN = 0.5, TEMPO_MAX = 2;
 // While a puff's air is still in him, it holds his head up off the ground: fully at
 // LIFT_FULL of puff air left, not at all at LIFT_NONE. Tapping every 4th beat he
 // dips close to the ground by the 4th beat but never touches it, at any tempo; wait
@@ -64,9 +68,11 @@ export function puff(d, strength = 1, dir = 0) {
 export function stepDancer(d, dt) {
   dt = Math.min(dt, 1 / 30);
   const sub = 4, h = dt / sub;
+  const tempo = Math.min(TEMPO_MAX, Math.max(TEMPO_MIN, TEMPO_REF / (d.beatSec || TEMPO_REF)));
+  const hb = h * tempo; // body time step on the beat clock
   for (let k = 0; k < sub; k++) {
-    d.t += h;
-    d.surge *= Math.exp(-h * AIR_LOSS_PER_BEAT / (d.beatSec || 0.6));
+    d.t += hb;
+    d.surge *= Math.exp(-h * AIR_LOSS_PER_BEAT / (d.beatSec || TEMPO_REF));
     const liftT = Math.max(0, Math.min(1, (d.surge - LIFT_NONE) / (LIFT_FULL - LIFT_NONE)));
     const lift = LIFT_MAX * liftT * liftT * (3 - 2 * liftT);
     const P = pressure(d);
@@ -88,11 +94,11 @@ export function stepDancer(d, dt) {
       const turb = gust * (Math.sin(d.t * 3.1 - i * 0.55 + d.phA[i]) + 0.6 * Math.sin(d.t * 5.3 - i * 0.9 + d.phB[i])) * (0.4 + 0.6 * (i / N));
       let tq = -stiff * d.th[i] - damp * d.om[i] + grav * above * Math.sin(phi) + turb + floorPush[i];
       if (i < 3) tq += 18 * P * (d.lean * 0.35 - phi) * (i === 0 ? 1 : 0.5);
-      d.om[i] += tq * h;
+      d.om[i] += tq * hb;
     }
     phi = 0; ht = 0;
     for (let i = 0; i < N; i++) {
-      d.th[i] += d.om[i] * h;
+      d.th[i] += d.om[i] * hb;
       if (d.th[i] > 1.4) { d.th[i] = 1.4; d.om[i] *= -0.3; }
       if (d.th[i] < -1.4) { d.th[i] = -1.4; d.om[i] *= -0.3; }
       phi += d.th[i];
@@ -110,8 +116,8 @@ export function stepDancer(d, dt) {
         const target = i === 0 ? rest : 0;
         const turb = 2.5 * (0.4 + P) * Math.sin(d.t * (4 + i) + d.phArm[i + (a.side > 0 ? ARM_N : 0)]);
         const tq = -aStiff * (a.th[i] - target) - aDamp * a.om[i] + turb;
-        a.om[i] += tq * h;
-        a.th[i] += a.om[i] * h;
+        a.om[i] += tq * hb;
+        a.th[i] += a.om[i] * hb;
         const lim = i === 0 ? 3.1 : 1.3;
         if (a.th[i] > lim) { a.th[i] = lim; a.om[i] *= -0.3; }
         if (a.th[i] < -lim) { a.th[i] = -lim; a.om[i] *= -0.3; }
@@ -119,7 +125,7 @@ export function stepDancer(d, dt) {
     }
   }
   d.flash = Math.max(0, d.flash - dt * 2.5);
-  d.hair += dt * (6 + 10 * pressure(d));
+  d.hair += dt * tempo * (6 + 10 * pressure(d));
 }
 
 // ─── drawing ───────────────────────────────────────────────────────────────
