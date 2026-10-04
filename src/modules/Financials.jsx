@@ -1638,6 +1638,14 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
       .eq("agency_id", AGENCY_ID).maybeSingle()
       .then(({ data: tp }) => setTithePool(tp || null));
   }, [data]);
+  // Tax pool (Peter 2026-10-04): 3% of gross State Farm comp set aside for taxes, less taxes paid.
+  const [taxPool, setTaxPool] = useState(null);
+  useEffect(() => {
+    supabase.from("v_pool_balance")
+      .select("set_aside_total, given_total, available")
+      .eq("agency_id", AGENCY_ID).eq("pool", "tax").maybeSingle()
+      .then(({ data: tp }) => setTaxPool(tp || null));
+  }, [data]);
   // PaperNewt sales + use tax owed (Peter 2026-10-04): the oldest tax year not yet paid.
   const [salesTax, setSalesTax] = useState(null);
   useEffect(() => {
@@ -2148,10 +2156,18 @@ const PLSection = ({ data, onDataChanged, entity, setEntity, breadcrumb, directC
             Tithe pool <strong>{fmtMoney(tithePool.available)}</strong> available
           </span>
         )}
+        {taxPool && (
+          <span
+            title={`Set aside ${fmtMoney(taxPool.set_aside_total)} · Paid ${fmtMoney(taxPool.given_total)}`}
+            style={{ order: 100, fontSize: 12, color: T.slate700, padding: "5px 10px", background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 6 }}
+          >
+            Tax pool <strong>{fmtMoney(taxPool.available)}</strong> available
+          </span>
+        )}
         {salesTax && (
           <span
             title={`PaperNewt ${salesTax.tax_year}: sales tax ${fmtMoney(salesTax.sales_tax)} + use tax ${fmtMoney(salesTax.use_tax)}${Number(salesTax.paid) > 0 ? ` · paid ${fmtMoney(salesTax.paid)}` : ""}`}
-            style={{ order: 100, fontSize: 12, color: T.slate700, padding: "5px 10px", background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 6 }}
+            style={{ order: 101, fontSize: 12, color: T.slate700, padding: "5px 10px", background: T.slate50, border: `1px solid ${T.slate200}`, borderRadius: 6 }}
           >
             PaperNewt sales tax <strong>{fmtMoney(salesTax.balance)}</strong> due {new Date(salesTax.due_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
           </span>
