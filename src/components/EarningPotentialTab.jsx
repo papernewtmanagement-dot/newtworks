@@ -97,19 +97,11 @@ const CURVE_LINES = [
   { key: "total",     label: "Bonuses",           color: T.blue,     dash: null,  w: 2.75, place: "above" },
 ];
 
-// Each person's rate as the raise ladder sees it: the ladder step, plus any manager
-// title amount paid on top (earnings_curve_positions carries both).
-// When their average has already earned the next step, it shows as "$20 → $21": paid
-// now → takes effect at the quarter close, so the rate matches where the point sits.
+// Manager title amount, paid on top of the ladder step (Peter 2026-10-03: this line
+// shows only the title amount; the ladder step is already where the point sits).
 const rateLine = (p) => {
-  const step = Number(p?.step_hourly);
-  if (!Number.isFinite(step)) return null;
   const title = Number(p?.title_hourly) || 0;
-  const next = Number(p?.next_step_hourly);
-  const rate = p?.on_track && Number.isFinite(next)
-    ? `$${Math.round(step)} \u2192 $${Math.round(next)}/hr`
-    : `$${Math.round(step)}/hr`;
-  return title > 0 ? `${rate} + $${Math.round(title)} ${p.title_label || "title"}` : rate;
+  return title > 0 ? `+ $${Math.round(title)} ${p.title_label || "title"}` : null;
 };
 const rateSentence = (p) => {
   const step = Number(p?.step_hourly);
@@ -757,7 +749,7 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
       <div style={card}>
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected annual pay by {curve?.x_label ? curve.x_label.toLowerCase() : "production level"}</div>
-          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{rolePositions.length > 0 ? " The purple points are real: production is the same weekly average the raise review uses for each person's next step, pay is the same on-time annual figure the weekly CPR shows, and the rate under each name is their ladder step plus any manager title amount. An arrow means their average has earned the next step, which takes effect at the quarter close." : ""}</div>
+          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{rolePositions.length > 0 ? " The purple points are real: production is the same weekly average the raise review uses for each person's next step, pay is the same on-time annual figure the weekly CPR shows, and a manager's title amount shows under their name, paid on top of the ladder step." : ""}</div>
         </div>
         {curve ? (
           <EarningsCurveChart curve={curve} ladder={role.raise_ladder} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} positions={rolePositions} />
