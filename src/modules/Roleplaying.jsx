@@ -858,7 +858,11 @@ const MAP_SERIF = "Georgia, 'Times New Roman', serif";
 const MAP_PAPER = { sea: "#B4CACB", shallow: "#C6D9D6", shore: "#D6E4DD", land: "#EFE5C8" };
 // The kinds of unnamed ground, in the order the key lists them, each with its letter in a grid drawn fine (v.detail;
 // the same letters as rpg_map_grounds).
-const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["forest", "t"], ["pine", "p"], ["jungle", "j"], ["hills", "h"], ["mountains", "m"], ["desert", "d"], ["tundra", "u"], ["ice", "i"], ["swamp", "s"]];
+const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["forest", "t"], ["pine", "p"], ["jungle", "j"], ["hills", "h"], ["mountains", "m"], ["desert", "d"], ["tundra", "u"], ["ice", "i"], ["swamp", "s"], ["water", "w"], ["deep", "k"]];
+// Rivers drawn as lines on a grid too coarse to hold them as water (rpg_map_view: cells' river, detail.rivers): the
+// line's width in screen pixels by its size, 2 a great river down to 5 a brook.
+const MAP_RIVER_W = { 2: 4.6, 3: 3.3, 4: 2.2, 5: 1.4 };
+const MAP_RIVER = "#5E93AB";
 // How much of a ground's battle-grid color the fantasy map takes; the rest is paper.
 const MAP_TINT = 0.42;
 // The ground the group has not found yet (the kids login): dark, with specks of light, like nothing else on the map.
@@ -1131,6 +1135,8 @@ const MAP_ART = {
   // ice, drift = a patch of snow, tree and big = a trunk under its crown; needle = its trees are pines).
   top: {
     sea:       { tones: ["#6FA3B7", "#6CA0B4", "#72A6BA"], wave: 0.8 },
+    water:     { tones: ["#8FBFC9", "#8CBCC6", "#92C2CC"], wave: 0.25, pebble: 0.06 },
+    deep:      { tones: ["#5C93A8", "#5990A5", "#5F96AB"], wave: 0.5 },
     land:      { tones: ["#93B262", "#90AF5F", "#96B565"], blade: 0.75, flower: 0.07, pebble: 0.08, bush: 0.02 },
     forest:    { tones: ["#6F8F4A", "#6C8C47", "#72924D"], blade: 0.5, bush: 0.11, tree: 0.04, big: 0.013, pebble: 0.04 },
     hills:     { tones: ["#A9AE6A", "#A6AB67", "#ACB16D"], blade: 0.5, rock: 0.14, pebble: 0.3 },
@@ -1174,16 +1180,18 @@ const mapMix = (a, b, t) => "#" + [1, 3, 5].map(n => Math.round(parseInt(a.slice
 // The color of a ground on the fantasy map: the paper tinted with the color that ground has on the battle grid
 // (MAP_ART.top), so a cell and the squares inside it are one color family at every level. A ground the battle grid
 // has no look of its own for is open land.
-const mapWash = (what) => (what === "sea" ? MAP_PAPER.sea : mapMix(MAP_PAPER.land, (MAP_ART.top[what] || MAP_ART.top.land).tones[0], MAP_TINT));
+const mapWash = (what) => (what === "sea" || what === "deep" ? MAP_PAPER.sea : what === "water" ? mapMix(MAP_PAPER.shallow, MAP_PAPER.sea, 0.45) : mapMix(MAP_PAPER.land, (MAP_ART.top[what] || MAP_ART.top.land).tones[0], MAP_TINT));
+// Water on the map: rivers and lakes, waded or swum (rpg_map_water)
+const mapWet = (k) => k === "water" || k === "deep";
 // Harder ground drawn darker (Peter 2026-10-03: thicker forest, deeper water darker): h(i, j) = how hard a square is
 // inside its ground, 0 to 9 (rpg_map_view: cells' hard, detail.hard), nothing when not known. Each step from 2 up adds
-// a thin dark wash over the squares at or above it, so 9 (a thicket) is the darkest.
-function mapHardShade(cols, rows, h, unit, round) {
+// a thin dark wash over the squares at or above it, so 9 (a thicket) is the darkest; deep water is shaded in blue.
+function mapHardShade(cols, rows, h, unit, round, color = "#1F2A12") {
   const out = [];
   let any = false;
   for (let j = 0; j < rows && !any; j++) for (let i = 0; i < cols; i++) if (h(i, j) != null) { any = true; break; }
   if (!any) return out;
-  for (let d = 2; d <= 9; d++) out.push({ d: mapOutline(cols, rows, (i, j) => { const v = h(i, j); return v != null && v >= d; }, unit, round), fill: "#1F2A12", o: 0.045 });
+  for (let d = 2; d <= 9; d++) out.push({ d: mapOutline(cols, rows, (i, j) => { const v = h(i, j); return v != null && v >= d; }, unit, round), fill: color, o: 0.045 });
   return out.filter(l => l.d);
 }
 // Where to set a symbol s wide near x, y so it does not cover one already set: at x, y when that is free, else the
@@ -1228,9 +1236,11 @@ function mapFantasy(v, byId) {
     const marks = detail.marks && typeof detail.marks === "object" ? detail.marks : {};
     // how hard each square is inside its ground, one digit a square (detail.hard; - for none)
     const hard = Array.isArray(detail.hard) ? detail.hard : [];
-    detail.cells.forEach((row, j) => { for (let i = 0; i < C; i++) { const code = String(row || "").charCodeAt(i); const mk = marks[i + "," + j]; const hd = String(hard[j] || "").charAt(i); grid[j * C + i] = { ...(kinds[code] ? { k: kinds[code] } : { k: "place", id: (detail.places || [])[code - 256] }), marks: Array.isArray(mk) ? mk : [], h: hd >= "0" && hd <= "9" ? Number(hd) : null }; } });
+    // the rivers drawn as lines, one digit a square (detail.rivers; 0 for none)
+    const rivers = Array.isArray(detail.rivers) ? detail.rivers : [];
+    detail.cells.forEach((row, j) => { for (let i = 0; i < C; i++) { const code = String(row || "").charCodeAt(i); const mk = marks[i + "," + j]; const hd = String(hard[j] || "").charAt(i); const rv = Number(String(rivers[j] || "").charAt(i)) || 0; grid[j * C + i] = { ...(kinds[code] ? { k: kinds[code] } : { k: "place", id: (detail.places || [])[code - 256] }), marks: Array.isArray(mk) ? mk : [], h: hd >= "0" && hd <= "9" ? Number(hd) : null, rv }; } });
   } else {
-    cells.forEach(c => { grid[(c.y - 1) * C + (c.x - 1)] = { k: c.kind, id: c.place || null, marks: Array.isArray(c.marks) ? c.marks : [], h: c.hard == null ? null : Number(c.hard) }; });
+    cells.forEach(c => { grid[(c.y - 1) * C + (c.x - 1)] = { k: c.kind, id: c.place || null, marks: Array.isArray(c.marks) ? c.marks : [], h: c.hard == null ? null : Number(c.hard), rv: Number(c.river) || 0 }; });
   }
   const none = { k: "sea" };
   const get = (i, j) => grid[(j < 0 ? 0 : j >= R ? R - 1 : j) * C + (wrap ? ((i % C) + C) % C : (i < 0 ? 0 : i >= C ? C - 1 : i))] || none;
@@ -1247,8 +1257,26 @@ function mapFantasy(v, byId) {
   const filled = new Map();
   grid.forEach((g, n) => { if (g && g.k === "place" && g.id) { if (!filled.has(g.id)) filled.set(g.id, []); filled.get(g.id).push(n); } });
   filled.forEach((list, id) => { const p = byId[id]; if (p && p.color) layers.push({ d: mapOutline(C, R, (i, j) => { const g = get(i, j); return g.k === "place" && g.id === id; }, unit, 0.45), fill: p.color, o: 0.3 }); });
-  // harder ground is darker: each square a shade by how hard it is inside its ground (0 to 9; thickets 9)
-  layers.push(...mapHardShade(C, R, (i, j) => get(i, j).h, unit, 0.45));
+  // harder ground is darker: each square a shade by how hard it is inside its ground (0 to 9; thickets 9); deeper
+  // water darker blue
+  layers.push(...mapHardShade(C, R, (i, j) => (mapWet(get(i, j).k) ? null : get(i, j).h), unit, 0.45));
+  layers.push(...mapHardShade(C, R, (i, j) => (mapWet(get(i, j).k) ? get(i, j).h : null), unit, 0.45, "#123A5A"));
+  // rivers too narrow for this grid's cells: a line from cell to cell along them, thinner for smaller rivers; a
+  // diagonal step only where no straight one joins the two
+  const runs = {};
+  const flow = (i, j) => (i >= 0 && j >= 0 && i < C && j < R && grid[j * C + i] && grid[j * C + i].rv > 0 ? grid[j * C + i].rv : 0);
+  for (let j = 0; j < R; j++) for (let i = 0; i < C; i++) {
+    const k = flow(i, j);
+    if (!k) continue;
+    const cx = (i + 0.5) * unit, cy = (j + 0.5) * unit;
+    const to = [[1, 0], [0, 1]].filter(([a, b]) => flow(i + a, j + b));
+    if (flow(i + 1, j + 1) && !flow(i + 1, j) && !flow(i, j + 1)) to.push([1, 1]);
+    if (flow(i - 1, j + 1) && !flow(i - 1, j) && !flow(i, j + 1)) to.push([-1, 1]);
+    const alone = !to.length && ![[-1, 0], [0, -1], [-1, -1], [1, -1]].some(([a, b]) => flow(i + a, j + b));
+    to.forEach(([a, b]) => { const w = Math.max(k, flow(i + a, j + b)); runs[w] = (runs[w] || "") + mapLine([[cx, cy], [cx + a * unit, cy + b * unit]]); });
+    if (alone) runs[k] = (runs[k] || "") + mapLine([[cx - unit * 0.3, cy], [cx + unit * 0.3, cy]]);
+  }
+  Object.keys(runs).sort().reverse().forEach(k => layers.push({ d: runs[k], line: MAP_RIVER, w: MAP_RIVER_W[k] || 1 }));
   layers.push({ d: land, line: MAP_INK, w: 1.25 });
   const strokes = mapRows(unit * (detail ? 1 : 0.12));
   const marked = mapRows(unit * 0.12);
@@ -1368,7 +1396,7 @@ function mapTop(cols, rows, x0, y0, what, washes, show, hard) {
   }
   bases.forEach((d, fill) => layers.push({ d, fill }));
   washes.forEach(w => layers.push(w));
-  const dry = (i, j) => what(i, j) !== "sea";
+  const dry = (i, j) => what(i, j) !== "sea" && !mapWet(what(i, j));
   let wet = false;
   for (let j = 0; j < rows && !wet; j++) for (let i = 0; i < cols; i++) if (!dry(i, j)) { wet = true; break; }
   if (wet) layers.push({ d: mapOutline(cols, rows, dry, U, 0.3), line: "#E6DFC2", units: 9, o: 0.9 });
@@ -1432,11 +1460,13 @@ function mapBattle(v, byId) {
   const cells = Array.isArray(v.cells) ? v.cells : [];
   const m = /^(\d+)-(\d+)-(\d+)$/.exec(v.view || "");
   const grid = new Array(cols * rows).fill(null);
-  cells.forEach(c => { const p = c.place ? byId[c.place] : null; grid[(c.y - 1) * cols + (c.x - 1)] = { what: p ? (MAP_ART.top[p.icon] ? p.icon : "plain") : c.kind, id: c.place || null, h: c.hard == null ? null : Number(c.hard) }; });
+  cells.forEach(c => { const p = c.place && !mapWet(c.kind) ? byId[c.place] : null; grid[(c.y - 1) * cols + (c.x - 1)] = { what: p ? (MAP_ART.top[p.icon] ? p.icon : "plain") : c.kind, id: c.place || null, h: c.hard == null ? null : Number(c.hard) }; });
   const get = (i, j) => grid[(j < 0 ? 0 : j >= rows ? rows - 1 : j) * cols + (i < 0 ? 0 : i >= cols ? cols - 1 : i)] || { what: "plain" };
   const washes = [];
   Array.from(new Set(grid.filter(g => g && g.id).map(g => g.id))).forEach(id => { const p = byId[id]; if (p && p.color) washes.push({ d: mapOutline(cols, rows, (i, j) => get(i, j).id === id, 100, 0.3), fill: p.color, o: 0.14 }); });
-  washes.push(...mapHardShade(cols, rows, (i, j) => (i < 0 || j < 0 || i >= cols || j >= rows ? null : get(i, j).h), 100, 0.3));
+  const inGrid = (i, j) => i >= 0 && j >= 0 && i < cols && j < rows;
+  washes.push(...mapHardShade(cols, rows, (i, j) => (!inGrid(i, j) || mapWet(get(i, j).what) ? null : get(i, j).h), 100, 0.3));
+  washes.push(...mapHardShade(cols, rows, (i, j) => (inGrid(i, j) && mapWet(get(i, j).what) ? get(i, j).h : null), 100, 0.3, "#123A5A"));
   const lines = [];
   for (let i = 1; i < cols; i++) lines.push(mapLine([[i * 100, 0], [i * 100, rows * 100]]));
   for (let j = 1; j < rows; j++) lines.push(mapLine([[0, j * 100], [cols * 100, j * 100]]));
