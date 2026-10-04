@@ -24,10 +24,15 @@ import { useTabParam } from "../lib/routing.jsx";
 // Exported so the onboarding template can link each form without keeping a
 // second list of them.
 export const FORMS = [
-  // Read-only: the new hire reads it and follows along. Nothing is submitted,
-  // so it stays off the list below and opens from its line on the Login card.
-  { id: "login_packet", label: "Login Packet", readOnly: true,
+  // Read-only: the new hire reads it and follows along. Nothing is submitted.
+  // It opens from its line on their Login card, not from the list below.
+  { id: "login_packet", label: "Login Packet", readOnly: true, hidden: true,
     blurb: "Your State Farm sign-in details and first-day setup steps." },
+  // Where Peter types each hire's packet details, from his Fill in Login Packet
+  // Info card. It has its own Save button, and his line checks itself off once
+  // every box is filled.
+  { id: "login_packet_info", label: "Login Packet Info", savesItself: true, hidden: true,
+    blurb: "The details from State Farm's login packet for this new hire." },
   { id: "combined_onboarding", label: "Onboarding",
     blurb: "Your details, your story, and payroll setup." },
   { id: "w4", label: "W-4",
@@ -500,13 +505,13 @@ function I9EmployerSection({ data, setData, canEdit, locked }) {
 }
 
 // ─── login packet ───────────────────────────────────────────────────────
-// State Farm's New Agent/Agent Team Member Onboarding Packet, word for word.
-// The lines that are different for each person live on their team record
-// (sf_alias and the sf_* packet columns). Admins type them in at the top;
-// the new hire sees them filled in. Team rows are readable only by admins and
-// the person themselves, so nobody else sees the password or the pass. The
-// template preview shows the blanks. Nothing here is submitted: the new hire
-// reads it and follows along.
+// Two forms. login_packet is State Farm's New Agent/Agent Team Member
+// Onboarding Packet, word for word: the new hire reads it and follows along,
+// and nothing is submitted. login_packet_info is where Peter types the lines
+// that differ for each person, from his Fill in Login Packet Info card. They
+// live on the team record (sf_alias and the sf_* packet columns), which only
+// admins and the person themselves can read, so nobody else sees the password
+// or the pass. The template preview shows the blanks.
 
 const PACKET_COLS = "first_name, last_name, sf_alias, sf_registration_number, sf_initial_password, sf_mfa_temp_pass, sf_mfa_temp_pass_from, sf_mfa_temp_pass_until";
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
@@ -567,12 +572,11 @@ function PacketLink({ href }) {
   );
 }
 
-function LoginPacketForm({ teamId, isAdmin, preview }) {
+// The person's packet details from their team record.
+function usePacketRecord(teamId, preview) {
   const [rec, setRec] = useState(null);
-  const [draft, setDraft] = useState(packetDraft(null));
   const [loading, setLoading] = useState(!preview);
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState(null);
+  const [err, setErr] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -581,17 +585,30 @@ function LoginPacketForm({ teamId, isAdmin, preview }) {
       const { data: row, error } = await supabase
         .from("team").select(PACKET_COLS).eq("id", teamId).maybeSingle();
       if (!alive) return;
-      if (error) setMsg(error.message || "Could not load the packet details.");
+      if (error) setErr(error.message || "Could not load the packet details.");
       setRec(row || null);
-      setDraft(packetDraft(row));
       setLoading(false);
     })();
     return () => { alive = false; };
   }, [teamId, preview]);
 
+  return { rec, setRec, loading, err };
+}
+
+// Peter's side: the boxes. Saving puts them on the new hire's team record,
+// which fills in their Login Packet and checks off his card once all six are in.
+function LoginPacketInfoForm({ teamId, preview }) {
+  const { rec, setRec, loading, err } = usePacketRecord(teamId, preview);
+  const [draft, setDraft] = useState(packetDraft(null));
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  // Fill the boxes once the record arrives, and again after each save.
+  useEffect(() => { setDraft(packetDraft(rec)); }, [rec]);
+
   const set = (k) => (v) => setDraft({ ...draft, [k]: v });
 
-  const saveDetails = async () => {
+  const save = async () => {
     if (!supabase || !teamId) return;
     setSaving(true); setMsg(null);
     const payload = {
@@ -610,9 +627,49 @@ function LoginPacketForm({ teamId, isAdmin, preview }) {
     if (error) { setMsg(error.message || "Could not save that."); return; }
     if (!rows || rows.length === 0) { setMsg("That did not save. The record may be blocked from changes."); return; }
     setRec(rows[0]);
-    setDraft(packetDraft(rows[0]));
     setMsg("Saved.");
   };
+
+  const name = rec ? `${rec.first_name || ""} ${rec.last_name || ""}`.trim() : "";
+
+  return (
+    <Section title={name ? `For ${name}` : "For the new hire"}
+      note="These fill in the new hire's Login Packet. Only admins and the new hire can see them. Your card checks this off once every box is filled.">
+      <Grid min={220}>
+        <Field label="Alias (User ID)">
+          <Text value={draft.sf_alias} onChange={set("sf_alias")} />
+        </Field>
+        <Field label="Registration Number">
+          <Text value={draft.sf_registration_number} onChange={set("sf_registration_number")} />
+        </Field>
+        <Field label="Initial computer/workstation password">
+          <Text value={draft.sf_initial_password} onChange={set("sf_initial_password")} />
+        </Field>
+        <Field label="Initial MFA Temporary Access Pass">
+          <Text value={draft.sf_mfa_temp_pass} onChange={set("sf_mfa_temp_pass")} />
+        </Field>
+        <Field label="Good from">
+          <Text type="datetime-local" value={draft.sf_mfa_temp_pass_from} onChange={set("sf_mfa_temp_pass_from")} />
+        </Field>
+        <Field label="Until">
+          <Text type="datetime-local" value={draft.sf_mfa_temp_pass_until} onChange={set("sf_mfa_temp_pass_until")} />
+        </Field>
+      </Grid>
+      {!preview && (
+        <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <Button onClick={save} disabled={saving || loading}>
+            {saving ? "Saving..." : "Save"}
+          </Button>
+          {(msg || err) && <span style={{ fontSize: 12.5, color: T.slate600 }}>{msg || err}</span>}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+// The new hire's side: the packet itself, read-only.
+function LoginPacketForm({ teamId, preview }) {
+  const { rec, loading, err } = usePacketRecord(teamId, preview);
 
   const v = preview ? null : rec;
   const name = v ? `${v.first_name || ""} ${v.last_name || ""}`.trim() : "";
@@ -621,37 +678,7 @@ function LoginPacketForm({ teamId, isAdmin, preview }) {
 
   return (
     <div>
-      {isAdmin && !preview && (
-        <Section title="From the State Farm packet"
-          note="These fill in the packet below. Only admins and this person can see them.">
-          <Grid min={220}>
-            <Field label="Alias (User ID)">
-              <Text value={draft.sf_alias} onChange={set("sf_alias")} />
-            </Field>
-            <Field label="Registration Number">
-              <Text value={draft.sf_registration_number} onChange={set("sf_registration_number")} />
-            </Field>
-            <Field label="Initial computer/workstation password">
-              <Text value={draft.sf_initial_password} onChange={set("sf_initial_password")} />
-            </Field>
-            <Field label="Initial MFA Temporary Access Pass">
-              <Text value={draft.sf_mfa_temp_pass} onChange={set("sf_mfa_temp_pass")} />
-            </Field>
-            <Field label="Good from">
-              <Text type="datetime-local" value={draft.sf_mfa_temp_pass_from} onChange={set("sf_mfa_temp_pass_from")} />
-            </Field>
-            <Field label="Until">
-              <Text type="datetime-local" value={draft.sf_mfa_temp_pass_until} onChange={set("sf_mfa_temp_pass_until")} />
-            </Field>
-          </Grid>
-          <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <Button tone="quiet" onClick={saveDetails} disabled={saving || loading}>
-              {saving ? "Saving..." : "Save details"}
-            </Button>
-            {msg && <span style={{ fontSize: 12.5, color: T.slate600 }}>{msg}</span>}
-          </div>
-        </Section>
-      )}
+      {err && <div style={{ marginTop: 14, fontSize: 12.5, color: T.red }}>{err}</div>}
 
       <div style={{
         marginTop: 18, padding: "18px 20px", border: `1px solid ${T.slate200}`,
@@ -884,8 +911,9 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
   const [err, setErr] = useState(null);
   // The template page shows a blank preview: nothing loaded, nothing saved.
   const locked = !preview && !!submission?.locked_at;
-  // A read-only form (the login packet) is read and followed, never submitted.
-  const readOnly = !!form.readOnly;
+  // No Submit on a read-only form (the login packet) or on one with its own
+  // Save button (the packet info).
+  const noSubmit = !!(form.readOnly || form.savesItself);
   const doc = form.id === "non_compete" ? docs.non_compete
             : form.id === "handbook_ack" ? docs.handbook : null;
 
@@ -1028,7 +1056,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
         </div>
       )}
 
-      {preview && !readOnly && (
+      {preview && !noSubmit && (
         <div style={{
           marginTop: 12, padding: "10px 14px", background: T.blueLt, color: T.slate700,
           borderRadius: 8, fontSize: 13, boxSizing: "border-box",
@@ -1039,7 +1067,9 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
 
       <div style={locked && form.id !== "i9" ? { pointerEvents: "none", opacity: 0.65 } : null}>
         {form.id === "login_packet" &&
-          <LoginPacketForm teamId={teamId} isAdmin={isAdmin} preview={preview} />}
+          <LoginPacketForm teamId={teamId} preview={preview} />}
+        {form.id === "login_packet_info" &&
+          <LoginPacketInfoForm teamId={teamId} preview={preview} />}
         {form.id === "combined_onboarding" &&
           <CombinedForm data={data} setData={setData} secure={secure} setSecure={setSecure} needs={needs} />}
         {form.id === "w4" && <W4Form data={data} setData={setData} />}
@@ -1061,7 +1091,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
         }}>{err}</div>
       )}
 
-      {!locked && !preview && !readOnly && (
+      {!locked && !preview && !noSubmit && (
         <div style={{ marginTop: 24, display: "flex", gap: 10, flexWrap: "wrap" }}>
           <Button onClick={() => save(true)} disabled={busy || !canSubmit}>
             {busy ? "Saving..." : "Submit"}
@@ -1071,7 +1101,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
           )}
         </div>
       )}
-      {!locked && !canSubmit && !readOnly && (
+      {!locked && !canSubmit && !noSubmit && (
         <div style={{ fontSize: 12, color: T.slate500, marginTop: 10 }}>
           Fill in everything above to submit.
         </div>
@@ -1209,8 +1239,8 @@ export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, em
             {FORMS.map(f => {
               const r = rows.find(x => x.form_type === f.id) || {};
               const s = r.state || "action_needed";
-              // Read-only forms open from their onboarding line, not from here.
-              if (f.readOnly) return null;
+              // The packet forms open from their onboarding lines, not from here.
+              if (f.hidden) return null;
               return (
                 <div key={f.id} style={{
                   display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap",
