@@ -897,7 +897,11 @@ const mapStar = (x, y, r, n, inner, rnd, turn = 0) => mapPoly(Array.from({ lengt
 }));
 // The outline of a set of cells as closed shapes with rounded corners (SVG path data). inside(i, j) says whether a
 // cell is in the set; it is asked one ring past the grid too, so a shape that runs off the grid is drawn running off.
-function mapOutline(cols, rows, inside, unit, round) {
+// wob (the fantasy map: { lvl, x0, y0 } = the grid and where its first square sits in the world) draws the edge as a
+// soft, wandering line instead (Peter 2026-10-04, 1B: soften the borders in the drawing): every side of a cell bends
+// out or in by its own steady amount, the same whichever shape it is the edge of, so two grounds that meet share one
+// line, and the line curves smoothly from side to side.
+function mapOutline(cols, rows, inside, unit, round, wob) {
   const at = (i, j) => (i < -1 || j < -1 || i > cols || j > rows ? false : inside(i, j));
   const out = new Map();
   const put = (x0, y0, x1, y1) => { const k = x0 + "," + y0; const e = { x0, y0, x1, y1, used: false }; const l = out.get(k); if (l) l.push(e); else out.set(k, [e]); };
@@ -925,6 +929,22 @@ function mapOutline(cols, rows, inside, unit, round) {
     run.forEach((p, k) => { const q = run[(k + run.length - 1) % run.length]; if (q.x1 - q.x0 !== p.x1 - p.x0 || q.y1 - q.y0 !== p.y1 - p.y0) corners.push([p.x0, p.y0]); });
     const n = corners.length;
     if (n < 4) return;
+    if (wob) {
+      // the middle of each side, moved across the side by up to 0.3 of a cell and along it by up to 0.2, from where
+      // the side lies in the world; the line runs smoothly from one side's point to the next
+      const pts = run.map(e => {
+        const flat = e.y0 === e.y1, kx = Math.min(e.x0, e.x1), ky = Math.min(e.y0, e.y1);
+        const across = (mapRand(wob.lvl, wob.x0 + kx, wob.y0 + ky, flat ? 503 : 504) - 0.5) * 0.6;
+        const along = (mapRand(wob.lvl, wob.x0 + kx, wob.y0 + ky, flat ? 505 : 506) - 0.5) * 0.4;
+        return flat ? [kx + 0.5 + along, ky + across] : [kx + across, ky + 0.5 + along];
+      });
+      const m = pts.length;
+      const half = (p, q) => [(p[0] + q[0]) / 2 * unit, (p[1] + q[1]) / 2 * unit];
+      d += "M" + mapPt(half(pts[m - 1], pts[0]));
+      pts.forEach((p, k) => { d += "Q" + mapPt([p[0] * unit, p[1] * unit]) + " " + mapPt(half(p, pts[(k + 1) % m])); });
+      d += "Z";
+      return;
+    }
     corners.forEach((c, k) => {
       const a = corners[(k + n - 1) % n], b = corners[(k + 1) % n];
       const ra = Math.min(round, (Math.abs(c[0] - a[0]) + Math.abs(c[1] - a[1])) / 2), rb = Math.min(round, (Math.abs(b[0] - c[0]) + Math.abs(b[1] - c[1])) / 2);
@@ -1186,12 +1206,12 @@ const mapWet = (k) => k === "water" || k === "deep";
 // Harder ground drawn darker (Peter 2026-10-03: thicker forest, deeper water darker): h(i, j) = how hard a square is
 // inside its ground, 0 to 9 (rpg_map_view: cells' hard, detail.hard), nothing when not known. Each step from 2 up adds
 // a thin dark wash over the squares at or above it, so 9 (a thicket) is the darkest; deep water is shaded in blue.
-function mapHardShade(cols, rows, h, unit, round, color = "#1F2A12") {
+function mapHardShade(cols, rows, h, unit, round, color = "#1F2A12", wob) {
   const out = [];
   let any = false;
   for (let j = 0; j < rows && !any; j++) for (let i = 0; i < cols; i++) if (h(i, j) != null) { any = true; break; }
   if (!any) return out;
-  for (let d = 2; d <= 9; d++) out.push({ d: mapOutline(cols, rows, (i, j) => { const v = h(i, j); return v != null && v >= d; }, unit, round), fill: color, o: 0.045 });
+  for (let d = 2; d <= 9; d++) out.push({ d: mapOutline(cols, rows, (i, j) => { const v = h(i, j); return v != null && v >= d; }, unit, round, wob), fill: color, o: 0.045 });
   return out.filter(l => l.d);
 }
 // Where to set a symbol s wide near x, y so it does not cover one already set: at x, y when that is free, else the
@@ -1249,22 +1269,29 @@ function mapFantasy(v, byId) {
   const none = { k: "sea" };
   const get = (i, j) => grid[(j < 0 ? 0 : j >= R ? R - 1 : j) * C + (wrap ? ((i % C) + C) % C : (i < 0 ? 0 : i >= C ? C - 1 : i))] || none;
   const layers = [{ d: `M0 0H${cols * 100}V${rows * 100}H0Z`, fill: MAP_PAPER.sea }];
-  const land = mapOutline(C, R, (i, j) => { const k = get(i, j).k; return k !== "sea" && k !== "unknown"; }, unit, 0.45);
+  // every edge on this map is drawn soft and wandering (mapOutline wob), steady for each spot of the world
+  const wob = { lvl, x0, y0 };
+  const land = mapOutline(C, R, (i, j) => { const k = get(i, j).k; return k !== "sea" && k !== "unknown"; }, unit, 0.45, wob);
   // the land is open land (grass) from coast to coast; every other ground is painted over it in its own color
   layers.push({ d: land, line: MAP_PAPER.shallow, units: unit * (detail ? 1.5 : 0.4) }, { d: land, line: MAP_PAPER.shore, units: unit * (detail ? 0.7 : 0.2) }, { d: land, fill: mapWash("land") });
   // what ground a cell shows: a place's symbol names it, else the kind of the cell
   const shows = (g) => { const p = g.k === "place" ? byId[g.id] : null; return p ? p.icon : g.k; };
   const grounds = new Set();
   grid.forEach(g => { const what = g ? shows(g) : null; if (what && what !== "sea" && what !== "land" && what !== "unknown" && MAP_ART.top[what]) grounds.add(what); });
-  grounds.forEach(what => layers.push({ d: mapOutline(C, R, (i, j) => shows(get(i, j)) === what, unit, 0.45), fill: mapWash(what) }));
+  // each ground, then a soft edge of its own color along its outline, half a cell wide, so where two grounds meet
+  // each fades a little into the other (open land too); kept on the land
+  const soft = [];
+  grounds.forEach(what => { const d = mapOutline(C, R, (i, j) => shows(get(i, j)) === what, unit, 0.45, wob); layers.push({ d, fill: mapWash(what) }); soft.push({ d, line: mapWash(what), units: unit * 0.5, o: 0.4, clip: land }); });
+  if (soft.length) soft.push({ d: mapOutline(C, R, (i, j) => shows(get(i, j)) === "land", unit, 0.45, wob), line: mapWash("land"), units: unit * 0.5, o: 0.4, clip: land });
+  layers.push(...soft.filter(l => l.d));
   // every place with ground of its own on this grid: a wash of its color under its symbols
   const filled = new Map();
   grid.forEach((g, n) => { if (g && g.k === "place" && g.id) { if (!filled.has(g.id)) filled.set(g.id, []); filled.get(g.id).push(n); } });
-  filled.forEach((list, id) => { const p = byId[id]; if (p && p.color) layers.push({ d: mapOutline(C, R, (i, j) => { const g = get(i, j); return g.k === "place" && g.id === id; }, unit, 0.45), fill: p.color, o: 0.3 }); });
+  filled.forEach((list, id) => { const p = byId[id]; if (p && p.color) layers.push({ d: mapOutline(C, R, (i, j) => { const g = get(i, j); return g.k === "place" && g.id === id; }, unit, 0.45, wob), fill: p.color, o: 0.3 }); });
   // harder ground is darker: each square a shade by how hard it is inside its ground (0 to 9; thickets 9); deeper
   // water darker blue
-  layers.push(...mapHardShade(C, R, (i, j) => (mapWet(get(i, j).k) ? null : get(i, j).h), unit, 0.45));
-  layers.push(...mapHardShade(C, R, (i, j) => (mapWet(get(i, j).k) ? get(i, j).h : null), unit, 0.45, "#123A5A"));
+  layers.push(...mapHardShade(C, R, (i, j) => (mapWet(get(i, j).k) ? null : get(i, j).h), unit, 0.45, undefined, wob));
+  layers.push(...mapHardShade(C, R, (i, j) => (mapWet(get(i, j).k) ? get(i, j).h : null), unit, 0.45, "#123A5A", wob));
   // rivers too narrow for this grid's cells: a line through the point of each cell where the river truly runs, so it
   // lies where the next zoom shows it; thinner for smaller rivers; a diagonal step only where no straight one joins the
   // two and never across a corner of sea; a scrap of fewer than three cells that does not run off the grid is left out
@@ -1285,11 +1312,26 @@ function mapFantasy(v, byId) {
     while (todo.length) { const [a, b] = todo.pop(); part.push([a, b]); links(a, b).forEach(([da, db]) => { const n = (b + db) * C + a + da; if (!seen.has(n)) { seen.add(n); todo.push([a + da, b + db]); } }); }
     if (part.length >= 3 || part.some(([a, b]) => a === 0 || b === 0 || a === C - 1 || b === R - 1)) part.forEach(([a, b]) => keep.add(b * C + a));
   }
+  // rivers branch but never loop: where cells of river lie side by side (two lines close together, or a bend that
+  // fills a block of cells) only the joins that link pieces not yet linked are drawn, the same river's first, the
+  // shortest first, so no little squares or triangles of river appear
+  const joins = [];
   for (let j = 0; j < R; j++) for (let i = 0; i < C; i++) {
     const k = flow(i, j);
     if (!k || !keep.has(j * C + i)) continue;
-    links(i, j).filter(([a, b]) => b > 0 || (b === 0 && a > 0)).forEach(([a, b]) => { const w = Math.max(k, flow(i + a, j + b)); runs[w] = (runs[w] || "") + mapLine([pt(i, j), pt(i + a, j + b)]); });
+    links(i, j).filter(([a, b]) => b > 0 || (b === 0 && a > 0)).forEach(([a, b]) => {
+      const p = pt(i, j), q = pt(i + a, j + b), other = flow(i + a, j + b);
+      joins.push({ from: j * C + i, to: (j + b) * C + i + a, p, q, w: Math.max(k, other), rank: (other === k ? 0 : 1e6) + Math.hypot(q[0] - p[0], q[1] - p[1]) });
+    });
   }
+  const root = new Map();
+  const top = (n) => { let r = n; while (root.has(r) && root.get(r) !== r) r = root.get(r); root.set(n, r); return r; };
+  joins.sort((a, b) => a.rank - b.rank).forEach(e => {
+    const a = top(e.from), b = top(e.to);
+    if (a === b) return;
+    root.set(a, b);
+    runs[e.w] = (runs[e.w] || "") + mapLine([e.p, e.q]);
+  });
   Object.keys(runs).sort().reverse().forEach(k => layers.push({ d: runs[k], line: MAP_RIVER, w: MAP_RIVER_W[k] || 1 }));
   layers.push({ d: land, line: MAP_INK, w: 1.25 });
   const strokes = mapRows(unit * (detail ? 1 : 0.12));
@@ -1390,9 +1432,41 @@ function mapFantasy(v, byId) {
     names: lands.concat(names, ways), blocks,
   };
 }
+// A smooth wandering number for a spot of the world (x, y in squares, any fraction), steady from one look to the
+// next: steady rolls at the corners of a lattice `size` squares wide, eased between them; about -0.5 to 0.5.
+const mapWander = (x, y, size, n) => {
+  const gx = Math.floor(x / size), gy = Math.floor(y / size), fx = x / size - gx, fy = y / size - gy;
+  const ease = (t) => t * t * (3 - 2 * t), ex = ease(fx), ey = ease(fy);
+  const r = (a, b) => mapRand(7, gx + a, gy + b, n);
+  return (r(0, 0) * (1 - ex) + r(1, 0) * ex) * (1 - ey) + (r(0, 1) * (1 - ex) + r(1, 1) * ex) * ey - 0.5;
+};
+// The lines where a smooth height f(x, y) (x, y in squares across the grid) crosses each of the heights `levels`,
+// worked out on a lattice four points to a square: per height, a list of short pieces [x0, y0, x1, y1] in squares.
+function mapContours(cols, rows, f, levels) {
+  const n = 4, W = cols * n, H = rows * n;
+  const v = new Float64Array((W + 1) * (H + 1));
+  for (let b = 0; b <= H; b++) for (let a = 0; a <= W; a++) v[b * (W + 1) + a] = f(a / n, b / n);
+  return levels.map(L => {
+    const out = [];
+    for (let b = 0; b < H; b++) for (let a = 0; a < W; a++) {
+      const p = [v[b * (W + 1) + a], v[b * (W + 1) + a + 1], v[(b + 1) * (W + 1) + a + 1], v[(b + 1) * (W + 1) + a]];
+      const c = [[a, b], [a + 1, b], [a + 1, b + 1], [a, b + 1]];
+      const cut = [];
+      for (let k = 0; k < 4; k++) {
+        const q = (k + 1) % 4;
+        if ((p[k] > L) !== (p[q] > L)) { const t = (L - p[k]) / (p[q] - p[k]); cut.push([(c[k][0] + (c[q][0] - c[k][0]) * t) / n, (c[k][1] + (c[q][1] - c[k][1]) * t) / n]); }
+      }
+      if (cut.length >= 2) out.push([cut[0][0], cut[0][1], cut[1][0], cut[1][1]]);
+      if (cut.length === 4) out.push([cut[2][0], cut[2][1], cut[3][0], cut[3][1]]);
+    }
+    return out;
+  });
+}
 // One grid seen from above (the battle grid). what(i, j) = the ground of a square, also asked past the edge of the
 // grid, where the nearest square answers, so a crown rooted just off the grid still hangs over it.
-function mapTop(cols, rows, x0, y0, what, washes, show, hard) {
+// slope = { ux, uy }: which way is uphill on the mountains and hills of this grid (a unit step east, south); mountain
+// squares are then drawn as a mountainside (Peter 2026-10-04: the mountain battle grid should look like a mountain side).
+function mapTop(cols, rows, x0, y0, what, washes, show, hard, slope) {
   const U = 100;
   const layers = [];
   const bases = new Map();
@@ -1410,6 +1484,48 @@ function mapTop(cols, rows, x0, y0, what, washes, show, hard) {
   }
   bases.forEach((d, fill) => layers.push({ d, fill }));
   washes.forEach(w => layers.push(w));
+  // a mountainside: the ground climbs uphill (slope), with steady bumps from where it lies in the world, and steps up
+  // in rock ledges across the slope, one every 1.5 squares (about 1.7 m), a sheer face every third; each ledge has
+  // a shadow cast down the slope below its lip and light along the lip's top, and the ledges break off here and
+  // there like outcrops. Hills climb the same way in soft lines every 3 squares.
+  const steep = (i, j) => { const k = what(Math.min(cols - 1, Math.max(0, i)), Math.min(rows - 1, Math.max(0, j))); return k === "mountains" ? 2 : k === "hills" ? 1 : 0; };
+  let climbs = false;
+  for (let j = 0; j < rows && !climbs; j++) for (let i = 0; i < cols; i++) if (steep(i, j)) { climbs = true; break; }
+  if (slope && climbs) {
+    const { ux, uy } = slope;
+    const height = (x, y) => { const X = x0 + x, Y = y0 + y; return X * ux + Y * uy + mapWander(X, Y, 3.2, 801) * 2.2 + mapWander(X, Y, 1.1, 802) * 0.7; };
+    let lo = Infinity, hi = -Infinity;
+    for (let y = 0; y <= rows; y += 0.25) for (let x = 0; x <= cols; x += 0.25) { const h = height(x, y); lo = Math.min(lo, h); hi = Math.max(hi, h); }
+    const step = 1.5;
+    const first = Math.ceil(lo / step), last = Math.floor(hi / step);
+    const levels = [];
+    for (let k = first; k <= last; k++) levels.push(k);
+    const face = { cliff: "", cliffFar: "", ledge: "", ledgeFar: "", lip: "", lit: "", hill: "" };
+    // offset of a piece of line by `by` squares uphill (less than 0 = downhill)
+    const shift = (ax, ay, bx, by, k) => mapLine([[(ax + ux * k) * U, (ay + uy * k) * U], [(bx + ux * k) * U, (by + uy * k) * U]]);
+    mapContours(cols, rows, height, levels.map(k => k * step)).forEach((list, n) => {
+      const k = levels[n], sheer = k % 3 === 0;
+      list.forEach(([ax, ay, bx, by]) => {
+        const g = steep(Math.floor((ax + bx) / 2), Math.floor((ay + by) / 2));
+        if (!g) return;
+        if (g === 1) { if (k % 2 === 0) face.hill += mapLine([[ax * U, ay * U], [bx * U, by * U]]); return; }
+        // ledges break off here and there, so they read as outcrops of rock; sheer faces run on longer
+        if (mapWander(x0 + (ax + bx) / 2, y0 + (ay + by) / 2, 2.4, 803 + k) < (sheer ? -0.32 : -0.12)) return;
+        // the shadow the step casts down the slope below its lip, a thin light on the lip's top edge
+        if (sheer) { face.cliff += shift(ax, ay, bx, by, -0.1); face.cliffFar += shift(ax, ay, bx, by, -0.2); } else { face.ledge += shift(ax, ay, bx, by, -0.06); face.ledgeFar += shift(ax, ay, bx, by, -0.12); }
+        face.lit += shift(ax, ay, bx, by, 0.035);
+        face.lip += mapLine([[ax * U, ay * U], [bx * U, by * U]]);
+      });
+    });
+    if (face.hill) layers.push({ d: face.hill, line: "#6F7446", w: 1.1, o: 0.35 });
+    // the shadow darkest at the foot of the step, fading down the slope
+    if (face.cliffFar) layers.push({ d: face.cliffFar, line: "#2A2620", units: U * 0.4, o: 0.13 });
+    if (face.cliff) layers.push({ d: face.cliff, line: "#2A2620", units: U * 0.2, o: 0.24 });
+    if (face.ledgeFar) layers.push({ d: face.ledgeFar, line: "#2A2620", units: U * 0.24, o: 0.1 });
+    if (face.ledge) layers.push({ d: face.ledge, line: "#2A2620", units: U * 0.12, o: 0.2 });
+    if (face.lit) layers.push({ d: face.lit, line: "#EEE9DE", w: 1.2, o: 0.6 });
+    if (face.lip) layers.push({ d: face.lip, line: "#4F4A42", w: 1.3, o: 0.8 });
+  }
   const dry = (i, j) => what(i, j) !== "sea" && !mapWet(what(i, j));
   let wet = false;
   for (let j = 0; j < rows && !wet; j++) for (let i = 0; i < cols; i++) if (!dry(i, j)) { wet = true; break; }
@@ -1433,7 +1549,11 @@ function mapTop(cols, rows, x0, y0, what, washes, show, hard) {
     if (a.wave && rnd(10) < a.wave) { const [x, y] = at(11); const w = U * (0.14 + rnd(13) * 0.1); add("wave", `M${mapPt([x - w, y])}q${mapNum(w / 2)} ${mapNum(-w * 0.5)} ${mapNum(w)} 0t${mapNum(w)} 0`); }
     if (a.blade && rnd(14) < a.blade) for (let n = 0; n < 1 + Math.floor(rnd(15) * 3); n++) { const [x, y] = at(16 + n * 2); const h = U * (0.07 + rnd(22 + n) * 0.06); add("blade", mapLine([[x, y], [x - h * 0.4, y - h]]) + mapLine([[x, y], [x + h * 0.1, y - h * 1.2]]) + mapLine([[x, y], [x + h * 0.5, y - h * 0.8]])); }
     if (a.streak && rnd(26) < a.streak) for (let n = 0; n < 2; n++) { const [x, y] = at(27 + n * 2); const l = U * (0.2 + rnd(31 + n) * 0.3); add("streak", tall ? mapLine([[x, y - l / 2], [x, y + l / 2]]) : mapLine([[x - l / 2, y], [x + l / 2, y]])); }
-    if (a.crack && rnd(33) < a.crack) { const [x, y] = at(34); const l = U * 0.24; add("crack", mapLine([[x - l, y - l * rnd(36)], [x - l * 0.2, y + l * 0.2 * (rnd(37) - 0.5)], [x + l * 0.3, y - l * 0.4 * rnd(38)], [x + l, y + l * rnd(39)]])); }
+    if (a.crack && rnd(33) < a.crack) {
+      // on a slope the cracks run straight down it, as gullies do
+      const [x, y] = at(34); const l = U * 0.24, cx = slope ? slope.ux : 1, cy = slope ? slope.uy : 0;
+      add("crack", mapLine([[-l, -l * rnd(36)], [-l * 0.2, l * 0.2 * (rnd(37) - 0.5)], [l * 0.3, -l * 0.4 * rnd(38)], [l, l * rnd(39)]].map(([p, q]) => [x + p * cx - q * cy, y + p * cy + q * cx])));
+    }
     if (a.slab && rnd(40) < a.slab) { const [x, y] = at(41); add("slab", mapStar(x, y, U * (0.16 + rnd(43) * 0.14), 7, 0.82, rnd, rnd(44) * 3)); }
     if (a.puddle && rnd(45) < a.puddle) { const [x, y] = at(46); const w = U * (0.16 + rnd(48) * 0.14); add("puddle", `M${mapPt([x - w, y])}a${mapNum(w)} ${mapNum(w * 0.6)} 0 1 0 ${mapNum(2 * w)} 0a${mapNum(w)} ${mapNum(w * 0.6)} 0 1 0 ${mapNum(-2 * w)} 0Z`); }
     if (a.root && rnd(49) < a.root) { const [x, y] = at(50); const l = U * (0.3 + rnd(52) * 0.3), t = rnd(53) * 6.3; add("root", `M${mapPt([x - Math.cos(t) * l, y - Math.sin(t) * l])}Q${mapPt([x + Math.sin(t) * l * 0.5, y - Math.cos(t) * l * 0.5])} ${mapPt([x + Math.cos(t) * l, y + Math.sin(t) * l])}`); }
@@ -1484,19 +1604,43 @@ function mapBattle(v, byId) {
   const lines = [];
   for (let i = 1; i < cols; i++) lines.push(mapLine([[i * 100, 0], [i * 100, rows * 100]]));
   for (let j = 1; j < rows; j++) lines.push(mapLine([[0, j * 100], [cols * 100, j * 100]]));
-  const layers = mapTop(cols, rows, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0, (i, j) => get(i, j).what, washes, false, (i, j) => get(i, j).h);
+  // which way is uphill: the cells' rise (rpg_map_view: how near each mountain or hill square is to the middle line
+  // of its chain) fitted to a flat slope; with too little to go on, a steady way of its own
+  const ups = cells.filter(c => c.rise != null).map(c => [c.x, c.y, Number(c.rise)]);
+  let slope = null;
+  if (ups.length >= 3) {
+    const mx = ups.reduce((t, u) => t + u[0], 0) / ups.length, my = ups.reduce((t, u) => t + u[1], 0) / ups.length, mr = ups.reduce((t, u) => t + u[2], 0) / ups.length;
+    let xx = 0, xy = 0, yy = 0, xr = 0, yr = 0;
+    ups.forEach(([x, y, r]) => { xx += (x - mx) ** 2; xy += (x - mx) * (y - my); yy += (y - my) ** 2; xr += (x - mx) * (r - mr); yr += (y - my) * (r - mr); });
+    const det = xx * yy - xy * xy;
+    const gx = det ? (xr * yy - yr * xy) / det : 0, gy = det ? (yr * xx - xr * xy) / det : 0, len = Math.hypot(gx, gy);
+    if (len > 0) slope = { ux: gx / len, uy: gy / len };
+  }
+  if (!slope && cells.some(c => c.kind === "mountains" || c.kind === "hills")) { const t = mapRand(7, m ? Number(m[2]) : 0, m ? Number(m[3]) : 0, 800) * 2 * Math.PI; slope = { ux: Math.cos(t), uy: Math.sin(t) }; }
+  const layers = mapTop(cols, rows, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0, (i, j) => get(i, j).what, washes, false, (i, j) => get(i, j).h, slope);
   const fog = mapFog(cols, rows, 100, (i, j) => get(i, j).what === "unknown", 0.3, cols, rows, 7, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0);
   return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat([{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }], fog), names: [], blocks: [] };
 }
 // The strokes as SVG. A stroke's line is w screen pixels wide (thinner on a small map), or `units` of the drawing
-// wide less `inset` screen pixels (the fill of a road inside its inked edge).
+// wide less `inset` screen pixels (the fill of a road inside its inked edge). A stroke with a clip (the outline of a
+// shape) paints only inside that shape: the soft edge of a ground stays on the land and off the sea.
+let mapClips = 0;
 function MapStrokes({ layers, px, unit }) {
+  const id = useRef("rpg-map-clip-" + (++mapClips)).current;
   const pen = Math.max(0.4, Math.min(1, px * unit * 0.06));
-  return layers.map((l, n) => (
-    <path key={n} d={l.d} fill={l.fill || "none"} stroke={l.line || "none"} opacity={l.o}
-      strokeWidth={l.line ? (l.units ? Math.max(0, l.units - (l.inset || 0) / px) : l.w * pen / px) : undefined}
-      strokeLinejoin="round" strokeLinecap={l.cap || "round"} strokeDasharray={l.dash ? l.dash.map(n2 => n2 * pen / px).join(" ") : undefined} />
-  ));
+  const clips = [];
+  layers.forEach(l => { if (l.clip && !clips.includes(l.clip)) clips.push(l.clip); });
+  return (
+    <>
+      {clips.length > 0 && <defs>{clips.map((d, n) => <clipPath key={n} id={id + "-" + n}><path d={d} /></clipPath>)}</defs>}
+      {layers.map((l, n) => (
+        <path key={n} d={l.d} fill={l.fill || "none"} stroke={l.line || "none"} opacity={l.o}
+          strokeWidth={l.line ? (l.units ? Math.max(0, l.units - (l.inset || 0) / px) : l.w * pen / px) : undefined}
+          clipPath={l.clip ? `url(#${id}-${clips.indexOf(l.clip)})` : undefined}
+          strokeLinejoin="round" strokeLinecap={l.cap || "round"} strokeDasharray={l.dash ? l.dash.map(n2 => n2 * pen / px).join(" ") : undefined} />
+      ))}
+    </>
+  );
 }
 // Where the names go. Each tries a few spots round its place and takes the first that is clear of the names already
 // written and of the symbols (blocks); a small place whose name fits nowhere goes without (it is still in the lists
