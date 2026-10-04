@@ -43,7 +43,7 @@ export function pressure(d) {
 // A puff of air. strength 0..1.5; dir -1 / 1 picks the side it whips toward (0 = random).
 export function puff(d, strength = 1, dir = 0) {
   const side = dir || (d.rnd() < 0.5 ? -1 : 1);
-  d.surge = Math.min(0.95, d.surge + 0.62 * strength);
+  d.surge = Math.min(0.95, d.surge + 0.68 * strength);
   for (let i = 0; i < N; i++) {
     const wave = Math.sin((i / N) * Math.PI * 1.5 + d.rnd());
     d.om[i] += strength * (side * (1.2 + (i / N) * 2.5) * wave + (d.rnd() - 0.5) * 1.5);
@@ -56,15 +56,15 @@ export function stepDancer(d, dt) {
   const sub = 4, h = dt / sub;
   for (let k = 0; k < sub; k++) {
     d.t += h;
-    d.surge *= Math.exp(-h * 3.6);
+    d.surge *= Math.exp(-h * 2.9);
     // slow, uneven air loss: two drifting waves plus the odd sudden gulp
-    d.flutter = 0.16 * Math.sin(d.t * 1.7 + d.phA[0]) * Math.sin(d.t * 0.63 + d.phB[0]) - (d.gulp || 0);
+    d.flutter = 0.12 * Math.sin(d.t * 1.7 + d.phA[0]) * Math.sin(d.t * 0.63 + d.phB[0]) - (d.gulp || 0);
     if (d.gulp) d.gulp = Math.max(0, d.gulp - h * 0.8);
-    else if (d.rnd() < h * 0.25) d.gulp = 0.25 + d.rnd() * 0.25;
+    else if (d.rnd() < h * 0.15) d.gulp = 0.15 + d.rnd() * 0.2;
     const P = pressure(d);
-    const stiff = 2 + 52 * P * P;
-    const damp = 2 + 4 * P;
-    const grav = 42 * Math.pow(Math.max(0, 1 - P), 1.6);
+    const stiff = 2.3 + 58 * P * P;
+    const damp = 2.2 + 4.5 * P;
+    const grav = 40 * Math.pow(Math.max(0, 1 - P), 1.7);
     const gust = 2.2 + 3 * Math.min(1, P);
     // heights of each point, in segment lengths above the blower top
     let phi = 0, ht = 0;
@@ -78,7 +78,7 @@ export function stepDancer(d, dt) {
       const above = (N - i) / N;
       // air rushing up the tube: a ripple travelling upward
       const turb = gust * (Math.sin(d.t * 3.1 - i * 0.55 + d.phA[i]) + 0.6 * Math.sin(d.t * 5.3 - i * 0.9 + d.phB[i])) * (0.4 + 0.6 * (i / N));
-      let tq = -stiff * (1.5 - i / N) * d.th[i] - damp * d.om[i] + grav * above * Math.sin(phi) + turb + floorPush[i];
+      let tq = -stiff * (1.25 - 0.5 * i / N) * d.th[i] - damp * d.om[i] + grav * above * Math.sin(phi) + turb + floorPush[i];
       if (i < 3) tq += 18 * P * (d.lean * 0.35 - phi) * (i === 0 ? 1 : 0.5);
       d.om[i] += tq * h;
     }
