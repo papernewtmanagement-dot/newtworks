@@ -97,6 +97,33 @@ const CURVE_LINES = [
   { key: "total",     label: "Bonuses",           color: T.blue,     dash: null,  w: 2.75, place: "above" },
 ];
 
+// Each person's rate as the raise ladder sees it: the ladder step, plus any manager
+// title amount paid on top (earnings_curve_positions carries both).
+const rateLine = (p) => {
+  const step = Number(p?.step_hourly);
+  if (!Number.isFinite(step)) return null;
+  const title = Number(p?.title_hourly) || 0;
+  return title > 0
+    ? `$${Math.round(step)}/hr + $${Math.round(title)} ${p.title_label || "title"}`
+    : `$${Math.round(step)}/hr`;
+};
+const rateSentence = (p) => {
+  const step = Number(p?.step_hourly);
+  if (!Number.isFinite(step)) return "";
+  const title = Number(p?.title_hourly) || 0;
+  const now = Number(p?.current_hourly);
+  return title > 0
+    ? ` Your rate is $${Math.round(now)} an hour: the $${Math.round(step)} ladder step plus $${Math.round(title)} for ${p.title_label || "your title"}.`
+    : ` Your rate is $${Math.round(step)} an hour on the ladder.`;
+};
+// The window the average covers, in quarters when it is whole quarters.
+const windowText = (p) => {
+  const w = Number(p?.window_weeks);
+  if (!Number.isFinite(w) || w <= 0) return "the raise window";
+  if (w % 13 === 0) { const q = w / 13; return q === 1 ? "the last quarter" : `the last ${q} quarters`; }
+  return `the last ${w} weeks, since you started`;
+};
+
 // Dotted vertical every 50 weekly sales points, with the dollar figure at
 // every crossing on every line (Peter 2026-08-28). Point axes only — the
 // Life Specialist axis is premium dollars, where a line every 50 would be
@@ -435,7 +462,7 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
           </g>
         );
       })}
-      {/* Where each person actually sits, from their last 13 weeks */}
+      {/* Where each person actually sits: the weekly average their raise review uses */}
       {(Array.isArray(positions) ? positions : [])
         .map(p => ({ ...p, xv: Math.min(Math.max(Number(p?.x) || 0, 0), xMax) }))
         .sort((a, b) => a.xv - b.xv)
@@ -457,12 +484,16 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
           return (
             <g key={"pos-" + (p.team_member_id || i)}>
               <circle cx={px} cy={py} r={p.is_me ? 6 : 4.5} fill={T.purple} stroke={T.white} strokeWidth="2" />
-              <text x={px} y={py + (below ? 22 + lift : -28 - lift)} textAnchor={anchor} fontSize={isPhone ? 10 : 11.5}
+              <text x={px} y={py + (below ? 22 + lift : -39 - lift)} textAnchor={anchor} fontSize={isPhone ? 10 : 11.5}
                 fontWeight={800} fill={T.purple}>{p.is_me ? "You" : p.first_name}</text>
-              <text x={px} y={py + (below ? 33 + lift : -17 - lift)} textAnchor={anchor} fontSize={isPhone ? 8.5 : 9.5}
+              <text x={px} y={py + (below ? 33 + lift : -28 - lift)} textAnchor={anchor} fontSize={isPhone ? 8.5 : 9.5}
                 fontWeight={600} fill={T.purple}>
                 {(isPremium ? fmtK(p.xv) : Math.round(p.xv) + " pts") + " \u00b7 " + fmtK(pay)}
               </text>
+              {rateLine(p) && (
+                <text x={px} y={py + (below ? 44 + lift : -17 - lift)} textAnchor={anchor} fontSize={isPhone ? 8.5 : 9.5}
+                  fontWeight={600} fill={T.purple}>{rateLine(p)}</text>
+              )}
             </g>
           );
         })}
@@ -718,7 +749,7 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
       <div style={card}>
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected annual pay by {curve?.x_label ? curve.x_label.toLowerCase() : "production level"}</div>
-          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{rolePositions.length > 0 ? " The purple points are real: production is the last 13 weeks, pay is the same on-time annual figure the weekly CPR shows." : ""}</div>
+          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{rolePositions.length > 0 ? " The purple points are real: production is the same weekly average the raise review uses for each person's next step, pay is the same on-time annual figure the weekly CPR shows, and the rate under each name is their ladder step plus any manager title amount." : ""}</div>
         </div>
         {curve ? (
           <EarningsCurveChart curve={curve} ladder={role.raise_ladder} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} positions={rolePositions} />
@@ -727,7 +758,7 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
         )}
         {myPos && myPos.role_key === role.role_key && (
           <div style={{ marginTop: 8, fontSize: 11.5, color: T.slate700, background: T.purpleLt, border: `1px solid ${T.purple}`, borderRadius: 7, padding: "7px 10px" }}>
-            You are averaging {Math.round(Number(myPos.x) || 0)} sales points a week over the last 13 weeks{Number.isFinite(Number(myPos.y)) ? ", and you are on time for " + fmtMoney(Number(myPos.y)) + " this year" : ""}. Your point on the chart is those two figures together.
+            You are averaging {Math.round(Number(myPos.x) || 0)} sales points a week over {windowText(myPos)}, the same average your next raise is measured on{Number.isFinite(Number(myPos.y)) ? ", and you are on time for " + fmtMoney(Number(myPos.y)) + " this year" : ""}. Your point on the chart is those two figures together.{rateSentence(myPos)}
           </div>
         )}
         <div style={{ marginTop: 4, fontSize: 10.5, color: T.slate400 }}>
