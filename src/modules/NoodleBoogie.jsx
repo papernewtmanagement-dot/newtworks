@@ -7,14 +7,17 @@ import { analyzeSong, gradeOffset, MAX_POINTS, MISS_AFTER, starsFor, createLiveB
 import { createDancer, stepDancer, puff, drawScene, drawDancer } from "../lib/airDancer.js";
 
 // =========================================================================
-// PrivateDancer.jsx — test build of the air dancer game (Family area).
+// NoodleBoogie.jsx — test build of the air dancer game (Family area). Named
+// Private Dancer until 2026-10-04; the browser storage keys keep the old name so
+// best scores and the timing setting carry over.
 // Play: tap the screen on the beat; each tap is a puff of air. Every tap is
 // graded against the nearest beat (Perfect / Good / OK), streaks raise a multiplier.
 // Any pattern counts: every beat, every other beat, once a bar. Skipped beats are
 // never a miss (dancers move at whatever beat level they feel; Drake, Jones & Baruch
 // 2000, Cognition 77). What counts is each tap's timing and keeping the dancer going:
 // stars = timing x the share of bars (4 beats) with at least one on-beat tap.
-// Watch: the dancer dances to the music by itself.
+// Watch: the dancer dances to the music by itself, switching every few bars between
+// puffing on every beat, every other beat, once a bar, double time, or resting.
 // Music: three original practice songs (exact beats known), a song file from
 // the phone (beat found by src/lib/beat.js), or Listen, which hears whatever is
 // playing in the room through the microphone and follows its beat live.
@@ -55,7 +58,7 @@ function newScore() {
   };
 }
 
-export default function PrivateDancer() {
+export default function NoodleBoogie() {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
   const [mode, setMode, modeHref] = useTabParam("mode", "play", MODES);
@@ -172,7 +175,7 @@ export default function PrivateDancer() {
     setResult(null);
     finish(false);
     const ctx = getCtx();
-    const base = { mode: modeRef.current, score: newScore(), cursor: 0, missCheck: -1, passed: -1 };
+    const base = { mode: modeRef.current, score: newScore(), cursor: 0, missCheck: -1, passed: -1, watch: { pattern: null, beatsLeft: 0, count: 0, pending: [] } };
     if (source.kind === "mic") {
       setStatus("Asking for the microphone…");
       let stream;
@@ -290,9 +293,14 @@ export default function PrivateDancer() {
         // beats passing now: glow, and in Watch mode a puff
         for (const bt of beatsBetween(r.passed, now)) {
           e.glow = 1;
-          if (r.mode === "watch") puff(d, 0.55 + 0.45 * Math.min(1, r.loudNow || 0) + (r.downbeats?.has(bt) ? 0.25 : 0), 0);
+          if (r.mode === "watch") watchBeat(r, d, bt);
         }
         r.passed = now;
+        // Watch mode's double-time puffs land half a beat after their beat
+        while (r.mode === "watch" && r.watch.pending.length && r.watch.pending[0] <= now) {
+          r.watch.pending.shift();
+          puff(d, 0.45 + 0.3 * Math.random(), 0);
+        }
         // beats now past tapping: count bars danced, and end a streak after two quiet bars
         if (r.mode === "play" && r.score.started) {
           const s = r.score;
@@ -306,7 +314,7 @@ export default function PrivateDancer() {
           }
         }
         r.missCheck = now - MISS_AFTER;
-        d.base = r.mode === "watch" ? 0.42 + 0.35 * Math.min(1, r.loudNow || 0) : 0.36;
+        d.base = r.mode === "watch" ? 0.36 + 0.2 * Math.min(1, r.loudNow || 0) : 0.34;
       } else {
         d.base = 0.5;
         if (Math.random() < dt * 0.5) puff(d, 0.4, 0);
@@ -353,7 +361,7 @@ export default function PrivateDancer() {
   return (
     <div style={{ padding: _pad, maxWidth: 760, margin: "0 auto", boxSizing: "border-box" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
-        <div style={{ fontSize: 22, fontWeight: 800, color: T.slate900 }}>Private Dancer</div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: T.slate900 }}>Noodle Boogie</div>
         <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap" }}>
           {MODES.map((m) => (
             <TabLink key={m} href={modeHref(m)} onSelect={() => { finish(false); setResult(null); setMode(m); }}
@@ -469,6 +477,37 @@ function drawHud(g, w, h, e, r, now, dt) {
     });
     g.globalAlpha = 1;
   }
+}
+
+// ─── Watch mode: how often the dancer puffs ───────────────────────────────
+// A pattern is picked at random (weighted), held for 2 to 4 bars, then picked again.
+const WATCH_PATTERNS = [
+  { every: 1, weight: 3 },               // every beat
+  { every: 2, weight: 3 },               // every other beat
+  { every: 4, weight: 2 },               // once a bar
+  { every: 1, double: true, weight: 1 }, // double time: on the beat and halfway between
+  { every: 8, weight: 1 },               // a rest: one big puff every two bars
+];
+function pickWatchPattern() {
+  const total = WATCH_PATTERNS.reduce((a, p) => a + p.weight, 0);
+  let x = Math.random() * total;
+  for (const p of WATCH_PATTERNS) { x -= p.weight; if (x < 0) return p; }
+  return WATCH_PATTERNS[0];
+}
+function watchBeat(r, d, bt) {
+  const w = r.watch;
+  if (w.beatsLeft <= 0) { w.pattern = pickWatchPattern(); w.beatsLeft = 4 * (2 + Math.floor(Math.random() * 3)); w.count = 0; }
+  if (w.count % w.pattern.every === 0) {
+    const loud = Math.min(1, r.loudNow || 0);
+    const big = w.pattern.every >= 4 ? 0.35 : 0; // fewer puffs, bigger ones
+    puff(d, 0.5 + 0.35 * loud + 0.35 * Math.random() + big + (r.downbeats?.has(bt) ? 0.15 : 0), 0);
+    if (w.pattern.double) {
+      const gap = r.kind === "mic" ? r.live.period : (beatsIn(r, bt, bt + 2)[0] || bt + 0.5) - bt;
+      if (gap > 0 && gap < 2) w.pending.push(bt + gap / 2);
+    }
+  }
+  w.count += 1;
+  w.beatsLeft -= 1;
 }
 
 // Has a tap already been scored on this beat?

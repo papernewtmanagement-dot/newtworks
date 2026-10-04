@@ -28,7 +28,7 @@ import ActivityLog from "./src/modules/ActivityLog.jsx";
 import Family from "./src/modules/Family.jsx";
 import Inventory from "./src/modules/Inventory.jsx";
 import Roleplaying from "./src/modules/Roleplaying.jsx";
-import PrivateDancer from "./src/modules/PrivateDancer.jsx";
+import NoodleBoogie from "./src/modules/NoodleBoogie.jsx";
 import MealPlan from "./src/modules/MealPlan.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
@@ -128,7 +128,7 @@ const NAV_ITEMS = [
   { id: "inventory",   label: "Inventory",   icon: "package",       roles: FAMILY_ROLES },
   { id: "meals",       label: "Meal Plan",   icon: "utensils",      roles: FAMILY_ROLES },
   { id: "roleplaying", label: "Roleplaying", icon: "dice",          roles: FAMILY_ROLES },
-  { id: "dancer",      label: "Private Dancer", icon: "music",     roles: FAMILY_ROLES },
+  { id: "dancer",      label: "Noodle Boogie", icon: "music",      roles: FAMILY_ROLES },
   { id: "course",      label: "Course",      icon: "graduation",    roles: FAMILY_ROLES },
 ];
 
@@ -699,7 +699,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     family:      <ErrorBoundary name="Family"><Family userRole={userRole} /></ErrorBoundary>,
     inventory:   <ErrorBoundary name="Inventory"><Inventory userRole={userRole} /></ErrorBoundary>,
     roleplaying: <ErrorBoundary name="Roleplaying"><Roleplaying userRole={userRole} /></ErrorBoundary>,
-    dancer:      <ErrorBoundary name="Private Dancer"><PrivateDancer /></ErrorBoundary>,
+    dancer:      <ErrorBoundary name="Noodle Boogie"><NoodleBoogie /></ErrorBoundary>,
     meals:       <ErrorBoundary name="Meal Plan"><MealPlan userRole={userRole} /></ErrorBoundary>,
     course:      <ErrorBoundary key="course" name="Course"><Manual manualType="financial_literacy" userRole={userRole} /></ErrorBoundary>,
   };

@@ -1,6 +1,6 @@
 // =========================================================================
 // airDancer.js — the inflatable tube dancer: how it moves and how it's drawn.
-// Used by the Private Dancer game. No browser needed for the motion, so it
+// Used by the Noodle Boogie game. No browser needed for the motion, so it
 // can be tested in Node; drawDancer takes any canvas 2D context.
 //
 // How it moves: the tube is a chain of joints standing on a blower.
@@ -33,14 +33,17 @@ export function createDancer(seed = 1) {
   };
 }
 
+// Air in the tube: the blower's steady push, plus puffs, plus flutter. Real tube
+// dancers keep losing air out the top, so pressure wobbles on its own and the
+// tube folds over and pops back up even in steady wind.
 export function pressure(d) {
-  return Math.max(0, Math.min(1.15, d.base + d.surge));
+  return Math.max(0, Math.min(1.15, d.base + d.surge + (d.flutter || 0)));
 }
 
 // A puff of air. strength 0..1.5; dir -1 / 1 picks the side it whips toward (0 = random).
 export function puff(d, strength = 1, dir = 0) {
   const side = dir || (d.rnd() < 0.5 ? -1 : 1);
-  d.surge = Math.min(0.95, d.surge + 0.75 * strength);
+  d.surge = Math.min(0.95, d.surge + 0.62 * strength);
   for (let i = 0; i < N; i++) {
     const wave = Math.sin((i / N) * Math.PI * 1.5 + d.rnd());
     d.om[i] += strength * (side * (1.2 + (i / N) * 2.5) * wave + (d.rnd() - 0.5) * 1.5);
@@ -53,11 +56,15 @@ export function stepDancer(d, dt) {
   const sub = 4, h = dt / sub;
   for (let k = 0; k < sub; k++) {
     d.t += h;
-    d.surge *= Math.exp(-h * 2.2);
+    d.surge *= Math.exp(-h * 3.6);
+    // slow, uneven air loss: two drifting waves plus the odd sudden gulp
+    d.flutter = 0.16 * Math.sin(d.t * 1.7 + d.phA[0]) * Math.sin(d.t * 0.63 + d.phB[0]) - (d.gulp || 0);
+    if (d.gulp) d.gulp = Math.max(0, d.gulp - h * 0.8);
+    else if (d.rnd() < h * 0.25) d.gulp = 0.25 + d.rnd() * 0.25;
     const P = pressure(d);
-    const stiff = 3 + 75 * P * P;
-    const damp = 2.5 + 5 * P;
-    const grav = 34 * Math.pow(Math.max(0, 1 - P), 2);
+    const stiff = 2 + 52 * P * P;
+    const damp = 2 + 4 * P;
+    const grav = 42 * Math.pow(Math.max(0, 1 - P), 1.6);
     const gust = 2.2 + 3 * Math.min(1, P);
     // heights of each point, in segment lengths above the blower top
     let phi = 0, ht = 0;
@@ -71,7 +78,7 @@ export function stepDancer(d, dt) {
       const above = (N - i) / N;
       // air rushing up the tube: a ripple travelling upward
       const turb = gust * (Math.sin(d.t * 3.1 - i * 0.55 + d.phA[i]) + 0.6 * Math.sin(d.t * 5.3 - i * 0.9 + d.phB[i])) * (0.4 + 0.6 * (i / N));
-      let tq = -stiff * d.th[i] - damp * d.om[i] + grav * above * Math.sin(phi) + turb + floorPush[i];
+      let tq = -stiff * (1.5 - i / N) * d.th[i] - damp * d.om[i] + grav * above * Math.sin(phi) + turb + floorPush[i];
       if (i < 3) tq += 18 * P * (d.lean * 0.35 - phi) * (i === 0 ? 1 : 0.5);
       d.om[i] += tq * h;
     }
