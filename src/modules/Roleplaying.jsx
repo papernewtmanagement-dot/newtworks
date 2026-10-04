@@ -858,7 +858,7 @@ const MAP_SERIF = "Georgia, 'Times New Roman', serif";
 const MAP_PAPER = { sea: "#B4CACB", shallow: "#C6D9D6", shore: "#D6E4DD", land: "#EFE5C8" };
 // The kinds of unnamed ground, in the order the key lists them, each with its letter in a grid drawn fine (v.detail;
 // the same letters as rpg_map_grounds).
-const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["forest", "t"], ["pine", "p"], ["jungle", "j"], ["hills", "h"], ["mountains", "m"], ["desert", "d"], ["tundra", "u"], ["ice", "i"], ["swamp", "s"], ["town", "n"], ["water", "w"], ["deep", "k"]];
+const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["forest", "t"], ["pine", "p"], ["jungle", "j"], ["hills", "h"], ["mountains", "m"], ["desert", "d"], ["tundra", "u"], ["ice", "i"], ["swamp", "s"], ["town", "n"], ["road", "r"], ["pass", "a"], ["water", "w"], ["deep", "k"]];
 // Rivers drawn as lines on a grid too coarse to hold them as water (rpg_map_view: cells' river, detail.rivers): the
 // line's width in screen pixels by its size, 2 a great river down to 5 a brook.
 const MAP_RIVER_W = { 2: 4.6, 3: 3.3, 4: 2.2, 5: 1.4 };
@@ -870,6 +870,14 @@ const MAP_FOG = { dark: "#1F2029", speck: "#EDE6D3", line: "#FFFFFF" };
 // A village, town or city marked on a grid (rpg_map_view: towns; step 8): how big its symbol is drawn, as a share of
 // the room its cell gives a mark, and the size of its name. A village a little smaller, a city a little bigger.
 const MAP_MARK_SIZE = { village: 0.8, town: 0.95, city: 1.1 };
+// The roads (step 8b), smallest first so the bigger lie on top: the inked edge (min = screen pixels wide at the least,
+// dash for a lane) and the light middle (inset = screen pixels in from the edge; min for a highway, whose middle shows
+// however far out the map is drawn).
+const MAP_ROADS = [
+  { k: 3, name: "Lane", edge: { line: "#8A6A48", min: 1.5, dash: [5, 3.5] }, mid: { line: "#E8D6A6", inset: 1.6 } },
+  { k: 2, name: "Road", edge: { line: "#7A5A3A", min: 2.3 }, mid: { line: "#E8D6A6", inset: 2 } },
+  { k: 1, name: "Highway", edge: { line: MAP_INK, min: 4.4 }, mid: { line: "#EDDDB0", inset: 2.2, min: 2 } },
+];
 const MAP_MARK_TEXT = { village: 10.5, town: 12, city: 13 };
 // A steady number from 0 to 1 for a spot on the map, so the same cell always draws the same way.
 const mapRand = (a, b, c, d) => {
@@ -1207,6 +1215,7 @@ const MAP_ART = {
     town:      { tones: ["#C8B48A", "#C5B187", "#CBB78D"], cobble: 0.6, pebble: 0.16, blade: 0.05 },
     city:      { tones: ["#C3B69E", "#C0B39B", "#C6B9A1"], cobble: 0.85, pebble: 0.1, block: 0.03 },
     road:      { tones: ["#B99C6C", "#B69969", "#BC9F6F"], streak: 0.7, pebble: 0.25 },
+    pass:      { tones: ["#ABA08A", "#A89D87", "#AEA38D"], streak: 0.45, pebble: 0.45, crack: 0.12, rock: 0.04 },
     ruins:     { tones: ["#AEAA6E", "#ABA76B", "#B1AD71"], block: 0.17, pebble: 0.3, blade: 0.45 },
     valley:    { tones: ["#86B45C", "#83B159", "#89B75F"], blade: 0.85, flower: 0.32 },
     fog:       { tones: ["#94A18B", "#919E88", "#97A48E"], puddle: 0.22, mist: 0.36, blade: 0.25 },
@@ -1437,6 +1446,17 @@ function mapFantasy(v, byId) {
     const mid = list[Math.floor(list.length / 2)];
     if (byId[id] && mid !== undefined) ways.push({ text: byId[id].name, x: (mid % C + 0.5) * unit, y: (Math.floor(mid / C) + 0.5) * unit, r: unit * (r.full ? 0.2 : 0.1), size: 11.5, way: unit * 2.5 });
   });
+  // the roads between places (rpg_map_view: roads, step 8b): each piece [size, x0, y0, x1, y1] in thousandths of a cell,
+  // as wide as the road truly is where that is wider than a line (road_width, thousandths of a cell of what is drawn):
+  // a highway two inked edges with the road light between, a road one brown line, a lane a dashed one; drawn close,
+  // each is a light road between its edges
+  const rw = Array.isArray(v.road_width) ? v.road_width.map(Number) : [];
+  const paths = { 1: "", 2: "", 3: "" };
+  (Array.isArray(v.roads) ? v.roads : []).forEach(r => { if (Array.isArray(r) && paths[r[0]] !== undefined) paths[r[0]] += mapLine([[r[1] / 10, r[2] / 10], [r[3] / 10, r[4] / 10]]); });
+  const wide = (k) => (rw[k - 1] || 0) / 1000 * unit;
+  const roadways = [];
+  MAP_ROADS.forEach(({ k, edge, mid }) => { if (paths[k]) roadways.push({ d: paths[k], line: edge.line, units: wide(k), min: edge.min, dash: edge.dash, cap: edge.dash ? "butt" : "round" }); });
+  MAP_ROADS.forEach(({ k, edge, mid }) => { if (paths[k]) roadways.push({ d: paths[k], line: mid.line, units: wide(k), inset: mid.inset, min: mid.min }); });
   // the names of the lands this grid lists (continents on the world, countries on a continent), spread to their size
   places.filter(p => p.listed && !p.ground && Array.isArray(p.spot)).forEach(p => {
     lands.push({ text: String(p.name || "").toUpperCase(), x: p.spot[0] / 10, y: p.spot[1] / 10, caps: true, room: (p.spot[2] || 0) / 10, must: true });
@@ -1473,7 +1493,7 @@ function mapFantasy(v, byId) {
   const fog = mapFog(C, R, unit, (i, j) => get(i, j).k === "unknown", 0.45, cols, rows, lvl, x0, y0);
   return {
     wide: cols * 100, high: rows * 100, unit, aged: true,
-    layers: layers.concat(rose, strokes.list(MAP_ART.ink), lanes, pads, marked.list(MAP_ART.ink), [{ d: lines.join(""), line: MAP_INK, w: 0.8, o: 0.16 }], fog),
+    layers: layers.concat(rose, strokes.list(MAP_ART.ink), roadways, lanes, pads, marked.list(MAP_ART.ink), [{ d: lines.join(""), line: MAP_INK, w: 0.8, o: 0.16 }], fog),
     names: lands.concat(names, ways), blocks,
   };
 }
@@ -1692,8 +1712,9 @@ function mapBattle(v, byId) {
   return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat([{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }], fog), names: [], blocks: [] };
 }
 // The strokes as SVG. A stroke's line is w screen pixels wide (thinner on a small map), or `units` of the drawing
-// wide less `inset` screen pixels (the fill of a road inside its inked edge). A stroke with a clip (the outline of a
-// shape) paints only inside that shape: the soft edge of a ground stays on the land and off the sea.
+// wide less `inset` screen pixels (the fill of a road inside its inked edge) but never under `min` screen pixels (a
+// road drawn true to its width when the map is close, as a line when it is far out). A stroke with a clip (the outline
+// of a shape) paints only inside that shape: the soft edge of a ground stays on the land and off the sea.
 let mapClips = 0;
 function MapStrokes({ layers, px, unit }) {
   const id = useRef("rpg-map-clip-" + (++mapClips)).current;
@@ -1705,7 +1726,7 @@ function MapStrokes({ layers, px, unit }) {
       {clips.length > 0 && <defs>{clips.map((d, n) => <clipPath key={n} id={id + "-" + n}><path d={d} /></clipPath>)}</defs>}
       {layers.map((l, n) => (
         <path key={n} d={l.d} fill={l.fill || "none"} stroke={l.line || "none"} opacity={l.o}
-          strokeWidth={l.line ? (l.units ? Math.max(0, l.units - (l.inset || 0) / px) : l.w * pen / px) : undefined}
+          strokeWidth={l.line ? (l.units != null ? Math.max(l.min ? l.min * pen / px : 0, l.units - (l.inset || 0) / px) : l.w * pen / px) : undefined}
           clipPath={l.clip ? `url(#${id}-${clips.indexOf(l.clip)})` : undefined}
           strokeLinejoin="round" strokeLinecap={l.cap || "round"} strokeDasharray={l.dash ? l.dash.map(n2 => n2 * pen / px).join(" ") : undefined} />
       ))}
@@ -1776,7 +1797,9 @@ function MapSwatch({ what, color, size = 24, top }) {
     if (color) out.push({ d: "M0 0H100V100H0Z", fill: color, o: 0.3 });
     const rows = mapRows(12);
     const plain = what === "sea" || what === "land";
-    if (what === "road") out.push({ d: "M0 50H100", line: "#7A5A3A", w: 2, dash: [5, 3.5] });
+    const way = MAP_ROADS.find(r => what === "way" + r.k);
+    if (way) out.push({ d: "M0 50H100", line: way.edge.line, units: 0, min: way.edge.min * 1.6, dash: way.edge.dash, cap: "butt" }, { d: "M0 50H100", line: way.mid.line, units: 0, min: (way.mid.min || 0) * 1.6 });
+    else if (what === "road") out.push({ d: "M0 50H100", line: "#7A5A3A", w: 2, dash: [5, 3.5] });
     else if (MAP_ART.fantasy[what]) MAP_ART.fantasy[what](rows.add, plain ? 16 : 19, plain ? 16 : 27, plain ? 100 : 62, () => (plain ? 0.1 : 0.5), !plain);
     else if (color) out.push({ d: "M30 86V16", line: MAP_INK, w: 1.6 }, { d: "M30 18L78 30L30 46Z", fill: color, line: MAP_INK, w: 1.2 });
     return out.concat(rows.list(MAP_ART.ink));
@@ -2067,7 +2090,9 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
   const shown = places.filter(p => drawn.has(p.id) && !p.listed);
   // each kind of village, town and city drawn here, once in the key, then what their streets cost
   const townKinds = ["city", "town", "village"].map(k => towns.find(t => t.kind === k && drawn.has(t.id))).filter(Boolean);
-  const costly = kinds.some(k => grounds[k] && grounds[k].penalty) || shown.some(p => /%/.test(p.ground || "")) || townKinds.length > 0;
+  // the sizes of road drawn here (rpg_map_view: roads), then what a road and a mountain road cost
+  const ways = MAP_ROADS.slice().reverse().filter(r => (Array.isArray(v.roads) ? v.roads : []).some(p => Array.isArray(p) && p[0] === r.k));
+  const costly = kinds.some(k => grounds[k] && grounds[k].penalty) || shown.some(p => /%/.test(p.ground || "")) || townKinds.length > 0 || ways.length > 0;
   return (
     <div style={{ ...card, order: 1, minWidth: 0, display: "grid", gap: 10 }}>
       <style>{".rpg-map-cell:hover{box-shadow:inset 0 0 0 2px rgba(75,59,42,.6);border-radius:3px}"}</style>
@@ -2109,6 +2134,12 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
           </span>
         ))}
         {townKinds.length > 0 && townKinds[0].ground && <span>Their streets and yards: {townKinds[0].ground}.</span>}
+        {ways.map(r => (
+          <span key={r.k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <MapSwatch what={"way" + r.k} size={20} />{r.name}
+          </span>
+        ))}
+        {ways.length > 0 && grounds.road && <span>On a road: {grounds.road.penalty}{grounds.pass && grounds.pass.penalty ? `; over mountains: ${grounds.pass.penalty}` : ""}. A walk keeps to the roads where they serve.</span>}
         {kinds.map(k => (
           <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <MapSwatch what={k} size={20} top={top} />{ground(k)}
