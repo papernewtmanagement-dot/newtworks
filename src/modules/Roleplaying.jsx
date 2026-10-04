@@ -2121,8 +2121,8 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
   );
 }
 
-// A picture for the card. Pictures live in the private rpg-images bucket: everyone signed in can
-// see them, parents upload. No picture yet → a parent gets an upload control and a ready-made
+// A picture for the card. Pictures live in the private rpg-images bucket: the family login, owner
+// and admin can see them (rpg_can_play, 2026-10-04), parents upload. No picture yet → a parent gets an upload control and a ready-made
 // prompt to paste into ChatGPT; players just see the empty frame.
 const plainText = (t) => String(t || "").replace(/[*_`#>]/g, "").replace(/\s+/g, " ").trim();
 const imagePrompt = (c) => [

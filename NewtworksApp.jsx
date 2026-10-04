@@ -30,6 +30,7 @@ import Inventory from "./src/modules/Inventory.jsx";
 import Roleplaying from "./src/modules/Roleplaying.jsx";
 import Dancer from "./src/modules/Dancer.jsx";
 import MealPlan from "./src/modules/MealPlan.jsx";
+import Gridstrike from "./src/modules/Gridstrike.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
@@ -130,7 +131,19 @@ const NAV_ITEMS = [
   { id: "roleplaying", label: "Roleplaying", icon: "dice",          roles: FAMILY_ROLES },
   { id: "dancer",      label: "Dancer",      icon: "music",         roles: FAMILY_ROLES },
   { id: "course",      label: "Course",      icon: "graduation",    roles: FAMILY_ROLES },
+  { id: "gridstrike",  label: "Gridstrike",  icon: "target",        roles: FAMILY_ROLES },
 ];
+// Peter 2026-10-04: every link below the last divider is owner, admin and the
+// family login only. Enforced here for every link down there, today's and any
+// added later: a link's roles can only narrow that list, never widen it, and a
+// link with no roles gets exactly that list. The sidebar filter and the
+// ModuleRouter guard both read NAV_ITEMS, so this covers the menu and direct URLs.
+const _LAST_DIVIDER_AT = NAV_ITEMS.map(n => n.type).lastIndexOf("divider");
+NAV_ITEMS.forEach((n, i) => {
+  if (i > _LAST_DIVIDER_AT && n.type !== "divider") {
+    n.roles = (n.roles || FAMILY_ROLES).filter(r => FAMILY_ROLES.includes(r));
+  }
+});
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
 const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) => {
@@ -172,6 +185,7 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     utensils:   <svg style={s} viewBox="0 0 24 24" {...p}><path d="M7 3v8"/><path d="M5 3v4a2 2 0 0 0 4 0V3"/><path d="M7 11v10"/><path d="M17 3c-2 0-3 2-3 5v4h3v9"/></svg>,
     dice:       <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.2" fill={color}/><circle cx="16" cy="8" r="1.2" fill={color}/><circle cx="12" cy="12" r="1.2" fill={color}/><circle cx="8" cy="16" r="1.2" fill={color}/><circle cx="16" cy="16" r="1.2" fill={color}/></svg>,
     music:      <svg style={s} viewBox="0 0 24 24" {...p}><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
+    target:     <svg style={s} viewBox="0 0 24 24" {...p}><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></svg>,
     briefcase:<svg style={s} viewBox="0 0 24 24" {...p}><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
   };
   return icons[name] || null;
@@ -702,6 +716,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     dancer:      <ErrorBoundary name="Dancer"><Dancer /></ErrorBoundary>,
     meals:       <ErrorBoundary name="Meal Plan"><MealPlan userRole={userRole} /></ErrorBoundary>,
     course:      <ErrorBoundary key="course" name="Course"><Manual manualType="financial_literacy" userRole={userRole} /></ErrorBoundary>,
+    gridstrike:  <ErrorBoundary name="Gridstrike"><Gridstrike /></ErrorBoundary>,
   };
   // Access guard — enforce nav role at the module level so direct URL
   // navigation (e.g. /financials) cannot bypass the sidebar filter. Mirrors
