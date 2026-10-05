@@ -119,6 +119,7 @@ const PRODUCT_BY_PAGE = {
   "1530134531": { line: "variable", type: "", quotable: false },                    // Simple Investing FIT: a meeting with Peter
   "2588770324": { line: "", type: "", quotable: false },                            // Simple Retirement Insurance FIT: a meeting with Peter
   "newtworks-native-simple-us-bank-fit": { line: "bank", type: "", quotable: false }, // Simple US Bank FIT: Bank counts when funded, not at the close (Peter 2026-09-11)
+  "newtworks-native-simple-medicare-fit": { line: "health", type: "", quotable: false }, // Simple Medicare FIT (2026-10-04): the Log has no Medicare product yet
 };
 
 const MONKEY = "🙊";
