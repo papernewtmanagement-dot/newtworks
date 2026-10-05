@@ -662,11 +662,18 @@ function LoginPacketInfoForm({ teamId, preview }) {
 }
 
 // The new hire's side: the packet itself, read-only.
-// The whole sheet is one text in onboarding_instructions ("Login packet text"),
-// so an admin can edit every word of it right here. Blanks like {{alias}} are
-// filled from the hire's team record after the text is turned into HTML, so a
-// password with odd characters can never upset the formatting.
-const PACKET_LABEL = "Login packet text";
+// The login packet pop-up. Every word of it lives in onboarding_instructions so
+// an admin can edit it right here: the top part ("Login packet text") with the
+// hire's details, then one body per way of logging in. The hire picks WiFi
+// (the default) or a network cable, and with a cable, a new or old workstation.
+// Blanks like {{alias}} are filled from the hire's team record after the text
+// is turned into HTML, so a password with odd characters can't upset it.
+const PACKET_TOP = "Login packet text";
+const PACKET_WAYS = {
+  wifi: "Login packet: WiFi + new workstation",
+  cable_new: "Login packet: Network cable + new workstation",
+  cable_old: "Login packet: Network cable + old workstation",
+};
 const PACKET_BLANKS = "{{name}} {{alias}} {{registration}} {{password}} {{pass}} {{from}} {{until}}";
 
 function escHtml(x) {
@@ -690,40 +697,98 @@ function fillPacketBlanks(html, v) {
   return html.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in map ? map[k] : m));
 }
 
-function LoginPacketForm({ teamId, preview, isAdmin = false }) {
-  const { rec, loading, err } = usePacketRecord(teamId, preview);
-  const [ins, setIns] = useState(null);       // the sheet's text row
-  const [insLoading, setInsLoading] = useState(true);
+// One piece of packet text: shown with the hire's details filled in, and an
+// Edit button for admins that saves straight back to its row.
+function PacketText({ row, onSaved, isAdmin, v }) {
   const [draft, setDraft] = useState(null);   // text being edited, null when not editing
   const [saving, setSaving] = useState(false);
-  const [saveErr, setSaveErr] = useState("");
-  useEffect(() => {
-    let alive = true;
-    if (!supabase) { setInsLoading(false); return () => { alive = false; }; }
-    (async () => {
-      const { data: row } = await supabase.from("onboarding_instructions")
-        .select("id, body_md").eq("agency_id", AGENCY_ID)
-        .eq("substep_label", PACKET_LABEL).maybeSingle();
-      if (!alive) return;
-      setIns(row || null);
-      setInsLoading(false);
-    })();
-    return () => { alive = false; };
-  }, []);
-  const savePacketText = async () => {
-    setSaveErr("");
+  const [err, setErr] = useState("");
+  useEffect(() => { setDraft(null); setErr(""); }, [row?.id]);
+  if (!row) return null;
+  const save = async () => {
+    setErr("");
     setSaving(true);
     const { error } = await supabase.from("onboarding_instructions")
       .update({ body_md: draft, updated_at: new Date().toISOString() })
-      .eq("id", ins.id);
+      .eq("id", row.id);
     setSaving(false);
-    if (error) { setSaveErr(error.message); return; }
-    setIns({ ...ins, body_md: draft });
+    if (error) { setErr(error.message); return; }
+    onSaved({ ...row, body_md: draft });
     setDraft(null);
   };
+  if (draft !== null) {
+    return (
+      <div>
+        <div style={{ fontSize: 12, color: T.slate500, marginBottom: 6, lineHeight: 1.5 }}>
+          These blanks fill in from each hire's record: {PACKET_BLANKS}
+        </div>
+        <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={18}
+          style={{ ...inputBase, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }} />
+        {err && <div style={{ marginTop: 8, fontSize: 12.5, color: T.red }}>{err}</div>}
+        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+          <Button tone="quiet" onClick={() => { setDraft(null); setErr(""); }} disabled={saving}>Cancel</Button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div>
+      {isAdmin && (
+        <div style={{ textAlign: "right", marginBottom: 4 }}>
+          <Button tone="quiet" onClick={() => setDraft(row.body_md || "")}>Edit</Button>
+        </div>
+      )}
+      <div dangerouslySetInnerHTML={{ __html: fillPacketBlanks(mdToHtml(row.body_md || ""), v) }} />
+    </div>
+  );
+}
+
+// A row of choice buttons, one picked.
+function PacketChoice({ options, value, onChange }) {
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      {options.map(([id, label]) => {
+        const on = id === value;
+        return (
+          <button key={id} type="button" onClick={() => onChange(id)} style={{
+            padding: "8px 14px", borderRadius: 8, fontSize: 13.5, fontWeight: 600,
+            fontFamily: "inherit", cursor: "pointer", boxSizing: "border-box",
+            background: on ? T.blue : T.white, color: on ? T.white : T.slate700,
+            border: `1px solid ${on ? T.blue : T.slate200}`,
+          }}>{label}</button>
+        );
+      })}
+    </div>
+  );
+}
+
+function LoginPacketForm({ teamId, preview, isAdmin = false }) {
+  const { rec, loading, err } = usePacketRecord(teamId, preview);
+  const [rows, setRows] = useState({});      // substep_label -> row
+  const [rowsLoading, setRowsLoading] = useState(true);
+  const [via, setVia] = useState("wifi");     // wifi | cable
+  const [station, setStation] = useState("new"); // new | old (cable only)
+  useEffect(() => {
+    let alive = true;
+    if (!supabase) { setRowsLoading(false); return () => { alive = false; }; }
+    (async () => {
+      const { data } = await supabase.from("onboarding_instructions")
+        .select("id, substep_label, body_md").eq("agency_id", AGENCY_ID)
+        .in("substep_label", [PACKET_TOP, ...Object.values(PACKET_WAYS)]);
+      if (!alive) return;
+      const m = {};
+      (data || []).forEach(r => { m[r.substep_label] = r; });
+      setRows(m);
+      setRowsLoading(false);
+    })();
+    return () => { alive = false; };
+  }, []);
+  const saved = (r) => setRows(prev => ({ ...prev, [r.substep_label]: r }));
 
   const v = preview ? null : rec;
-  const html = ins?.body_md ? fillPacketBlanks(mdToHtml(ins.body_md), v) : "";
+  const way = via === "wifi" ? "wifi" : station === "old" ? "cable_old" : "cable_new";
+  const label = { fontSize: 12, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 };
 
   return (
     <div>
@@ -734,7 +799,7 @@ function LoginPacketForm({ teamId, preview, isAdmin = false }) {
         borderRadius: 10, background: T.white, fontSize: 13.5, lineHeight: 1.65,
         color: T.slate800, boxSizing: "border-box", minWidth: 0,
       }}>
-        {(loading || insLoading) && <div style={{ color: T.slate500, marginBottom: 10 }}>Loading...</div>}
+        {(loading || rowsLoading) && <div style={{ color: T.slate500, marginBottom: 10 }}>Loading...</div>}
         {v?.sf_no_login_packet && (
           <div style={{
             marginBottom: 16, padding: "10px 12px", borderRadius: 8,
@@ -744,27 +809,27 @@ function LoginPacketForm({ teamId, preview, isAdmin = false }) {
             joins the call to confirm you work here.
           </div>
         )}
-        {isAdmin && ins && draft === null && (
-          <div style={{ textAlign: "right", marginBottom: 8 }}>
-            <Button tone="quiet" onClick={() => setDraft(ins.body_md || "")}>Edit</Button>
-          </div>
-        )}
-        {draft !== null ? (
+
+        <PacketText row={rows[PACKET_TOP]} onSaved={saved} isAdmin={isAdmin} v={v} />
+
+        <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.slate200}`, display: "grid", gap: 12 }}>
           <div>
-            <div style={{ fontSize: 12, color: T.slate500, marginBottom: 6, lineHeight: 1.5 }}>
-              These blanks fill in from each hire's record: {PACKET_BLANKS}
-            </div>
-            <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={24}
-              style={{ ...inputBase, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }} />
-            {saveErr && <div style={{ marginTop: 8, fontSize: 12.5, color: T.red }}>{saveErr}</div>}
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Button onClick={savePacketText} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
-              <Button tone="quiet" onClick={() => { setDraft(null); setSaveErr(""); }} disabled={saving}>Cancel</Button>
-            </div>
+            <div style={label}>How are you connecting?</div>
+            <PacketChoice value={via} onChange={setVia}
+              options={[["wifi", "WiFi"], ["cable", "Network cable"]]} />
           </div>
-        ) : (
-          <div dangerouslySetInnerHTML={{ __html: html }} />
-        )}
+          {via === "cable" && (
+            <div>
+              <div style={label}>Which workstation?</div>
+              <PacketChoice value={station} onChange={setStation}
+                options={[["new", "New workstation"], ["old", "Old workstation"]]} />
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginTop: 16 }}>
+          <PacketText row={rows[PACKET_WAYS[way]]} onSaved={saved} isAdmin={isAdmin} v={v} />
+        </div>
       </div>
     </div>
   );
