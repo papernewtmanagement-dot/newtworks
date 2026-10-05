@@ -618,9 +618,26 @@ function loadKickoffMd() {
 
 // A pop-up of written instructions or background (an onboarding_instructions
 // row), opened from the (i) next to a card title or a sub-item.
-export function InstructionsModal({ item, onClose }) {
+export function InstructionsModal({ item, onClose, canEdit = false, onSaved = null }) {
   const bodyRef = useRef(null);
-  const body = item?.body_md || "";
+  const [saved, setSaved] = useState(null);   // text just saved, shown until the list reloads
+  const [draft, setDraft] = useState(null);   // text being edited, null when not editing
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => { setSaved(null); setDraft(null); setErr(""); }, [item?.id]);
+  const body = saved ?? item?.body_md ?? "";
+  const save = async () => {
+    setErr("");
+    setSaving(true);
+    const { error } = await supabase.from("onboarding_instructions")
+      .update({ body_md: draft, updated_at: new Date().toISOString() })
+      .eq("id", item.id);
+    setSaving(false);
+    if (error) { setErr(error.message); return; }
+    setSaved(draft);
+    setDraft(null);
+    if (onSaved) onSaved();
+  };
   const usesKickoff = /\{\{roleplay:/i.test(body);
   const [kickoffMd, setKickoffMd] = useState("");
   useEffect(() => {
@@ -633,7 +650,7 @@ export function InstructionsModal({ item, onClose }) {
     () => mdToHtml(usesKickoff ? withRoleplayBlocks(body, kickoffMd) : body),
     [body, usesKickoff, kickoffMd]
   );
-  useEffect(() => wireRoleplayPickers(bodyRef.current), [html]);
+  useEffect(() => wireRoleplayPickers(bodyRef.current), [html, draft]);
   if (!item) return null;
   return (
     <div
@@ -653,15 +670,37 @@ export function InstructionsModal({ item, onClose }) {
           boxShadow: "0 20px 50px rgba(0,0,0,0.25)", ...wrapLongText,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{item.title}</div>
-          <Button variant="secondary" onClick={onClose}>Close</Button>
+          <div style={{ display: "flex", gap: 8 }}>
+            {canEdit && item.id && draft === null && (
+              <Button variant="secondary" onClick={() => setDraft(body)}>Edit</Button>
+            )}
+            <Button variant="secondary" onClick={onClose}>Close</Button>
+          </div>
         </div>
-        <div
-          ref={bodyRef}
-          style={{ fontSize: 13, color: T.slate700, lineHeight: 1.55 }}
-          dangerouslySetInnerHTML={{ __html: html }}
-        />
+        {draft !== null ? (
+          <div>
+            <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={18}
+              style={{ ...inputBase, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }} />
+            {err && (
+              <div style={{
+                marginTop: 8, padding: "10px 12px", background: T.redLt, color: T.red,
+                borderRadius: 8, fontSize: 13, boxSizing: "border-box",
+              }}>{err}</div>
+            )}
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+              <Button variant="secondary" onClick={() => { setDraft(null); setErr(""); }} disabled={saving}>Cancel</Button>
+            </div>
+          </div>
+        ) : (
+          <div
+            ref={bodyRef}
+            style={{ fontSize: 13, color: T.slate700, lineHeight: 1.55 }}
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        )}
       </div>
     </div>
   );

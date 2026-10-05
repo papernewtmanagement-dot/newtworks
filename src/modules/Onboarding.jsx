@@ -315,7 +315,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
         ) : null}
       </Card>
 
-      <InstructionsModal item={openInstr} onClose={() => setOpenInstr(null)} />
+      <InstructionsModal item={openInstr} onClose={() => setOpenInstr(null)} canEdit={isAdmin} onSaved={onReload} />
       {replyFor && (
         <ReplyPopup
           label={replyFor.label}

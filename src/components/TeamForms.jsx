@@ -679,8 +679,36 @@ function LoginPacketInfoForm({ teamId, preview }) {
 }
 
 // The new hire's side: the packet itself, read-only.
-function LoginPacketForm({ teamId, preview }) {
+function LoginPacketForm({ teamId, preview, isAdmin = false }) {
   const { rec, loading, err } = usePacketRecord(teamId, preview);
+  // The packet's fixed wording lives in onboarding_instructions so an admin can
+  // edit it right here. If the row is ever missing, the built-in wording shows.
+  const [ins, setIns] = useState(null);
+  const [draft, setDraft] = useState(null);   // text being edited, null when not editing
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState("");
+  useEffect(() => {
+    let alive = true;
+    if (!supabase) return () => { alive = false; };
+    (async () => {
+      const { data: row } = await supabase.from("onboarding_instructions")
+        .select("id, body_md").eq("agency_id", AGENCY_ID)
+        .eq("substep_label", "Login packet text").maybeSingle();
+      if (alive) setIns(row || null);
+    })();
+    return () => { alive = false; };
+  }, []);
+  const savePacketText = async () => {
+    setSaveErr("");
+    setSaving(true);
+    const { error } = await supabase.from("onboarding_instructions")
+      .update({ body_md: draft, updated_at: new Date().toISOString() })
+      .eq("id", ins.id);
+    setSaving(false);
+    if (error) { setSaveErr(error.message); return; }
+    setIns({ ...ins, body_md: draft });
+    setDraft(null);
+  };
 
   const v = preview ? null : rec;
   const name = v ? `${v.first_name || ""} ${v.last_name || ""}`.trim() : "";
@@ -724,6 +752,28 @@ function LoginPacketForm({ teamId, preview }) {
           </div>
         </div>
 
+        {ins?.body_md ? (
+          <div style={{ marginTop: 16 }}>
+            {isAdmin && draft === null && (
+              <div style={{ textAlign: "right", marginBottom: 8 }}>
+                <Button tone="quiet" onClick={() => setDraft(ins.body_md)}>Edit</Button>
+              </div>
+            )}
+            {draft !== null ? (
+              <div>
+                <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={22}
+                  style={{ ...inputBase, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }} />
+                {saveErr && <div style={{ marginTop: 8, fontSize: 12.5, color: T.red }}>{saveErr}</div>}
+                <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <Button onClick={savePacketText} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+                  <Button tone="quiet" onClick={() => { setDraft(null); setSaveErr(""); }} disabled={saving}>Cancel</Button>
+                </div>
+              </div>
+            ) : (
+              <div dangerouslySetInnerHTML={{ __html: mdToHtml(ins.body_md) }} />
+            )}
+          </div>
+        ) : (<>
         <div style={{ marginTop: 16, fontWeight: 700, color: T.slate900 }}>
           Compliance with State Farm’s Enterprise Information Security Policy (EISP) is mandatory for
           all Agents and Team Members. COMPLETE ALL STEPS ON THIS PAGE. Call the New Team Member
@@ -791,6 +841,7 @@ function LoginPacketForm({ teamId, preview }) {
             </ol>
           </li>
         </ol>
+        </>)}
       </div>
     </div>
   );
@@ -1087,7 +1138,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
 
       <div style={locked && form.id !== "i9" ? { pointerEvents: "none", opacity: 0.65 } : null}>
         {form.id === "login_packet" &&
-          <LoginPacketForm teamId={teamId} preview={preview} />}
+          <LoginPacketForm teamId={teamId} preview={preview} isAdmin={isAdmin} />}
         {form.id === "login_packet_info" &&
           <LoginPacketInfoForm teamId={teamId} preview={preview} />}
         {form.id === "combined_onboarding" &&
