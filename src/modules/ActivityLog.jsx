@@ -447,12 +447,13 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [date, setDate] = useState(today);
   const [dateOpen, setDateOpen] = useState(false);
   const [logFor, setLogFor] = useState(null);
-  // Peter 2026-10-05: licensed team don't log a Pivot. Quoting an existing customer writes it
-  // (rp_derive_quote_pivot). The Pivot activity is offered to unlicensed team only.
+  // Peter 2026-10-05: authorized team don't log a Pivot. Quoting an existing customer writes it
+  // (rp_derive_quote_pivot). The Pivot activity is offered to everyone who isn't authorized.
   const [meId, setMeId] = useState(null);
   useEffect(() => { supabase.rpc("current_team_member_id").then(r => setMeId(r?.data || null)); }, []);
   const loggerRow = (roster || []).find(t => t.id === (logFor || meId));
-  const licensed = !!(loggerRow && (loggerRow.license_pc || loggerRow.license_lh));
+  // Mirrors team_can_quote: authorized, and holding a P&C or L&H license.
+  const canQuote = !!(loggerRow && loggerRow.authorized && (loggerRow.license_pc || loggerRow.license_lh));
   const [onFile, setOnFile] = useState([]);        // this customer's active sold policies (rp_sold_on_file)
   const [relationship, setRelationship] = useState(pf.relationship || "");
   const [source, setSource] = useState(pf.source || "");
@@ -473,8 +474,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [last, setLast] = useState(null);            // {result, first, initial, date} of the entry just logged, for Undo / Log another
 
   // every Retention Points item, least expensive first
-  const items = useMemo(() => (values || []).filter(v => v.category === "logged" && !(licensed && v.activity_key === "pivot"))
-    .slice().sort((a, b) => (Number(a.points) - Number(b.points)) || String(a.label).localeCompare(String(b.label))), [values, licensed]);
+  const items = useMemo(() => (values || []).filter(v => v.category === "logged" && !(canQuote && v.activity_key === "pivot"))
+    .slice().sort((a, b) => (Number(a.points) - Number(b.points)) || String(a.label).localeCompare(String(b.label))), [values, canQuote]);
   const [infoOpen, setInfoOpen] = useState(false);
   const byKey = useMemo(() => Object.fromEntries((values || []).map(v => [v.activity_key, v])), [values]);
   const [nextPts, setNextPts] = useState({});   // activity_key -> what the next one pays this week
@@ -496,8 +497,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   // the keys that record owns to the matching rp_edit_* function.
   const [editRec, setEditRec] = useState(null);
   const isEdit = !!editRec;
-  // A pivot a Live call recorded drops out for licensed team: their quote writes it.
-  useEffect(() => { if (licensed && !isEdit) setActivities(list => list.filter(a => a.key !== "pivot" || a.orig)); }, [licensed, isEdit]);
+  // A pivot a Live call recorded drops out for authorized team: their quote writes it.
+  useEffect(() => { if (canQuote && !isEdit) setActivities(list => list.filter(a => a.key !== "pivot" || a.orig)); }, [canQuote, isEdit]);
   useEffect(() => {
     if (!editing?.id) { setEditRec(null); return undefined; }
     let alive = true;
