@@ -966,6 +966,8 @@ function readyToSubmit(formType, data, secure, needs = {}) {
   if (formType === "w4") return !!data.filing_status;
   if (formType === "combined_onboarding") {
     return !!data.why_statement &&
+      !!String(data.need_to_make || "").trim() &&
+      !!String(data.want_to_make || "").trim() &&
       (secure.banks || []).some(b => b.bank_name && b.account_number && b.routing_number) &&
       (!needs.ssn || String(secure.ssn || "").replace(/[^0-9]/g, "").length === 9) &&
       (!needs.birthday || !!secure.dob);
