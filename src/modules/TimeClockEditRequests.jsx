@@ -2,6 +2,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { T } from "../lib/theme.js";
+import DateTimeField from "../components/DateTimeField.jsx";
 
 // =====================================================================
 // TimeClockEditRequests.jsx — request + approval flow for time-clock edits
@@ -132,7 +133,7 @@ function TextInput({ value, onChange, type = "text", placeholder, style = {} }) 
       onChange={onChange}
       placeholder={placeholder}
       style={{
-        width: "100%", padding: "8px 10px",
+        width: "100%", minWidth: 0, boxSizing: "border-box", padding: "8px 10px",
         borderRadius: 7, border: `1px solid ${T.slate200}`,
         background: T.white, fontSize: 13, color: T.slate900,
         outline: "none", ...style,
@@ -157,7 +158,8 @@ function TextArea({ value, onChange, placeholder, rows = 3, style = {} }) {
     />
   );
 }
-function ModalShell({ children, onClose, width = 500 }) {
+// Shared with TimeClock.jsx.
+export function ModalShell({ children, onClose, width = 500 }) {
   return (
     <div
       onClick={onClose}
@@ -171,7 +173,7 @@ function ModalShell({ children, onClose, width = 500 }) {
         onClick={(e) => e.stopPropagation()}
         style={{
           background: T.white, borderRadius: 12, width: "100%", maxWidth: width,
-          maxHeight: "92vh", overflowY: "auto",
+          maxHeight: "92vh", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box",
           boxShadow: "0 20px 50px rgba(15,23,42,0.25)",
         }}
       >
@@ -536,7 +538,7 @@ function RequestFormModal({ user, initial, weekStart, onClose, onSubmitted }) {
             <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 4 }}>
               Clock in {editType === "wrong_time" && <span style={{ color: T.slate400, fontWeight: 400 }}>(leave blank to keep original)</span>}
             </div>
-            <TextInput type="datetime-local" value={clockIn} onChange={(e) => setClockIn(e.target.value)} />
+            <DateTimeField value={clockIn} onChange={setClockIn} defaultDate={punchDate} />
             {editType === "wrong_time" && existingEntry?.clock_in_at && (
               <div style={{ fontSize: 10, color: T.slate500, marginTop: 3 }}>
                 Original: {fmtTime(existingEntry.clock_in_at)}
@@ -554,7 +556,7 @@ function RequestFormModal({ user, initial, weekStart, onClose, onSubmitted }) {
               {editType === "wrong_time" && existingEntry?.clock_out_at && <span style={{ color: T.slate400, fontWeight: 400 }}>(leave blank to keep original)</span>}
               {editType === "wrong_time" && !existingEntry?.clock_out_at && <span style={{ color: T.slate400, fontWeight: 400 }}>(leave blank if still working)</span>}
             </div>
-            <TextInput type="datetime-local" value={clockOut} onChange={(e) => setClockOut(e.target.value)} />
+            <DateTimeField value={clockOut} onChange={setClockOut} defaultDate={punchDate} />
             {editType === "wrong_time" && existingEntry?.clock_out_at && (
               <div style={{ fontSize: 10, color: T.slate500, marginTop: 3 }}>
                 Original: {fmtTime(existingEntry.clock_out_at)}

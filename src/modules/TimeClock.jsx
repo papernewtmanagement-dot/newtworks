@@ -27,9 +27,10 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 // =====================================================================
 
 import { T } from "../lib/theme.js";
-import { StaffRequestSection, AdminApprovalQueue } from "./TimeClockEditRequests.jsx";
+import { StaffRequestSection, AdminApprovalQueue, ModalShell } from "./TimeClockEditRequests.jsx";
 
 import { useTabParam, TabLink } from "../lib/routing.jsx";
+import DateTimeField from "../components/DateTimeField.jsx";
 const YELLOW_HR = 39;
 const RED_HR = 40;
 
@@ -177,6 +178,8 @@ function TextInput({ value, onChange, type = "text", placeholder, maxLength, inp
       inputMode={inputMode}
       style={{
         width: "100%",
+        minWidth: 0,
+        boxSizing: "border-box",
         padding: "8px 10px",
         borderRadius: 7,
         border: `1px solid ${T.slate200}`,
@@ -729,29 +732,6 @@ function StaffWeekCard({ staff: s, weekStart, entries, onEdit, onAdd }) {
 // =====================================================================
 // MODALS
 // =====================================================================
-function ModalShell({ children, onClose, width = 460 }) {
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        zIndex: 9999, padding: 16,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: T.white, borderRadius: 12, width: "100%", maxWidth: width,
-          boxShadow: "0 20px 50px rgba(15,23,42,0.25)",
-        }}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
-
 function EditEntryModal({ entry, forStaff, userId, onClose, onSaved }) {
   const isNew = !entry;
   const [clockIn, setClockIn] = useState(toLocalInput(entry?.clock_in_at) || toLocalInput(new Date().toISOString()));
@@ -814,7 +794,7 @@ function EditEntryModal({ entry, forStaff, userId, onClose, onSaved }) {
     : "this entry";
 
   return (
-    <ModalShell onClose={busy ? () => {} : onClose}>
+    <ModalShell width={460} onClose={busy ? () => {} : onClose}>
       <div style={{ padding: "16px 20px", borderBottom: `1px solid ${T.slate200}` }}>
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>
           {isNew ? `New entry for ${subject}` : "Edit time entry"}
@@ -829,11 +809,11 @@ function EditEntryModal({ entry, forStaff, userId, onClose, onSaved }) {
       <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
         <div>
           <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 4 }}>Clock in</div>
-          <TextInput type="datetime-local" value={clockIn} onChange={(e) => setClockIn(e.target.value)} />
+          <DateTimeField value={clockIn} onChange={setClockIn} />
         </div>
         <div>
           <div style={{ fontSize: 11, fontWeight: 600, color: T.slate600, marginBottom: 4 }}>Clock out</div>
-          <TextInput type="datetime-local" value={clockOut} onChange={(e) => setClockOut(e.target.value)} />
+          <DateTimeField value={clockOut} onChange={setClockOut} defaultDate={(clockIn || "").slice(0, 10)} />
           <div style={{ fontSize: 10, color: T.slate500, marginTop: 4 }}>Leave blank to keep this entry open.</div>
         </div>
         <div>
