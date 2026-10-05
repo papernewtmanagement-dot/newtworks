@@ -39,7 +39,7 @@ import LiveSourceWarning from "../components/LiveSourceWarning.jsx";
 //    "Anna S." is spelled one way and cancelations can match sales.
 //  * "Add Activity" dropdown, cheapest first. Each pick is a pill with
 //    an x; the same item can be added twice (two policy changes = two
-//    pills = two rows). Pivot is on the list at $0: tracked, not paid.
+//    pills = two rows). Pivot is paid like any other activity (Peter 2026-10-05).
 //  * "Add Policy" dropdown adds a pill on its own row, like activities.
 //    The pill you tapped last is the one being edited below it: type,
 //    Quoted / Sold / Quoted and sold / Canceled, premium and cars once
@@ -3681,7 +3681,7 @@ function WeekView({ isAdmin, isOwner, myTeamId, roster, nameOf, values, sources,
           rankOf={p => Number(p.retention?.net || 0)} valueOf={p => fmtWk(p.retention?.net)}
           subOf={p => `${fmtPts(p.retention?.gross)} gross · missed ${fmtPts(p.retention?.missed_pct)}% calls`}
           renderItems={retentionItems} open={open.r} onToggle={toggle("r")} />}
-        <ScoreCard title="Conversations" total={teamAvg == null ? "—" : teamAvg.toFixed(2)} note="Conversation score, 1 to 3. Pivots are tracked, not paid." people={people}
+        <ScoreCard title="Conversations" total={teamAvg == null ? "—" : teamAvg.toFixed(2)} note="Conversation score, 1 to 3." people={people}
           rankOf={p => Number(p.conversations?.avg || 0)} valueOf={p => p.conversations?.avg == null ? "—" : Number(p.conversations.avg).toFixed(2)}
           subOf={p => `${plural(p.conversations?.scorecards || 0, "scored conversation")} · ${plural(p.conversations?.pivots || 0, "pivot")}`} />
       </div>
@@ -5634,7 +5634,7 @@ export default function ActivityLog({ userRole, userId }) {
         supabase.from("retention_point_values").select("activity_key, label, points, category, requires_note, requires_ecrm, requires_platform, sort_order, description").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("sales_marketing_sources").select("source_key, label, sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("product_types").select("line_of_business, type_key, label, sort_order, one_per_household").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
-        supabase.from("team_directory").select("id, first_name, role_category, is_admin_backoffice, is_test_user, archived_at, category, is_active, license_pc, license_lh").eq("agency_id", AGENCY_ID).order("first_name"),
+        supabase.from("team_directory").select("id, first_name, role_category, is_admin_backoffice, is_test_user, archived_at, category, is_active, license_pc, license_lh, authorized").eq("agency_id", AGENCY_ID).order("first_name"),
         supabase.rpc("current_team_member_id"),
       ]);
       if (!alive) return;

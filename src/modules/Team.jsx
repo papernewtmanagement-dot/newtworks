@@ -74,7 +74,7 @@ function useProducerROI() {
 
         const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes, lapseRes] = await Promise.all([
           supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
-          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, annual_benefits_value, weekly_life_benefit_agency_paid, weekly_health_benefit_agency_paid, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, license_states, compliance_flag, nickname, is_admin_backoffice, photo_storage_path, signature_title, nmls_number, credentials_line, address_line1, address_line2, city, state, zip_code, license_number, languages").eq("agency_id", AGENCY_ID),
+          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, annual_benefits_value, weekly_life_benefit_agency_paid, weekly_health_benefit_agency_paid, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, authorized, license_states, compliance_flag, nickname, is_admin_backoffice, photo_storage_path, signature_title, nmls_number, credentials_line, address_line1, address_line2, city, state, zip_code, license_number, languages").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("team_member_id, gross_pay, payroll_run_id").eq("business_entity_id", BUSINESS_ENTITY_ID),
           supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("business_entity_id", BUSINESS_ENTITY_ID).order("pay_date",{ascending:false}).limit(24),
@@ -1242,7 +1242,7 @@ const StaffDirectory = ({ staff }) => {
     (async () => {
       const { data: teamRows, error: teamErr } = await supabase
         .from("team")
-        .select("id, first_name, last_name, role, role_level, role_category, category, employment_type, start_date, end_date, archived_at, performance_status, pay_type, pay_rate, license_pc, license_lh, license_ips, license_states, email_personal, email_sf, phone_personal, phone_extension, notes, termination_reason, user_id, photo_storage_path, address_line1, address_line2, city, state, zip_code")
+        .select("id, first_name, last_name, role, role_level, role_category, category, employment_type, start_date, end_date, archived_at, performance_status, pay_type, pay_rate, license_pc, license_lh, license_ips, authorized, license_states, email_personal, email_sf, phone_personal, phone_extension, notes, termination_reason, user_id, photo_storage_path, address_line1, address_line2, city, state, zip_code")
         .eq("agency_id", AGENCY_ID)
         .eq("is_active", false)
         .not("archived_at", "is", null)
@@ -1386,6 +1386,7 @@ const StaffDirectory = ({ staff }) => {
     license_pc:       false,
     license_lh:       false,
     license_ips:      false,
+    authorized:       false,
   });
   const [additions, setAdditions] = useState([]);
   // Set when this panel was opened from the hiring pipeline (?newhire=<id>),
@@ -1468,6 +1469,7 @@ const StaffDirectory = ({ staff }) => {
       license_pc:      false,
       license_lh:      false,
       license_ips:     false,
+      authorized:      false,
     });
   };
   const closeAdd = () => { setAddOpen(false); setAddError(""); setHiredFrom(null); };
@@ -1538,6 +1540,7 @@ const StaffDirectory = ({ staff }) => {
         license_pc:      addForm.license_pc  === true,
         license_lh:      addForm.license_lh  === true,
         license_ips:     addForm.license_ips === true,
+        authorized:      addForm.authorized === true,
         license_states:  [],
         created_at:      nowIso,
         updated_at:      nowIso,
@@ -1609,7 +1612,7 @@ const StaffDirectory = ({ staff }) => {
         role:"", role_category:"", role_level:"",
         category:"agency", employment_type:"w2",
         start_date: new Date().toISOString().slice(0,10),
-        license_pc:false, license_lh:false, license_ips:false,
+        license_pc:false, license_lh:false, license_ips:false, authorized:false,
       });
     } catch (e) {
       setAddError(e?.message || "Unexpected error while adding member.");
@@ -1647,6 +1650,7 @@ const StaffDirectory = ({ staff }) => {
       license_pc: member.license_pc === true,
       license_lh: member.license_lh === true,
       license_ips: member.license_ips === true,
+      authorized: member.authorized === true,
       license_states: Array.isArray(member.license_states) ? member.license_states.join(", ") : "",
       license_number: member.license_number || "",
       languages: languagesToRows(member.languages),
@@ -1689,6 +1693,7 @@ const StaffDirectory = ({ staff }) => {
       license_pc: form.license_pc === true,
       license_lh: form.license_lh === true,
       license_ips: form.license_ips === true,
+      authorized: form.authorized === true,
       license_states: form.license_states.trim()
         ? form.license_states.split(",").map(s => s.trim()).filter(Boolean)
         : [],
@@ -1896,6 +1901,10 @@ const StaffDirectory = ({ staff }) => {
               </label>
               <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:T.slate800, cursor:"pointer" }}>
                 <input type="checkbox" checked={addForm.license_ips} onChange={e => setAddForm(f => ({ ...f, license_ips: e.target.checked }))} /> IPS
+              </label>
+              {/* Peter 2026-10-05: authorized for every license checked off here */}
+              <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:T.slate800, cursor:"pointer" }} title="Authorized for every license checked off">
+                <input type="checkbox" checked={addForm.authorized === true} onChange={e => setAddForm(f => ({ ...f, authorized: e.target.checked }))} /> Authorized
               </label>
             </div>
           </div>
@@ -2177,6 +2186,7 @@ const StaffDirectory = ({ staff }) => {
                       {member.license_pc && <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.greenLt, color:"#065F46" }}>P&amp;C</span>}
                       {member.license_lh && <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:"#DBEAFE", color:"#1E40AF" }}>L&amp;H</span>}
                       {member.license_ips && <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:"#EDE9FE", color:"#5B21B6" }}>IPS</span>}
+                      {member.authorized && <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.slate100, color:T.slate700 }}>Authorized</span>}
                     </div>
                   ) : (
                     <span style={{ fontSize:10, fontWeight:600, padding:"2px 8px", borderRadius:20, background:T.slate100, color:T.slate500 }}>Unlicensed</span>
@@ -2717,6 +2727,10 @@ const StaffDirectory = ({ staff }) => {
                     <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                       <input id={`lips-${member.id}`} type="checkbox" checked={form.license_ips===true} onChange={e=>setForm({...form, license_ips:e.target.checked})} style={{ width:16, height:16 }} />
                       <label htmlFor={`lips-${member.id}`} style={{ fontSize:12, color:T.slate700, cursor:"pointer" }}>IPS license</label>
+                    </div>
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <input id={`lauth-${member.id}`} type="checkbox" checked={form.authorized===true} onChange={e=>setForm({...form, authorized:e.target.checked})} style={{ width:16, height:16 }} />
+                      <label htmlFor={`lauth-${member.id}`} style={{ fontSize:12, color:T.slate700, cursor:"pointer" }}>Authorized for every license checked</label>
                     </div>
                   </div>
                 </div>
