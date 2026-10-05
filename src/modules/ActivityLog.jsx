@@ -447,6 +447,12 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [date, setDate] = useState(today);
   const [dateOpen, setDateOpen] = useState(false);
   const [logFor, setLogFor] = useState(null);
+  // Peter 2026-10-05: licensed team don't log a Pivot. Quoting an existing customer writes it
+  // (rp_derive_quote_pivot). The Pivot activity is offered to unlicensed team only.
+  const [meId, setMeId] = useState(null);
+  useEffect(() => { supabase.rpc("current_team_member_id").then(r => setMeId(r?.data || null)); }, []);
+  const loggerRow = (roster || []).find(t => t.id === (logFor || meId));
+  const licensed = !!(loggerRow && (loggerRow.license_pc || loggerRow.license_lh));
   const [onFile, setOnFile] = useState([]);        // this customer's active sold policies (rp_sold_on_file)
   const [relationship, setRelationship] = useState(pf.relationship || "");
   const [source, setSource] = useState(pf.source || "");
@@ -467,8 +473,9 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [last, setLast] = useState(null);            // {result, first, initial, date} of the entry just logged, for Undo / Log another
 
   // every Retention Points item, least expensive first
-  const items = useMemo(() => (values || []).filter(v => v.category === "logged")
-    .slice().sort((a, b) => (Number(a.points) - Number(b.points)) || String(a.label).localeCompare(String(b.label))), [values]);
+  const items = useMemo(() => (values || []).filter(v => v.category === "logged" && !(licensed && v.activity_key === "pivot"))
+    .slice().sort((a, b) => (Number(a.points) - Number(b.points)) || String(a.label).localeCompare(String(b.label))), [values, licensed]);
+  const [infoOpen, setInfoOpen] = useState(false);
   const byKey = useMemo(() => Object.fromEntries((values || []).map(v => [v.activity_key, v])), [values]);
   const [nextPts, setNextPts] = useState({});   // activity_key -> what the next one pays this week
   useEffect(() => {
@@ -489,6 +496,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   // the keys that record owns to the matching rp_edit_* function.
   const [editRec, setEditRec] = useState(null);
   const isEdit = !!editRec;
+  // A pivot a Live call recorded drops out for licensed team: their quote writes it.
+  useEffect(() => { if (licensed && !isEdit) setActivities(list => list.filter(a => a.key !== "pivot" || a.orig)); }, [licensed, isEdit]);
   useEffect(() => {
     if (!editing?.id) { setEditRec(null); return undefined; }
     let alive = true;
@@ -753,21 +762,31 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   // (Home, Renters, Term Life...) sets the line and type together, and the customer's policies
   // on file sit above it as one-tap choices.
   const policyFields = (a, withOnFile = true) => {
+    // Peter 2026-10-05: when the household has policies in our logs, the review picks one of
+    // those. The full list only opens on "Not on this list".
     const mine = withOnFile ? onFile.filter(r => !r.already_canceled) : [];
+    const picked = !lineMissing(a);
+    const done = picked
+      ? <button type="button" style={{ ...btnGhost, marginBottom: 6 }} onClick={() => editActivity(a.id, { done: true })}>Done</button>
+      : null;
+    if (mine.length > 0 && !a.other) return (
+      <>
+        <div style={{ ...chipRow, flex: "1 1 100%" }}>
+          {mine.map(r => (
+            <span key={r.sale_product_id} style={chip(a.pick === r.sale_product_id)}
+                  onClick={() => editActivity(a.id, { line: r.line_of_business, type: r.product_type || "", pick: r.sale_product_id })}>
+              {typeLabel(types, r.line_of_business, r.product_type) || PRODUCT_LABEL[r.line_of_business]} · ${fmtPts(r.premium)}
+            </span>
+          ))}
+          <span style={chip(false)} onClick={() => editActivity(a.id, { other: true, line: "", type: "", pick: null })}>Not on this list</span>
+        </div>
+        {done}
+      </>
+    );
     return (
       <>
-        {mine.length > 0 && (
-          <div style={{ ...chipRow, flex: "1 1 100%" }}>
-            {mine.map(r => (
-              <span key={r.sale_product_id} style={chip(a.pick === r.sale_product_id)}
-                    onClick={() => editActivity(a.id, { line: r.line_of_business, type: r.product_type || "", pick: r.sale_product_id })}>
-                {typeLabel(types, r.line_of_business, r.product_type) || PRODUCT_LABEL[r.line_of_business]} · ${fmtPts(r.premium)}
-              </span>
-            ))}
-          </div>
-        )}
         <div style={field(200)}>
-          <label style={labelStyle}>{!withOnFile ? "Product" : mine.length > 0 ? "Or pick the policy" : "Policy"}</label>
+          <label style={labelStyle}>{!withOnFile ? "Product" : "Policy"}</label>
           <select style={inputBase} value={a.line ? `${a.line}|${a.type || ""}` : ""}
                   onChange={e => { const [line, type] = e.target.value.split("|"); editActivity(a.id, { line: line || "", type: type || "", pick: null }); }}>
             <option value="">Pick one</option>
@@ -776,6 +795,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               : <option key={pr.key} value={`${pr.key}|`}>{pr.label}</option>)}
           </select>
         </div>
+        {done}
       </>
     );
   };
@@ -1114,12 +1134,23 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               {items.map(v => <option key={v.activity_key} value={v.activity_key}>{itemLabel(v, isEdit ? null : nextPts)}</option>)}
             </select>
             {activities.map(a => byKey[a.key] && (
-              <span key={a.id} style={pill}>
-                {itemLabel(byKey[a.key], isEdit ? null : nextPts)}
-                <button type="button" style={pillX} onClick={() => dropActivity(a.id)} aria-label="remove">×</button>
+              <span key={a.id} style={{ ...pill, cursor: a.done ? "pointer" : "default" }} onClick={() => a.done && editActivity(a.id, { done: false })}>
+                {itemLabel(byKey[a.key], isEdit ? null : nextPts)}{a.done && a.line ? ` · ${typeLabel(types, a.line, a.type) || PRODUCT_LABEL[a.line]}` : ""}
+                <button type="button" style={pillX} onClick={e => { e.stopPropagation(); dropActivity(a.id); }} aria-label="remove">×</button>
               </span>
             ))}
+            <button type="button" onClick={() => setInfoOpen(o => !o)} aria-label="What each activity means" title="What each activity means"
+                    style={{ width: 26, height: 26, borderRadius: 999, border: `1px solid ${infoOpen ? T.blue : T.slate300}`, background: infoOpen ? T.blueLt : T.white,
+                             color: infoOpen ? T.blue : T.slate500, fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", flex: "0 0 auto" }}>i</button>
           </div>
+          {infoOpen && (
+            <div style={{ marginTop: 10, padding: 12, background: T.slate50, borderRadius: 8, fontSize: 13, color: T.slate700, lineHeight: 1.5 }}>
+              <div style={{ fontWeight: 700, color: T.slate800, marginBottom: 6 }}>Most calls are simple phone calls. Answering the phone, taking a payment, sending ID cards and answering basic questions count as calls answered on their own, so there is nothing to log. Log an activity only when the call did one of these:</div>
+              {items.map(v => (
+                <div key={v.activity_key} style={{ marginTop: 6 }}><strong>{v.label}:</strong> {v.description || ""}</div>
+              ))}
+            </div>
+          )}
           {activities.filter(a => a.key === "autopay_enrollment").map(a => (
             <div key={a.id} style={{ ...wrapRow, marginTop: 10, padding: 10, background: T.slate50, borderRadius: 8 }}>
               <div style={{ fontWeight: 700, color: T.slate800, flex: "0 0 auto", paddingBottom: 10 }}>Autopay on</div>
@@ -1142,7 +1173,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </div>
             </div>
           ))}
-          {activities.filter(a => LINE_REQUIRED[a.key]).map(a => (
+          {activities.filter(a => LINE_REQUIRED[a.key] && !a.done).map(a => (
             <div key={a.id} style={{ ...wrapRow, marginTop: 10, padding: 10, background: T.slate50, borderRadius: 8 }}>
               <div style={{ fontWeight: 700, color: T.slate800, flex: "0 0 auto", paddingBottom: 10 }}>{a.key === "pivot" ? "Pivoted to" : "Policy reviewed"}</div>
               {policyFields(a, a.key === "policy_review")}
@@ -5603,7 +5634,7 @@ export default function ActivityLog({ userRole, userId }) {
         supabase.from("retention_point_values").select("activity_key, label, points, category, requires_note, requires_ecrm, requires_platform, sort_order, description").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("sales_marketing_sources").select("source_key, label, sort_order").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
         supabase.from("product_types").select("line_of_business, type_key, label, sort_order, one_per_household").eq("agency_id", AGENCY_ID).eq("is_active", true).order("sort_order"),
-        supabase.from("team_directory").select("id, first_name, role_category, is_admin_backoffice, is_test_user, archived_at, category, is_active").eq("agency_id", AGENCY_ID).order("first_name"),
+        supabase.from("team_directory").select("id, first_name, role_category, is_admin_backoffice, is_test_user, archived_at, category, is_active, license_pc, license_lh").eq("agency_id", AGENCY_ID).order("first_name"),
         supabase.rpc("current_team_member_id"),
       ]);
       if (!alive) return;
