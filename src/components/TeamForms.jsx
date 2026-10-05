@@ -202,6 +202,17 @@ function CombinedForm({ data, setData, secure, setSecure, needs = {} }) {
         <Area value={data.why_statement} onChange={set("why_statement")} rows={5} />
       </Section>
 
+      <Section title="Your income" note="For the year.">
+        <Grid min={220}>
+          <Field label="What do you need to make?">
+            <Text value={data.need_to_make} onChange={set("need_to_make")} placeholder="$" />
+          </Field>
+          <Field label="What do you want to make?">
+            <Text value={data.want_to_make} onChange={set("want_to_make")} placeholder="$" />
+          </Field>
+        </Grid>
+      </Section>
+
       <Section title="What motivates you" note="Rank these from 1 down to 4.">
         <Grid min={200}>
           {RANKABLE.map(({ key: r, label }) => (
