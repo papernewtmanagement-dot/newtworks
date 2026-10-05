@@ -115,6 +115,8 @@ const LINE_REQUIRED = { policy_review: "type", pivot: "line" };
 const EXISTING_ONLY = new Set(["pivot", "policy_review", "service_task", "service_task_company",
   "service_task_coi", "cancelation_saved"]);
 const TABS = ["live", "log", "checklist", "hours", "deposits", "week", "issued", "development", "changes", "spotcheck", "backfill", "history", "billing"];
+// Earnings tab hidden for now (Peter 2026-10-05). Flip to true to bring it back.
+const EARNINGS_TAB_ON = false;
 // The ten scorecard parts live in src/lib/fitParts.js (CARD_PARTS), shared with the Live tab.
 const GENDERS = [["male", "Male"], ["female", "Female"]];
 
@@ -5478,7 +5480,7 @@ export default function ActivityLog({ userRole, userId }) {
   // The Live tab is Peter's alone until he says it is finished (2026-10-04): for
   // anyone else it is not in the row, and a link to ?tab=live opens Log.
   const liveOn = canSeeLive(userRole);
-  const [tab, setTab, tabHref] = useTabParam("tab", "log", [...TABS.filter(t => liveOn || t !== "live"), "earnings", "history"]);
+  const [tab, setTab, tabHref] = useTabParam("tab", "log", [...TABS.filter(t => liveOn || t !== "live"), ...(EARNINGS_TAB_ON ? ["earnings"] : []), "history"]);
   const [acct, setAcct] = useTabParam("acct", "");   // the customer account popup, open from any tab
   // Changes, Spot-check and Backfill live under History now (Peter 2026-09-25).
   // A link to one of the old tabs opens History on that sub-tab instead.
@@ -5565,7 +5567,7 @@ export default function ActivityLog({ userRole, userId }) {
     ...(liveOn ? [{ id: "live", label: "Live" }] : []),
     { id: "log", label: "Log" },
     { id: "week", label: "Score" },
-    { id: "earnings", label: "Earnings" },  // everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
+    ...(EARNINGS_TAB_ON ? [{ id: "earnings", label: "Earnings" }] : []),  // hidden for now (Peter 2026-10-05); was everyone (Peter 2026-09-04); Retention + Life Specialist curves inside are admin only
     { id: "issued", label: "Pending" },
     { id: "history", label: "History" },  // Changes, Spot-check and Backfill are its sub-tabs (Peter 2026-09-25)
     { type: "divider", id: "_dv_rest" },
@@ -5645,7 +5647,7 @@ export default function ActivityLog({ userRole, userId }) {
       {tab === "hours" && <TimeHub embedded userRole={userRole} />}
       {tab === "deposits" && <PFA userRole={userRole} embedded />}
       {tab === "development" && <Development userRole={userRole} userId={userId} embedded />}
-      {tab === "earnings" && <EarningPotentialTab isAdmin={isAdmin} />}
+      {tab === "earnings" && EARNINGS_TAB_ON && <EarningPotentialTab isAdmin={isAdmin} />}
       {tab === "history" && <HistoryGroup values={values} sources={sources} types={types} isOwner={isOwner} isAdmin={isAdmin}
         myTeamId={myTeamId} roster={roster} nameOf={nameOf} refreshKey={refreshKey} onChanged={bump} />}
       {tab === "billing" && <DeweyOwe />}
