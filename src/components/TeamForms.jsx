@@ -812,7 +812,7 @@ function LoginPacketForm({ teamId, preview, isAdmin = false }) {
 
         <PacketText row={rows[PACKET_TOP]} onSaved={saved} isAdmin={isAdmin} v={v} />
 
-        <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.slate200}`, display: "grid", gap: 12 }}>
+        <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.slate200}`, display: "flex", flexWrap: "wrap", gap: "12px 28px", alignItems: "flex-start" }}>
           <div>
             <div style={label}>How are you connecting?</div>
             <PacketChoice value={via} onChange={setVia}
