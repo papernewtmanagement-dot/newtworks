@@ -1161,7 +1161,7 @@ export default function OnboardingTemplateEditor({ phaseMeta, ownerName, team = 
         />
       )}
 
-      <InstructionsModal item={openInstr} onClose={() => setOpenInstr(null)} />
+      <InstructionsModal item={openInstr} onClose={() => setOpenInstr(null)} canEdit={canEdit} onSaved={onReload} />
       {orientationRow && (
         <OrientationPopup
           instruction={orientationRow}

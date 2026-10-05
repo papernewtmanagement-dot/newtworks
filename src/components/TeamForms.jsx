@@ -558,23 +558,6 @@ function packetDraft(row) {
   };
 }
 
-function PacketValue({ value, mono = false }) {
-  if (!value) return <span style={{ color: T.slate400 }}>—</span>;
-  return (
-    <strong style={{ color: T.slate900, fontFamily: mono ? MONO : "inherit", wordBreak: "break-all" }}>
-      {value}
-    </strong>
-  );
-}
-
-function PacketLink({ href }) {
-  return (
-    <a href={href} target="_blank" rel="noopener noreferrer" style={{
-      color: T.blue, fontWeight: 700, textDecoration: "none", wordBreak: "break-all",
-    }}>{href}</a>
-  );
-}
-
 // The person's packet details from their team record.
 function usePacketRecord(teamId, preview) {
   const [rec, setRec] = useState(null);
@@ -679,22 +662,51 @@ function LoginPacketInfoForm({ teamId, preview }) {
 }
 
 // The new hire's side: the packet itself, read-only.
+// The whole sheet is one text in onboarding_instructions ("Login packet text"),
+// so an admin can edit every word of it right here. Blanks like {{alias}} are
+// filled from the hire's team record after the text is turned into HTML, so a
+// password with odd characters can never upset the formatting.
+const PACKET_LABEL = "Login packet text";
+const PACKET_BLANKS = "{{name}} {{alias}} {{registration}} {{password}} {{pass}} {{from}} {{until}}";
+
+function escHtml(x) {
+  return String(x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function fillPacketBlanks(html, v) {
+  const val = (x, mono = false) => x
+    ? `<strong style="color:${T.slate900};word-break:break-all${mono ? `;font-family:${MONO}` : ""}">${escHtml(x)}</strong>`
+    : `<span style="color:${T.slate400}">—</span>`;
+  const name = v ? `${v.first_name || ""} ${v.last_name || ""}`.trim() : "";
+  const map = {
+    name: val(name),
+    alias: val(v?.sf_alias),
+    registration: val(v?.sf_registration_number),
+    password: val(v?.sf_initial_password, true),
+    pass: val(v?.sf_mfa_temp_pass, true),
+    from: val(packetTime(v?.sf_mfa_temp_pass_from)),
+    until: val(packetTime(v?.sf_mfa_temp_pass_until)),
+  };
+  return html.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in map ? map[k] : m));
+}
+
 function LoginPacketForm({ teamId, preview, isAdmin = false }) {
   const { rec, loading, err } = usePacketRecord(teamId, preview);
-  // The packet's fixed wording lives in onboarding_instructions so an admin can
-  // edit it right here. If the row is ever missing, the built-in wording shows.
-  const [ins, setIns] = useState(null);
+  const [ins, setIns] = useState(null);       // the sheet's text row
+  const [insLoading, setInsLoading] = useState(true);
   const [draft, setDraft] = useState(null);   // text being edited, null when not editing
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState("");
   useEffect(() => {
     let alive = true;
-    if (!supabase) return () => { alive = false; };
+    if (!supabase) { setInsLoading(false); return () => { alive = false; }; }
     (async () => {
       const { data: row } = await supabase.from("onboarding_instructions")
         .select("id, body_md").eq("agency_id", AGENCY_ID)
-        .eq("substep_label", "Login packet text").maybeSingle();
-      if (alive) setIns(row || null);
+        .eq("substep_label", PACKET_LABEL).maybeSingle();
+      if (!alive) return;
+      setIns(row || null);
+      setInsLoading(false);
     })();
     return () => { alive = false; };
   }, []);
@@ -711,9 +723,7 @@ function LoginPacketForm({ teamId, preview, isAdmin = false }) {
   };
 
   const v = preview ? null : rec;
-  const name = v ? `${v.first_name || ""} ${v.last_name || ""}`.trim() : "";
-  const sub = { paddingLeft: 22, margin: "6px 0 0" };
-  const item = { marginTop: 4 };
+  const html = ins?.body_md ? fillPacketBlanks(mdToHtml(ins.body_md), v) : "";
 
   return (
     <div>
@@ -724,7 +734,7 @@ function LoginPacketForm({ teamId, preview, isAdmin = false }) {
         borderRadius: 10, background: T.white, fontSize: 13.5, lineHeight: 1.65,
         color: T.slate800, boxSizing: "border-box", minWidth: 0,
       }}>
-        {loading && <div style={{ color: T.slate500, marginBottom: 10 }}>Loading...</div>}
+        {(loading || insLoading) && <div style={{ color: T.slate500, marginBottom: 10 }}>Loading...</div>}
         {v?.sf_no_login_packet && (
           <div style={{
             marginBottom: 16, padding: "10px 12px", borderRadius: 8,
@@ -734,114 +744,27 @@ function LoginPacketForm({ teamId, preview, isAdmin = false }) {
             joins the call to confirm you work here.
           </div>
         )}
-        <div style={{ fontWeight: 700, color: T.slate900 }}>New Agent/Agent Team Member Onboarding Packet</div>
-        <div style={{ fontWeight: 700, color: T.slate900 }}>CONFIDENTIAL</div>
-        <div>- Distribution on a Business Need to Know Basis Only -</div>
-
-        <div style={{ marginTop: 16 }}>
-          <div style={{ fontWeight: 700, color: T.slate900 }}>
-            This document should only be given to {name || <span style={{ color: T.slate400 }}>—</span>}
+        {isAdmin && ins && draft === null && (
+          <div style={{ textAlign: "right", marginBottom: 8 }}>
+            <Button tone="quiet" onClick={() => setDraft(ins.body_md || "")}>Edit</Button>
           </div>
-          <div>Your alias (User ID) is: <PacketValue value={v?.sf_alias} /></div>
-          <div>Your Registration Number is: <PacketValue value={v?.sf_registration_number} /></div>
-          <div>Your initial computer/workstation password: <PacketValue value={v?.sf_initial_password} mono /></div>
+        )}
+        {draft !== null ? (
           <div>
-            Your initial MFA Temporary Access Pass: <PacketValue value={v?.sf_mfa_temp_pass} mono />
-            {" "}Good from: <PacketValue value={packetTime(v?.sf_mfa_temp_pass_from)} />
-            {" "}Until: <PacketValue value={packetTime(v?.sf_mfa_temp_pass_until)} />
+            <div style={{ fontSize: 12, color: T.slate500, marginBottom: 6, lineHeight: 1.5 }}>
+              These blanks fill in from each hire's record: {PACKET_BLANKS}
+            </div>
+            <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={24}
+              style={{ ...inputBase, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }} />
+            {saveErr && <div style={{ marginTop: 8, fontSize: 12.5, color: T.red }}>{saveErr}</div>}
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Button onClick={savePacketText} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+              <Button tone="quiet" onClick={() => { setDraft(null); setSaveErr(""); }} disabled={saving}>Cancel</Button>
+            </div>
           </div>
-        </div>
-
-        {ins?.body_md ? (
-          <div style={{ marginTop: 16 }}>
-            {isAdmin && draft === null && (
-              <div style={{ textAlign: "right", marginBottom: 8 }}>
-                <Button tone="quiet" onClick={() => setDraft(ins.body_md)}>Edit</Button>
-              </div>
-            )}
-            {draft !== null ? (
-              <div>
-                <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={22}
-                  style={{ ...inputBase, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }} />
-                {saveErr && <div style={{ marginTop: 8, fontSize: 12.5, color: T.red }}>{saveErr}</div>}
-                <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Button onClick={savePacketText} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
-                  <Button tone="quiet" onClick={() => { setDraft(null); setSaveErr(""); }} disabled={saving}>Cancel</Button>
-                </div>
-              </div>
-            ) : (
-              <div dangerouslySetInnerHTML={{ __html: mdToHtml(ins.body_md) }} />
-            )}
-          </div>
-        ) : (<>
-        <div style={{ marginTop: 16, fontWeight: 700, color: T.slate900 }}>
-          Compliance with State Farm’s Enterprise Information Security Policy (EISP) is mandatory for
-          all Agents and Team Members. COMPLETE ALL STEPS ON THIS PAGE. Call the New Team Member
-          Support Hotline: 1-833-572-0397 for assistance
-        </div>
-
-        <p style={{ margin: "16px 0 0" }}>
-          If you have a new team member who will be working in office on a previously used or shared
-          workstation, please visit: <PacketLink href="http://s.f/yubikeyinoffice" />
-        </p>
-        <p style={{ margin: "12px 0 0" }}>
-          If new user is logging into a new workstation remotely, follow the instructions found
-          at <PacketLink href="http://s.f/remoteuserabs" />
-        </p>
-
-        <ol style={{ paddingLeft: 22, margin: "16px 0 0" }}>
-          <li style={item}>
-            <strong style={{ color: T.slate900 }}>Logon instructions for in-office users with a new workstation:</strong>
-            <ol type="a" style={sub}>
-              <li style={item}>At the workstation logon screen enter the alias and password provided above</li>
-              <li style={item}>
-                When prompted to change your password, create a new password following these standards:
-                <ul style={sub}>
-                  <li style={item}>The password should be a minimum of 16 characters</li>
-                  <li style={item}>
-                    The password must contain at least one of each of the following: a capital letter,
-                    a lower case letter, a numeric character, and a special character (no blank spaces allowed)
-                  </li>
-                  <li style={item}>
-                    <strong>Do not</strong> use a name, a dictionary word, or your State Farm alias as part
-                    of your password.
-                  </li>
-                </ul>
-              </li>
-            </ol>
-          </li>
-          <li style={{ marginTop: 14 }}>
-            <strong style={{ color: T.slate900 }}>Setup of ABS Password:</strong>
-            <ol type="a" style={sub}>
-              <li style={item}>
-                Once logged in, open a web browser and enter the following URL: <PacketLink href="https://s.f/spc" />
-              </li>
-              <li style={item}>Sign in and select <strong>Change ABS/Dial-in password</strong> option</li>
-              <li style={item}>
-                Create a new password in the <strong>Enter new password</strong> field then enter again to confirm
-              </li>
-              <li style={item}>A Success confirmation pop up should be displayed</li>
-            </ol>
-          </li>
-          <li style={{ marginTop: 14 }}>
-            <strong style={{ color: T.slate900 }}>Additional items:</strong>
-            <ol type="a" style={sub}>
-              <li style={item}>
-                Open Web Browser and navigate to: <PacketLink href="https://s.f/agencysecuritycheckpoint" />
-                <ul style={sub}>
-                  <li style={item}>
-                    Select <strong>New Agent/Agent team member Onboarding Packet</strong> on the left side of the screen
-                  </li>
-                  <li style={item}><strong>Complete all tasks in the Onboarding Packet to be compliant</strong></li>
-                </ul>
-              </li>
-              <li style={item}>
-                Visit <PacketLink href="https://s.f/yubikeyagency" /> for further assistance with YubiKeys and MFA technology
-              </li>
-            </ol>
-          </li>
-        </ol>
-        </>)}
+        ) : (
+          <div dangerouslySetInnerHTML={{ __html: html }} />
+        )}
       </div>
     </div>
   );
