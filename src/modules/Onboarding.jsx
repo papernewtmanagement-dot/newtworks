@@ -123,7 +123,7 @@ function useOnboardingData(userId, isAdmin) {
       if (plans.length) {
         const planIds = plans.map(p => p.id);
         const stepsRes = await supabase.from("team_onboarding_steps")
-          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, substep_answers, owner_kind, assigned_to, task_id, track, track_order, blocked_by, auto_source, auto_summary, unlock_rule, unlocks_on, widget, assign_role_category, week_no, full_width")
+          .select("id, plan_id, template_key, title, description, phase, category, source_manual_id, source_anchor, sort_order, is_required, completed_at, completed_by, notes, substeps, substeps_done, substep_answers, owner_kind, assigned_to, task_id, track, track_order, blocked_by, auto_source, auto_summary, unlock_rule, unlocks_on, widget, assign_role_category, week_no, full_width, due_on")
           .in("plan_id", planIds)
           .order("phase", { ascending: true })
           .order("sort_order", { ascending: true });
@@ -196,15 +196,22 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
   const p = progress(steps);
 
   // One major card per phase, and one per week for a phase that spans weeks.
+  // Anything not done by its due date leaves its own card for the Overdue card.
+  const overdue = useMemo(() => steps
+    .filter(s => !s.completed_at && s.due_on && s.due_on < todayCT)
+    .sort((a, b) => a.due_on.localeCompare(b.due_on) || a.phase - b.phase || (a.sort_order ?? 0) - (b.sort_order ?? 0)),
+  [steps, todayCT]);
+  const overdueIds = useMemo(() => new Set(overdue.map(s => s.id)), [overdue]);
+
   const byPhase = useMemo(() => {
     const map = new Map();
-    steps.forEach(s => {
+    steps.filter(s => !overdueIds.has(s.id)).forEach(s => {
       const key = `${s.phase}|${s.week_no ?? ""}`;
       if (!map.has(key)) map.set(key, { key, phase: s.phase, week: s.week_no ?? null, steps: [] });
       map.get(key).steps.push(s);
     });
     return [...map.values()].sort((a, b) => a.phase - b.phase || (a.week ?? 0) - (b.week ?? 0));
-  }, [steps]);
+  }, [steps, overdueIds]);
 
   // template_key -> title, for every step in this plan that is not done yet.
   // Anything listing one of these as a blocker stays locked.
@@ -243,135 +250,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
 
   const statusCol = STATUS_COLORS[plan.status] || STATUS_COLORS.active;
 
-  return (
-    <div>
-      {/* Header */}
-      {showBack && <div style={{ marginBottom: 16 }}>
-        <a
-          href="/development"
-          onClick={(e) => {
-            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-            e.preventDefault();
-            onBack();
-          }}
-          style={{ fontSize: 12, color: T.slate500, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}
-        >← All schedules</a>
-      </div>}
-
-      <Card style={{ marginBottom: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 240 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-              <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
-                {subjectName}
-              </div>
-              <Pill fg={statusCol.fg} bg={statusCol.bg}>{statusCol.label}</Pill>
-              {isCandidate && <Pill fg={T.purple} bg={T.purpleLt}>Not on the team yet</Pill>}
-            </div>
-            <div style={{ fontSize: 12, color: T.slate500 }}>
-              {plan.role_snapshot || "—"}
-              {plan.role_category_snapshot ? ` · ${plan.role_category_snapshot}` : ""}
-              {plan.role_level_snapshot ? ` · ${plan.role_level_snapshot}` : ""}
-            </div>
-            <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>
-              Started {fmtDate(plan.start_date)} · Day {daysBetween(plan.start_date)}
-            </div>
-            {plan.notes ? (
-              <div style={{ fontSize: 12, color: T.slate600, marginTop: 8, padding: "8px 10px", background: T.slate50, borderRadius: 6 }}>
-                {plan.notes}
-              </div>
-            ) : null}
-          </div>
-
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 28, fontWeight: 700, color: p.pct === 100 ? T.green : T.amber, letterSpacing: "-0.02em" }}>{p.pct}%</div>
-            <div style={{ fontSize: 10, color: T.slate500 }}>{p.done}/{p.total} steps</div>
-            <div style={{ fontSize: 10, color: T.slate400, marginTop: 2 }}>{p.req_done}/{p.req_total} required</div>
-          </div>
-        </div>
-
-        {/* Progress bar */}
-        <div style={{ marginTop: 14, height: 6, background: T.slate100, borderRadius: 3, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${p.pct}%`, background: p.pct === 100 ? T.green : T.blue, transition: "width 0.4s" }} />
-        </div>
-
-        {/* Admin actions */}
-        {isAdmin ? (
-          <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {plan.status === "active" && (
-              <Button variant="secondary" onClick={() => onChangeStatus(plan.id, "paused")}>Pause</Button>
-            )}
-            {plan.status === "paused" && (
-              <Button variant="secondary" onClick={() => onChangeStatus(plan.id, "active")}>Resume</Button>
-            )}
-            {plan.status !== "completed" && p.req_pct === 100 && (
-              <Button variant="primary" onClick={() => onChangeStatus(plan.id, "completed")}>Mark completed</Button>
-            )}
-            {plan.status === "completed" && (
-              <Button variant="secondary" onClick={() => onChangeStatus(plan.id, "archived")}>Archive</Button>
-            )}
-            <Button variant="danger" onClick={() => onDeletePlan(plan.id)} style={{ marginLeft: "auto" }}>Delete plan</Button>
-          </div>
-        ) : null}
-      </Card>
-
-      <InstructionsModal item={openInstr} onClose={() => setOpenInstr(null)} canEdit={isAdmin} onSaved={onReload} />
-      {replyFor && (
-        <ReplyPopup
-          label={replyFor.label}
-          onClose={() => setReplyFor(null)}
-          onSave={async (text) => {
-            const e = await onToggleSubstep(replyFor.step, replyFor.label, text);
-            if (!e) setReplyFor(null);
-            return e;
-          }}
-        />
-      )}
-      {orientation && (
-        <OrientationPopup
-          instruction={orientation}
-          userId={userId}
-          onClose={() => { setOrientation(null); if (onReload) onReload(); }}
-        />
-      )}
-
-      {/* Phases */}
-      {byPhase.map(({ key: cardKey, phase, week, steps: phaseSteps }) => {
-        const meta = phaseMeta(phase);
-        const phaseP = progress(phaseSteps);
-        const cardName = meta.weeksLong > 1 && week
-          ? `Week ${week}${meta.weekTitles[String(week)] ? `: ${meta.weekTitles[String(week)]}` : ""}`
-          : meta.name;
-        const anyOpen = phaseSteps.some(s => { const l = stepLock(s); return !l.done && !l.locked; });
-        const isOpen = cardOpen[cardKey] ?? anyOpen;
-        const nextOpens = phaseSteps
-          .filter(s => !s.completed_at && s.unlocks_on && s.unlocks_on > todayCT)
-          .map(s => s.unlocks_on).sort()[0];
-
-        return (
-          <Card key={cardKey} style={{ marginBottom: 12 }}>
-            <div
-              role="button" tabIndex={0}
-              onClick={() => setCardOpen(o => ({ ...o, [cardKey]: !isOpen }))}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setCardOpen(o => ({ ...o, [cardKey]: !isOpen })); } }}
-              style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: isOpen ? 12 : 0, flexWrap: "wrap", cursor: "pointer" }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, color: T.slate400, width: 10 }}>{isOpen ? "▾" : "▸"}</span>
-                <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{cardName}</div>
-                {meta.stage && STAGE_LABELS[meta.stage] && (
-                  <Pill fg={STAGE_LABELS[meta.stage].fg} bg={STAGE_LABELS[meta.stage].bg}>
-                    {STAGE_LABELS[meta.stage].label}
-                  </Pill>
-                )}
-                {isOpen && meta.blurb && <div style={{ fontSize: 11, color: T.slate500, flexBasis: "100%" }}>{meta.blurb}</div>}
-              </div>
-              <div style={{ fontSize: 11, color: T.slate500 }}>
-                {!isOpen && !anyOpen && nextOpens ? `Opens ${fmtDate(nextOpens)} · ` : ""}{phaseP.done}/{phaseP.total}
-              </div>
-            </div>
-
-            {isOpen && (() => {
+  // One subcard, wherever it sits: its week card or the Overdue card.
             const renderStep = (step) => {
                 const cc = CATEGORY_COLORS[step.category] || { fg: T.slate600, bg: T.slate100, label: step.category || "Step" };
                 const isExpanded = expandedStep === step.id;
@@ -721,6 +600,163 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                 );
             };
 
+  return (
+    <div>
+      {/* Header */}
+      {showBack && <div style={{ marginBottom: 16 }}>
+        <a
+          href="/development"
+          onClick={(e) => {
+            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            onBack();
+          }}
+          style={{ fontSize: 12, color: T.slate500, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}
+        >← All schedules</a>
+      </div>}
+
+      <Card style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
+                {subjectName}
+              </div>
+              <Pill fg={statusCol.fg} bg={statusCol.bg}>{statusCol.label}</Pill>
+              {isCandidate && <Pill fg={T.purple} bg={T.purpleLt}>Not on the team yet</Pill>}
+            </div>
+            <div style={{ fontSize: 12, color: T.slate500 }}>
+              {plan.role_snapshot || "—"}
+              {plan.role_category_snapshot ? ` · ${plan.role_category_snapshot}` : ""}
+              {plan.role_level_snapshot ? ` · ${plan.role_level_snapshot}` : ""}
+            </div>
+            <div style={{ fontSize: 12, color: T.slate500, marginTop: 2 }}>
+              Started {fmtDate(plan.start_date)} · Day {daysBetween(plan.start_date)}
+            </div>
+            {plan.notes ? (
+              <div style={{ fontSize: 12, color: T.slate600, marginTop: 8, padding: "8px 10px", background: T.slate50, borderRadius: 6 }}>
+                {plan.notes}
+              </div>
+            ) : null}
+          </div>
+
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 28, fontWeight: 700, color: p.pct === 100 ? T.green : T.amber, letterSpacing: "-0.02em" }}>{p.pct}%</div>
+            <div style={{ fontSize: 10, color: T.slate500 }}>{p.done}/{p.total} steps</div>
+            <div style={{ fontSize: 10, color: T.slate400, marginTop: 2 }}>{p.req_done}/{p.req_total} required</div>
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div style={{ marginTop: 14, height: 6, background: T.slate100, borderRadius: 3, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${p.pct}%`, background: p.pct === 100 ? T.green : T.blue, transition: "width 0.4s" }} />
+        </div>
+
+        {/* Admin actions */}
+        {isAdmin ? (
+          <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {plan.status === "active" && (
+              <Button variant="secondary" onClick={() => onChangeStatus(plan.id, "paused")}>Pause</Button>
+            )}
+            {plan.status === "paused" && (
+              <Button variant="secondary" onClick={() => onChangeStatus(plan.id, "active")}>Resume</Button>
+            )}
+            {plan.status !== "completed" && p.req_pct === 100 && (
+              <Button variant="primary" onClick={() => onChangeStatus(plan.id, "completed")}>Mark completed</Button>
+            )}
+            {plan.status === "completed" && (
+              <Button variant="secondary" onClick={() => onChangeStatus(plan.id, "archived")}>Archive</Button>
+            )}
+            <Button variant="danger" onClick={() => onDeletePlan(plan.id)} style={{ marginLeft: "auto" }}>Delete plan</Button>
+          </div>
+        ) : null}
+      </Card>
+
+      <InstructionsModal item={openInstr} onClose={() => setOpenInstr(null)} canEdit={isAdmin} onSaved={onReload} />
+      {replyFor && (
+        <ReplyPopup
+          label={replyFor.label}
+          onClose={() => setReplyFor(null)}
+          onSave={async (text) => {
+            const e = await onToggleSubstep(replyFor.step, replyFor.label, text);
+            if (!e) setReplyFor(null);
+            return e;
+          }}
+        />
+      )}
+      {orientation && (
+        <OrientationPopup
+          instruction={orientation}
+          userId={userId}
+          onClose={() => { setOrientation(null); if (onReload) onReload(); }}
+        />
+      )}
+
+      {/* Overdue: one column per subcard, up to four, and no more columns than it needs. */}
+      {overdue.length > 0 && (() => {
+        const n = Math.min(4, overdue.length);
+        const gap = 12;
+        return (
+          <Card style={{ marginBottom: 12, border: `1px solid ${T.red}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: T.red }}>Overdue</div>
+              <div style={{ fontSize: 11, color: T.slate500 }}>{overdue.length}</div>
+            </div>
+            <div style={{
+              display: "grid", gap, alignItems: "start",
+              gridTemplateColumns: `repeat(auto-fit, minmax(max(240px, calc((100% - ${(n - 1) * gap}px) / ${n})), 1fr))`,
+            }}>
+              {overdue.map(step => {
+                const m = phaseMeta(step.phase);
+                return (
+                  <div key={step.id} style={{ minWidth: 0 }}>
+                    <div style={trackHeadStyle}>{m.name} · due {fmtDate(step.due_on)}</div>
+                    {renderStep(step)}
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        );
+      })()}
+
+      {/* Phases */}
+      {byPhase.map(({ key: cardKey, phase, week, steps: phaseSteps }) => {
+        const meta = phaseMeta(phase);
+        const phaseP = progress(phaseSteps);
+        const cardName = meta.weeksLong > 1 && week
+          ? `Week ${week}${meta.weekTitles[String(week)] ? `: ${meta.weekTitles[String(week)]}` : ""}`
+          : meta.name;
+        const anyOpen = phaseSteps.some(s => { const l = stepLock(s); return !l.done && !l.locked; });
+        const isOpen = cardOpen[cardKey] ?? anyOpen;
+        const nextOpens = phaseSteps
+          .filter(s => !s.completed_at && s.unlocks_on && s.unlocks_on > todayCT)
+          .map(s => s.unlocks_on).sort()[0];
+
+        return (
+          <Card key={cardKey} style={{ marginBottom: 12 }}>
+            <div
+              role="button" tabIndex={0}
+              onClick={() => setCardOpen(o => ({ ...o, [cardKey]: !isOpen }))}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setCardOpen(o => ({ ...o, [cardKey]: !isOpen })); } }}
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: isOpen ? 12 : 0, flexWrap: "wrap", cursor: "pointer" }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, color: T.slate400, width: 10 }}>{isOpen ? "▾" : "▸"}</span>
+                <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{cardName}</div>
+                {meta.stage && STAGE_LABELS[meta.stage] && (
+                  <Pill fg={STAGE_LABELS[meta.stage].fg} bg={STAGE_LABELS[meta.stage].bg}>
+                    {STAGE_LABELS[meta.stage].label}
+                  </Pill>
+                )}
+                {isOpen && meta.blurb && <div style={{ fontSize: 11, color: T.slate500, flexBasis: "100%" }}>{meta.blurb}</div>}
+              </div>
+              <div style={{ fontSize: 11, color: T.slate500 }}>
+                {!isOpen && !anyOpen && nextOpens ? `Opens ${fmtDate(nextOpens)} · ` : ""}{phaseP.done}/{phaseP.total}
+              </div>
+            </div>
+
+            {isOpen && (() => {
             // Goals and the like sit across the top of the card.
             const banners = phaseSteps.filter(s => s.full_width);
             const rest = phaseSteps.filter(s => !s.full_width);
