@@ -109,7 +109,7 @@ const SERVICE_PREFIX = "service_task";
 // RELATIONSHIPS and REVIEW_SITES are the Log's own choices, in src/lib/logChoices.js.
 // Peter 2026-10-03: a policy review names the policy reviewed (line, and type where
 // the line has types); a pivot names the line it pivoted to.
-const LINE_REQUIRED = { policy_review: "type", pivot: "line" };
+const LINE_REQUIRED = { policy_review: "type", pivot: "type" };   // Peter 2026-10-05: a pivot names its product too
 // Peter 2026-10-03: service work is for a customer already on the books, so any of
 // these sets the relationship to Existing. Not autopay: it can ride on a new sale.
 const EXISTING_ONLY = new Set(["pivot", "policy_review", "service_task", "service_task_company",
@@ -602,7 +602,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const addPolicy = (line) => {
     if (!line) return;
     const id = newPolicyId();
-    setPolicies(list => [...list, { id, line, type: "", status: quoteOnly ? "quoted" : "", premium: "", vehicles: "1", isNewLine: null, addedToExisting: false, insured: "" }]);
+    const only = (types[line] || []).length === 1 ? types[line][0].type_key : "";   // Bank, Variable: one product
+    setPolicies(list => [...list, { id, line, type: only, status: quoteOnly ? "quoted" : "", premium: "", vehicles: "1", isNewLine: null, addedToExisting: false, insured: "" }]);
     setActivePolicy(id);
   };
   const editPolicy = (id, patch) => setPolicies(list => list.map(p => p.id === id ? { ...p, ...patch } : p));
@@ -693,20 +694,38 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const isSold = (p) => p.status === "sold" || p.status === "quoted_sold";
   const needsMoney = (p) => isSold(p) || p.status === "canceled";
   const showDate = dateOpen || date !== today;
-  const oldOnFile = (p) => onFile.filter(x => x.line_of_business === p.line && !x.already_canceled).sort((a, b) => (a.submitted_date < b.submitted_date ? 1 : -1))[0] || null;
+  // What this household had on file before this entry: not canceled, not the record being edited.
+  const onFileBefore = onFile.filter(x => !x.already_canceled && !policies.some(p => p.dbId && p.dbId === x.sale_product_id)
+    && (!date || x.submitted_date <= date));
+  const hasRecords = onFileBefore.length > 0;
+  // Peter 2026-10-05: the same product. Same line and type; a life counts only when it sold in the last
+  // 60 days (a new life past that is a new product). Mirrors rp_household_on_file on the server.
+  const sameProductOnFile = (p) => onFileBefore
+    .filter(x => x.line_of_business === p.line && (p.line === "life"
+      ? x.submitted_date >= addDays(date || today, -60)
+      : (x.product_type || "") === (p.type || "")))
+    .sort((a, b) => (a.submitted_date < b.submitted_date ? 1 : -1))[0] || null;
   // Peter 2026-09-26: a household holds one PLUP and one PAP. A new one replaces the older one of the same
   // type on its own when it is logged (rp_replace_one_per_household), so it is not asked about.
   const onePerHousehold = (p) => !!(types[p.line] || []).find(t => t.type_key === p.type)?.one_per_household;
-  const sameTypeOnFile = (p) => onFile.find(x => x.line_of_business === p.line && x.product_type === p.type && !x.already_canceled) || null;
-  const autoReplaced = isEdit ? [] : sold.filter(p => onePerHousehold(p) && sameTypeOnFile(p));
-  const flagged = isEdit ? [] : sold.filter(p => oldOnFile(p) && !autoReplaced.includes(p));   // a record being edited would match itself
+  const autoReplaced = isEdit ? [] : sold.filter(p => onePerHousehold(p) && sameProductOnFile(p));
+  // Peter 2026-10-05: the same fire product already on file (other than PLUP and PAP) is the one thing
+  // the team is asked about: does it replace the one on file, or do they keep both.
+  const flagged = isEdit ? [] : sold.filter(p => p.line === "fire" && !onePerHousehold(p) && sameProductOnFile(p));
   const replaces = flagged.filter(p => onFileAnswer[p.id] === "replaces");
-  // Peter 2026-10-05: multiline is worked out, not ticked. A line the household already has
-  // on file is never a new line (rp_household_had_line decides the credit on the server).
-  // The team is asked only when our records can't tell: an existing customer with nothing on
-  // that line from before our records start, or a name match they said is another household.
+  const otherHousehold = flagged.some(p => onFileAnswer[p.id] === "different");
+  // The same auto product goes in as an added auto, and a life inside 60 days counts as the
+  // replacement. Both on their own, no question; the server does the same (rp_log_sale,
+  // rp_household_on_file). Said here so the team sees why.
+  const autoAdded = isEdit || otherHousehold ? [] : sold.filter(p => p.line === "auto" && !p.addedToExisting && sameProductOnFile(p));
+  const lifeRepeat = isEdit || otherHousehold ? [] : sold.filter(p => p.line === "life" && sameProductOnFile(p));
+  // Peter 2026-10-05: a New or Winback customer with policies still on file is a mix-up to clear up:
+  // the cancelation was never logged, or they are really Existing.
+  const mixUp = !isEdit && (relationship === "new" || relationship === "winback") && hasRecords && (hasSale || hasQuote);
+  // Multiline is worked out from what is on file. Only an Existing customer we hold no records for
+  // is asked, per policy: new for them, or a replacement.
   const askNewLine = (p) => isSold(p) && relationship === "existing" && !(p.line === "auto" && p.addedToExisting)
-    && (isEdit || !oldOnFile(p) || onFileAnswer[p.id] === "different");
+    && (!hasRecords || otherHousehold);
 
   // Line, then type where the line has types: the one pair of pickers wherever an
   // activity names a policy (autopay, save, policy review, pivot).
@@ -733,8 +752,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   // Peter 2026-10-05: a policy review names the POLICY reviewed, not the line. One "Policy" pick
   // (Home, Renters, Term Life...) sets the line and type together, and the customer's policies
   // on file sit above it as one-tap choices.
-  const policyFields = (a) => {
-    const mine = onFile.filter(r => !r.already_canceled);
+  const policyFields = (a, withOnFile = true) => {
+    const mine = withOnFile ? onFile.filter(r => !r.already_canceled) : [];
     return (
       <>
         {mine.length > 0 && (
@@ -748,7 +767,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           </div>
         )}
         <div style={field(200)}>
-          <label style={labelStyle}>{mine.length > 0 ? "Or pick the policy" : "Policy"}</label>
+          <label style={labelStyle}>{!withOnFile ? "Product" : mine.length > 0 ? "Or pick the policy" : "Policy"}</label>
           <select style={inputBase} value={a.line ? `${a.line}|${a.type || ""}` : ""}
                   onChange={e => { const [line, type] = e.target.value.split("|"); editActivity(a.id, { line: line || "", type: type || "", pick: null }); }}>
             <option value="">Pick one</option>
@@ -774,7 +793,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     if (list.some(a => a.key === "cancelation_saved" && (!a.line || (needsType(a.line) && !a.type) || !(a.reason || "").trim()))) out.push("Each save needs the policy line, its type, and the reason the customer gave.");
     if (list.some(a => a.key === "policy_review") && !note.trim()) out.push("The policy review needs a note on what you covered.");
     if (list.some(a => a.key === "policy_review" && lineMissing(a))) out.push("Pick the policy reviewed.");
-    if (list.some(a => a.key === "pivot" && lineMissing(a))) out.push("The pivot needs the line it pivoted to.");
+    if (list.some(a => a.key === "pivot" && lineMissing(a))) out.push("The pivot needs the product it pivoted to.");
     if (list.some(a => a.key === "autopay_enrollment" && (!a.line || (needsType(a.line) && !a.type) || a.premium === "" || !(Number(a.premium) >= 0)))) out.push("Each autopay needs the policy line, type, and premium.");
     return out;
   };
@@ -799,8 +818,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   sharedGate(false).forEach(m => problems.push(m));
   if (needsCard && cardChosen < CARD_PARTS.length) problems.push("Score every part of the scorecard. Tap x on a part you did not do.");
   if (flagged.some(p => !onFileAnswer[p.id])) problems.push("Say whether the new policy replaces the one on file, is added to it, or is a different household.");
-  const unansweredLines = [...new Set(sold.filter(p => askNewLine(p) && p.isNewLine == null).map(p => PRODUCT_SHORT[p.line]))];
-  if (unansweredLines.length) problems.push(`Say whether they already had ${unansweredLines.join(", ")} with us.`);
+  if (mixUp) problems.push(`They already have policies on file, so they are not ${relationship === "new" ? "New" : "a Winback"}. Switch to Existing, or log the cancelation of what is on file first.`);
+  if (sold.some(p => askNewLine(p) && p.isNewLine == null)) problems.push("Say whether each policy sold is new for them or a replacement.");
   if (hasSale && hasCxl) {
     const soldLines = new Set(sold.map(p => p.line));
     const clash = [...new Set(canceled.filter(p => soldLines.has(p.line)).map(p => p.line))];
@@ -836,7 +855,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     if (k === "cancelation" && policies.length !== 1) gate.push("A cancelation is one policy. Log a second one separately.");
     if (k === "sale" && sold.some(p => p.premium === "" || !(Number(p.premium) >= 0))) gate.push("Every sold policy needs a premium.");
     sharedGate(k === "sale" && editRec.entry_source === "historical_backfill").forEach(m => gate.push(m));
-    if (k === "sale" && sold.some(p => askNewLine(p) && p.isNewLine == null)) gate.push("Say whether they already had that line with us.");
+    if (k === "sale" && sold.some(p => askNewLine(p) && p.isNewLine == null)) gate.push("Say whether each policy sold is new for them or a replacement.");
     // An activity can gain a quote here, and a quote can take the activity's place.
     const addQuote = k === "activity" && quoted.length > 0;
     // Peter 2026-10-03: only the record's own activity is edited. Anything added here
@@ -953,10 +972,10 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
         activity: hasActivity ? { items: activityItems } : null,
         quote: hasQuote ? { items: quoted.map(row) } : null,
         sale: hasSale ? {
-          products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, added_to_existing: p.line === "auto" && !!p.addedToExisting, is_new_line: householdFresh ? true : askNewLine(p) && p.isNewLine === true, autopay: !!p.autopay,
+          products: sold.map(p => ({ ...row(p), ...money(p), policy_count: 1, added_to_existing: p.line === "auto" && !!p.addedToExisting, is_new_line: askNewLine(p) ? p.isNewLine === true : true, autopay: !!p.autopay,
             insured_name: p.line === "life" ? ((p.insured || "").trim() || null) : null })),
           on_file_answer: flagged.length ? (replaces.length ? "replaces" : flagged.some(p => onFileAnswer[p.id] === "added") ? "added" : "different") : null,
-          replaced_sale_product_id: replaces.length ? oldOnFile(replaces[0]).sale_product_id : null,
+          replaced_sale_product_id: replaces.length ? sameProductOnFile(replaces[0]).sale_product_id : null,
         } : null,
         cancelation: hasCxl ? { items: canceled.map(p => ({ ...row(p), ...money(p), ...matched(p) })) } : null,
         scorecard: hasCard ? { ...scores } : null,
@@ -981,7 +1000,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       let cxlResult = null;
       if (replaces.length) {
         // the confirmed replacements cancel the old policies now, in the same click; no chargeback (the household kept the line)
-        const items = replaces.map(p => { const o = oldOnFile(p); return { line_of_business: o.line_of_business, product_type: o.product_type || null, premium: Number(o.premium ?? 0),
+        const items = replaces.map(p => { const o = sameProductOnFile(p); return { line_of_business: o.line_of_business, product_type: o.product_type || null, premium: Number(o.premium ?? 0),
           vehicle_count: hasCars(o.line_of_business, o.product_type) ? Number(o.vehicle_count || 1) : null, matched_sale_product_id: o.sale_product_id, replacement: true }; });
         const c = await supabase.rpc("rp_log_entry", { p_payload: {
           customer_first: first.trim(), customer_last_initial: initial.trim(), customer_kind: custKind, phone_last4: phone, occurred_on: date, team_member_id: logFor, relationship_type: "existing",
@@ -1126,7 +1145,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           {activities.filter(a => LINE_REQUIRED[a.key]).map(a => (
             <div key={a.id} style={{ ...wrapRow, marginTop: 10, padding: 10, background: T.slate50, borderRadius: 8 }}>
               <div style={{ fontWeight: 700, color: T.slate800, flex: "0 0 auto", paddingBottom: 10 }}>{a.key === "pivot" ? "Pivoted to" : "Policy reviewed"}</div>
-              {a.key === "policy_review" ? policyFields(a) : lineFields(a, LINE_REQUIRED[a.key] === "type")}
+              {policyFields(a, a.key === "policy_review")}
             </div>
           ))}
           {activities.filter(a => a.key === "cancelation_saved").map(a => (
@@ -1249,10 +1268,10 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               )}
               {askNewLine(active) && (
                 <div style={field(170)}>
-                  <label style={labelStyle}>Already had {PRODUCT_SHORT[active.line]} with us?</label>
+                  <label style={labelStyle}>New for them, or a replacement?</label>
                   <div style={{ ...chipRow, paddingBottom: 4 }}>
-                    <span style={chip(active.isNewLine === false)} onClick={() => editPolicy(active.id, { isNewLine: false })}>Yes</span>
-                    <span style={chip(active.isNewLine === true)} onClick={() => editPolicy(active.id, { isNewLine: true })}>No</span>
+                    <span style={chip(active.isNewLine === true)} onClick={() => editPolicy(active.id, { isNewLine: true })}>New</span>
+                    <span style={chip(active.isNewLine === false)} onClick={() => editPolicy(active.id, { isNewLine: false })}>Replacement</span>
                   </div>
                 </div>
               )}
@@ -1260,7 +1279,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
             </div>
           )}
           {flagged.map(p => {
-            const r = oldOnFile(p);
+            const r = sameProductOnFile(p);
             const oldLabel = typeLabel(types, r.line_of_business, r.product_type) || PRODUCT_SHORT[p.line];
             const pick = (v) => setOnFileAnswer(a => ({ ...a, [p.id]: v }));
             return (
@@ -1275,13 +1294,38 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
             );
           })}
           {autoReplaced.map(p => {
-            const r = sameTypeOnFile(p);
+            const r = sameProductOnFile(p);
             return (
               <div key={p.id} style={{ padding: "8px 12px", borderRadius: 8, background: T.amberLt, color: T.amber, fontSize: 13, fontWeight: 600, marginTop: 10 }}>
                 {preview} already has {typeLabel(types, p.line, p.type)} on file, sold {fmtDate(r.submitted_date)}. A household has one, so logging this cancels the old one as a replacement.
               </div>
             );
           })}
+          {autoAdded.map(p => {
+            const r = sameProductOnFile(p);
+            return (
+              <div key={p.id} style={{ padding: "8px 12px", borderRadius: 8, background: T.slate50, color: T.slate700, fontSize: 13, fontWeight: 600, marginTop: 10 }}>
+                {preview} already has {typeLabel(types, p.line, p.type) || "this auto"} on file, sold {fmtDate(r.submitted_date)}, so this goes in as an added auto.
+              </div>
+            );
+          })}
+          {lifeRepeat.map(p => {
+            const r = sameProductOnFile(p);
+            return (
+              <div key={p.id} style={{ padding: "8px 12px", borderRadius: 8, background: T.slate50, color: T.slate700, fontSize: 13, fontWeight: 600, marginTop: 10 }}>
+                {preview} had a life sold {fmtDate(r.submitted_date)}, inside 60 days, so this one counts as the replacement, not a new product.
+              </div>
+            );
+          })}
+          {mixUp && (
+            <div style={{ padding: "10px 12px", borderRadius: 8, background: T.amberLt, color: T.amber, fontSize: 13, fontWeight: 600, marginTop: 10 }}>
+              <div>{preview} already has {[...new Set(onFileBefore.map(x => typeLabel(types, x.line_of_business, x.product_type) || PRODUCT_SHORT[x.line_of_business]))].join(", ")} on file, so they are not {relationship === "new" ? "a new customer" : "a winback"}. Either the cancelation was never logged, or they are an existing customer.</div>
+              <div style={{ ...chipRow, marginTop: 8 }}>
+                <span style={chip(false)} onClick={() => setRelationship("existing")}>They're an existing customer</span>
+              </div>
+              <div style={{ marginTop: 6, fontWeight: 400 }}>If what's on file canceled, log that cancelation first, then this.</div>
+            </div>
+          )}
           {(!isEdit || quoteOnly) && hasQuote && dupQuotes.length > 0 && (
             <div style={{ padding: "8px 12px", borderRadius: 8, background: T.amberLt, color: T.amber, fontSize: 13, fontWeight: 600, marginTop: 10 }}>
               {preview} was already quoted this week ({dupQuotes.map(d => `${(roster || []).find(t => t.id === d.team_member_id)?.first_name || "someone"} on ${fmtDate(d.quote_date)}`).join(", ")}). It still logs; the same household counts once for HH quotes.
@@ -4599,7 +4643,7 @@ function liveRecorded(rec, values, types) {
   const out = [];
   const label = (k) => ((values || []).find(v => v.activity_key === k) || {}).label || k;
   for (const a of rec.activities || []) {
-    if (a.key === "pivot") out.push(`Pivot to ${PRODUCT_LABEL[a.line] || a.line}`);
+    if (a.key === "pivot") out.push(`Pivot to ${typeLabel(types, a.line, a.type) || PRODUCT_LABEL[a.line] || a.line}`);
     else if (a.key === "google_review") out.push(`${label(a.key)} · ${reviewSiteLabel(a.site)}`);
     else if (a.key === "policy_review") out.push(`${label(a.key)} · ${PRODUCT_LABEL[a.line] || a.line}`);
     else out.push(label(a.key));

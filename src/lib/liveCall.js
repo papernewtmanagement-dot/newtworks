@@ -116,10 +116,10 @@ const PRODUCT_BY_PAGE = {
   "newtworks-native-simple-rv-fit": { line: "auto", type: "rv" },                    // Simple RV FIT
   "newtworks-native-simple-classic-car-fit": { line: "auto", type: "classic" },      // Simple Classic Car FIT
   // These never log a quote:
-  "1530134531": { line: "variable", type: "", quotable: false },                    // Simple Investing FIT: a meeting with Peter
+  "1530134531": { line: "variable", type: "variable", quotable: false },            // Simple Investing FIT: a meeting with Peter
   "2588770324": { line: "", type: "", quotable: false },                            // Simple Retirement Insurance FIT: a meeting with Peter
   "newtworks-native-simple-us-bank-fit": { line: "bank", type: "", quotable: false }, // Simple US Bank FIT: Bank counts when funded, not at the close (Peter 2026-09-11)
-  "newtworks-native-simple-medicare-fit": { line: "health", type: "", quotable: false }, // Simple Medicare FIT (2026-10-04): the Log has no Medicare product yet
+  "newtworks-native-simple-medicare-fit": { line: "health", type: "medicare" },     // Simple Medicare FIT: Medicare is a Log product (Peter 2026-10-05)
 };
 
 const MONKEY = "🙊";
@@ -935,8 +935,10 @@ function fitEntry(b, id) {
 }
 
 // A pivot into a product is recorded the moment it is chosen.
-function pivotTo(b, line) {
-  addActivity(b, { key: "pivot", line });
+// Peter 2026-10-05: a pivot names the product as well as the line. Where the call
+// doesn't know the product yet (life), the Log asks for it at the end.
+function pivotTo(b, line, type = "") {
+  addActivity(b, { key: "pivot", line, type: type || "" });
   if (!b.rec.source) b.rec.source = "service_pivot";
   if (!b.rec.relationship) b.rec.relationship = "existing";
 }
@@ -959,7 +961,7 @@ function wrapUp(b) {
   if (p === "_product") {
     const id = b.ask("wrap.product", "Which product?", productOptions(L));
     if (!id) return;
-    pivotTo(b, L.product(id).line);
+    pivotTo(b, L.product(id).line, L.product(id).type);
     fit(b, { first: id, via: "pivot" });
     return;
   }
@@ -989,7 +991,7 @@ function wrapUp(b) {
       ...goes.map((x) => ({ key: x.page, label: x.label })), { key: "later", label: "Set a time" }, { key: "no", label: "Not interested" }]);
     if (!f) return;
     const pg = L.product(f);
-    pivotTo(b, pg ? pg.line : "health");
+    pivotTo(b, pg ? pg.line : "health", pg ? pg.type : "");
     if (pg) { fit(b, { first: pg.page, via: "pivot" }); return; }
     if (f === "later") later(`wrap.${p}.later`);
     reviewAndReferral(b);
