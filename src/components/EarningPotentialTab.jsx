@@ -561,13 +561,13 @@ const TierBreakdown = ({ tier, roleKey }) => {
 // sales-point pace read live off the published pay scale, so the table
 // moves with the scale. The closing note is the point of the table: the
 // timeline belongs to the person, not the plan.
-const YearOnePath = ({ path, isPhone }) => {
+const YearOnePath = ({ path, isPhone, pointsLabel = "Weekly sales points" }) => {
   const rungs = Array.isArray(path?.rungs) ? path.rungs : [];
   if (rungs.length === 0) return null;
   const th = { padding: "6px 10px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: T.slate500, textAlign: "right", borderBottom: `1px solid ${T.slate200}`, whiteSpace: "nowrap" };
   const td = { padding: "8px 10px", fontSize: 12, color: T.slate700, textAlign: "right", borderBottom: `1px solid ${T.slate100}`, whiteSpace: "nowrap" };
   const rows = [
-    { k: "weekly_sales_points", label: "Weekly sales points", fmt: v => Number(v).toLocaleString() },
+    { k: "weekly_sales_points", label: pointsLabel, fmt: v => Number(v).toLocaleString() },
     { k: "base_annual",  label: "Base pay",   fmt: v => fmtMoney(v), sub: r => r.rate_label },
     { k: "commission",   label: "Commission", fmt: v => fmtMoney(v) },
     { k: "bonus",        label: "Team bonus", fmt: v => fmtMoney(v) },
@@ -765,7 +765,7 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
           </div>
         )}
         <div style={{ marginTop: 4, fontSize: 10.5, color: T.slate400 }}>
-          {role.role_key === "sales" ? "Held at a steady production pace. The table below shows how a first year can build up to it." : "Held at a steady production pace. Years one and two typically run lower — the year-by-year table below shows the ramp."}
+          {role.role_key !== "life_specialist" ? "Held at a steady production pace. The table below shows how a first year can build up to it." : "Held at a steady production pace. Years one and two typically run lower — the year-by-year table below shows the ramp."}
         </div>
         {role.role_key === "life_specialist" && extrasNote && (
           <div style={{ marginTop: 8, fontSize: 11.5, color: T.slate700, background: T.goldLt, border: `1px solid ${T.gold}`, borderRadius: 7, padding: "7px 10px" }}>
@@ -774,8 +774,10 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
         )}
       </div>
 
-      {/* Sales: first-year path to $100k. Other roles keep the tier grid. */}
-      {role.role_key === "sales" && y1 && (
+      {/* Sales and Retention: first-year path to $100k. Both curves read the same pay-scale rows
+          (base + commission + team bonus), so the rungs are the same; Retention counts total points.
+          Life Specialist keeps the tier grid. */}
+      {(role.role_key === "sales" || role.role_key === "retention") && y1 && (
         <div style={card}>
           <div style={{ fontSize: _vp.isPhone ? 19 : 23, fontWeight: 800, color: T.slate900, letterSpacing: "-0.02em", lineHeight: 1.15 }}>
             Year One — Path to $100k
@@ -783,10 +785,10 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
           {y1.headline && (
             <div style={{ fontSize: 12, color: T.slate600, marginTop: 4, marginBottom: 10 }}>{y1.headline}</div>
           )}
-          <YearOnePath path={y1} isPhone={_vp.isPhone} />
+          <YearOnePath path={y1} isPhone={_vp.isPhone} pointsLabel={role.role_key === "retention" ? "Weekly total points" : "Weekly sales points"} />
         </div>
       )}
-      {role.role_key !== "sales" && hotTier && (
+      {role.role_key === "life_specialist" && hotTier && (
         <div style={card}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900 }}>
