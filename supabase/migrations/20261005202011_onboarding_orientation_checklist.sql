@@ -141,3 +141,4 @@ $function$;
 
 REVOKE ALL ON FUNCTION public.onboarding_orientation_videos(uuid, text[]) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.onboarding_orientation_videos(uuid, text[]) TO authenticated, service_role;
+
