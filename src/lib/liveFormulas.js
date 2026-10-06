@@ -20,6 +20,11 @@
 //   {{live:retention-example}}      a worked example of the step
 //   {{live:marketing-points-table}} every event that earns marketing points
 //   {{live:marketing-cap}}          "99"
+//
+// Sections that only apply while someone uses them (Peter 2026-10-06):
+//   {{live-if:group-health}} ... {{/live-if}}
+//   The block shows only while handbook_live_formulas says show['group-health']
+//   is true (an active teammate on the group health plan). Hidden while loading.
 
 const pct = (x, digits = 2) => {
   const n = Number(x) * 100;
@@ -96,8 +101,12 @@ function marketingTable(f) {
   return ["| What happened | Points | Each earlier one this quarter adds |", "| --- | --- | --- |", ...rows].join("\n");
 }
 
+const LIVE_IF_RE = /\{\{live-if:([a-z-]+)\}\}([\s\S]*?)\{\{\/live-if\}\}\n?/g;
+
 export function fillLiveFormulas(md, f) {
-  const text = String(md || "");
+  let text = String(md || "");
+  if (!text.includes("{{live")) return text;
+  text = text.replace(LIVE_IF_RE, (whole, key, body) => (f?.show?.[key] === true ? body : ""));
   if (!text.includes("{{live:")) return text;
   const { step, cap } = retentionStepAndCap(f);
   const mcap = Math.max(0, ...((f?.marketing || []).map((m) => Number(m.cap) || 0)));

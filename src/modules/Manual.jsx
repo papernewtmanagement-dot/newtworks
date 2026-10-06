@@ -1730,7 +1730,7 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   // gets the current rates from handbook_live_formulas, the same sources the
   // pay math reads. See src/lib/liveFormulas.js.
   const [liveFormulas, setLiveFormulas] = useState(null);
-  const usesLive = String(page?.content || "").includes("{{live:");
+  const usesLive = String(page?.content || "").includes("{{live");
   useEffect(() => {
     if (!usesLive) return undefined;
     let alive = true;
