@@ -8,6 +8,19 @@ import {
 } from "../lib/onboardingUi.jsx";
 import { Section, Check } from "./TeamForms.jsx";
 
+// A heading's checkbox: checked when every line under it is ticked, a dash
+// when only some are.
+function SectionBox({ checked, some, disabled, onChange }) {
+  const ref = useRef(null);
+  useEffect(() => { if (ref.current) ref.current.indeterminate = !!some && !checked; }, [some, checked]);
+  return (
+    <input ref={ref} type="checkbox" checked={!!checked} disabled={disabled} onChange={onChange}
+      aria-label="Check the whole section"
+      style={{ marginTop: 4, width: 17, height: 17, flexShrink: 0, accentColor: T.blue,
+        cursor: disabled ? "default" : "pointer" }} />
+  );
+}
+
 // =========================================================================
 // OrientationPopup.jsx
 // =========================================================================
@@ -23,6 +36,13 @@ import { Section, Check } from "./TeamForms.jsx";
 // (asksForReply). A section is done when every line in it that is not a
 // video is ticked. A section of only videos is done once one of its videos
 // is ticked.
+//
+// Each heading has its own checkbox (Peter 2026-10-06). Checking it ticks
+// every line under it, videos included, and folds the section. Ticking every
+// line one by one checks the heading and folds it too. Unchecking it unticks
+// every line and opens the section. Clicking the heading's name folds or
+// opens it by hand. A section with its talking points ticked but videos left
+// stays open with its heading unchecked; those videos go to the Watch card.
 //
 // When the pop-up closes, for each hire worked with:
 //   - videos left unticked in a finished section go on the hire's Watch card
@@ -74,6 +94,7 @@ export default function OrientationPopup({ instruction, userId, onClose }) {
   const [busy, setBusy] = useState(false);
   const [closing, setClosing] = useState(false);
   const [err, setErr] = useState("");
+  const [fold, setFold] = useState({});   // sections folded or opened by hand: index -> folded
   const touched = useRef(new Set());   // plans whose ticks changed while open
   const picked = useRef(false);        // who's here gets a first guess once
 
@@ -138,17 +159,32 @@ export default function OrientationPopup({ instruction, userId, onClose }) {
     });
   };
 
-  // Tick or untick one line for everyone here. A line ticked for some of them
-  // but not all is ticked for the rest.
-  const toggleLine = async (line) => {
-    if (!inRoom.length || busy) return;
+  // Every line under a heading ticked for everyone here, or only some.
+  const isFull = (gi) => {
+    const items = groups[gi]?.items || [];
+    return inRoom.length > 0 && items.length > 0 && inRoom.every(h => items.every(l => h.checked.includes(l)));
+  };
+  const isSome = (gi) => {
+    const items = groups[gi]?.items || [];
+    return inRoom.some(h => items.some(l => h.checked.includes(l)));
+  };
+  const hasHead = (gi) => !!(groups[gi] && (groups[gi].group || groups[gi].info.length));
+  // A section folds itself once everything in it is ticked, unless folded or
+  // opened by hand since.
+  const isFolded = (gi) => hasHead(gi) && (Object.prototype.hasOwnProperty.call(fold, gi) ? fold[gi] : isFull(gi));
+  const toggleFold = (gi) => setFold(prev => ({ ...prev, [gi]: !isFolded(gi) }));
+
+  // The one place ticks change: tick (on) or untick these lines for everyone here.
+  const setLines = async (lines, on) => {
+    if (!inRoom.length || busy || !lines.length) return;
     setErr("");
     setBusy(true);
-    const allHave = inRoom.every(h => h.checked.includes(line));
-    const changes = inRoom.map(h => ({
-      planId: h.planId,
-      next: allHave ? h.checked.filter(l => l !== line) : (h.checked.includes(line) ? h.checked : [...h.checked, line]),
-    })).filter(c => c.next !== (hires.find(h => h.planId === c.planId) || {}).checked);
+    const changes = inRoom.map(h => {
+      const next = on
+        ? [...h.checked, ...lines.filter(l => !h.checked.includes(l))]
+        : h.checked.filter(l => !lines.includes(l));
+      return { planId: h.planId, next, same: next.length === h.checked.length };
+    }).filter(c => !c.same);
     const results = await Promise.all(changes.map(c =>
       supabase.from("team_onboarding_plans").update({ orientation_checked: c.next }).eq("id", c.planId)));
     setBusy(false);
@@ -157,7 +193,18 @@ export default function OrientationPopup({ instruction, userId, onClose }) {
     changes.forEach(c => touched.current.add(c.planId));
     const nextOf = new Map(changes.map(c => [c.planId, c.next]));
     setHires(prev => prev.map(h => (nextOf.has(h.planId) ? { ...h, checked: nextOf.get(h.planId) } : h)));
+    // Sections whose ticks changed go back to folding on their own.
+    setFold(prev => {
+      const next = { ...prev };
+      groups.forEach((g, gi) => { if (g.items.some(l => lines.includes(l))) delete next[gi]; });
+      return next;
+    });
   };
+
+  // One line: a line ticked for some of the hires here but not all is ticked for the rest.
+  const toggleLine = (line) => setLines([line], !inRoom.every(h => h.checked.includes(line)));
+  // A heading: ticks everything under it, or unticks everything when it is all ticked.
+  const toggleSection = (gi) => setLines(groups[gi]?.items || [], !isFull(gi));
 
   // On the way out: leftover videos to the Watch card, and the Orientation
   // line ticked or unticked, for each hire whose ticks changed.
@@ -203,16 +250,17 @@ export default function OrientationPopup({ instruction, userId, onClose }) {
   // Where the hires in the room stand, section by section.
   const progressHere = inRoom.map(h => orientationProgress(sections, h.checked));
 
-  const sectionTag = (si) => {
-    if (!inRoom.length) return null;
-    const s = sections[si];
-    const allDone = progressHere.every(p => p.rows[si].done);
-    if (allDone) {
-      return <span style={{ fontSize: 12, fontWeight: 600, color: T.green }}>Done</span>;
-    }
-    if (inRoom.length > 1 || !s.talk.length) return null;
-    const r = progressHere[0].rows[si];
-    return <span style={{ fontSize: 12, color: T.slate500 }}>{r.talkDone} of {r.talkTotal}</span>;
+  // Talking points done but videos left: those go to the Watch card.
+  const sectionTag = (gi) => {
+    const sec = sections[gi];
+    if (!inRoom.length || !sec?.videos.length || isFull(gi)) return null;
+    if (!progressHere.every(p => p.rows[gi].done)) return null;
+    const left = inRoom.length === 1 ? sec.videos.filter(l => !inRoom[0].checked.includes(l)).length : 0;
+    return (
+      <span style={{ fontSize: 12, fontWeight: 400, color: T.slate500 }}>
+        {left === 1 ? "1 video" : left > 1 ? `${left} videos` : "Videos"} left for the Watch card
+      </span>
+    );
   };
 
   const errorBox = err && (
@@ -273,46 +321,59 @@ export default function OrientationPopup({ instruction, userId, onClose }) {
             </Section>
 
             {groups.map((g, gi) => {
+              const off = !inRoom.length || busy;
+              const full = isFull(gi);
+              const folded = isFolded(gi);
               return (
-                <div key={gi} style={{ marginTop: gi === 0 ? 24 : 22 }}>
-                  {(g.group || g.info.length > 0) && (
-                    <GroupHead
-                      label={g.group}
-                      info={g.info}
-                      extra={sectionTag(gi)}
-                      style={{ marginBottom: 6 }}
-                      labelStyle={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}
-                      pathColor={T.teal} linkColor={T.blue}
-                    />
+                <div key={gi} style={{ marginTop: gi === 0 ? 24 : folded ? 12 : 22 }}>
+                  {hasHead(gi) && (
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: folded ? 0 : 6, minWidth: 0 }}>
+                      <SectionBox checked={full} some={isSome(gi)} disabled={off} onChange={() => toggleSection(gi)} />
+                      <div role="button" aria-expanded={!folded} onClick={() => toggleFold(gi)}
+                        style={{ display: "flex", gap: 6, alignItems: "flex-start", cursor: "pointer", minWidth: 0, flex: 1 }}>
+                        <span aria-hidden="true" style={{ color: T.slate400, fontSize: 11, lineHeight: "23px", width: 10, flexShrink: 0 }}>
+                          {folded ? "\u25B8" : "\u25BE"}
+                        </span>
+                        <GroupHead
+                          label={g.group}
+                          info={g.info}
+                          extra={sectionTag(gi)}
+                          style={{ minWidth: 0, flex: 1 }}
+                          labelStyle={{ fontSize: 15, fontWeight: 700, color: full ? T.slate500 : T.slate900 }}
+                          pathColor={T.teal} linkColor={T.blue}
+                        />
+                      </div>
+                    </div>
                   )}
-                  <div style={{ display: "grid", gap: 2 }}>
-                    {g.items.map((line, ix) => {
-                      const { level, text } = splitIndent(line);
-                      const have = inRoom.filter(h => h.checked.includes(line));
-                      const ticked = inRoom.length > 0 && have.length === inRoom.length;
-                      const some = have.length > 0 && !ticked;
-                      const off = !inRoom.length || busy;
-                      return (
-                        <label key={ix} style={{
-                          display: "flex", gap: 10, alignItems: "flex-start", padding: "4px 0",
-                          marginLeft: level * 18, cursor: off ? "default" : "pointer", minWidth: 0,
-                        }}>
-                          <input type="checkbox" checked={ticked} disabled={off} onChange={() => toggleLine(line)}
-                            style={{ marginTop: 3, width: 16, height: 16, flexShrink: 0, accentColor: T.blue }} />
-                          <div style={{ fontSize: 13.5, color: ticked ? T.slate500 : T.slate800, lineHeight: 1.5, minWidth: 0, flex: 1 }}>
-                            <ItemInfo lines={g.itemInfo[line] || []} pathColor={T.teal} linkColor={T.blue}>
-                              <LabelText text={text} pathColor={T.teal} linkColor={T.blue} />
-                              {some && (
-                                <span style={{ fontSize: 12, color: T.slate500 }}>
-                                  {` · done for ${have.map(h => h.name).join(", ")}`}
-                                </span>
-                              )}
-                            </ItemInfo>
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
+                  {!folded && (
+                    <div style={{ display: "grid", gap: 2 }}>
+                      {g.items.map((line, ix) => {
+                        const { level, text } = splitIndent(line);
+                        const have = inRoom.filter(h => h.checked.includes(line));
+                        const ticked = inRoom.length > 0 && have.length === inRoom.length;
+                        const some = have.length > 0 && !ticked;
+                        return (
+                          <label key={ix} style={{
+                            display: "flex", gap: 10, alignItems: "flex-start", padding: "4px 0",
+                            marginLeft: (hasHead(gi) ? 27 : 0) + level * 18, cursor: off ? "default" : "pointer", minWidth: 0,
+                          }}>
+                            <input type="checkbox" checked={ticked} disabled={off} onChange={() => toggleLine(line)}
+                              style={{ marginTop: 3, width: 16, height: 16, flexShrink: 0, accentColor: T.blue }} />
+                            <div style={{ fontSize: 13.5, color: ticked ? T.slate500 : T.slate800, lineHeight: 1.5, minWidth: 0, flex: 1 }}>
+                              <ItemInfo lines={g.itemInfo[line] || []} pathColor={T.teal} linkColor={T.blue}>
+                                <LabelText text={text} pathColor={T.teal} linkColor={T.blue} />
+                                {some && (
+                                  <span style={{ fontSize: 12, color: T.slate500 }}>
+                                    {` · done for ${have.map(h => h.name).join(", ")}`}
+                                  </span>
+                                )}
+                              </ItemInfo>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}
