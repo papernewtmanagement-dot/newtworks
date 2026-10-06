@@ -869,8 +869,12 @@ const MAP_TINT = 0.42;
 // The ground the group has not found yet (the kids login): dark, with specks of light, like nothing else on the map.
 const MAP_FOG = { dark: "#1F2029", speck: "#EDE6D3", line: "#FFFFFF" };
 // A village, town or city marked on a grid (rpg_map_view: towns; step 8): how big its symbol is drawn, as a share of
-// the room its cell gives a mark, and the size of its name. A village a little smaller, a city a little bigger.
-const MAP_MARK_SIZE = { village: 0.8, town: 0.95, city: 1.1 };
+// the room its cell gives a mark, and the size of its name. A village a little smaller, a city a little bigger, a great
+// city (step 12a) bigger still.
+const MAP_MARK_SIZE = { village: 0.8, town: 0.95, city: 1.1, great_city: 1.05 };
+// A great city's mark grows with its people (rpg_map_view: towns' people), by the fourth root about the middle of their
+// range (63,000): 20,000 draws at 0.75, 200,000 at 1.33.
+const mapMarkScale = (k) => (k.icon === "great_city" && k.people > 0 ? Math.min(1.35, Math.max(0.75, Math.pow(k.people / 63000, 0.25))) : 1);
 // The roads (step 8b), smallest first so the bigger lie on top: the inked edge (min = screen pixels wide at the least,
 // dash for a lane) and the light middle (inset = screen pixels in from the edge; min for a highway, whose middle shows
 // however far out the map is drawn).
@@ -879,7 +883,7 @@ const MAP_ROADS = [
   { k: 2, name: "Road", edge: { line: "#7A5A3A", min: 2.3 }, mid: { line: "#E8D6A6", inset: 2 } },
   { k: 1, name: "Highway", edge: { line: MAP_INK, min: 4.4 }, mid: { line: "#EDDDB0", inset: 2.2, min: 2 } },
 ];
-const MAP_MARK_TEXT = { village: 10.5, town: 12, city: 13 };
+const MAP_MARK_TEXT = { village: 10.5, town: 12, city: 13, great_city: 14.5 };
 // Bridges and fords (step 11; rpg_map_view: crossings), as the key names them: 1 a bridge, 2 a ford where a road
 // crosses, 3 a planned ford off the roads.
 const MAP_CROSSINGS = { 1: "Bridge", 2: "Ford", 3: "Ford" };
@@ -1155,6 +1159,28 @@ const MAP_ART = {
         if (k === 1 && rnd(20) < 0.12) mapTower(add, px, py, s * 0.5); else mapHouse(add, px, py, s * (0.22 + rnd(15 + k) * 0.08));
       });
     },
+    // a great city (step 12a): a long wall with a tower at each end and a gate between two more, packed roofs behind
+    // it, a cathedral with two spires and a keep; a cell of its ground, houses packed closer than a city's, now and
+    // then a spire or a tower
+    great_city(add, x, y, s, rnd, few) {
+      if (few) {
+        mapHouse(add, x + 0.17 * s, y + 0.64 * s, s * 0.3); mapHouse(add, x + 0.3 * s, y + 0.6 * s, s * 0.28); mapHouse(add, x + 0.85 * s, y + 0.64 * s, s * 0.3);
+        mapSpire(add, x + 0.44 * s, y + 0.62 * s, s * 0.6); mapSpire(add, x + 0.58 * s, y + 0.62 * s, s * 0.6);
+        mapTower(add, x + 0.72 * s, y + 0.66 * s, s * 0.66);
+        const b = y + 0.96 * s, t = y + 0.79 * s;
+        add(b, "stone", mapPoly([[x + 0.05 * s, b], [x + 0.05 * s, t], [x + 0.45 * s, t], [x + 0.45 * s, b]]) + mapPoly([[x + 0.55 * s, b], [x + 0.55 * s, t], [x + 0.95 * s, t], [x + 0.95 * s, b]]));
+        add(b, "hole", `M${mapPt([x + 0.45 * s, b])}L${mapPt([x + 0.45 * s, t + 0.06 * s])}Q${mapPt([x + 0.5 * s, t - 0.01 * s])} ${mapPt([x + 0.55 * s, t + 0.06 * s])}L${mapPt([x + 0.55 * s, b])}Z`);
+        mapTower(add, x + 0.05 * s, b, s * 0.52); mapTower(add, x + 0.41 * s, b, s * 0.46); mapTower(add, x + 0.59 * s, b, s * 0.46); mapTower(add, x + 0.95 * s, b, s * 0.52);
+        return;
+      }
+      [[0.18, 0.32], [0.5, 0.28], [0.82, 0.34], [0.33, 0.62], [0.67, 0.6], [0.16, 0.94], [0.5, 0.92], [0.84, 0.96]].forEach(([u, v], k) => {
+        if (k > 5 && rnd(k) > 0.75) return;
+        const px = x + (u + (rnd(5 + k) - 0.5) * 0.08) * s, py = y + (v + (rnd(10 + k) - 0.5) * 0.06) * s;
+        if (k === 1 && rnd(20) < 0.16) mapSpire(add, px, py, s * 0.46);
+        else if (k === 4 && rnd(21) < 0.12) mapTower(add, px, py, s * 0.5);
+        else mapHouse(add, px, py, s * (0.2 + rnd(15 + k) * 0.07));
+      });
+    },
     ruins(add, x, y, s, rnd, few) {
       if (!few && rnd(1) > 0.3) { if (rnd(2) < 0.4) mapTuft(add, x + (0.3 + rnd(3) * 0.4) * s, y + (0.4 + rnd(4) * 0.4) * s, s * 0.11); return; }
       const k = few ? 1.5 : 1, base = y + s * (few ? 0.84 : 0.55 + rnd(5) * 0.35), cx = x + s * (few ? 0.5 : 0.3 + rnd(6) * 0.4), w = s * 0.05 * k;
@@ -1245,6 +1271,7 @@ const MAP_ART = {
     village:   { tones: ["#CBB78C", "#C8B489", "#CEBA8F"], cobble: 0.45, pebble: 0.2, blade: 0.08 },
     town:      { tones: ["#C8B48A", "#C5B187", "#CBB78D"], cobble: 0.6, pebble: 0.16, blade: 0.05 },
     city:      { tones: ["#C3B69E", "#C0B39B", "#C6B9A1"], cobble: 0.85, pebble: 0.1, block: 0.03 },
+    great_city: { tones: ["#BEB4A0", "#BBB19D", "#C1B7A3"], cobble: 0.9, pebble: 0.08, block: 0.05 },
     road:      { tones: ["#B99C6C", "#B69969", "#BC9F6F"], streak: 0.7, pebble: 0.25 },
     // a bridge (step 11): the road carried over the water on planks laid across it; a ford: knee-deep water over gravel
     // and flat stones, a little stiller than the river round it
@@ -1480,7 +1507,7 @@ function mapFantasy(v, byId) {
       const s = detail ? Math.max(cols, rows) * 5 : unit * [0, 0.62, 0.46, 0.42][here.length];
       const spots = [[], [[0.5, 0.5]], [[0.27, 0.5], [0.73, 0.5]], [[0.27, 0.29], [0.73, 0.29], [0.5, 0.73]]][here.length];
       here.forEach((k, n) => {
-        const sk = s * (MAP_MARK_SIZE[k.icon] || 1);
+        const sk = s * (MAP_MARK_SIZE[k.icon] || 1) * mapMarkScale(k);
         const [cx, cy] = detail ? aside(k.spot[0] / 10, k.spot[1] / 10, sk) : [(i + spots[n][0]) * unit, (j + spots[n][1]) * unit];
         if (p) pads.push({ d: mapCircle(cx, cy, sk * 0.56), fill: MAP_PAPER.land, o: 0.82 });
         if (MAP_ART.fantasy[k.icon]) MAP_ART.fantasy[k.icon](marked.add, cx - sk / 2, cy - sk / 2, sk, (q) => mapRand(lvl, x0 + i, y0 + j, q + 100 * (n + 1)), true);
@@ -2260,7 +2287,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
   const kinds = MAP_GROUNDS.filter(([k, ch]) => cells.some(c => c.kind === k) || (detail && detail.cells.some(row => String(row).includes(ch)))).map(([k]) => k);
   const shown = places.filter(p => drawn.has(p.id) && !p.listed);
   // each kind of village, town and city drawn here, once in the key, then what their streets cost
-  const townKinds = ["city", "town", "village"].map(k => towns.find(t => t.kind === k && drawn.has(t.id))).filter(Boolean);
+  const townKinds = ["great_city", "city", "town", "village"].map(k => towns.find(t => t.kind === k && drawn.has(t.id))).filter(Boolean);
   // the sizes of road drawn here (rpg_map_view: roads), then what a road and a mountain road cost
   const ways = MAP_ROADS.slice().reverse().filter(r => (Array.isArray(v.roads) ? v.roads : []).some(p => Array.isArray(p) && p[0] === r.k));
   // the bridges and fords drawn here (step 11): on the fantasy map the crossings, on the battle grid the squares
