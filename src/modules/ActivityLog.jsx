@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, createContext, useContext } from "react";
 import { DayDoneStyles, Confetti, Dancer, useDancers } from "../components/Critters.jsx";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useViewport } from "../lib/hooks.js";
@@ -422,6 +422,10 @@ function summarizeEntry(data) {
   return `Logged for ${data?.customer || "the customer"}: ${parts.join("; ")}.`;
 }
 
+// Everyone who has ever been on the agency team, set once by the module shell.
+// Editing an old record can give it to someone who has since left (Peter 2026-10-06).
+const TeamDirectoryCtx = createContext([]);
+
 // =====================================================================
 // Entry page — one customer, one contact, everything that happened, on
 // one flat page. One Log button; one RPC that saves all of it or none.
@@ -448,6 +452,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const [date, setDate] = useState(today);
   const [dateOpen, setDateOpen] = useState(false);
   const [logFor, setLogFor] = useState(null);
+  const [belongsTo, setBelongsTo] = useState("");   // edit mode, owner only: who the record is credited to
+  const directory = useContext(TeamDirectoryCtx);
   // Peter 2026-10-05: authorized team don't log a Pivot. Quoting an existing customer writes it
   // (rp_derive_quote_pivot). The Pivot activity is offered to everyone who isn't authorized.
   const [meId, setMeId] = useState(null);
@@ -514,6 +520,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       setPhone(d.phone_last4 || ""); setDate(d.date || today); setDateOpen(true);
       setRelationship(d.relationship || (d.kind === "activity" && EXISTING_ONLY.has(d.activity_key) ? "existing" : "")); setSource(d.marketing_source || "");
       setSourcedBy(d.sourced_by_team_member_id || ""); setEcrm(d.ecrm_url || "");
+      setBelongsTo(d.team_member_id || "");
       setNote(d.note || "");
       setOk(""); setErr(""); setAttempted(false); setLast(null);
       setActivities([]); setPolicies([]); setActivePolicy(null); setScores({});
@@ -705,6 +712,20 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
   const isSold = (p) => p.status === "sold" || p.status === "quoted_sold";
   const needsMoney = (p) => isSold(p) || p.status === "canceled";
   const showDate = dateOpen || date !== today;
+  // Peter 2026-10-06: the owner can say who a record belongs to while editing it, past
+  // teammates included. A conversation score has no owner to move.
+  const canReassign = isOwner && isEdit && editRec.kind !== "scorecard";
+  const ownerChoices = useMemo(() => {
+    const team = (directory || []).filter(t => t.category === "agency" && !t.is_admin_backoffice && !t.is_test_user);
+    const here = (t) => t.is_active && !t.archived_at;
+    const current = team.filter(here);
+    const former = team.filter(t => !here(t));
+    // Whoever it belongs to now always shows, even if not on the agency list.
+    if (belongsTo && !team.some(t => t.id === belongsTo)) {
+      former.unshift({ id: belongsTo, first_name: (directory || []).find(t => t.id === belongsTo)?.first_name || "former teammate" });
+    }
+    return { current, former };
+  }, [directory, belongsTo]);
   // What this household had on file before this entry: not canceled, not the record being edited.
   const onFileBefore = onFile.filter(x => !x.already_canceled && !policies.some(p => p.dbId && p.dbId === x.sale_product_id)
     && (!date || x.submitted_date <= date));
@@ -966,6 +987,11 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
       const { data, error } = await supabase.rpc(fn, { p_id: editRec.id, p_changes: changes });
       if (error) { setErr(errText(error)); return; }
       if (data && data.ok === false) { setErr(errText(data)); return; }
+      // Who a record belongs to is its own call: the edit functions do not own it.
+      if (canReassign && belongsTo && belongsTo !== editRec.team_member_id) {
+        const mv = await supabase.rpc("rp_reassign_record", { p_kind: k, p_id: editRec.id, p_team_member_id: belongsTo });
+        if (mv.error || !mv.data?.ok) { setErr(`The rest is saved, but it still belongs to the same person: ${errText(mv.error || mv.data)}`); onLogged?.(); return; }
+      }
       onLogged?.();
       onCloseEdit?.(data?.moved_from_historical
         ? "Saved. That record left the historical load and sits in the production log now."
@@ -1105,6 +1131,19 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
               </select>
             </div>
           )}
+          {canReassign && (
+            <div style={{ flex: "0 1 140px", minWidth: 0 }}>
+              <label style={labelStyle}>Belongs to</label>
+              <select style={inputBase} value={belongsTo} onChange={e => setBelongsTo(e.target.value)}>
+                {ownerChoices.current.map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
+                {ownerChoices.former.length > 0 && (
+                  <optgroup label="No longer here">
+                    {ownerChoices.former.map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
+                  </optgroup>
+                )}
+              </select>
+            </div>
+          )}
           <CustomerFields kind={custKind} first={first} initial={initial} phone={phone} age={age} gender={gender}
             withAgeGender={withAgeGender} onChange={onCustomer} onPick={pickCustomer} />
           <div style={{ flex: "0 1 150px", minWidth: 0 }}>
@@ -1117,7 +1156,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           {showDate && (
             <div style={field(150)}>
               <label style={labelStyle}>Date</label>
-              <input type="date" style={inputBase} value={date} max={today} min={addDays(today, -90)} onChange={e => setDate(e.target.value)} />
+              <input type="date" style={inputBase} value={date} max={today} min={isEdit && isOwner ? undefined : addDays(today, -90)} onChange={e => setDate(e.target.value)} />
             </div>
           )}
         </div>
@@ -5706,6 +5745,7 @@ export default function ActivityLog({ userRole, userId }) {
 
   return (
     <AccountCtx.Provider value={account}>
+    <TeamDirectoryCtx.Provider value={directory}>
     <div style={{ padding: _pad, display: "grid", gap: 16 }}>
       {acct ? <CustomerAccount token={acct} values={values} sources={sources} types={types} isOwner={isOwner}
                 roster={roster} onLogged={bump} onClose={() => setAcct("")} /> : null}
@@ -5771,6 +5811,7 @@ export default function ActivityLog({ userRole, userId }) {
         myTeamId={myTeamId} roster={roster} nameOf={nameOf} refreshKey={refreshKey} onChanged={bump} />}
       {tab === "billing" && <DeweyOwe />}
     </div>
+    </TeamDirectoryCtx.Provider>
     </AccountCtx.Provider>
   );
 }
