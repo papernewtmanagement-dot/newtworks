@@ -844,7 +844,8 @@ function ObjectsTab({ onError }) {
 // grids inside them (v.detail: every cell of the grid one level down), so the world is the largest map.
 // The drawing has two styles (MAP_ART). From the world down to a district it is a fantasy map: an inked coast,
 // little trees, hills and peaks, and names written on the land. The battle grid is seen from above: grass, tree
-// trunks under their crowns, rocks, water, and the roofs of houses (mapRoofs). Every ground has one color at every level: the fantasy map paints it in
+// trunks under their crowns, rocks, water, the roofs of houses (mapRoofs), the planks of a bridge and the stones of a
+// ford (step 11). Every ground has one color at every level: the fantasy map paints it in
 // the color the battle grid gives it, lightened toward the paper (mapWash), so open land is grassland on every grid
 // and never bare paper. The drawing is decoration only; what a cell is, and what it costs to enter, comes from the
 // function. The same cell always draws the same way (mapRand).
@@ -879,6 +880,9 @@ const MAP_ROADS = [
   { k: 1, name: "Highway", edge: { line: MAP_INK, min: 4.4 }, mid: { line: "#EDDDB0", inset: 2.2, min: 2 } },
 ];
 const MAP_MARK_TEXT = { village: 10.5, town: 12, city: 13 };
+// Bridges and fords (step 11; rpg_map_view: crossings), as the key names them: 1 a bridge, 2 a ford where a road
+// crosses, 3 a planned ford off the roads.
+const MAP_CROSSINGS = { 1: "Bridge", 2: "Ford", 3: "Ford" };
 // A steady number from 0 to 1 for a spot on the map, so the same cell always draws the same way.
 const mapRand = (a, b, c, d) => {
   let h = Math.imul((a | 0) + 0x9E3779B9, 0x85EBCA6B);
@@ -906,6 +910,20 @@ const mapBend = (pts) => {
   return d;
 };
 const mapPoly = (pts) => mapLine(pts) + "Z";
+// A bridge or a ford on the fantasy map (step 11): at x, y, the way across the water at angle a (radians, clockwise
+// from east), L units long, over a road w units wide (0 for a planned ford). A bridge is an inked bar with a lighter
+// deck and a post at each end; a ford is the way dotted through the water over a strip of the paper, so the river
+// breaks where it is forded. The dots and the posts keep their size on the screen however far out the map is drawn.
+const mapCrossing = (x, y, a, L, kind, w) => {
+  const dx = Math.cos(a), dy = Math.sin(a), nx = -dy, ny = dx;
+  const bar = mapLine([[x - dx * L / 2, y - dy * L / 2], [x + dx * L / 2, y + dy * L / 2]]);
+  if (kind === 1) {
+    const ph = Math.max(w * 1.1, L * 0.1);
+    const post = (s) => mapLine([[x + dx * s * L / 2 - nx * ph, y + dy * s * L / 2 - ny * ph], [x + dx * s * L / 2 + nx * ph, y + dy * s * L / 2 + ny * ph]]);
+    return [{ d: bar, line: MAP_INK, units: w * 1.7, min: 4.2, cap: "butt" }, { d: bar, line: "#C8A064", units: w * 1.7, inset: 2.4, min: 1.8, cap: "butt" }, { d: post(-1) + post(1), line: MAP_INK, units: 0, min: 1.6 }];
+  }
+  return [{ d: bar, line: MAP_PAPER.land, units: w * 1.4, min: 4.4, cap: "butt", o: 0.55 }, { d: bar, line: MAP_INK, units: 0, min: 2.4, dash: [0.01, 3.8], o: 0.9 }];
+};
 const mapCircle = (x, y, r) => `M${mapNum(x - r)} ${mapNum(y)}a${mapNum(r)} ${mapNum(r)} 0 1 0 ${mapNum(2 * r)} 0a${mapNum(r)} ${mapNum(r)} 0 1 0 ${mapNum(-2 * r)} 0Z`;
 // A round shape with a bumpy edge: one big circle and smaller ones round it (a tree crown from above, a bush).
 const mapBlob = (x, y, r, n, turn) => {
@@ -1214,7 +1232,8 @@ const MAP_ART = {
   // The battle grid, seen from above. Each ground: its three tones, then how likely a square of it is to carry each
   // thing (blade = grass, pebble, flower, rock = a boulder, slab and crack = bare stone, bush, thorn, block = a cut
   // stone, cobble, streak = a wheel mark, puddle, mist, root, wave, reed, ripple = blown sand, frost = a crack in
-  // ice, drift = a patch of snow, tree and big = a trunk under its crown; needle = its trees are pines).
+  // ice, drift = a patch of snow, tree and big = a trunk under its crown; needle = its trees are pines; plank = the
+  // boards of a bridge, laid across the road).
   top: {
     sea:       { tones: ["#6FA3B7", "#6CA0B4", "#72A6BA"], wave: 0.8 },
     water:     { tones: ["#8FBFC9", "#8CBCC6", "#92C2CC"], wave: 0.25, pebble: 0.06 },
@@ -1227,6 +1246,10 @@ const MAP_ART = {
     town:      { tones: ["#C8B48A", "#C5B187", "#CBB78D"], cobble: 0.6, pebble: 0.16, blade: 0.05 },
     city:      { tones: ["#C3B69E", "#C0B39B", "#C6B9A1"], cobble: 0.85, pebble: 0.1, block: 0.03 },
     road:      { tones: ["#B99C6C", "#B69969", "#BC9F6F"], streak: 0.7, pebble: 0.25 },
+    // a bridge (step 11): the road carried over the water on planks laid across it; a ford: knee-deep water over gravel
+    // and flat stones, a little stiller than the river round it
+    bridge:    { tones: ["#9C7A4E", "#99774B", "#9F7D51"], plank: true },
+    ford:      { tones: ["#A4C6C4", "#A1C3C1", "#A7C9C7"], wave: 0.3, pebble: 0.55, slab: 0.12 },
     pass:      { tones: ["#ABA08A", "#A89D87", "#AEA38D"], streak: 0.45, pebble: 0.45, crack: 0.12, rock: 0.04 },
     ruins:     { tones: ["#AEAA6E", "#ABA76B", "#B1AD71"], block: 0.17, pebble: 0.3, blade: 0.45 },
     valley:    { tones: ["#86B45C", "#83B159", "#89B75F"], blade: 0.85, flower: 0.32 },
@@ -1245,6 +1268,7 @@ const MAP_ART = {
   // The strokes of the battle grid, in the order they are painted.
   paint: [
     { k: "blade", line: "#5E7E39", w: 1 }, { k: "streak", line: "#927952", w: 1.6 }, { k: "wave", line: "#CFE6EC", w: 1.4 }, { k: "crack", line: "#6F6A62", w: 1 },
+    { k: "plank", line: "#5E4426", w: 1 }, { k: "plankLit", line: "#C9A66E", w: 0.8, o: 0.6 },
     { k: "reed", line: "#4E5D2B", w: 1.1 }, { k: "ripple", line: "#B49C67", w: 1.3 }, { k: "frost", line: "#AFC5D1", w: 1.2 },
     { k: "puddle", fill: "#8AA6AD", line: "#B9CDD0", w: 1 }, { k: "root", line: "#4E3B29", w: 2.6 }, { k: "drift", fill: "#FAFBFB", line: "#D5E0E5", w: 0.8 },
     { k: "pebble", fill: "#9B958A" }, { k: "slab", fill: "#B9B4A9" }, { k: "petal", fill: "#F6F2DC" }, { k: "gold", fill: "#E6C552" },
@@ -1266,8 +1290,8 @@ const mapMix = (a, b, t) => "#" + [1, 3, 5].map(n => Math.round(parseInt(a.slice
 // (MAP_ART.top), so a cell and the squares inside it are one color family at every level. A ground the battle grid
 // has no look of its own for is open land.
 const mapWash = (what) => (what === "sea" || what === "deep" ? MAP_PAPER.sea : what === "water" ? mapMix(MAP_PAPER.shallow, MAP_PAPER.sea, 0.45) : mapMix(MAP_PAPER.land, (MAP_ART.top[what] || MAP_ART.top.land).tones[0], MAP_TINT));
-// Water on the map: rivers and lakes, waded or swum (rpg_map_water)
-const mapWet = (k) => k === "water" || k === "deep";
+// Water on the map: rivers and lakes, waded or swum (rpg_map_water); a ford is knee-deep water (step 11)
+const mapWet = (k) => k === "water" || k === "deep" || k === "ford";
 // Harder ground drawn darker (Peter 2026-10-03: thicker forest, deeper water darker): h(i, j) = how hard a square is
 // inside its ground, 0 to 9 (rpg_map_view: cells' hard, detail.hard), nothing when not known. Each step from 2 up adds
 // a thin dark wash over the squares at or above it, so 9 (a thicket) is the darkest; deep water is shaded in blue.
@@ -1504,6 +1528,16 @@ function mapFantasy(v, byId) {
   const roadways = [];
   MAP_ROADS.forEach(({ k, edge, mid }) => { if (paths[k]) roadways.push({ d: paths[k], line: edge.line, units: wide(k), min: edge.min, dash: edge.dash, cap: edge.dash ? "butt" : "round" }); });
   MAP_ROADS.forEach(({ k, edge, mid }) => { if (paths[k]) roadways.push({ d: paths[k], line: mid.line, units: wide(k), inset: mid.inset, min: mid.min }); });
+  // the bridges and fords (step 11; rpg_map_view: crossings): each [kind, river, road, x, y, angle, span], x and y in
+  // thousandths of a cell, angle the way across the water (degrees, clockwise from east), span the width of the water
+  // there; drawn a little longer than the water is wide, and never too small to see
+  const crossings = [];
+  (Array.isArray(v.crossings) ? v.crossings : []).forEach(c => {
+    if (!Array.isArray(c) || c.length < 7) return;
+    const kind = Number(c[0]), rc = Number(c[2]), x = c[3] / 10, y = c[4] / 10, a = Number(c[5]) * Math.PI / 180, span = c[6] / 10;
+    const L = Math.max(span + unit * (kind === 1 ? 0.16 : 0.1), unit * 0.22, cols * 1.8);
+    crossings.push(...mapCrossing(x, y, a, L, kind, wide(rc) || 0));
+  });
   // the names of the lands this grid lists (continents on the world, countries on a continent), spread to their size
   places.filter(p => p.listed && !p.ground && Array.isArray(p.spot)).forEach(p => {
     lands.push({ text: String(p.name || "").toUpperCase(), x: p.spot[0] / 10, y: p.spot[1] / 10, caps: true, room: (p.spot[2] || 0) / 10, must: true });
@@ -1540,7 +1574,7 @@ function mapFantasy(v, byId) {
   const fog = mapFog(C, R, unit, (i, j) => get(i, j).k === "unknown", 0.45, cols, rows, lvl, x0, y0);
   return {
     wide: cols * 100, high: rows * 100, unit, aged: true,
-    layers: layers.concat(rose, strokes.list(MAP_ART.ink), roadways, lanes, pads, marked.list(MAP_ART.ink), [{ d: lines.join(""), line: MAP_INK, w: 0.8, o: 0.16 }], fog),
+    layers: layers.concat(rose, strokes.list(MAP_ART.ink), roadways, lanes, crossings, pads, marked.list(MAP_ART.ink), [{ d: lines.join(""), line: MAP_INK, w: 0.8, o: 0.16 }], fog),
     names: lands.concat(names, ways), blocks,
   };
 }
@@ -1667,9 +1701,10 @@ function mapTop(cols, rows, x0, y0, what, washes, show, hard, slope, cliff) {
   let wet = false;
   for (let j = 0; j < rows && !wet; j++) for (let i = 0; i < cols; i++) if (!dry(i, j)) { wet = true; break; }
   if (wet) layers.push({ d: mapOutline(cols, rows, dry, U, 0.3), line: "#E6DFC2", units: 9, o: 0.9 });
-  // run of the road: along the longer side of what this grid shows of it
+  // run of the road: along the longer side of what this grid shows of it (a bridge is the road over the water)
   let across = 0, down = 0;
-  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) if (what(i, j) === "road") { if (i + 1 < cols && what(i + 1, j) === "road") across += 1; if (j + 1 < rows && what(i, j + 1) === "road") down += 1; }
+  const onRoad = (i, j) => what(i, j) === "road" || what(i, j) === "bridge";
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) if (onRoad(i, j)) { if (i + 1 < cols && onRoad(i + 1, j)) across += 1; if (j + 1 < rows && onRoad(i, j + 1)) down += 1; }
   const tall = down > across;
   const trees = [];
   for (let j = -4; j < rows + 4; j++) for (let i = -4; i < cols + 4; i++) {
@@ -1686,6 +1721,12 @@ function mapTop(cols, rows, x0, y0, what, washes, show, hard, slope, cliff) {
     if (a.wave && rnd(10) < a.wave) { const [x, y] = at(11); const w = U * (0.14 + rnd(13) * 0.1); add("wave", `M${mapPt([x - w, y])}q${mapNum(w / 2)} ${mapNum(-w * 0.5)} ${mapNum(w)} 0t${mapNum(w)} 0`); }
     if (a.blade && rnd(14) < a.blade) for (let n = 0; n < 1 + Math.floor(rnd(15) * 3); n++) { const [x, y] = at(16 + n * 2); const h = U * (0.07 + rnd(22 + n) * 0.06); add("blade", mapLine([[x, y], [x - h * 0.4, y - h]]) + mapLine([[x, y], [x + h * 0.1, y - h * 1.2]]) + mapLine([[x, y], [x + h * 0.5, y - h * 0.8]])); }
     if (a.streak && rnd(26) < a.streak) for (let n = 0; n < 2; n++) { const [x, y] = at(27 + n * 2); const l = U * (0.2 + rnd(31 + n) * 0.3); add("streak", tall ? mapLine([[x, y - l / 2], [x, y + l / 2]]) : mapLine([[x - l / 2, y], [x + l / 2, y]])); }
+    // the planks of a bridge (step 11): three boards a square, laid across the road, each with a lit edge
+    if (a.plank) for (let n = 0; n < 3; n++) {
+      const t = (n + 0.5) / 3 * U + (rnd(160 + n) - 0.5) * U * 0.04;
+      add("plank", tall ? mapLine([[i * U, j * U + t], [(i + 1) * U, j * U + t]]) : mapLine([[i * U + t, j * U], [i * U + t, (j + 1) * U]]));
+      add("plankLit", tall ? mapLine([[i * U, j * U + t + U * 0.045], [(i + 1) * U, j * U + t + U * 0.045]]) : mapLine([[i * U + t + U * 0.045, j * U], [i * U + t + U * 0.045, (j + 1) * U]]));
+    }
     if (a.crack && rnd(33) < a.crack) {
       // on a slope the cracks run straight down it, as gullies do
       const [x, y] = at(34); const l = U * 0.24, cx = slope ? slope.ux : 1, cy = slope ? slope.uy : 0;
@@ -1803,7 +1844,8 @@ function mapBattle(v, byId) {
   const cells = Array.isArray(v.cells) ? v.cells : [];
   const m = /^(\d+)-(\d+)-(\d+)$/.exec(v.view || "");
   const grid = new Array(cols * rows).fill(null);
-  cells.forEach(c => { const p = c.place && !mapWet(c.kind) ? byId[c.place] : null; grid[(c.y - 1) * cols + (c.x - 1)] = { what: p ? (MAP_ART.top[p.icon] ? p.icon : "plain") : c.kind, id: c.place || null, h: c.hard == null ? null : Number(c.hard), cliff: c.cliff == null ? null : Number(c.cliff) }; });
+  // a square carried over water by a bridge, or in a ford, draws as that (step 11; rpg_map_view: cells' cross)
+  cells.forEach(c => { const p = c.place && !mapWet(c.kind) ? byId[c.place] : null; grid[(c.y - 1) * cols + (c.x - 1)] = { what: c.cross === "bridge" || c.cross === "ford" ? c.cross : p ? (MAP_ART.top[p.icon] ? p.icon : "plain") : c.kind, id: c.place || null, h: c.hard == null ? null : Number(c.hard), cliff: c.cliff == null ? null : Number(c.cliff) }; });
   const get = (i, j) => grid[(j < 0 ? 0 : j >= rows ? rows - 1 : j) * cols + (i < 0 ? 0 : i >= cols ? cols - 1 : i)] || { what: "plain" };
   const washes = [];
   Array.from(new Set(grid.filter(g => g && g.id).map(g => g.id))).forEach(id => { const p = byId[id]; if (p && p.color) washes.push({ d: mapOutline(cols, rows, (i, j) => get(i, j).id === id, 100, 0.3), fill: p.color, o: 0.14 }); });
@@ -1922,6 +1964,8 @@ function MapSwatch({ what, color, size = 24, top }) {
     const plain = what === "sea" || what === "land";
     const way = MAP_ROADS.find(r => what === "way" + r.k);
     if (way) out.push({ d: "M0 50H100", line: way.edge.line, units: 0, min: way.edge.min * 1.6, dash: way.edge.dash, cap: "butt" }, { d: "M0 50H100", line: way.mid.line, units: 0, min: (way.mid.min || 0) * 1.6 });
+    // a bridge or a ford (step 11): the river across the square, the road down it, the crossing where they meet
+    else if (what === "bridge" || what === "ford") out.push({ d: "M0 50Q50 36 100 50", line: MAP_RIVER, w: 3.2 }, { d: "M50 0V100", line: "#7A5A3A", w: 2 }, ...mapCrossing(50, 43, Math.PI / 2, 46, what === "bridge" ? 1 : 2, 4));
     else if (what === "road") out.push({ d: "M0 50H100", line: "#7A5A3A", w: 2, dash: [5, 3.5] });
     else if (MAP_ART.fantasy[what]) MAP_ART.fantasy[what](rows.add, plain ? 16 : 19, plain ? 16 : 27, plain ? 100 : 62, () => (plain ? 0.1 : 0.5), !plain);
     else if (color) out.push({ d: "M30 86V16", line: MAP_INK, w: 1.6 }, { d: "M30 18L78 30L30 46Z", fill: color, line: MAP_INK, w: 1.2 });
@@ -2219,6 +2263,8 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
   const townKinds = ["city", "town", "village"].map(k => towns.find(t => t.kind === k && drawn.has(t.id))).filter(Boolean);
   // the sizes of road drawn here (rpg_map_view: roads), then what a road and a mountain road cost
   const ways = MAP_ROADS.slice().reverse().filter(r => (Array.isArray(v.roads) ? v.roads : []).some(p => Array.isArray(p) && p[0] === r.k));
+  // the bridges and fords drawn here (step 11): on the fantasy map the crossings, on the battle grid the squares
+  const crosses = ["bridge", "ford"].filter(k => (Array.isArray(v.crossings) ? v.crossings : []).some(c => Array.isArray(c) && MAP_CROSSINGS[c[0]] === (k === "bridge" ? "Bridge" : "Ford")) || cells.some(c => c.cross === k));
   const costly = kinds.some(k => grounds[k] && grounds[k].penalty) || shown.some(p => /%/.test(p.ground || "")) || townKinds.length > 0 || ways.length > 0;
   return (
     <div style={{ ...card, order: 1, minWidth: 0, display: "grid", gap: 10 }}>
@@ -2272,6 +2318,11 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
           </span>
         ))}
         {ways.length > 0 && grounds.road && <span>On a road: {grounds.road.penalty}{grounds.pass && grounds.pass.penalty ? `; over mountains: ${grounds.pass.penalty}` : ""}. A walk keeps to the roads where they serve.</span>}
+        {crosses.map(k => (
+          <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <MapSwatch what={k} size={20} top={top} />{k === "bridge" ? "Bridge: the road carried over the water" : "Ford: the water is knee-deep here (+50% a square), waded; a walk sent through one needs no swim"}
+          </span>
+        ))}
         {kinds.map(k => (
           <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <MapSwatch what={k} size={20} top={top} />{ground(k)}
