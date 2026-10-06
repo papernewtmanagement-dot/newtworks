@@ -893,6 +893,18 @@ const mapRand = (a, b, c, d) => {
 const mapNum = (n) => Math.round(n * 10) / 10;
 const mapPt = (p) => `${mapNum(p[0])} ${mapNum(p[1])}`;
 const mapLine = (pts) => "M" + pts.map(mapPt).join("L");
+// A smooth open line through a chain of points: it passes the first and last and the midpoint between each pair in
+// between, with the points themselves steering it (quadratic curves), so a chain of cell points reads as one bending
+// line and not as a string of corners.
+const mapBend = (pts) => {
+  if (pts.length < 3) return mapLine(pts);
+  let d = "M" + mapPt(pts[0]);
+  for (let k = 1; k < pts.length - 1; k++) {
+    const p = pts[k], q = pts[k + 1];
+    d += "Q" + mapPt(p) + " " + mapPt(k === pts.length - 2 ? q : [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]);
+  }
+  return d;
+};
 const mapPoly = (pts) => mapLine(pts) + "Z";
 const mapCircle = (x, y, r) => `M${mapNum(x - r)} ${mapNum(y)}a${mapNum(r)} ${mapNum(r)} 0 1 0 ${mapNum(2 * r)} 0a${mapNum(r)} ${mapNum(r)} 0 1 0 ${mapNum(-2 * r)} 0Z`;
 // A round shape with a bumpy edge: one big circle and smaller ones round it (a tree crown from above, a bush).
@@ -1379,11 +1391,40 @@ function mapFantasy(v, byId) {
   }
   const root = new Map();
   const top = (n) => { let r = n; while (root.has(r) && root.get(r) !== r) r = root.get(r); root.set(n, r); return r; };
+  // the joins kept, by the width they are drawn in, as the neighbours of each cell
+  const kept = {};
   joins.sort((a, b) => a.rank - b.rank).forEach(e => {
     const a = top(e.from), b = top(e.to);
     if (a === b) return;
     root.set(a, b);
-    runs[e.w] = (runs[e.w] || "") + mapLine([e.p, e.q]);
+    const near = kept[e.w] || (kept[e.w] = new Map());
+    [[e.from, e.to, e.p, e.q], [e.to, e.from, e.q, e.p]].forEach(([n, m, p, q]) => { if (!near.has(n)) near.set(n, { at: p, to: [] }); near.get(n).to.push([m, q]); });
+  });
+  // each river is drawn as one smooth line from end to end (step 10a, Peter 2026-10-04: rivers are squiggly lines):
+  // its cells' points steer the line, which runs through the midpoint between each pair of them, so the bends the
+  // cells hold show as curves and not as corners; a line ends where a river ends or meets another
+  Object.keys(kept).forEach(w => {
+    const near = kept[w];
+    const used = new Set();
+    const edge = (n, m) => (n < m ? n + "-" + m : m + "-" + n);
+    near.forEach((node, n) => {
+      if (node.to.length === 2) return;
+      node.to.forEach(([m0]) => {
+        if (used.has(edge(n, m0))) return;
+        const chain = [node.at];
+        let from = n, at = m0;
+        while (true) {
+          used.add(edge(from, at));
+          const here = near.get(at);
+          chain.push(here.at);
+          if (here.to.length !== 2) break;
+          const next = here.to.find(([m]) => m !== from);
+          if (!next || used.has(edge(at, next[0]))) break;
+          from = at; at = next[0];
+        }
+        runs[w] = (runs[w] || "") + mapBend(chain);
+      });
+    });
   });
   Object.keys(runs).sort().reverse().forEach(k => layers.push({ d: runs[k], line: MAP_RIVER, w: MAP_RIVER_W[k] || 1 }));
   layers.push({ d: land, line: MAP_INK, w: 1.25 });
