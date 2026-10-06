@@ -300,7 +300,7 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                 // line -> its own (i) lines, across every group on the card
                 const itemInfo = Object.assign({}, ...groups.map(g => g.itemInfo));
                 const altActive = altGroups.length > 0 && (altOn[step.id] ??
-                  altGroups.some(g => g.items.some(i => subsDone.includes(i))));
+                  altGroups.some(g => g.keys.some(k => subsDone.includes(k))));
                 const altToggle = altGroups.length > 0 && (
                   <button
                     onClick={(e) => { e.stopPropagation(); setAltOn(m => ({ ...m, [step.id]: !altActive })); }}
@@ -479,10 +479,10 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                   />
                                 )}
                                 <div style={{ display: "grid", gap: 5 }}>
-                                  {g.items.flatMap(label => (altActive && altFor.has(label))
-                                    ? altGroups.filter(a => a.altFor === label).flatMap(a => a.items)
-                                    : [label]).map((label, ix) => {
-                                    const sd = subsDone.includes(label);
+                                  {g.items.flatMap((bare, bi) => (altActive && altFor.has(bare))
+                                    ? altGroups.filter(a => a.altFor === bare).flatMap(a => a.items.map((l, j) => ({ label: l, key: a.keys[j] })))
+                                    : [{ label: bare, key: g.keys[bi] }]).map(({ label, key }, ix) => {
+                                    const sd = subsDone.includes(key);
                                     // A line that links to a form they fill in ticks itself.
                                     const byForm = !!tickingFormOf(label);
                                     // leading spaces nest the line under the one above
@@ -495,12 +495,12 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
                                     // A training video line asks for one takeaway when ticked; once
                                     // ticked, the card shows the reply under the line.
                                     const wantsReply = asksForReply(label);
-                                    const reply = wantsReply && sd ? (step.substep_answers || {})[label] : null;
+                                    const reply = wantsReply && sd ? (step.substep_answers || {})[key] : null;
                                     // One click handler for the whole line: the box, the words and
                                     // the space beside them. The (i)s and links keep their own clicks.
                                     const onTick = byForm || lineLocked ? undefined
-                                      : (wantsReply && !sd) ? () => setReplyFor({ step, label })
-                                      : () => onToggleSubstep(step, label);
+                                      : (wantsReply && !sd) ? () => setReplyFor({ step, label: key })
+                                      : () => onToggleSubstep(step, key);
                                     return (
                                       <ItemInfo key={ix} lines={itemInfo[label] || []} pathColor={T.teal} linkColor={T.blue}>
                                       {(howTo) => (
@@ -1104,7 +1104,8 @@ function OnboardingSidebar({ people, candidatePlans, view, activePersonId, activ
           {sub("Offer stage")}
         </TabLink>
       ))}
-      {people.map(t => {
+      {people.filter(t => (counts[t.id] || 0) > 0 || openPlanFor(t.id) || (view === "person" && t.id === activePersonId)).map(t => {
+        // Someone with nothing due and no plan of their own stays off the list.
         const n = counts[t.id] || 0;
         const plan = openPlanFor(t.id);
         const note = n > 0 ? `${n} due`

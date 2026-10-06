@@ -268,10 +268,10 @@ function OnboardingItem({ item, busy, instructions, icons, onTickLine, onReply, 
     return (
       <div style={{ opacity: busy ? 0.6 : 1 }}>
         {description}
-        {item.mine.map(label => (
-          <div key={label} style={{ marginBottom: 6 }}>
-            {groups.filter(g => g.items.includes(label)).map((g, gi) => <div key={gi}>{head(g)}</div>)}
-            <Line text="Done" onTick={busy ? undefined : () => onTickLine(label)} />
+        {item.mine.map(key => (
+          <div key={key} style={{ marginBottom: 6 }}>
+            {groups.filter(g => g.keys.includes(key)).map((g, gi) => <div key={gi}>{head(g)}</div>)}
+            <Line text="Done" onTick={busy ? undefined : () => onTickLine(key)} />
           </div>
         ))}
       </div>
@@ -296,16 +296,17 @@ function OnboardingItem({ item, busy, instructions, icons, onTickLine, onReply, 
           {head(g)}
           <div style={{ display: "grid", gap: 5 }}>
             {g.items.map((label, ix) => {
-              const sd = done.includes(label);
+              const key = g.keys[ix];
+              const sd = done.includes(key);
               const byForm = !!tickingFormOf(label);
               const { level, text: shown } = splitIndent(label);
               const instr = instructions[shown];
               const locked = instr?.kind === ORIENTATION_KIND;
               const wantsReply = asksForReply(label);
-              const reply = wantsReply && sd ? (item.substep_answers || {})[label] : null;
+              const reply = wantsReply && sd ? (item.substep_answers || {})[key] : null;
               const onTick = busy || byForm || locked ? undefined
-                : (wantsReply && !sd) ? () => onReply(label)
-                : () => onTickLine(label);
+                : (wantsReply && !sd) ? () => onReply(key)
+                : () => onTickLine(key);
               return (
                 <ItemInfo key={ix} lines={g.itemInfo[label] || []} pathColor={T.teal} linkColor={T.blue}>
                   {(howTo) => (

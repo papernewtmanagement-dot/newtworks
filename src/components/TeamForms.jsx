@@ -346,30 +346,85 @@ function NonCompeteForm({ doc, data, setData }) {
 
 // ─── handbook acknowledgment ────────────────────────────────────────────
 
-function HandbookForm({ doc, data, setData }) {
+function HandbookForm({ doc, data, setData, teamId }) {
+  // Someone who confirmed an earlier version reads only what changed since then.
+  // Someone who never has reads the whole handbook.
+  const [changes, setChanges] = useState(null);   // null = looking, [] = nothing to show
+  const [since, setSince] = useState(null);       // the version they last confirmed
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!teamId || !doc) { if (alive) setChanges([]); return; }
+      const { data: rows } = await supabase.from("team_form_submissions")
+        .select("cycle_key, status").eq("team_id", teamId).eq("form_type", "handbook_ack");
+      const prev = (rows || [])
+        .filter(r => r.status !== "draft" && r.cycle_key && r.cycle_key !== `v${doc.version}`)
+        .map(r => parseInt(String(r.cycle_key).replace(/^v/, ""), 10))
+        .filter(n => Number.isFinite(n) && n < doc.version)
+        .sort((x, y) => y - x)[0];
+      if (!prev) { if (alive) { setSince(null); setChanges([]); } return; }
+      const { data: diff } = await supabase.rpc("handbook_changes", { p_from_version: prev });
+      if (alive) { setSince(prev); setChanges(Array.isArray(diff) ? diff : []); }
+    })();
+    return () => { alive = false; };
+  }, [teamId, doc?.version]);
+
+  const onlyChanges = since != null && Array.isArray(changes) && changes.length > 0;
+  const box = {
+    marginTop: 18, padding: "16px 18px", border: `1px solid ${T.slate200}`,
+    borderRadius: 10, background: T.slate50, boxSizing: "border-box",
+  };
+  const quote = (bg, fg) => ({
+    margin: "6px 0 0", padding: "8px 10px", borderRadius: 6, background: bg, color: fg,
+    fontSize: 12.5, lineHeight: 1.5, whiteSpace: "pre-wrap", overflowWrap: "anywhere",
+  });
   return (
     <div>
-      <div style={{
-        marginTop: 18, padding: "16px 18px", border: `1px solid ${T.slate200}`,
-        borderRadius: 10, background: T.slate50, boxSizing: "border-box",
-      }}>
+      <div style={box}>
         <div style={{ fontSize: 14, fontWeight: 600, color: T.slate900 }}>
           {doc ? doc.title : "Team Member Handbook"}
           {doc && <span style={{ color: T.slate500, fontWeight: 500 }}> — version {doc.version}</span>}
         </div>
         <div style={{ fontSize: 12.5, color: T.slate500, marginTop: 6, lineHeight: 1.5 }}>
-          Read it in full before you confirm. When a new version is published this
-          comes back around.
+          {onlyChanges
+            ? `You have confirmed this handbook before. Below is only what changed since version ${since}.`
+            : "Read it in full before you confirm. When a new version is published you will see only what changed."}
         </div>
-        <div style={{ marginTop: 12 }}>
-          <a href="/handbook" style={{
-            fontSize: 13.5, fontWeight: 600, color: T.blue, textDecoration: "none",
-          }}>Open the handbook</a>
-        </div>
+        {!onlyChanges && (
+          <div style={{ marginTop: 12 }}>
+            <a href="/handbook" style={{
+              fontSize: 13.5, fontWeight: 600, color: T.blue, textDecoration: "none",
+            }}>Open the handbook</a>
+          </div>
+        )}
       </div>
+
+      {onlyChanges && changes.map(c => (
+        <div key={c.id} style={{ ...box, marginTop: 12 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: T.slate900 }}>
+            {c.title}
+            {c.new_page && <span style={{ color: T.green, fontWeight: 600, fontSize: 11, marginLeft: 8 }}>new page</span>}
+            {c.removed_page && <span style={{ color: T.red, fontWeight: 600, fontSize: 11, marginLeft: 8 }}>page removed</span>}
+          </div>
+          {(c.added || []).map((t, i) => <div key={"a" + i} style={quote(T.greenLt, "#1B5E36")}>{t}</div>)}
+          {(c.removed || []).map((t, i) => (
+            <div key={"r" + i} style={{ ...quote(T.slate100, T.slate500), textDecoration: "line-through" }}>{t}</div>
+          ))}
+          {c.page && !c.removed_page && (
+            <div style={{ marginTop: 8 }}>
+              <a href={`/handbook/${c.page}`} style={{ fontSize: 12.5, fontWeight: 600, color: T.blue, textDecoration: "none" }}>
+                Open this page
+              </a>
+            </div>
+          )}
+        </div>
+      ))}
+
       <div style={{ marginTop: 16 }}>
         <Check checked={data.agreed} onChange={v => setData({ ...data, agreed: v })}>
-          I have read the current handbook and I understand what it asks of me.
+          {onlyChanges
+            ? "I have read what changed in the handbook and I understand what it asks of me."
+            : "I have read the current handbook and I understand what it asks of me."}
         </Check>
       </div>
     </div>
@@ -1158,7 +1213,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
           <CombinedForm data={data} setData={setData} secure={secure} setSecure={setSecure} needs={needs} />}
         {form.id === "w4" && <W4Form data={data} setData={setData} />}
         {form.id === "non_compete" && <NonCompeteForm doc={doc} data={data} setData={setData} />}
-        {form.id === "handbook_ack" && <HandbookForm doc={doc} data={data} setData={setData} />}
+        {form.id === "handbook_ack" && <HandbookForm doc={doc} data={data} setData={setData} teamId={teamId} />}
         {form.id === "i9" && (
           <>
             <I9EmployeeSection data={data} setData={setData} locked={!!submission?.employee_submitted_at} />

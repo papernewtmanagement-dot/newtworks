@@ -147,6 +147,13 @@ export function subGroups(substeps, { keepEmpty = false } = {}) {
       flat.items.push(s);
     }
   });
+  // The text each line is ticked under in substeps_done. Usually the line itself. A line
+  // that sits under more than one heading on the card (the team list under both Outlook and
+  // Jabber) is ticked separately under each, as "<heading> › <line>". Mirrors
+  // onboarding_substep_lines() in the database.
+  const seen = {};
+  out.forEach(g => g.items.forEach(i => { seen[i] = (seen[i] || 0) + 1; }));
+  out.forEach(g => { g.keys = g.items.map(i => (seen[i] > 1 ? (g.group || "") + " › " + i : i)); });
   return out.filter(g => g.items.length || g.info.length || (keepEmpty && g.fill));
 }
 
@@ -158,9 +165,10 @@ export function subProgress(substeps, done) {
   const groups = subGroups(substeps);
   const d = Array.isArray(done) ? done : [];
   const alts = groups.filter(g => g.altFor);
-  const required = groups.filter(g => !g.altFor).reduce((acc, g) => acc.concat(g.items), []);
-  const ok = (label) => d.includes(label)
-    || alts.some(a => a.altFor === label && a.items.length && a.items.every(i => d.includes(i)));
+  const required = groups.filter(g => !g.altFor)
+    .reduce((acc, g) => acc.concat(g.items.map((label, i) => ({ label, key: g.keys[i] }))), []);
+  const ok = ({ label, key }) => d.includes(key)
+    || alts.some(a => a.altFor === label && a.items.length && a.keys.every(k => d.includes(k)));
   const doneCount = required.filter(ok).length;
   return { total: required.length, done: doneCount, complete: required.length > 0 && doneCount === required.length };
 }
