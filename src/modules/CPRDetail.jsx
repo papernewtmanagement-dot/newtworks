@@ -4507,8 +4507,10 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
       {/* ───── 1. HOW THE ENVELOPE IS BUILT (annual basis → weekly → QTD accrual) ───── */}
       <div style={{ fontWeight: 700, marginBottom: 4, color: T.slate900 }}>1. How the Envelope is built</div>
       <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
-        On-time annualization = 365 / days_elapsed (Jan 1 → comp_anchor_date {compAnchorDate || "—"}, {compDaysElapsed} days → ×{compAnnualization.toFixed(4)}).
-        Book premium anchor: {bookSnapshotDate || "—"}.
+        {basis.basis_method === "book"
+          ? <>Book basis: auto + fire book × (base rate + on-time variable rate) + life book × life rate + on-time Scorecard. Book anchor: {bookSnapshotDate || "—"}, life book: {basis.life_snapshot_date || "—"}.</>
+          : <>On-time annualization = 365 / days_elapsed (Jan 1 → comp_anchor_date {compAnchorDate || "—"}, {compDaysElapsed} days → ×{compAnnualization.toFixed(4)}).
+        Book premium anchor: {bookSnapshotDate || "—"}.</>}
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 8 }}>
         <thead>
@@ -4520,6 +4522,20 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
           </tr>
         </thead>
         <tbody>
+          {basis.basis_method === "book" ? (<>
+          <tr>
+            <Td style={{ paddingLeft: 14 }}>Auto + fire book × base rate</Td>
+            <Td align="right">{fmtMoneyCentsR(bookPremium)}</Td>
+            <Td align="right" style={{ fontSize: 11, color: T.slate500 }}>×{(Number(basis.pc_base_rate || 0) * 100).toFixed(2)}%</Td>
+            <Td align="right">{fmtMoneyCentsR(Number(basis.pc_base_dollars || 0))}</Td>
+          </tr>
+          <tr>
+            <Td style={{ paddingLeft: 14 }}>Life book × life rate</Td>
+            <Td align="right">{fmtMoneyCentsR(Number(basis.life_premium || 0))}</Td>
+            <Td align="right" style={{ fontSize: 11, color: T.slate500 }}>×{(Number(basis.life_rate || 0) * 100).toFixed(2)}%</Td>
+            <Td align="right">{fmtMoneyCentsR(Number(basis.life_dollars || 0))}</Td>
+          </tr>
+          </>) : (<>
           <tr>
             <Td style={{ paddingLeft: 14 }}>P&amp;C gross (auto/fire new+renewal)</Td>
             <Td align="right">{fmtMoneyCentsR(pcYtd)}</Td>
@@ -4532,6 +4548,7 @@ function FormulaBreakdown({ diag, sorted, weeklySalesPool, weeklyRetentionPool }
             <Td align="right" style={{ fontSize: 11, color: T.slate500 }}>×{compAnnualization.toFixed(3)}</Td>
             <Td align="right">{fmtMoneyCentsR(lhAnnualized)}</Td>
           </tr>
+          </>)}
           <tr>
             <Td style={{ paddingLeft: 14 }}>On-time SMVC $</Td>
             <Td align="right">{(smvcPct * 100).toFixed(3)}%</Td>
