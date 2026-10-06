@@ -4,6 +4,7 @@ import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 import { mdToHtml } from "../lib/markdown.js";
 import { useTabParam } from "../lib/routing.jsx";
+import { developmentChanged } from "../lib/development.js";
 
 // =========================================================================
 // TeamForms.jsx
@@ -58,10 +59,6 @@ export function cycleKeyFor(formId, docs) {
   const d = docFor(formId, docs);
   return d ? `v${d.version}` : "";
 }
-
-// Sent on the window whenever someone finishes a form, so anything showing a
-// form's status (the handbook reminder) can look again.
-export const FORMS_CHANGED = "newtworks:forms-changed";
 
 const STATE_STYLE = {
   complete:          { bg: T.greenLt, fg: "#1B5E36", label: "Done" },
@@ -1317,7 +1314,7 @@ export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, em
           preview={preview}
           docs={docs}
           onBack={() => setOpen(null)}
-          onDone={() => { setOpen(null); load(); window.dispatchEvent(new Event(FORMS_CHANGED)); }}
+          onDone={() => { setOpen(null); load(); developmentChanged(); }}
           backLabel={onlyForm ? "Close" : "Back to forms"}
         />
       ) : (
