@@ -244,31 +244,47 @@ function Uploader({ folder, onDone }) {
 }
 
 // The computer version of the game. Stays mounted (hidden) while the printouts are open.
+// Full screen = the game fills the window under a bar with an Exit button, so there is always a visible way out (an
+// iPhone or iPad has no Escape key). Where the browser allows it, its own full screen is used too, to hide the address
+// bar; leaving that with Escape also closes the view. The same iframe is restyled, never remounted, so the game in
+// progress survives going in and out.
 function GameView({ game, visible, isPhone }) {
-  const frameRef = useRef(null);
+  const boxRef = useRef(null);
+  const [big, setBig] = useState(false);
   const html = game?.html || "";
-  // Full screen where the browser allows it; otherwise the game opens in its own tab.
-  const openTab = () => {
-    if (!html) return;
-    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
-    window.open(url, "_blank", "noopener");
-  };
   const openBig = () => {
-    const el = frameRef.current;
-    if (el?.requestFullscreen) {
-      const p = el.requestFullscreen();
-      if (p?.catch) p.catch(openTab);
-      return;
-    }
-    openTab();
+    if (!html) return;
+    setBig(true);
+    try {
+      const p = boxRef.current?.requestFullscreen?.();
+      if (p?.catch) p.catch(() => {});
+    } catch { /* the window-filling view works without it */ }
   };
+  const closeBig = () => {
+    setBig(false);
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  };
+  useEffect(() => {
+    if (!big) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") setBig(false); };
+    const onFs = () => { if (!document.fullscreenElement) setBig(false); };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("fullscreenchange", onFs);
+    const before = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("fullscreenchange", onFs);
+      document.body.style.overflow = before;
+    };
+  }, [big]);
   return (
     <div style={{ display: visible ? "block" : "none" }}>
       <div style={{ ...card, background: T.blueLt, borderColor: T.slate200, marginBottom: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <div style={{ flex: "1 1 260px", fontSize: 13, color: T.slate700, lineHeight: 1.5 }}>
           <span style={{ fontWeight: 700, color: T.slate900 }}>The game on a screen, for testing rules. </span>
           Play against the computer, pass the phone, or watch computer against computer. The settings inside the game
-          switch the commander, ranks, terrain, range and more, so a rule can be tried before anything gets printed.
+          switch the missions, heroes, specialists, editions and more, so a rule can be tried before anything gets printed.
           Switching to Printouts keeps your game going.
         </div>
         <button type="button" onClick={openBig} disabled={!html} style={{ ...linkBtn("primary"), cursor: html ? "pointer" : "default", opacity: html ? 1 : 0.6 }}>
@@ -281,16 +297,26 @@ function GameView({ game, visible, isPhone }) {
           {game.problem} Reload the page. If it keeps happening, ask Claude to check the Gridstrike game file.
         </div>
       )}
-      {html && (
-        <iframe
-          ref={frameRef}
-          title="Gridstrike: computer version"
-          srcDoc={html}
-          sandbox="allow-scripts"
-          style={{ display: "block", width: "100%", height: `calc(100vh - ${isPhone ? 200 : 230}px)`, minHeight: 460,
-            border: `1px solid ${T.slate200}`, borderRadius: 12, background: T.white, boxSizing: "border-box" }}
-        />
-      )}
+      <div ref={boxRef} style={big ? { position: "fixed", inset: 0, zIndex: 9999, background: T.white, display: "flex", flexDirection: "column" } : undefined}>
+        {big && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 10px",
+            borderBottom: `1px solid ${T.slate200}`, background: T.slate50, flex: "0 0 auto" }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.slate800 }}>Gridstrike</span>
+            <button type="button" onClick={closeBig} style={{ ...linkBtn("primary"), cursor: "pointer" }}>Exit full screen</button>
+          </div>
+        )}
+        {html && (
+          <iframe
+            title="Gridstrike: computer version"
+            srcDoc={html}
+            sandbox="allow-scripts"
+            style={big
+              ? { display: "block", width: "100%", flex: "1 1 auto", minHeight: 0, border: "none", background: T.white }
+              : { display: "block", width: "100%", height: `calc(100vh - ${isPhone ? 200 : 230}px)`, minHeight: 460,
+                  border: `1px solid ${T.slate200}`, borderRadius: 12, background: T.white, boxSizing: "border-box" }}
+          />
+        )}
+      </div>
     </div>
   );
 }
