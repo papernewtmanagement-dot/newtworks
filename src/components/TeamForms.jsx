@@ -45,6 +45,24 @@ export const FORMS = [
     blurb: "Read the current handbook and confirm." },
 ];
 
+// The document a form is signed against, when it has one. The one place that
+// pairs a form with its document.
+export function docFor(formId, docs) {
+  return formId === "non_compete" ? docs?.non_compete
+       : formId === "handbook_ack" ? docs?.handbook : null;
+}
+
+// Which version a submission belongs to: "v3" for a form signed against a
+// document, "" for the rest.
+export function cycleKeyFor(formId, docs) {
+  const d = docFor(formId, docs);
+  return d ? `v${d.version}` : "";
+}
+
+// Sent on the window whenever someone finishes a form, so anything showing a
+// form's status (the handbook reminder) can look again.
+export const FORMS_CHANGED = "newtworks:forms-changed";
+
 const STATE_STYLE = {
   complete:          { bg: T.greenLt, fg: "#1B5E36", label: "Done" },
   action_needed:     { bg: T.amberLt, fg: "#7A5B08", label: "Action needed" },
@@ -986,8 +1004,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
   // No Submit on a read-only form (the login packet) or on one with its own
   // Save button (the packet info).
   const noSubmit = !!(form.readOnly || form.savesItself);
-  const doc = form.id === "non_compete" ? docs.non_compete
-            : form.id === "handbook_ack" ? docs.handbook : null;
+  const doc = docFor(form.id, docs);
 
   // The offer form is where the Social Security number and birthday are asked.
   // Someone hired without it gets those two boxes on the Onboarding form, and
@@ -1013,9 +1030,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
     if (!supabase) return;
     setBusy(true); setErr(null);
     try {
-      const cycleKey =
-        (form.id === "non_compete" || form.id === "handbook_ack") && doc ? `v${doc.version}`
-        : "";
+      const cycleKey = cycleKeyFor(form.id, docs);
 
       // The Onboarding form locks last. Its Social Security number and bank
       // details save first, so a failed save leaves the form open with
@@ -1283,7 +1298,12 @@ export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, em
   }
 
   const openForm = open && FORMS.find(f => f.id === open);
-  const subFor = (id) => subs.find(s => s.form_type === id && s.status !== "superseded") || null;
+  // The handbook is confirmed again for every new version, so only the
+  // confirmation of the current version counts. An older one stays on file
+  // but no longer fills the form in (it would show locked, and the box could
+  // not be ticked for the new version).
+  const subFor = (id) => subs.find(s => s.form_type === id && s.status !== "superseded"
+    && (id !== "handbook_ack" || s.cycle_key === cycleKeyFor(id, docs))) || null;
 
   return (
     <div style={{ padding: embedded ? _pad : _pad, maxWidth: 860, minWidth: 0 }}>
@@ -1297,7 +1317,7 @@ export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, em
           preview={preview}
           docs={docs}
           onBack={() => setOpen(null)}
-          onDone={() => { setOpen(null); load(); }}
+          onDone={() => { setOpen(null); load(); window.dispatchEvent(new Event(FORMS_CHANGED)); }}
           backLabel={onlyForm ? "Close" : "Back to forms"}
         />
       ) : (

@@ -736,6 +736,11 @@ export function PopupShell({ onClose, children, maxWidth = 820 }) {
 // ─── form pop-up ─────────────────────────────────────
 // teamId: whose forms. null = not on the team yet (a candidate's plan);
 // left out = the person signed in (the template page).
+// Inside the provider, useOpenForm() gives the opener: openForm("handbook_ack").
+export function useOpenForm() {
+  return useContext(FormLinkContext);
+}
+
 export function FormPopupProvider({ teamId, onClosed, children }) {
   const [formId, setFormId] = useState(null);
   const close = () => { setFormId(null); if (onClosed) onClosed(); };

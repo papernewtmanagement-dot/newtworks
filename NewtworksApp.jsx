@@ -33,6 +33,7 @@ import MealPlan from "./src/modules/MealPlan.jsx";
 import Gridstrike from "./src/modules/Gridstrike.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
+import HandbookReminder from "./src/components/HandbookReminder.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
 import { useViewport } from "./src/lib/hooks.js";
 import DemoBanner from "./src/components/DemoBanner.jsx";
@@ -1314,6 +1315,12 @@ export default function NewtworksApp() {
           {/* ── Main Content ── */}
           <main style={css.main}>
             <div style={{ ...css.mainInner, padding: viewport.isPhone ? "12px 12px" : viewport.isTablet ? "16px 18px" : "20px 24px" }}>
+              {/* Until they confirm the current handbook, on every page. */}
+              {!_isFamilyLogin && (
+                <ErrorBoundary name="Handbook Reminder">
+                  <HandbookReminder teamMemberId={agency?.user?.teamMemberId || null} role={agency?.user?.role} />
+                </ErrorBoundary>
+              )}
               {cprWeekDate ? (
                 <ErrorBoundary name="CPR Detail"><CPRDetail weekDate={cprWeekDate} onClose={handleCloseCPR} onNavigateWeek={handleNavigateCPRWeek} userRole={agency?.user?.role} viewerTeamMemberId={agency?.user?.teamMemberId || null} /></ErrorBoundary>
               ) : (
