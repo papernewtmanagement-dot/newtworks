@@ -528,150 +528,230 @@ function useCPRData(weekDate) {
       setState(s => ({ ...s, loading: true, error: null }));
       try {
         const year = parseInt(weekDate.slice(0, 4), 10);
+        const yearStart = `${year}-01-01`;
 
-        // 0. Cycle start as of TODAY, from current_cycle_info. Fetched first because the
-        // read-only gate in step 2b depends on it: anything before the current cycle is
-        // archival and must not be recomputed. Null on failure — isHistoricalWeek falls
-        // back to its calendar approximation.
-        let currentCycleStartISO = null;
-        try {
-          const { data: nowCycle } = await supabase.rpc("current_cycle_info", { p_agency_id: AGENCY_ID });
-          const nowRow = Array.isArray(nowCycle) ? nowCycle[0] : nowCycle;
-          currentCycleStartISO = nowRow?.cycle_start || null;
-        } catch (e) {
-          console.warn("current_cycle_info (today) fetch failed:", e);
-        }
+        // Speed (2026-10-06): the page used to make about forty database calls one after
+        // another. Calls that don't depend on each other now go out together, and every
+        // computed per-week figure comes back in one call, get_cpr_page_bundle, which runs
+        // the same server functions the page used to call one by one.
 
-        // 1. Team (ALL members, including archived, tenure order).
-        //
-        // Snapshot lives on weekly_cpr_team_detail directly (Peter directive 
-        // 2026-07-13 pm5 consolidation): role/role_level/pay_type/etc. columns 
-        // on the detail row are set at first-write by trigger and never 
-        // overwritten. Frontend fetches live team for name/hire_date/roster 
-        // purposes; downstream displays that need historical-frozen values 
-        // read from the detail row's snapshot cols directly.
-        //
-        // Historical CPR rows can reference team_detail for members who have
-        // since been terminated/archived. Filtering by is_active here would
-        // leave those team_detail rows orphaned and display "(unknown)" on the page.
-        const { data: liveRows } = await supabase
-          .from("team_directory")
-          .select("id, first_name, last_name, nickname, hire_date, start_date, end_date, role, role_level, category, is_active, archived_at")
-          .eq("agency_id", AGENCY_ID)
-          .eq("is_admin_backoffice", false)
-          .order("hire_date", { ascending: true })
-          .order("first_name", { ascending: true });
+        // A. Reads nothing below changes. Started now, awaited where needed.
+        const independentP = Promise.all([
+          // 0. Team (ALL members, including archived, tenure order). Historical CPR rows
+          // can reference members since archived; filtering by is_active would orphan
+          // them as "(unknown)". Frozen per-week fields come from the detail row's
+          // snapshot columns, not from here.
+          supabase
+            .from("team_directory")
+            .select("id, first_name, last_name, nickname, hire_date, start_date, end_date, role, role_level, category, is_active, archived_at")
+            .eq("agency_id", AGENCY_ID)
+            .eq("is_admin_backoffice", false)
+            .order("hire_date", { ascending: true })
+            .order("first_name", { ascending: true }),
+          // annual_benefits_value is comp data -- stays on the real team table
+          // (admin-or-own-row RLS), never on the open directory view. A staff viewer
+          // gets only their own row back; it is merged onto the directory rows below.
+          supabase.from("team").select("id, annual_benefits_value").eq("agency_id", AGENCY_ID),
+          // agency_snapshot — most recent row WITH YTD data on/before week end, plus the prior one
+          supabase
+            .from("agency_snapshot")
+            .select("*")
+            .eq("agency_id", AGENCY_ID)
+            .lte("snapshot_date", weekDate)
+            .not("auto_new_ytd", "is", null)
+            .order("snapshot_date", { ascending: false })
+            .limit(2),
+          // agency_snapshot — year-start anchor + most recent (stock data)
+          supabase.from("agency_snapshot").select("*").eq("agency_id", AGENCY_ID).eq("snapshot_date", yearStart).maybeSingle(),
+          supabase
+            .from("agency_snapshot")
+            .select("*")
+            .eq("agency_id", AGENCY_ID)
+            .lte("snapshot_date", weekDate)
+            .order("snapshot_date", { ascending: false })
+            .limit(1),
+          // book_performance_goals — current year
+          supabase.from("book_performance_goals").select("*").eq("agency_id", AGENCY_ID).eq("year", year),
+          // Campaign prefills — most recent prior week with a non-null value per type
+          supabase
+            .from("weekly_cpr_reports")
+            .select("week_ending_date, campaign_defectors_date, campaign_single_line_date, campaign_af_renewals_date")
+            .eq("agency_id", AGENCY_ID)
+            .lt("week_ending_date", weekDate)
+            .order("week_ending_date", { ascending: false })
+            .limit(30),
+          // Territory top-ranked lapse prefill — most recent prior week carrying both values.
+          // Entered by hand each week, so the fields open filled in and can be left alone or typed over.
+          supabase
+            .from("weekly_cpr_reports")
+            .select("week_ending_date, territory_top_lapse_auto, territory_top_lapse_fire")
+            .eq("agency_id", AGENCY_ID)
+            .lt("week_ending_date", weekDate)
+            .not("territory_top_lapse_auto", "is", null)
+            .not("territory_top_lapse_fire", "is", null)
+            .order("week_ending_date", { ascending: false })
+            .limit(1),
+          // Prize Cart — 13 prizes for the cycle containing this week, then that quarter's budget.
+          (async () => {
+            try {
+              const { data: prizeCartRows } = await supabase
+                .from("prize_cart")
+                .select("id, display_order, prize_description, prize_url, prize_value, winner_team_member_id, won_on, quarter_ending_date")
+                .eq("agency_id", AGENCY_ID)
+                .gte("quarter_ending_date", weekDate)
+                .order("quarter_ending_date", { ascending: true })
+                .order("display_order", { ascending: true })
+                .limit(13);
+              const cart = prizeCartRows || [];
+              const cartQuarterEnd = cart[0]?.quarter_ending_date || null;
+              let budget = null;
+              if (cartQuarterEnd) {
+                const { data: bud } = await supabase
+                  .from("quarter_prize_budgets")
+                  .select("budget_dollars, formula_note")
+                  .eq("agency_id", AGENCY_ID)
+                  .eq("quarter_ending_date", cartQuarterEnd)
+                  .maybeSingle();
+                budget = bud || null;
+              }
+              return { cart, budget };
+            } catch (e) {
+              console.warn("prize_cart fetch failed:", e);
+              return { cart: [], budget: null };
+            }
+          })(),
+          // Floor config (rounding step per category)
+          supabase.from("leaderboard_floor_config").select("category, round_step, round_direction, description"),
+          // Names for the logged-activity rows in the Retention expander
+          supabase.from("retention_point_values").select("activity_key, label").eq("agency_id", AGENCY_ID),
+          // Marketing notes still live on the table
+          supabase.from("marketing_points").select("team_member_id, notes").eq("agency_id", AGENCY_ID).eq("week_end_date", weekDate),
+          // Cycle start + end for the week being viewed, from current_cycle_info — the
+          // single source of quarter boundaries.
+          supabase.rpc("current_cycle_info", { p_agency_id: AGENCY_ID, p_today: weekDate }),
+        ]);
 
-        // annual_benefits_value is comp data -- stays on the real team table
-        // (admin-or-own-row RLS), never on the open directory view. A staff
-        // viewer's fetch here returns only their own row; merge whatever
-        // comes back onto the directory rows so admins see everyone's figure
-        // and staff only ever see their own.
-        const { data: benefitRows } = await supabase
-          .from("team")
-          .select("id, annual_benefits_value")
-          .eq("agency_id", AGENCY_ID);
-        const benefitsById = new Map((benefitRows || []).map(r => [r.id, r.annual_benefits_value]));
-        const teamRows = (liveRows || []).map(r => ({
-          ...r,
-          annual_benefits_value: benefitsById.get(r.id) ?? null,
-        }));
+        // B. Cycle start as of TODAY (drives the read-only gate) and this week's report row.
+        const [nowCycleRes, reportStoredRes] = await Promise.all([
+          supabase.rpc("current_cycle_info", { p_agency_id: AGENCY_ID }),
+          supabase.from("weekly_cpr_reports").select("*").eq("agency_id", AGENCY_ID).eq("week_ending_date", weekDate).maybeSingle(),
+        ]);
+        const nowRow = Array.isArray(nowCycleRes.data) ? nowCycleRes.data[0] : nowCycleRes.data;
+        const currentCycleStartISO = nowRow?.cycle_start || null;
+        let reportRow = reportStoredRes.data;
 
-        // 2. Report row for this week
-        const { data: reportRowStored } = await supabase
-          .from("weekly_cpr_reports")
-          .select("*")
-          .eq("agency_id", AGENCY_ID)
-          .eq("week_ending_date", weekDate)
-          .maybeSingle();
-        let reportRow = reportRowStored;
-
-        // 2b. Auto-recompute the full CPR outcome (won_the_week + MVP + payroll)
-        // on page load so the banner and Payroll section always reflect current
-        // truth. Skipped only for historical weeks (before current calendar
-        // quarter), which stay read-only. Errors swallowed — non-fatal.
+        // C. Recompute the CPR outcome (won_the_week + MVP + payroll) so open weeks show
+        // current truth. cpr_recompute_on_open decides: an open week recomputes; a frozen
+        // week (payroll locked or sent to the team) gets one final write the first time
+        // it is opened after the freeze, then reads its stored values from then on.
+        // Historical weeks (before the current quarter) stay read-only and skip this.
+        // Errors are non-fatal: the page falls through with stored values.
         if (reportRow?.id && !isHistoricalWeek(weekDate, currentCycleStartISO)) {
           try {
-            await supabase.rpc("recompute_cpr_outcome", {
+            const { data: rc } = await supabase.rpc("cpr_recompute_on_open", {
               p_agency_id: AGENCY_ID,
               p_week_end_date: weekDate,
             });
-            // Re-read the row: the recompute just re-stamped won_the_week, the
-            // requirements buy-back and the floor factor on it. Reading it only
-            // BEFORE the recompute is how the page showed a stale +25 team
-            // buyback next to live net quotes (week ending 2026-09-05).
-            const { data: reportRowFresh } = await supabase
-              .from("weekly_cpr_reports")
-              .select("*")
-              .eq("agency_id", AGENCY_ID)
-              .eq("week_ending_date", weekDate)
-              .maybeSingle();
-            if (reportRowFresh) reportRow = reportRowFresh;
+            if (rc === "recomputed" || rc === "finalized") {
+              // Re-read the row: the recompute re-stamped won_the_week, the requirements
+              // buy-back and the floor factor on it.
+              const { data: reportRowFresh } = await supabase
+                .from("weekly_cpr_reports")
+                .select("*")
+                .eq("agency_id", AGENCY_ID)
+                .eq("week_ending_date", weekDate)
+                .maybeSingle();
+              if (reportRowFresh) reportRow = reportRowFresh;
+            }
           } catch (_recomputeErr) {
             // Non-fatal: fall through with whatever stored values exist.
           }
         }
 
-        // 3. Detail rows for this week
+        // D. Everything that reads what the recompute writes, all at once.
         //
-        // weekly_cpr_team_detail_admin_or_own_read (20260805040457) is a
-        // ROW-level policy: a non-admin viewer's select("*") on the base
-        // table drops every OTHER teammate's row entirely, not just the
-        // comp columns on those rows. That's correct for comp fields (pay,
-        // bonuses, pool diagnostics) but it also silently hid harmless
-        // activity fields (quotes, sales points, checklist, production
-        // counts) that Team Activity and other sections need team-wide.
-        //
-        // Fix mirrors the annual_benefits_value pattern above: base table
-        // fetch stays primary (full row, comp fields included, for admins
-        // or for the viewer's own row). Any team_member_id the base fetch
-        // didn't return gets filled in from weekly_cpr_team_detail_activity
-        // -- a view with the comp/pool/pay columns dropped -- so every
-        // teammate's row is present with activity data, and only comp
-        // fields are (correctly) blank for people other than the viewer.
+        // Detail rows: weekly_cpr_team_detail is admin-or-own at the ROW level, so the
+        // base table gives full rows (comp included) for admins or the viewer's own row,
+        // and weekly_cpr_team_detail_activity (comp columns dropped) fills in every other
+        // teammate so team-wide sections still show everyone.
+        const [
+          baseDetailRes, activityDetailRes, bundleRes,
+          lbRes, asRes, mvpRes,
+        ] = await Promise.all([
+          reportRow?.id
+            ? supabase.from("weekly_cpr_team_detail").select("*").eq("agency_id", AGENCY_ID).eq("weekly_cpr_report_id", reportRow.id)
+            : Promise.resolve({ data: [] }),
+          reportRow?.id
+            ? supabase.from("weekly_cpr_team_detail_activity").select("*").eq("agency_id", AGENCY_ID).eq("weekly_cpr_report_id", reportRow.id)
+            : Promise.resolve({ data: [] }),
+          supabase.rpc("get_cpr_page_bundle", { p_agency_id: AGENCY_ID, p_week_end_date: weekDate }),
+          // Leaderboards — Gold/Silver/Bronze × 3 categories
+          supabase
+            .from("leaderboards")
+            .select("category, tier, team_member_id, record_value, record_period_label, record_week_ending, set_at")
+            .eq("agency_id", AGENCY_ID)
+            .order("category").order("tier"),
+          // All-star running counts
+          supabase.from("all_star_counts").select("category, team_member_id, count, seeded_count").eq("agency_id", AGENCY_ID),
+          // MVP this week
+          supabase.from("mvp_history").select("team_member_id, sales_points_earned, prize_draws").eq("agency_id", AGENCY_ID).eq("week_ending_date", weekDate).maybeSingle(),
+        ]);
+
+        const [
+          liveRes, benefitRes, snapRes, bookYSRes, bookNowRes, goalRes,
+          priorCampRes, priorTopRes, cartAndBudget, fcRes, rpvRes, mpNotesRes, wkCycleRes,
+        ] = await independentP;
+
+        if (bundleRes.error) console.error("get_cpr_page_bundle failed:", bundleRes.error);
+        const bundle = bundleRes.data || {};
+        for (const [k, msg] of Object.entries(bundle.errors || {})) {
+          console.warn(`CPR bundle: ${k} failed:`, msg);
+        }
+
+        // Team rows with benefits merged on
+        const benefitsById = new Map((benefitRes.data || []).map(r => [r.id, r.annual_benefits_value]));
+        const teamRows = (liveRes.data || []).map(r => ({
+          ...r,
+          annual_benefits_value: benefitsById.get(r.id) ?? null,
+        }));
+
+        // Detail rows: base first, activity view fills the gaps
         let detailRows = [];
         if (reportRow?.id) {
-          const { data: dr } = await supabase
-            .from("weekly_cpr_team_detail")
-            .select("*")
-            .eq("agency_id", AGENCY_ID)
-            .eq("weekly_cpr_report_id", reportRow.id);
-          detailRows = dr || [];
-
+          detailRows = baseDetailRes.data || [];
           const seenMemberIds = new Set(detailRows.map(r => r.team_member_id));
-          const { data: activityRows } = await supabase
-            .from("weekly_cpr_team_detail_activity")
-            .select("*")
-            .eq("agency_id", AGENCY_ID)
-            .eq("weekly_cpr_report_id", reportRow.id);
-          for (const a of activityRows || []) {
+          for (const a of activityDetailRes.data || []) {
             if (!seenMemberIds.has(a.team_member_id)) {
               detailRows.push(a);
               seenMemberIds.add(a.team_member_id);
             }
           }
-
-          // The Owner does not belong on the CPR (Peter 2026-09-18). He carries no
-          // quota, no requirement and no pay row here. He only has a detail row at
-          // all because the Checklist tab writes one for his own wrap-up and inbox
-          // tick, and that row was putting him into Requirements, Hours, Payroll,
-          // Team Activity, Personal Checklist and Code Reds. Drop him once, here,
-          // so no individual section has to know about it.
+          // The Owner does not belong on the CPR (Peter 2026-09-18). He only has a
+          // detail row because the Checklist tab writes one for his own wrap-up and
+          // inbox tick. Drop him once, here, so no section has to know about it.
           const ownerIds = new Set((teamRows || []).filter(t => t.role_level === "Owner").map(t => t.id));
           detailRows = detailRows.filter(d => !ownerIds.has(d.team_member_id));
         }
 
-        // 3b. Scorecard completion auto-verify — tenure-aware.
-        // All tier math, entry-type mapping, and threshold rules live in the
-        // server-side function public.compute_scorecard_done_for_cpr_week
-        // (single source of truth; same helpers the fit_scorecards insert
-        // trigger uses). We just call it and write the deltas.
-        // Runs on every load; manual edits persist until the next load.
-        // Non-fatal: verify failure falls through with stored values.
-        // The RPC is SECURITY DEFINER (20260831134254) on purpose: it reads
-        // weekly_cpr_team_detail, which is admin-or-own at the ROW level, so an
-        // invoker-rights version handed a non-admin viewer only their own row.
-        if (detailRows.length > 0 && weekDate < SCORECARD_CUTOVER) {
+        // Cycle start + end for the week being viewed
+        const wkRow = Array.isArray(wkCycleRes.data) ? wkCycleRes.data[0] : wkCycleRes.data;
+        if (wkCycleRes.error) console.warn("current_cycle_info (week) fetch failed:", wkCycleRes.error);
+        const cycleStartISO = wkRow?.cycle_start || null;
+        const cycleEndISO = wkRow?.cycle_end || null;
+
+        // Prior four completed quarters (labels and closes from current_cycle_info, server-side)
+        const priorQuarterMeta = Array.isArray(bundle.prior_quarters) ? bundle.prior_quarters : [];
+        const priorQuarterEndDates = priorQuarterMeta.map(r => r.close_date);
+        const priorQuarterByClose = Object.fromEntries(priorQuarterMeta.map(r => [r.close_date, r]));
+
+        // E. Second wave: scorecard verify, the cycle's weekly rows, prior-quarter rows.
+        //
+        // Scorecard completion auto-verify — tenure-aware. All tier math lives in
+        // compute_scorecard_done_for_cpr_week (SECURITY DEFINER, so a non-admin viewer
+        // still gets every teammate). Absent from the result means "not computed" --
+        // NOT "not done" -- and never overwrites stored data.
+        const scorecardP = (async () => {
+          if (!(detailRows.length > 0 && weekDate < SCORECARD_CUTOVER)) return;
           try {
             const { data: doneRows } = await supabase.rpc(
               "compute_scorecard_done_for_cpr_week",
@@ -680,12 +760,6 @@ function useCPRData(weekDate) {
             const doneByTm = new Map((doneRows || []).map(r => [r.team_member_id, Boolean(r.done)]));
             const toUpdate = [];
             for (const d of detailRows) {
-              // Absent from the RPC result means "not computed" -- NOT "not done".
-              // Writing false off a missing key is what showed every other teammate's
-              // Scorecard box as an X to a non-admin viewer, and wrote that false back
-              // to the table (the UPDATE policy is agency-wide, so it stuck until the
-              // next admin load recomputed it). Guard stays even now that the RPC is
-              // SECURITY DEFINER: a truncated result must never overwrite stored data.
               if (!doneByTm.has(d.team_member_id)) continue;
               const computed = doneByTm.get(d.team_member_id);
               if (Boolean(d.scorecard_done) !== computed) {
@@ -693,160 +767,46 @@ function useCPRData(weekDate) {
                 d.scorecard_done = computed;
               }
             }
-            for (const u of toUpdate) {
-              await supabase
-                .from("weekly_cpr_team_detail")
-                .update({ scorecard_done: u.computed })
-                .eq("id", u.id);
-            }
+            await Promise.all(toUpdate.map(u =>
+              supabase.from("weekly_cpr_team_detail").update({ scorecard_done: u.computed }).eq("id", u.id)));
           } catch (_scorecardVerifyErr) {
             // Non-fatal: fall through with whatever stored values exist.
           }
-        }
+        })();
 
-        // 4. agency_snapshot — most recent row WITH YTD data on/before week end
-        const { data: snapRows } = await supabase
-          .from("agency_snapshot")
-          .select("*")
-          .eq("agency_id", AGENCY_ID)
-          .lte("snapshot_date", weekDate)
-          .not("auto_new_ytd", "is", null)
-          .order("snapshot_date", { ascending: false })
-          .limit(2);
-        const snapshot = (snapRows && snapRows[0]) || null;
-        const snapshotPrior = (snapRows && snapRows[1]) || null;
-
-        // 4b. Lapse rate (canonical, server-computed). Single source of truth via
-        // public.compute_lapse_rate(agency_id, as_of). See op-rule
-        // "Lapse rate — never store, compute at runtime".
-        const { data: lapseRows } = await supabase
-          .rpc("compute_lapse_rate", { p_agency_id: AGENCY_ID, p_as_of: weekDate });
-        const lapseRates = {};
-        for (const r of (lapseRows || [])) {
-          // annualized_rate is a decimal (0.3169 = 31.69%); consumers want percent
-          if (r && r.line && r.annualized_rate != null) {
-            lapseRates[r.line] = parseFloat(r.annualized_rate) * 100;
-          }
-        }
-
-        // 5. agency_snapshot — year-start anchor + most recent (stock data)
-        const yearStart = `${year}-01-01`;
-        const { data: bookYS } = await supabase
-          .from("agency_snapshot")
-          .select("*")
-          .eq("agency_id", AGENCY_ID)
-          .eq("snapshot_date", yearStart)
-          .maybeSingle();
-        const { data: bookNowRows } = await supabase
-          .from("agency_snapshot")
-          .select("*")
-          .eq("agency_id", AGENCY_ID)
-          .lte("snapshot_date", weekDate)
-          .order("snapshot_date", { ascending: false })
-          .limit(1);
-        const bookCurrent = (bookNowRows && bookNowRows[0]) || null;
-
-        // 6. book_performance_goals — current year
-        const { data: goalRows } = await supabase
-          .from("book_performance_goals")
-          .select("*")
-          .eq("agency_id", AGENCY_ID)
-          .eq("year", year);
-
-        // 7. Campaign prefills — most recent prior week with a non-null value per type.
-        // Stored directly on weekly_cpr_reports (one column per campaign type).
-        const { data: priorCampRows } = await supabase
-          .from("weekly_cpr_reports")
-          .select("week_ending_date, campaign_defectors_date, campaign_single_line_date, campaign_af_renewals_date")
-          .eq("agency_id", AGENCY_ID)
-          .lt("week_ending_date", weekDate)
-          .order("week_ending_date", { ascending: false })
-          .limit(30);
-        const campaignPriors = {
-          defectors_date: null, single_line_date: null, af_renewals_date: null,
-        };
-        (priorCampRows || []).forEach(r => {
-          if (!campaignPriors.defectors_date  && r.campaign_defectors_date)  campaignPriors.defectors_date  = r.campaign_defectors_date;
-          if (!campaignPriors.single_line_date && r.campaign_single_line_date) campaignPriors.single_line_date = r.campaign_single_line_date;
-          if (!campaignPriors.af_renewals_date && r.campaign_af_renewals_date) campaignPriors.af_renewals_date = r.campaign_af_renewals_date;
-        });
-
-        // 7b. Territory top-ranked lapse prefill — most recent prior week carrying both values.
-        // Entered by hand each week, so the fields open filled in and can be left alone
-        // or typed over.
-        const { data: priorTopRows } = await supabase
-          .from("weekly_cpr_reports")
-          .select("week_ending_date, territory_top_lapse_auto, territory_top_lapse_fire")
-          .eq("agency_id", AGENCY_ID)
-          .lt("week_ending_date", weekDate)
-          .not("territory_top_lapse_auto", "is", null)
-          .not("territory_top_lapse_fire", "is", null)
-          .order("week_ending_date", { ascending: false })
-          .limit(1);
-        const priorTopRow = (priorTopRows || [])[0] || null;
-        const reportPrefills = priorTopRow ? {
-          territory_top_lapse_auto: priorTopRow.territory_top_lapse_auto,
-          territory_top_lapse_fire: priorTopRow.territory_top_lapse_fire,
-        } : {};
-
-        // 8. Cycle start + end (YYYY-MM-DD) for the week being viewed, and the cycle start
-        // for TODAY (drives read-only lockout of past quarters).
-        //
-        // These come from the current_cycle_info database function — the single source of
-        // quarter boundaries everywhere else in the app. The page used to derive them
-        // itself from a hardcoded 2026-04-05 anchor stepping 91 days, clamped at zero
-        // cycles: every week before that anchor got a "cycle start" LATER than the week
-        // itself, so the cycle charts on any 2025 or Q1-2026 CPR queried an empty range.
-        let cycleStartISO = null;
-        let cycleEndISO = null;
-        try {
-          const { data: wkCycle } = await supabase.rpc("current_cycle_info", {
-            p_agency_id: AGENCY_ID,
-            p_today: weekDate,
-          });
-          const wkRow = Array.isArray(wkCycle) ? wkCycle[0] : wkCycle;
-          cycleStartISO = wkRow?.cycle_start || null;
-          cycleEndISO   = wkRow?.cycle_end   || null;
-        } catch (e) {
-          console.warn("current_cycle_info (week) fetch failed:", e);
-        }
-
-        // 8c. Cycle weekly team detail — every team_detail row from cycle start through this week.
-        // Drives Payroll Commission expandable chart, Team Activity per-person weekly production
-        // expansion, and inline sparkline next to each teammate's name.
-        //
-        // `commission` is comp data and correctly stays admin-or-own (that's
-        // the Payroll Commission chart's existing, intended privacy — not
-        // part of this fix). But bundling it into one select("*")-style
-        // query meant the row-level RLS policy dropped sales_points/prod_*
-        // for every OTHER teammate too, killing their production expansion
-        // and sparkline on Team Activity. Same split as the main detail
-        // fetch: base table for commission (own/admin only), the activity
-        // view — which has no embedded-join support since it's a view, so
-        // report ids are resolved first — fills in sales_points/prod_* for
-        // teammates the base query didn't return.
-        let cycleWeeklyDetails = [];
-        if (cycleStartISO && weekDate) {
+        // Cycle weekly team detail — every team_detail row from cycle start through this
+        // week. Drives the Payroll Commission chart, Team Activity per-person production
+        // and the sparkline. commission is comp data and stays admin-or-own (base table);
+        // the activity view fills in sales_points/prod_* for everyone else.
+        const cycleP = (async () => {
+          if (!(cycleStartISO && weekDate)) return [];
+          const out = [];
           try {
-            const { data: cdRows } = await supabase
-              .from("weekly_cpr_team_detail")
-              .select("team_member_id, commission, sales_points, prod_total_count, prod_total_premium, prod_issued_count, prod_issued_premium, prod_auto, prod_fire, prod_life, prod_health, prod_bank, weekly_cpr_reports!inner(week_ending_date)")
-              .eq("agency_id", AGENCY_ID)
-              .gte("weekly_cpr_reports.week_ending_date", cycleStartISO)
-              .lte("weekly_cpr_reports.week_ending_date", weekDate);
-
+            const [cdRes, cycleReportsRes] = await Promise.all([
+              supabase
+                .from("weekly_cpr_team_detail")
+                .select("team_member_id, commission, sales_points, prod_total_count, prod_total_premium, prod_issued_count, prod_issued_premium, prod_auto, prod_fire, prod_life, prod_health, prod_bank, weekly_cpr_reports!inner(week_ending_date)")
+                .eq("agency_id", AGENCY_ID)
+                .gte("weekly_cpr_reports.week_ending_date", cycleStartISO)
+                .lte("weekly_cpr_reports.week_ending_date", weekDate),
+              supabase
+                .from("weekly_cpr_reports")
+                .select("id, week_ending_date")
+                .eq("agency_id", AGENCY_ID)
+                .gte("week_ending_date", cycleStartISO)
+                .lte("week_ending_date", weekDate),
+            ]);
             const seenMemberWeek = new Set();
-            (cdRows || []).forEach(r => {
+            (cdRes.data || []).forEach(r => {
               const wed = r.weekly_cpr_reports?.week_ending_date;
               seenMemberWeek.add(r.team_member_id + "|" + wed);
-              cycleWeeklyDetails.push({
+              out.push({
                 team_member_id: r.team_member_id,
                 week_ending_date: wed,
                 commission: Number(r.commission) || 0,
                 sales_points: Number(r.sales_points) || 0,
-                // Null-preserving copy. sales_points above coerces a blank week to 0, which
-                // makes "never filled in" look identical to "genuinely zero". The carried-
-                // forward lookup in Team Activity needs to tell those apart.
+                // Null-preserving copy: "never filled in" must stay distinct from "genuinely zero"
+                // for the carried-forward lookup in Team Activity.
                 sales_points_raw: r.sales_points == null ? null : Number(r.sales_points),
                 prod_total_count: Number(r.prod_total_count) || 0,
                 prod_issued_count: Number(r.prod_issued_count) || 0,
@@ -859,14 +819,7 @@ function useCPRData(weekDate) {
                 prod_bank: Number(r.prod_bank) || 0,
               });
             });
-
-            const { data: cycleReports } = await supabase
-              .from("weekly_cpr_reports")
-              .select("id, week_ending_date")
-              .eq("agency_id", AGENCY_ID)
-              .gte("week_ending_date", cycleStartISO)
-              .lte("week_ending_date", weekDate);
-            const reportIdToDate = Object.fromEntries((cycleReports || []).map(r => [r.id, r.week_ending_date]));
+            const reportIdToDate = Object.fromEntries((cycleReportsRes.data || []).map(r => [r.id, r.week_ending_date]));
             const cycleReportIds = Object.keys(reportIdToDate);
             if (cycleReportIds.length > 0) {
               const { data: activityRows } = await supabase
@@ -879,7 +832,7 @@ function useCPRData(weekDate) {
                 const key = r.team_member_id + "|" + wed;
                 if (seenMemberWeek.has(key)) return; // base query already had this row (commission included)
                 seenMemberWeek.add(key);
-                cycleWeeklyDetails.push({
+                out.push({
                   team_member_id: r.team_member_id,
                   week_ending_date: wed,
                   commission: 0, // comp field — intentionally not exposed for teammates other than viewer/admin
@@ -901,15 +854,11 @@ function useCPRData(weekDate) {
             console.warn("cycleWeeklyDetails fetch failed:", e);
           }
 
-          // Weeks past the State Farm producer report's coverage have no imported
-          // prod_* row, so the per-person production expander was empty for the week
-          // in progress (Peter 2026-09-18). production_by_week_for returns exactly
-          // those weeks, straight from the production log, in the same shape.
+          // Weeks past the State Farm producer report's coverage have no imported prod_*
+          // row, so the per-person production expander was empty for the week in progress
+          // (Peter 2026-09-18). production_by_week_for returns exactly those weeks.
           try {
-            const { data: liveProd } = await supabase.rpc("production_by_week_for", {
-              p_agency_id: AGENCY_ID, p_from: cycleStartISO, p_through: weekDate,
-            });
-            (liveProd || []).forEach(r => {
+            (Array.isArray(bundle.live_production) ? bundle.live_production : []).forEach(r => {
               const live = {
                 prod_issued_count: Number(r.issued_count) || 0,
                 prod_issued_premium: Number(r.issued_premium) || 0,
@@ -921,63 +870,111 @@ function useCPRData(weekDate) {
                 prod_health: Number(r.health) || 0,
                 prod_bank: Number(r.bank) || 0,
               };
-              const idx = cycleWeeklyDetails.findIndex(
+              const idx = out.findIndex(
                 x => x.team_member_id === r.team_member_id && x.week_ending_date === r.week_ending_date);
-              if (idx >= 0) cycleWeeklyDetails[idx] = { ...cycleWeeklyDetails[idx], ...live };
-              else cycleWeeklyDetails.push({
+              if (idx >= 0) out[idx] = { ...out[idx], ...live };
+              else out.push({
                 team_member_id: r.team_member_id,
                 week_ending_date: r.week_ending_date,
                 commission: 0, sales_points: 0, sales_points_raw: null, ...live,
               });
             });
           } catch (e) {
-            console.warn("production_by_week_for fetch failed:", e);
+            console.warn("production_by_week_for merge failed:", e);
+          }
+          return out;
+        })();
+
+        // Prior-quarter average weekly Sales Points per person (reference lines on the
+        // Sales Points weekly run). Read from the activity view so every teammate shows,
+        // not only the viewer. Divisor is a FIXED 13 (Peter 2026-08-28): the agency runs a
+        // 13-week quarter at all times. Do not replace it with a computed week count.
+        const priorQP = (async () => {
+          try {
+            if (priorQuarterEndDates.length === 0) return {};
+            const { data: qtrReportRows } = await supabase
+              .from("weekly_cpr_reports")
+              .select("id, week_ending_date")
+              .eq("agency_id", AGENCY_ID)
+              .in("week_ending_date", priorQuarterEndDates)
+              .lt("week_ending_date", weekDate);
+            const qtrReportIdToDate = Object.fromEntries((qtrReportRows || []).map(r => [r.id, r.week_ending_date]));
+            const qtrReportIds = Object.keys(qtrReportIdToDate);
+            if (qtrReportIds.length === 0) return {};
+            const { data: qr } = await supabase
+              .from("weekly_cpr_team_detail_activity")
+              .select("team_member_id, sales_points, weekly_cpr_report_id")
+              .eq("agency_id", AGENCY_ID)
+              .not("sales_points", "is", null)
+              .in("weekly_cpr_report_id", qtrReportIds);
+            const grouped = {};
+            (qr || []).forEach(r => {
+              const wed = qtrReportIdToDate[r.weekly_cpr_report_id];
+              const meta = priorQuarterByClose[wed];
+              if (!meta) return;
+              const tmId = r.team_member_id;
+              if (!grouped[tmId]) grouped[tmId] = [];
+              grouped[tmId].push({
+                quarter_label: meta.quarter_label,
+                avg_weekly_sp: (Number(r.sales_points) || 0) / 13,
+                qtd_sp: Number(r.sales_points) || 0,
+              });
+            });
+            return grouped;
+          } catch (e) {
+            console.warn("priorQuartersAvgSP fetch failed:", e);
+            return {};
+          }
+        })();
+
+        const [, cycleWeeklyDetails, priorQuartersAvgSP] = await Promise.all([scorecardP, cycleP, priorQP]);
+        if (cancelled) return;
+
+        // Snapshots, book, goals, prefills
+        const snapRows = snapRes.data;
+        const snapshot = (snapRows && snapRows[0]) || null;
+        const snapshotPrior = (snapRows && snapRows[1]) || null;
+        const bookCurrent = (bookNowRes.data && bookNowRes.data[0]) || null;
+
+        // Lapse rate (canonical, server-computed by compute_lapse_rate). annualized_rate is a
+        // decimal (0.3169 = 31.69%); consumers want percent.
+        const lapseRates = {};
+        for (const r of (Array.isArray(bundle.lapse) ? bundle.lapse : [])) {
+          if (r && r.line && r.annualized_rate != null) {
+            lapseRates[r.line] = parseFloat(r.annualized_rate) * 100;
           }
         }
 
-        // 8b. Prior-week Sales Points per member — drives WoW delta indicator in Team Activity.
-        // Sales Points, quarter-to-date, for this week and for last week — both
-        // through get_sales_points_qtd, the one server resolver (frozen, then live
-        // production, then a CPR override, then self-reported). The page used to read
-        // the stored weekly_cpr_team_detail.sales_points column straight off the row.
-        // That column stays blank until the week is filled in or frozen, so the live
-        // production figure never showed and the week-over-week delta never rendered
-        // at all (Peter 2026-09-18). The resolver is SECURITY DEFINER so a staff
-        // viewer sees the same numbers an admin does.
-        const lastWeekDate = addDaysISO(weekDate, -7);
-        let salesPointsByMember = {};
-        let salesPointsSourceByMember = {};
-        let lastWeekSalesPointsByMember = {};
-        try {
-          const { data: spNow } = await supabase.rpc("get_sales_points_qtd", {
-            p_agency_id: AGENCY_ID, p_week_end: weekDate,
-          });
-          (spNow || []).forEach(r => {
-            if (!r?.team_id) return;
-            salesPointsByMember[r.team_id] = Number(r.sales_points) || 0;
-            salesPointsSourceByMember[r.team_id] = r.source || null;
-          });
-          const { data: spPrev } = await supabase.rpc("get_sales_points_qtd", {
-            p_agency_id: AGENCY_ID, p_week_end: lastWeekDate,
-          });
-          (spPrev || []).forEach(r => {
-            if (!r?.team_id) return;
-            lastWeekSalesPointsByMember[r.team_id] = Number(r.sales_points) || 0;
-          });
-        } catch (e) {
-          console.warn("sales points QTD fetch failed:", e);
-        }
-
-        // 9. Runtime hours — get_weekly_cpr_hours blends TimeClock + work_location
-        const { data: hoursRows, error: hoursError } = await supabase.rpc("get_weekly_cpr_hours", {
-          p_agency_id: AGENCY_ID,
-          p_week_ending_date: weekDate,
+        const campaignPriors = { defectors_date: null, single_line_date: null, af_renewals_date: null };
+        (priorCampRes.data || []).forEach(r => {
+          if (!campaignPriors.defectors_date  && r.campaign_defectors_date)  campaignPriors.defectors_date  = r.campaign_defectors_date;
+          if (!campaignPriors.single_line_date && r.campaign_single_line_date) campaignPriors.single_line_date = r.campaign_single_line_date;
+          if (!campaignPriors.af_renewals_date && r.campaign_af_renewals_date) campaignPriors.af_renewals_date = r.campaign_af_renewals_date;
         });
-        if (hoursError) {
-          console.error("get_weekly_cpr_hours failed:", hoursError);
-        }
+        const priorTopRow = (priorTopRes.data || [])[0] || null;
+        const reportPrefills = priorTopRow ? {
+          territory_top_lapse_auto: priorTopRow.territory_top_lapse_auto,
+          territory_top_lapse_fire: priorTopRow.territory_top_lapse_fire,
+        } : {};
+
+        // Sales Points, quarter-to-date, this week and last week — get_sales_points_qtd,
+        // the one server resolver (SECURITY DEFINER, so staff see what an admin sees).
+        const salesPointsByMember = {};
+        const salesPointsSourceByMember = {};
+        const lastWeekSalesPointsByMember = {};
+        (Array.isArray(bundle.sales_points_now) ? bundle.sales_points_now : []).forEach(r => {
+          if (!r?.team_id) return;
+          salesPointsByMember[r.team_id] = Number(r.sales_points) || 0;
+          salesPointsSourceByMember[r.team_id] = r.source || null;
+        });
+        (Array.isArray(bundle.sales_points_prev) ? bundle.sales_points_prev : []).forEach(r => {
+          if (!r?.team_id) return;
+          lastWeekSalesPointsByMember[r.team_id] = Number(r.sales_points) || 0;
+        });
+
+        // Runtime hours — get_weekly_cpr_hours blends TimeClock + work_location
         const runtimeHours = {};
-        (hoursRows || []).forEach(h => {
+        (Array.isArray(bundle.hours) ? bundle.hours : []).forEach(h => {
           if (!runtimeHours[h.team_member_id]) runtimeHours[h.team_member_id] = {};
           runtimeHours[h.team_member_id][h.day_label] = {
             hours: h.hours != null ? Number(h.hours) : null,
@@ -987,17 +984,9 @@ function useCPRData(weekDate) {
           };
         });
 
-        // 10. Runtime requirements — get_weekly_cpr_requirements computes
-        // carryover/missed/cost/total/paid/owed/net_quotes per person.
-        const { data: reqsRows, error: reqsError } = await supabase.rpc("get_weekly_cpr_requirements", {
-          p_agency_id: AGENCY_ID,
-          p_week_ending_date: weekDate,
-        });
-        if (reqsError) {
-          console.error("get_weekly_cpr_requirements failed:", reqsError);
-        }
+        // Runtime requirements — get_weekly_cpr_requirements
         const runtimeReqs = {};
-        (reqsRows || []).forEach(r => {
+        (Array.isArray(bundle.requirements) ? bundle.requirements : []).forEach(r => {
           runtimeReqs[r.team_member_id] = {
             carryover: Number(r.carryover) || 0,
             personal_misses: Number(r.personal_misses) || 0,
@@ -1014,311 +1003,55 @@ function useCPRData(weekDate) {
           };
         });
 
-        if (cancelled) return;
+        // Section 11 (SMVC & Scorecard), this week and prior week for the WoW delta
+        const section11 = bundle.section11 || null;
+        const section11Prior = bundle.section11_prior || null;
 
-        // Section 11 data (SMVC & Scorecard) — fetched live via RPC.
-        // Also fetch prior-week snapshot to drive week-over-week delta on the
-        // SMVC % / SMVC $ / Scorecard rows now merged into Agency Performance.
-        let section11 = null;
-        let section11Prior = null;
-        try {
-          const priorWeekISO = (() => {
-            const d = new Date(weekDate + "T00:00:00Z");
-            d.setUTCDate(d.getUTCDate() - 7);
-            return d.toISOString().slice(0, 10);
-          })();
-          const [{ data: sec11Data }, { data: sec11PriorData }] = await Promise.all([
-            supabase.rpc("get_cpr_section_11", { p_agency_id: AGENCY_ID, p_week_ending_date: weekDate }),
-            supabase.rpc("get_cpr_section_11", { p_agency_id: AGENCY_ID, p_week_ending_date: priorWeekISO }),
-          ]);
-          if (!cancelled) {
-            section11 = sec11Data || null;
-            section11Prior = sec11PriorData || null;
+        // This week's crossings — recomputed live from the underlying rows
+        // (get_weekly_crossings_live), never read back from the stored crossing tables.
+        const crossingsLive = Array.isArray(bundle.crossings) ? bundle.crossings : [];
+
+        // Retention Points breakdown for the Payroll expander, and its activity labels
+        const retentionPointsByMember = {};
+        (Array.isArray(bundle.retention_points) ? bundle.retention_points : []).forEach(r => {
+          if (r?.team_member_id) retentionPointsByMember[r.team_member_id] = r;
+        });
+        const retentionPointLabels = {};
+        (rpvRes.data || []).forEach(v => { if (v?.activity_key && v.label) retentionPointLabels[v.activity_key] = v.label; });
+
+        // Marketing points — marketing_points_weekly is the one reader (locked weeks from
+        // what was reported, later weeks priced live). Notes still live on the table.
+        const marketingByTeammate = {};
+        const notesByTm = {};
+        (mpNotesRes.data || []).forEach(n => { notesByTm[n.team_member_id] = n.notes; });
+        (Array.isArray(bundle.marketing_points) ? bundle.marketing_points : []).forEach(r => {
+          const tmId = r.team_member_id;
+          if (!marketingByTeammate[tmId]) {
+            marketingByTeammate[tmId] = { qtd_prior_sum: 0, this_week_points: 0, this_week_notes: "" };
           }
-        } catch (e) {
-          // Section 11 fetch failure shouldn't block the rest of the page
-          console.warn("get_cpr_section_11 failed:", e);
-        }
-
-        // Prize Cart — 13 prizes for the cycle containing this week.
-        // Filter: smallest quarter_ending_date >= weekDate, ordered by display_order.
-        let prizeCart = [];
-        let cartQuarterEnd = null;
-        try {
-          const { data: prizeCartRows } = await supabase
-            .from("prize_cart")
-            .select("id, display_order, prize_description, prize_url, prize_value, winner_team_member_id, won_on, quarter_ending_date")
-            .eq("agency_id", AGENCY_ID)
-            .gte("quarter_ending_date", weekDate)
-            .order("quarter_ending_date", { ascending: true })
-            .order("display_order", { ascending: true })
-            .limit(13);
-          if (!cancelled) {
-            prizeCart = prizeCartRows || [];
-            cartQuarterEnd = prizeCart[0]?.quarter_ending_date || null;
+          const pts = Number(r.points) || 0;
+          if (r.week_end_date === weekDate) {
+            marketingByTeammate[tmId].this_week_points = pts;
+            marketingByTeammate[tmId].this_week_notes = notesByTm[tmId] || "";
+          } else {
+            marketingByTeammate[tmId].qtd_prior_sum += pts;
           }
-        } catch (e) {
-          console.warn("prize_cart fetch failed:", e);
-        }
+        });
 
-        // Quarter Prize Cart Budget — total quarter-ending budget (formula-driven).
-        let quarterPrizeBudget = null;
-        if (cartQuarterEnd) {
-          try {
-            const { data: bud } = await supabase
-              .from("quarter_prize_budgets")
-              .select("budget_dollars, formula_note")
-              .eq("agency_id", AGENCY_ID)
-              .eq("quarter_ending_date", cartQuarterEnd)
-              .maybeSingle();
-            if (!cancelled) quarterPrizeBudget = bud || null;
-          } catch (e) { console.warn("quarter_prize_budgets fetch failed:", e); }
-        }
-
-        // Leaderboards — Gold/Silver/Bronze × 3 categories
-        let leaderboards = [];
-        try {
-          const { data: lbRows } = await supabase
-            .from("leaderboards")
-            .select("category, tier, team_member_id, record_value, record_period_label, record_week_ending, set_at")
-            .eq("agency_id", AGENCY_ID)
-            .order("category").order("tier");
-          if (!cancelled) leaderboards = lbRows || [];
-        } catch (e) { console.warn("leaderboards fetch failed:", e); }
-
-        // All-star running counts
-        let allStarCounts = [];
-        try {
-          const { data: asRows } = await supabase
-            .from("all_star_counts")
-            .select("category, team_member_id, count, seeded_count")
-            .eq("agency_id", AGENCY_ID);
-          if (!cancelled) allStarCounts = asRows || [];
-        } catch (e) { console.warn("all_star_counts fetch failed:", e); }
-
-        // This week's crossings — All-Star, Trailblazer and any leaderboard record set
-        // this week. Recomputed live from the underlying rows, NOT read back from
-        // all_star_crossings / trailblazer_crossings / leaderboards. Those tables hold
-        // snapshots written once at week close; correcting a teammate's sales points
-        // afterward never moves them, so the banner kept showing a number and a badge that
-        // were no longer true (week ending 2026-09-12 showed 662.41 and an All-Star badge
-        // for a week that actually came in at 548.99, under the 650 floor).
-        // Peter standing policy: totals are computed on display, never read back.
-        let crossingsLive = [];
-        try {
-          const { data: xRows, error: xErr } = await supabase
-            .rpc("get_weekly_crossings_live", { p_agency_id: AGENCY_ID, p_week_end_date: weekDate });
-          if (xErr) throw xErr;
-          if (!cancelled) crossingsLive = xRows || [];
-        } catch (e) { console.warn("get_weekly_crossings_live failed:", e); }
-
-        // Floor config (rounding step per category)
-        let floorConfig = [];
-        try {
-          const { data: fcRows } = await supabase
-            .from("leaderboard_floor_config")
-            .select("category, round_step, round_direction, description");
-          if (!cancelled) floorConfig = fcRows || [];
-        } catch (e) { console.warn("floor_config fetch failed:", e); }
-
-        // MVP this week
-        let mvpThisWeek = null;
-        try {
-          const { data: mvpRow } = await supabase
-            .from("mvp_history")
-            .select("team_member_id, sales_points_earned, prize_draws")
-            .eq("agency_id", AGENCY_ID)
-            .eq("week_ending_date", weekDate)
-            .maybeSingle();
-          if (!cancelled) mvpThisWeek = mvpRow || null;
-        } catch (e) { console.warn("mvp_history fetch failed:", e); }
-
-        // Prior-quarter average weekly Sales Points per person, for the last 4 COMPLETED
-        // quarters before the week being viewed. Reference lines on the Sales Points
-        // weekly run (assumes even production across the quarter).
-        //
-        // Quarter boundaries and quarter NAMES both come from current_cycle_info, the one
-        // function that calculates quarters. This page derives neither. It walks back by
-        // asking that function again for the day before each cycle start -- the day before
-        // a cycle starts IS the previous cycle's closing Saturday -- so there is no date
-        // arithmetic and no label logic here at all.
-        //
-        // Both jobs used to be done locally and both were wrong: the label was read off the
-        // close Saturday's calendar month, which put every column one quarter too high
-        // ("Q3 2026" was carrying Q2 2026), and the year was wrong whenever a close crossed
-        // New Year. An intermediate fix routed this through a prior_quarter_closes() helper;
-        // that helper existed only to call current_cycle_info in a loop, so per Peter's
-        // directive it was deleted and the loop moved here, straight onto the core function.
-        let priorQuartersAvgSP = {};
-        const priorQuarterMeta = [];
-        try {
-          let cursor = cycleStartISO;
-          for (let i = 0; i < 4 && cursor; i++) {
-            const prevDay = new Date(new Date(cursor + "T00:00:00Z").getTime() - 86400000)
-              .toISOString().slice(0, 10);
-            const { data: cyc } = await supabase.rpc("current_cycle_info", {
-              p_agency_id: AGENCY_ID,
-              p_today: prevDay,
-            });
-            const row = Array.isArray(cyc) ? cyc[0] : cyc;
-            if (!row?.cycle_end || !row?.cycle_start) break;
-            if (row.cycle_end < weekDate) {
-              priorQuarterMeta.push({
-                close_date: row.cycle_end,
-                quarter_label: row.quarter_label,
-              });
-            }
-            cursor = row.cycle_start;
-          }
-        } catch (e) {
-          console.warn("current_cycle_info (prior quarters) fetch failed:", e);
-        }
-        const priorQuarterEndDates = priorQuarterMeta.map(r => r.close_date);
-        const priorQuarterByClose = Object.fromEntries(priorQuarterMeta.map(r => [r.close_date, r]));
-        try {
-          // weekly_cpr_team_detail_activity — sales_points is not comp data,
-          // but the base table's row-level admin-or-own policy dropped every
-          // non-viewer row wholesale, so the prior-quarter reference columns
-          // in Team Activity only ever populated for the viewer. Views don't
-          // reliably support PostgREST's embedded-join syntax
-          // (weekly_cpr_reports!inner(...)), so report ids for the target
-          // quarter-end dates are resolved first, then the view is filtered
-          // by weekly_cpr_report_id directly.
-          let qtrRows = [];
-          if (priorQuarterEndDates.length > 0) {
-            const { data: qtrReportRows } = await supabase
-              .from("weekly_cpr_reports")
-              .select("id, week_ending_date")
-              .eq("agency_id", AGENCY_ID)
-              .in("week_ending_date", priorQuarterEndDates)
-              .lt("week_ending_date", weekDate);
-            const qtrReportIdToDate = Object.fromEntries((qtrReportRows || []).map(r => [r.id, r.week_ending_date]));
-            const qtrReportIds = Object.keys(qtrReportIdToDate);
-            if (qtrReportIds.length > 0) {
-              const { data: qr } = await supabase
-                .from("weekly_cpr_team_detail_activity")
-                .select("team_member_id, sales_points, weekly_cpr_report_id")
-                .eq("agency_id", AGENCY_ID)
-                .not("sales_points", "is", null)
-                .in("weekly_cpr_report_id", qtrReportIds);
-              qtrRows = (qr || []).map(r => ({ ...r, weekly_cpr_reports: { week_ending_date: qtrReportIdToDate[r.weekly_cpr_report_id] } }));
-            }
-          }
-          if (!cancelled && qtrRows) {
-            const grouped = {};
-            qtrRows.forEach(r => {
-              const wed = r.weekly_cpr_reports?.week_ending_date;
-              const meta = priorQuarterByClose[wed];
-              if (!meta) return;
-              // 13 weeks, always. Peter directive 2026-08-28: the agency runs a
-              // 13-week quarter consistently at all times, so this divisor is a
-              // FIXED house constant, not something derived per quarter. Do not
-              // replace it with a computed week count.
-              const tmId = r.team_member_id;
-              if (!grouped[tmId]) grouped[tmId] = [];
-              grouped[tmId].push({
-                quarter_label: meta.quarter_label,
-                avg_weekly_sp: (Number(r.sales_points) || 0) / 13,
-                qtd_sp: Number(r.sales_points) || 0,
-              });
-            });
-            priorQuartersAvgSP = grouped;
-          }
-        } catch (e) { console.warn("priorQuartersAvgSP fetch failed:", e); }
-
-        // Marketing points QTD context (per-teammate). Peter enters QTD total in the
-        // Payroll edit UI; save handler stores delta = entered - qtd_prior_sum.
-        // Quarter window matches compute_weekly_marketing_bonus, which now reads
-        // current_cycle_info like everything else. This used to build a CALENDAR quarter
-        // start (first of Jan/Apr/Jul/Oct) locally, which is up to a week adrift of the
-        // real cycle start and pulled the wrong weeks into the quarter-to-date total.
-        // Retention Points breakdown for the Payroll expander: hours in office,
-        // calls answered, logged activity (with the counts behind it), derived
-        // points, and the missed-call reduction applied to the lot.
-        let retentionPointsByMember = {};
-        try {
-          const { data: rpBreakdown } = await supabase.rpc("compute_weekly_retention_points", {
-            p_agency_id: AGENCY_ID, p_week_end_date: weekDate,
-          });
-          (rpBreakdown || []).forEach(r => {
-            if (r?.team_member_id) retentionPointsByMember[r.team_member_id] = r;
-          });
-        } catch (e) {
-          console.warn("retention points breakdown fetch failed:", e);
-        }
-        // Names for the logged-activity rows in the Retention expander: the labels
-        // set on the Retention Points values, never the raw database keys.
-        let retentionPointLabels = {};
-        try {
-          const { data: rpv } = await supabase
-            .from("retention_point_values")
-            .select("activity_key, label")
-            .eq("agency_id", AGENCY_ID);
-          (rpv || []).forEach(v => { if (v?.activity_key && v.label) retentionPointLabels[v.activity_key] = v.label; });
-        } catch (e) {
-          console.warn("retention point labels fetch failed:", e);
-        }
-
-        let marketingByTeammate = {};
-        try {
-          // marketing_points_weekly is the one reader: locked weeks from what was
-          // reported, weeks after the last lock priced live from the logs (the
-          // same numbers the scoreboard shows). Notes still live on the table.
-          const [{ data: mpPts }, { data: mpNotes }] = await Promise.all([
-            supabase.rpc("marketing_points_weekly", { p_agency_id: AGENCY_ID, p_week_end: weekDate }),
-            supabase
-              .from("marketing_points")
-              .select("team_member_id, notes")
-              .eq("agency_id", AGENCY_ID)
-              .eq("week_end_date", weekDate),
-          ]);
-          const notesByTm = {};
-          (mpNotes || []).forEach(n => { notesByTm[n.team_member_id] = n.notes; });
-          const mpRows = (mpPts || []).map(r => ({ ...r, notes: notesByTm[r.team_member_id] || "" }));
-          if (mpRows) {
-            mpRows.forEach(r => {
-              const tmId = r.team_member_id;
-              if (!marketingByTeammate[tmId]) {
-                marketingByTeammate[tmId] = { qtd_prior_sum: 0, this_week_points: 0, this_week_notes: "" };
-              }
-              const pts = Number(r.points) || 0;
-              if (r.week_end_date === weekDate) {
-                marketingByTeammate[tmId].this_week_points = pts;
-                marketingByTeammate[tmId].this_week_notes = r.notes || "";
-              } else {
-                marketingByTeammate[tmId].qtd_prior_sum += pts;
-              }
-            });
-          }
-        } catch (e) { console.warn("marketing_points fetch failed:", e); }
-
-        // Sales Points band badge (Peter 2026-08-28: the band itself, not the
-        // nickname) -- Good, Great or Elite off the 13-week rolling average,
-        // nothing below. The RPC already excludes
-        // the Owner, unlicensed seats, archived and test rows, so a teammate absent from
-        // this map simply has no title to show.
+        // Sales Points band badge (Good, Great or Elite off the 13-week rolling average)
         const spTitleById = {};
-        try {
-          const { data: spRows, error: spErr } = await supabase.rpc("team_sales_points_ratings", { p_agency_id: AGENCY_ID });
-          if (spErr) console.error("Failed to load Sales Points ratings:", spErr);
-          (spRows || []).forEach(r => { if (r?.team_member_id) spTitleById[r.team_member_id] = r.title; });
-        } catch (e) { console.error("Sales Points ratings fetch failed:", e); }
+        (Array.isArray(bundle.sp_ratings) ? bundle.sp_ratings : []).forEach(r => { if (r?.team_member_id) spTitleById[r.team_member_id] = r.title; });
 
-        // Raise policy is live: this is who is currently on pace to earn
-        // their next rung at the coming quarter close.
+        // Raise policy is live: who is on pace to earn their next rung at the coming quarter close.
         const raiseOnTrackById = {};
-        try {
-          const { data: rpRows, error: rpErr } = await supabase.rpc("team_raise_progress", { p_agency_id: AGENCY_ID });
-          if (rpErr) console.error("Failed to load raise progress:", rpErr);
-          (rpRows || []).forEach(r => {
-            if (r?.team_member_id && r.on_track) {
-              raiseOnTrackById[r.team_member_id] = {
-                nextHourly: r.next_hourly,
-                requirement: r.next_requirement,
-              };
-            }
-          });
-        } catch (e) { console.error("Raise progress fetch failed:", e); }
+        (Array.isArray(bundle.raise_progress) ? bundle.raise_progress : []).forEach(r => {
+          if (r?.team_member_id && r.on_track) {
+            raiseOnTrackById[r.team_member_id] = {
+              nextHourly: r.next_hourly,
+              requirement: r.next_requirement,
+            };
+          }
+        });
 
         setState({
           loading: false, error: null,
@@ -1329,9 +1062,9 @@ function useCPRData(weekDate) {
           snapshot,
           snapshotPrior,
           lapseRates,
-          bookYearStart: bookYS || null,
+          bookYearStart: bookYSRes.data || null,
           bookCurrent,
-          goals: goalRows || [],
+          goals: goalRes.data || [],
           campaignPriors,
           reportPrefills,
           lastWeekSalesPointsByMember,
@@ -1346,13 +1079,13 @@ function useCPRData(weekDate) {
           runtimeReqs,
           section11,
           section11Prior,
-          prizeCart,
-          leaderboards,
-          allStarCounts,
+          prizeCart: cartAndBudget.cart,
+          leaderboards: lbRes.data || [],
+          allStarCounts: asRes.data || [],
           crossingsLive,
-          floorConfig,
-          mvpThisWeek,
-          quarterPrizeBudget,
+          floorConfig: fcRes.data || [],
+          mvpThisWeek: mvpRes.data || null,
+          quarterPrizeBudget: cartAndBudget.budget,
           priorQuartersAvgSP,
           marketingByTeammate,
           cycleWeeklyDetails,
