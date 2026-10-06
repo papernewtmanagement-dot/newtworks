@@ -50,7 +50,7 @@ const CODES = [
   { code: "5Manage", note: "Manager" },
 ];
 
-const COL_COUNT = 13;
+const COL_COUNT = 14;
 
 const CARD = { background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10, padding: "14px 16px", marginBottom: 14 };
 const H = { fontSize: 13, fontWeight: 700, color: T.slate900, margin: "0 0 8px 0" };
@@ -311,10 +311,60 @@ function LeslieGoals({ goals }) {
   );
 }
 
+// REIMB. The Win the Quarter trip prize lands here the week the quarter closes
+// (Peter 2026-10-06). Untick it when receipts are not in yet and it moves to
+// the following week; it keeps moving a week each time it is unticked. Once
+// payroll for the week is in, the column is the paid REIMB. line and the box
+// is locked. The move itself is wtq_reimb_set; this only calls it.
+function ReimbCell({ row, weekEnd, frozen, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const items = Array.isArray(row.wtq) ? row.wtq : [];
+  const flip = async (it) => {
+    setBusy(true);
+    setErr(null);
+    const { error: e } = await supabase.rpc("wtq_reimb_set", {
+      p_agency_id: AGENCY_ID,
+      p_detail_id: it.detail_id,
+      p_week_ending_date: weekEnd,
+      p_paid: !it.paid_this_week,
+    });
+    setBusy(false);
+    if (e) { setErr(e.message); return; }
+    onChanged();
+  };
+  if (!items.length) {
+    return <td style={{ ...TDR, color: num(row.reimb) > 0 ? T.green : T.slate500 }}>{money0(row.reimb)}</td>;
+  }
+  return (
+    <td style={TDR}>
+      {items.map((it) => (
+        <label
+          key={it.detail_id}
+          title={it.paid_this_week ? "WtQ trip prize. Untick if receipts are not in; it moves to next week." : "Moved to next week. Tick to pay it this week."}
+          style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end", cursor: frozen || busy ? "default" : "pointer" }}
+        >
+          <input
+            type="checkbox"
+            checked={!!it.paid_this_week}
+            disabled={frozen || busy}
+            onChange={() => flip(it)}
+          />
+          <span style={{ color: it.paid_this_week ? T.green : T.slate500, textDecoration: it.paid_this_week ? "none" : "line-through" }}>
+            {money(it.amount)}
+          </span>
+        </label>
+      ))}
+      {frozen && num(row.reimb) > 0 && <div style={{ fontSize: 11, color: T.slate500 }}>paid {money(row.reimb)}</div>}
+      {err && <div style={{ fontSize: 11, color: T.red, whiteSpace: "normal" }}>{err}</div>}
+    </td>
+  );
+}
+
 // One row per person. One row is one person's pay entry, in the order it gets
 // typed: hours, pay, the five codes, what is added in, the total before
 // deductions, then what comes out.
-function PayrollTable({ rows, hasReport, openId, setOpenId, hrefForPerson, onChanged }) {
+function PayrollTable({ rows, hasReport, weekEnd, frozen, openId, setOpenId, hrefForPerson, onChanged }) {
   if (!rows.length) return <div style={MUTED}>Nobody to pay this week.</div>;
 
   const totals = rows.reduce((acc, r) => {
@@ -324,11 +374,12 @@ function PayrollTable({ rows, hasReport, openId, setOpenId, hrefForPerson, onCha
     acc.pay += num(r.pay);
     CODES.forEach((c) => { acc.codes[c.code] += num(r.codes?.[c.code]); });
     acc.addIn += num(r.add_in);
+    acc.reimb += num(r.reimb);
     acc.before += num(r.before_deductions);
     acc.takeOut += num(r.take_out);
     return acc;
   }, {
-    worked: 0, pto: 0, overtime: 0, pay: 0, addIn: 0, before: 0, takeOut: 0,
+    worked: 0, pto: 0, overtime: 0, pay: 0, addIn: 0, reimb: 0, before: 0, takeOut: 0,
     codes: { "1Comm": 0, "2Team": 0, "3Market": 0, "4Goals": 0, "5Manage": 0 },
   });
 
@@ -344,6 +395,7 @@ function PayrollTable({ rows, hasReport, openId, setOpenId, hrefForPerson, onCha
             <th style={THR}>Pay</th>
             {CODES.map((c) => <th key={c.code} style={THR} title={c.note}>{c.code}</th>)}
             <th style={THR}>LIFE</th>
+            <th style={THR} title="Reimbursements, including the Win the Quarter trip prize">REIMB.</th>
             <th style={{ ...THR, color: T.slate900 }}>Total</th>
             <th style={THR}>Take out</th>
           </tr>
@@ -372,6 +424,7 @@ function PayrollTable({ rows, hasReport, openId, setOpenId, hrefForPerson, onCha
                     <td key={c.code} style={TDR}>{hasReport ? money0(r.codes?.[c.code]) : "\u2014"}</td>
                   ))}
                   <td style={{ ...TDR, color: num(r.add_in) > 0 ? T.green : T.slate500 }}>{money0(r.add_in)}</td>
+                  <ReimbCell row={r} weekEnd={weekEnd} frozen={frozen} onChanged={onChanged} />
                   <td style={{ ...TDR, fontWeight: 700, color: T.slate900 }}>{money0(r.before_deductions)}</td>
                   <td style={{ ...TDR, color: num(r.take_out) > 0 ? T.red : T.slate500 }}>{money0(r.take_out)}</td>
                 </tr>
@@ -395,6 +448,7 @@ function PayrollTable({ rows, hasReport, openId, setOpenId, hrefForPerson, onCha
               <td key={c.code} style={{ ...TDR, fontWeight: 700 }}>{hasReport ? money0(totals.codes[c.code]) : "\u2014"}</td>
             ))}
             <td style={{ ...TDR, fontWeight: 700 }}>{money0(totals.addIn)}</td>
+            <td style={{ ...TDR, fontWeight: 700 }}>{money0(totals.reimb)}</td>
             <td style={{ ...TDR, fontWeight: 700, color: T.slate900 }}>{money0(totals.before)}</td>
             <td style={{ ...TDR, fontWeight: 700 }}>{money0(totals.takeOut)}</td>
           </tr>
@@ -506,6 +560,8 @@ export default function TeamPayroll() {
               <PayrollTable
                 rows={rows}
                 hasReport={hasReport}
+                weekEnd={week?.week_ending_date || pickedWeek}
+                frozen={payrollIn}
                 openId={openId}
                 setOpenId={setOpenId}
                 hrefForPerson={hrefForPerson}
@@ -533,7 +589,7 @@ export default function TeamPayroll() {
         <div style={LI}>
           Life stipends are added as income from the dropdown so the benefit is taxed. Medical, dental and vision come out automatically, so just check they are on the right-hand side. Open a name in the table to add, edit or remove someone's lines.
         </div>
-        <div style={LI}>Pay is the wages for the week. LIFE is the life stipend. Total is the pay plus the bonuses plus the stipend. Take out is everything else on file for that person, and it comes off after that.</div>
+        <div style={LI}>Pay is the wages for the week. LIFE is the life stipend. Total is the pay plus the bonuses plus the stipend plus REIMB. Take out is everything else on file for that person, and it comes off after that.</div>
       </Note>
 
       <Note title="Bonuses and codes">
@@ -556,6 +612,7 @@ export default function TeamPayroll() {
       <Note title="Reimbursements — check these every payroll">
         <ul style={UL}>
           <li style={BULLET}><strong>Going out:</strong> do we owe anyone for lunches or anything else?</li>
+          <li style={BULLET}><strong>Win the Quarter trip prize:</strong> shows under REIMB. the week the quarter closes. Untick it if they have not turned in receipts yet, and it moves to the next week.</li>
           <li style={BULLET}><strong>Coming in:</strong> does anyone owe us from an advance? If so, take it now as a miscellaneous deduction.</li>
           <li style={BULLET}><strong>Fitbit:</strong> take $25 a week until it is paid off, regardless of bonus, as a deduction. The only exception is if we need to exchange it. Send the agent and the team member a record of the deduction and the remaining balance.</li>
         </ul>
