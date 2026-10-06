@@ -30,6 +30,7 @@ import { fetchExcerptRows, fetchFaqRows, fetchManualPages, ADMIN_ROLES } from ".
 import { T } from "../lib/theme.js";
 import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 import { wireRoleplayPickers } from "../lib/roleplayPickers.js";
+import { wirePopups } from "../lib/popups.js";
 import { MarkdownTextarea } from "../lib/markdownEditor.jsx";
 import { handleModuleLinkClick, useTabParam } from "../lib/routing.jsx";
 import { fillLiveFormulas } from "../lib/liveFormulas.js";
@@ -1853,6 +1854,9 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   // Role play pickers: a random card on load, a random card for whatever
   // springboard is picked, and the refresh button steps to the next one.
   useEffect(() => wireRoleplayPickers(bodyRef.current), [html]);
+  // Pop-ups: <details class="nw-popup"> becomes a button and a dialog
+  // (Peter 2026-10-06). See src/lib/popups.js.
+  useEffect(() => { wirePopups(bodyRef.current); }, [html]);
   // A closed expander is hidden by the browser itself, so its text would be
   // missing from a printed page even though it is sitting right there in the
   // document. This opens every expander the moment the print dialog is asked

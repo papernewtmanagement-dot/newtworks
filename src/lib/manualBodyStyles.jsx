@@ -199,6 +199,37 @@ export const MANUAL_BODY_CSS = `
         .newtworks-handbook-body > :is(table, .newtworks-table-wrap) {
           width: calc(100% - 12px);
         }
+        /* Pop-ups (src/lib/popups.js). A button in the page opens a dialog
+           with the same content: full screen on a phone, a centered panel on
+           a wider screen. Peter 2026-10-06. */
+        .newtworks-handbook-body .nw-popup-btn {
+          display: inline-flex; align-items: center; gap: 6px; margin: 6px 8px 6px 12px;
+          padding: 9px 16px; border: 1px solid ${T.blue}; border-radius: 999px;
+          background: ${T.blue}11; color: ${T.blue}; font: inherit; font-size: 14px; font-weight: 700;
+          line-height: 1.3; cursor: pointer;
+        }
+        .newtworks-handbook-body .nw-popup-btn:hover, .newtworks-handbook-body .nw-popup-btn:focus-visible { background: ${T.blue}22; outline: none; }
+        .newtworks-handbook-body dialog.nw-popup-dialog {
+          width: min(760px, calc(100vw - 32px)); max-width: 100vw; height: min(88vh, 900px); max-height: 100vh;
+          margin: auto; padding: 0; border: none; border-radius: 12px; background: #fff; color: ${T.slate700};
+          box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25); overflow: hidden;
+        }
+        .newtworks-handbook-body dialog.nw-popup-dialog[open] { display: flex; flex-direction: column; }
+        .newtworks-handbook-body dialog.nw-popup-dialog::backdrop { background: rgba(15, 23, 42, 0.45); }
+        .newtworks-handbook-body .nw-popup-bar {
+          display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0;
+          padding: 10px 12px 10px 16px; border-bottom: 1px solid ${T.slate200}; font-size: 16px; color: ${T.slate900};
+        }
+        .newtworks-handbook-body .nw-popup-close {
+          width: 36px; height: 36px; flex-shrink: 0; border: none; border-radius: 50%;
+          background: ${T.slate100}; color: ${T.slate700}; font: inherit; font-size: 16px; cursor: pointer;
+        }
+        .newtworks-handbook-body .nw-popup-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 16px 24px; }
+        .newtworks-handbook-body .nw-popup-body > :first-child { margin-top: 14px; }
+        @media (max-width: 639px) {
+          .newtworks-handbook-body dialog.nw-popup-dialog { width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; }
+        }
+        html:has(dialog.nw-popup-dialog[open]) { overflow: hidden; }
 
 `;
 
@@ -313,6 +344,14 @@ export const MANUAL_PRINT_CSS = `
              would cut them off, so it stops clipping. */
           .newtworks-table-wrap { overflow: visible !important; }
           .newtworks-handbook-body img { max-width: 100% !important; }
+          /* Pop-ups print in place, open, without their button. */
+          .newtworks-handbook-body .nw-popup-btn, .newtworks-handbook-body .nw-popup-close { display: none !important; }
+          .newtworks-handbook-body dialog.nw-popup-dialog {
+            display: block !important; position: static !important; width: auto !important; height: auto !important;
+            max-height: none !important; margin: 0 !important; box-shadow: none !important; border: none !important; overflow: visible !important;
+          }
+          .newtworks-handbook-body .nw-popup-bar { border: none !important; padding: 0 !important; }
+          .newtworks-handbook-body .nw-popup-body { overflow: visible !important; padding: 0 !important; }
         }
 `;
 
