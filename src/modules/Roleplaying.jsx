@@ -1487,13 +1487,19 @@ function mapFantasy(v, byId) {
     const mid = list[Math.floor(list.length / 2)];
     if (byId[id] && mid !== undefined) ways.push({ text: byId[id].name, x: (mid % C + 0.5) * unit, y: (Math.floor(mid / C) + 0.5) * unit, r: unit * (r.full ? 0.2 : 0.1), size: 11.5, way: unit * 2.5 });
   });
-  // the roads between places (rpg_map_view: roads, step 8b): each piece [size, x0, y0, x1, y1] in thousandths of a cell,
-  // as wide as the road truly is where that is wider than a line (road_width, thousandths of a cell of what is drawn):
+  // the roads between places (rpg_map_view: roads, step 8b): each piece [size, x0, y0, x1, y1, x2, y2, ...] the points
+  // of a road's wandering line (step 10b) in thousandths of a cell, drawn as one smooth line through them (mapBend), as
+  // wide as the road truly is where that is wider than a line (road_width, thousandths of a cell of what is drawn):
   // a highway two inked edges with the road light between, a road one brown line, a lane a dashed one; drawn close,
   // each is a light road between its edges
   const rw = Array.isArray(v.road_width) ? v.road_width.map(Number) : [];
   const paths = { 1: "", 2: "", 3: "" };
-  (Array.isArray(v.roads) ? v.roads : []).forEach(r => { if (Array.isArray(r) && paths[r[0]] !== undefined) paths[r[0]] += mapLine([[r[1] / 10, r[2] / 10], [r[3] / 10, r[4] / 10]]); });
+  (Array.isArray(v.roads) ? v.roads : []).forEach(r => {
+    if (!Array.isArray(r) || paths[r[0]] === undefined) return;
+    const pts = [];
+    for (let k = 1; k + 1 < r.length; k += 2) pts.push([r[k] / 10, r[k + 1] / 10]);
+    if (pts.length >= 2) paths[r[0]] += mapBend(pts);
+  });
   const wide = (k) => (rw[k - 1] || 0) / 1000 * unit;
   const roadways = [];
   MAP_ROADS.forEach(({ k, edge, mid }) => { if (paths[k]) roadways.push({ d: paths[k], line: edge.line, units: wide(k), min: edge.min, dash: edge.dash, cap: edge.dash ? "butt" : "round" }); });
