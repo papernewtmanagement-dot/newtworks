@@ -675,8 +675,11 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
   }, [positions]);
 
   // An admin moves between all three curves. Anyone else gets exactly one:
-  // the curve for their own seat.
-  const allowedRoles = isAdmin ? ROLE_ORDER : (myRole ? [myRole] : []);
+  // the curve for their own seat, and for now only the Sales curve is shown to
+  // the team; Retention and Life Specialist stay admin-only until their ladders
+  // are settled (Peter 2026-10-05).
+  const TEAM_ROLES = ["sales"];
+  const allowedRoles = isAdmin ? ROLE_ORDER : (myRole && TEAM_ROLES.includes(myRole) ? [myRole] : []);
 
   const roles = useMemo(() => {
     const list = (Array.isArray(data?.roles) ? data.roles : []).filter(r => allowedRoles.includes(r.role_key));
@@ -710,7 +713,7 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
   if (loading) {
     return <div style={{ fontSize: 12, color: T.slate400, textAlign: "center", padding: "28px 16px" }}>Loading earnings projection…</div>;
   }
-  if (!isAdmin && !myRole) {
+  if (!isAdmin && allowedRoles.length === 0) {
     return <div style={{ ...card, fontSize: 12, color: T.slate500 }}>There is no earnings chart for your seat yet.</div>;
   }
   if (!role || tiers.length === 0) {

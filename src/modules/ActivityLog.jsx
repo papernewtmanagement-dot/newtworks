@@ -115,8 +115,9 @@ const LINE_REQUIRED = { policy_review: "type", pivot: "type" };   // Peter 2026-
 const EXISTING_ONLY = new Set(["pivot", "policy_review", "service_task", "service_task_company",
   "service_task_coi", "cancelation_saved"]);
 const TABS = ["live", "log", "checklist", "hours", "deposits", "week", "issued", "development", "changes", "spotcheck", "backfill", "history", "billing"];
-// Earnings tab: owner only for now (Peter 2026-10-05), hidden from the team until the raise ladder is settled.
-const canSeeEarnings = (role) => role === "owner";
+// Earnings tab: whole team again (Peter 2026-10-05, evening). Inside the tab the Retention and
+// Life Specialist curves stay admin-only (EarningPotentialTab) until their ladders are settled.
+const canSeeEarnings = () => true;
 // The ten scorecard parts live in src/lib/fitParts.js (CARD_PARTS), shared with the Live tab.
 const GENDERS = [["male", "Male"], ["female", "Female"]];
 
