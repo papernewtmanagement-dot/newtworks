@@ -95,21 +95,24 @@ export async function setSubstepDone(step, label, done, userId, answer = null) {
 }
 
 // A training line that asks "What's one takeaway?" when it is ticked: any
-// line that links to a video (the video sites and TikTok, plus the training videos on
-// insuranceagencytraining.org/tools). The one place that decides which lines do.
+// line that links to a video (the video sites, TikTok, Facebook and Instagram
+// videos, C-SPAN clips, plus the training videos on
+// insuranceagencytraining.org/tools). The one place that decides which lines
+// are videos: the orientation pop-up uses it too.
 export const REPLY_QUESTION = "What's one takeaway?";
 export function asksForReply(label) {
-  return /\]\(\s*(https?:\/\/)?([a-z0-9-]+\.)*(youtube\.com|youtu\.be|vimeo\.com|loom\.com|tiktok\.com|insuranceagencytraining\.org\/tools)\//i.test(String(label || ""));
+  return /\]\(\s*(https?:\/\/)?([a-z0-9-]+\.)*(youtube\.com|youtu\.be|vimeo\.com|loom\.com|tiktok\.com|fb\.watch|facebook\.com\/[^)\s]*\/videos|instagram\.com\/(reel|reels|tv)|c-span\.org\/(video|clip)|insuranceagencytraining\.org\/tools)\//i.test(String(label || ""));
 }
 
 // ─── orientation ────────────────────────────────────
 // An onboarding_instructions row with kind "orientation" is Peter's
 // orientation. Its (i) sits next to the sub-item with that label (the
 // Orientation line on Review With Peter) and only the owner sees it. It opens
-// OrientationPopup: his talking points, which he can edit there, and a
-// checkmark per new hire that ticks that line on their card. Only the owner
-// can tick that line; onboarding_step_complete_gate enforces it. For this
-// kind, body_md holds the talking points in the sub-item text format.
+// OrientationPopup: his script, which he can edit there, as a checklist he
+// ticks for the new hires who are there. Each hire's ticks are kept on their
+// plan. The line ticks itself on a hire's card once every section is done.
+// Only the owner can tick that line; onboarding_step_complete_gate enforces
+// it. For this kind, body_md holds the script in the sub-item text format.
 export const ORIENTATION_KIND = "orientation";
 
 // ─── sub-item helpers ───────────────────────────────
