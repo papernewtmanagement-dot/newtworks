@@ -4,15 +4,26 @@ import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 
 // =========================================================================
-// Gridstrike.jsx — the print files for Gridstrike, the army-men game.
+// Gridstrike.jsx — Gridstrike, the army-men game: the computer version for
+// testing and the print files. Two views, picked from a sidebar (tabs on a
+// phone): Game and Printouts.
 // It sits below the last sidebar line, so only owner, admin and the family
 // login can open it (NewtworksApp.jsx enforces that for every link down there).
-// The files live in the private storage bucket "gridstrike". Its read rule,
+// Everything lives in the private storage bucket "gridstrike". Its read rule,
 // gridstrike_family_read, lets in the same three logins and nobody else
 // (migration gridstrike_print_files_bucket, 2026-10-04).
-// manifest.json in the bucket lists the sections and files in order, with
-// what is inside each file and how to print it. A new version is an upload
-// plus a manifest edit: no code change, no deploy.
+// GAME: one self-contained page, game/index.html in the bucket (the repo is
+// public, so the game itself never lives here). The bucket hands HTML back as
+// plain text with a locked-down content policy, so a plain iframe link would
+// show the source code. The page downloads the file and puts the text into
+// the iframe itself (srcDoc), sandboxed to scripts only: the game gets no
+// cookies, storage or network. A new version of the game is an upload: no
+// code change, no deploy (migration gridstrike_bucket_allow_html, 2026-10-05).
+// The iframe stays mounted while the printouts are open, so a game in
+// progress survives switching views.
+// PRINTOUTS: manifest.json in the bucket lists the sections and files in
+// order, with what is inside each file and how to print it. A new version is
+// an upload plus a manifest edit: no code change, no deploy.
 // A section can also name a storage folder ("folder": "3d"). Everything in
 // that folder is listed under the section with a Download link, and owner
 // and admin get an upload button there (zip, stl or pdf, 50 MB cap). Only
@@ -25,6 +36,11 @@ import { useViewport } from "../lib/hooks.js";
 // =========================================================================
 
 const BUCKET = "gridstrike";
+const GAME_PATH = "game/index.html";
+const VIEWS = [
+  { id: "game", label: "Game", hint: "Play on the screen" },
+  { id: "printouts", label: "Printouts", hint: "Files to print" },
+];
 const LINK_SECONDS = 3600;
 const RENEW_MS = 45 * 60 * 1000;
 const MAX_BYTES = 50 * 1024 * 1024;   // the bucket's own size cap
@@ -67,6 +83,23 @@ const linkBtn = (kind) => ({
   color: kind === "primary" ? T.white : T.slate700,
   borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, fontFamily: "inherit",
 });
+// The Game / Printouts switch: a column of buttons beside the content, a row of tabs on a phone.
+const navBtn = (active, isPhone) => ({
+  boxSizing: "border-box", textAlign: "left", cursor: active ? "default" : "pointer", fontFamily: "inherit",
+  flex: isPhone ? 1 : "none", width: isPhone ? "auto" : "100%",
+  border: `1px solid ${active ? T.blue : T.slate200}`,
+  background: active ? T.blueLt : T.white,
+  color: T.slate900, borderRadius: 8, padding: isPhone ? "8px 10px" : "9px 12px",
+});
+
+async function loadGame() {
+  const { data: blob, error } = await supabase.storage.from(BUCKET).download(GAME_PATH);
+  if (error || !blob) return { error: "The game could not be opened." };
+  let html = "";
+  try { html = await blob.text(); } catch { html = ""; }
+  if (!/<html[\s>]/i.test(html)) return { error: "The game file could not be read." };
+  return { html };
+}
 
 async function loadFiles() {
   const store = supabase.storage.from(BUCKET);
@@ -210,9 +243,63 @@ function Uploader({ folder, onDone }) {
   );
 }
 
+// The computer version of the game. Stays mounted (hidden) while the printouts are open.
+function GameView({ game, visible, isPhone }) {
+  const frameRef = useRef(null);
+  const html = game?.html || "";
+  // Full screen where the browser allows it; otherwise the game opens in its own tab.
+  const openTab = () => {
+    if (!html) return;
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    window.open(url, "_blank", "noopener");
+  };
+  const openBig = () => {
+    const el = frameRef.current;
+    if (el?.requestFullscreen) {
+      const p = el.requestFullscreen();
+      if (p?.catch) p.catch(openTab);
+      return;
+    }
+    openTab();
+  };
+  return (
+    <div style={{ display: visible ? "block" : "none" }}>
+      <div style={{ ...card, background: T.blueLt, borderColor: T.slate200, marginBottom: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 260px", fontSize: 13, color: T.slate700, lineHeight: 1.5 }}>
+          <span style={{ fontWeight: 700, color: T.slate900 }}>The game on a screen, for testing rules. </span>
+          Play against the computer, pass the phone, or watch computer against computer. The settings inside the game
+          switch the commander, ranks, terrain, range and more, so a rule can be tried before anything gets printed.
+          Switching to Printouts keeps your game going.
+        </div>
+        <button type="button" onClick={openBig} disabled={!html} style={{ ...linkBtn("primary"), cursor: html ? "pointer" : "default", opacity: html ? 1 : 0.6 }}>
+          Open full screen
+        </button>
+      </div>
+      {game?.loading && <div style={{ ...card, fontSize: 13, color: T.slate500 }}>Loading the game…</div>}
+      {game?.problem && (
+        <div style={{ ...card, background: T.redLt, borderColor: T.redLt, color: T.slate800, fontSize: 13 }}>
+          {game.problem} Reload the page. If it keeps happening, ask Claude to check the Gridstrike game file.
+        </div>
+      )}
+      {html && (
+        <iframe
+          ref={frameRef}
+          title="Gridstrike: computer version"
+          srcDoc={html}
+          sandbox="allow-scripts"
+          style={{ display: "block", width: "100%", height: `calc(100vh - ${isPhone ? 200 : 230}px)`, minHeight: 460,
+            border: `1px solid ${T.slate200}`, borderRadius: 12, background: T.white, boxSizing: "border-box" }}
+        />
+      )}
+    </div>
+  );
+}
+
 export default function Gridstrike({ userRole }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
+  const [view, setView] = useState("game");
+  const [game, setGame] = useState({ html: "", problem: "", loading: true });
   const [manifest, setManifest] = useState(null);
   const [links, setLinks] = useState({});
   const [folders, setFolders] = useState({});
@@ -240,25 +327,44 @@ export default function Gridstrike({ userRole }) {
     return () => clearInterval(timer);
   }, [refresh]);
 
+  // The game loads once. It is not on the renewal timer: a fresh copy would restart a game in progress.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      let result = null;
+      try { result = await loadGame(); } catch { result = { error: "The game could not be reached." }; }
+      if (!alive) return;
+      setGame(result?.error ? { html: "", problem: result.error, loading: false } : { html: result.html, problem: "", loading: false });
+    })();
+    return () => { alive = false; };
+  }, []);
+
   if (loading) return <div style={{ padding: _pad, color: T.slate500, fontSize: 13 }}>Loading…</div>;
 
   const sections = Array.isArray(manifest?.sections) ? manifest.sections : [];
+  const isPhone = _vp.isPhone;
 
-  return (
-    <div style={{ padding: _pad, maxWidth: 980, margin: "0 auto", boxSizing: "border-box" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 4 }}>
-        <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900 }}>Gridstrike</div>
-        {manifest?.updated && <div style={{ fontSize: 12, color: T.slate500 }}>Files updated {niceDate(manifest.updated)}</div>}
-      </div>
-      <div style={{ fontSize: 13, color: T.slate500, marginBottom: 14 }}>
-        Print files for the army-men game. Only the family login and admins can open this page and these files.
-      </div>
+  const nav = (
+    <div style={{ display: "flex", flexDirection: isPhone ? "row" : "column", gap: 8, width: isPhone ? "auto" : 168, flexShrink: 0, marginBottom: isPhone ? 12 : 0 }}>
+      {VIEWS.map(v => {
+        const active = view === v.id;
+        return (
+          <button key={v.id} type="button" onClick={() => setView(v.id)} aria-current={active ? "page" : undefined} style={navBtn(active, isPhone)}>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>{v.label}</div>
+            {!isPhone && <div style={{ fontSize: 11, color: T.slate500, marginTop: 1 }}>{v.hint}</div>}
+          </button>
+        );
+      })}
+    </div>
+  );
 
+  const printouts = view === "printouts" && (
+    <div>
       <div style={{ ...card, background: T.blueLt, borderColor: T.slate200, marginBottom: 18 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: T.slate900, marginBottom: 6 }}>Before you print</div>
         <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: T.slate700, lineHeight: 1.6 }}>
           <li>Letter paper. Print at actual size (100%), not "Fit to page", so cards and tiles come out the right size.</li>
-          <li>Rules pages go on plain paper. Cards, stand-ins and tiles go on card stock. Each file below says which pages are which.</li>
+          <li>Rules pages go on plain paper. Cards and tiles go on card stock. Each file below says which pages are which.</li>
           <li>Open to print shows the file in a new tab with a print button. Download saves a copy.</li>
         </ul>
       </div>
@@ -294,6 +400,26 @@ export default function Gridstrike({ userRole }) {
           </div>
         );
       })}
+    </div>
+  );
+
+  return (
+    <div style={{ padding: _pad, maxWidth: 1180, margin: "0 auto", boxSizing: "border-box" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 4 }}>
+        <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900 }}>Gridstrike</div>
+        {view === "printouts" && manifest?.updated && <div style={{ fontSize: 12, color: T.slate500 }}>Files updated {niceDate(manifest.updated)}</div>}
+      </div>
+      <div style={{ fontSize: 13, color: T.slate500, marginBottom: 14 }}>
+        The army-men game: a computer version for testing, and the files to print. Only the family login and admins can open this page.
+      </div>
+
+      <div style={{ display: "flex", flexDirection: isPhone ? "column" : "row", gap: isPhone ? 0 : 18, alignItems: "flex-start" }}>
+        {nav}
+        <div style={{ flex: 1, minWidth: 0, width: "100%" }}>
+          <GameView game={game} visible={view === "game"} isPhone={isPhone} />
+          {printouts}
+        </div>
+      </div>
     </div>
   );
 }
