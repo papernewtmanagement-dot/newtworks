@@ -1,31 +1,31 @@
 // =========================================================================
 // Development.jsx
 // =========================================================================
-// Parent module for everything that grows a teammate: their onboarding plan,
-// the trivia/training games, and their licenses and continuing education.
+// Parent module for everything that grows a teammate: their development plan
+// (onboarding cards plus the Ongoing card), their forms, and the trivia games.
+// Licensing lives in Peter's sidebar on the Onboarding tab (Peter 2026-10-06);
+// each person's license and CE items come due onto their Ongoing card.
 //
-// Three tabs, one URL param ("area"). Each tab renders the module that used
-// to be its own sidebar entry. Those modules keep their own inner tabs and
-// their own URL params — Onboarding uses "subtab", Trivia uses "tab".
+// One URL param ("area"). Each tab renders the module that used to be its
+// own sidebar entry. Those modules keep their own inner tabs and their own
+// URL params — Onboarding uses "subtab", Trivia uses "tab".
 // =========================================================================
 
 import { T } from "../lib/theme.js";
 import { TabLink, useTabParam } from "../lib/routing.jsx";
 import Onboarding from "./Onboarding.jsx";
 import Trivia from "./Trivia.jsx";
-import Licensing from "./Licensing.jsx";
 import TeamForms from "../components/TeamForms.jsx";
 
 const AREAS = [
   { id: "onboarding", label: "Onboarding" },
   { id: "forms",      label: "Forms" },
   { id: "trivia",     label: "Trivia" },
-  { id: "licensing",  label: "Licensing" },
 ];
 
 export default function Development({ userRole, userId, embedded = false }) {
   const [area, setArea, areaHref] = useTabParam(
-    "area", "onboarding", ["onboarding", "forms", "trivia", "licensing"]
+    "area", "onboarding", ["onboarding", "forms", "trivia"]
   );
 
   return (
@@ -66,7 +66,6 @@ export default function Development({ userRole, userId, embedded = false }) {
       {area === "onboarding" && <Onboarding userRole={userRole} userId={userId} embedded />}
       {area === "trivia"     && <Trivia userRole={userRole} userId={userId} embedded />}
       {area === "forms"      && <TeamForms embedded />}
-      {area === "licensing"  && <Licensing userRole={userRole} userId={userId} embedded />}
     </div>
   );
 }

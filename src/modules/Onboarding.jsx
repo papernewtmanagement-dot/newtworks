@@ -19,6 +19,13 @@
 //
 // RLS on the underlying tables enforces admin RW / team-tier read-own +
 // update-own-steps. This UI mirrors that scoping.
+//
+// Development plans (Peter 2026-10-06): every teammate has one. It is their
+// Ongoing card (licenses and CE coming due, the handbook, their part of a
+// new hire's plan — development_ongoing() decides) over their own open
+// onboarding cards, if they have a plan. Finished cards disappear. Admins
+// pick a person in the sidebar; the owner also gets Licensing under the
+// template, for the whole team's licenses.
 // =========================================================================
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -38,6 +45,9 @@ import OnboardingTemplateEditor from "../components/OnboardingTemplateEditor.jsx
 import OrientationPopup from "../components/OrientationPopup.jsx";
 import ReplyPopup from "../components/ReplyPopup.jsx";
 import ReferenceCalls from "./ReferenceCalls.jsx";
+import Licensing from "./Licensing.jsx";
+import OngoingCard from "../components/OngoingCard.jsx";
+import { DEVELOPMENT_CHANGED, developmentChanged } from "../lib/development.js";
 
 // ─── constants ─────────────────────────────────────
 const ADMIN_ROLES = ["owner", "admin"];
@@ -151,6 +161,25 @@ function useOnboardingData(userId, isAdmin) {
   return { ...state, reload: load };
 }
 
+// How many things each teammate has on their Ongoing card (admins only).
+// Looks again whenever anything on Development changes.
+function useOngoingCounts(isAdmin) {
+  const [counts, setCounts] = useState({});
+  const load = useCallback(async () => {
+    if (!isAdmin || !supabase) { setCounts({}); return; }
+    const { data } = await supabase.rpc("development_ongoing_counts");
+    const m = {};
+    (data || []).forEach(r => { m[r.team_member_id] = r.items; });
+    setCounts(m);
+  }, [isAdmin]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    window.addEventListener(DEVELOPMENT_CHANGED, load);
+    return () => window.removeEventListener(DEVELOPMENT_CHANGED, load);
+  }, [load]);
+  return counts;
+}
+
 // ─── name/date helpers ────────────────────────────────
 function memberName(t) {
   if (!t) return "Unknown teammate";
@@ -182,7 +211,7 @@ function progress(steps) {
 }
 
 // ─── plan detail (steps by phase/category) ───────────────
-function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleStep, onToggleSubstep, onUpdateStepNotes, onDeletePlan, onChangeStatus, isAdmin, isOwner = false, userId = null, onReload = null, phaseMeta, ownerName, instructions = {}, icons = {}, showBack = true }) {
+function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleStep, onToggleSubstep, onUpdateStepNotes, onDeletePlan, onChangeStatus, isAdmin, isOwner = false, userId = null, onReload = null, phaseMeta, ownerName, instructions = {}, icons = {}, showBack = true, topCard = null }) {
   const [expandedStep, setExpandedStep] = useState(null);
   // The orientation pop-up that is open (owner only): its instructions row.
   const [orientation, setOrientation] = useState(null);
@@ -672,6 +701,9 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
         ) : null}
       </Card>
 
+      {/* The Ongoing card sits right under the header, above their own cards. */}
+      {topCard}
+
       <InstructionsModal item={openInstr} onClose={() => setOpenInstr(null)} canEdit={isAdmin} onSaved={onReload} />
       {replyFor && (
         <ReplyPopup
@@ -722,6 +754,10 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
 
       {/* Phases */}
       {byPhase.map(({ key: cardKey, phase, week, steps: phaseSteps }) => {
+        // Finished cards disappear (Peter 2026-10-06). The count on the header
+        // still reads against every card in it.
+        const openSteps = phaseSteps.filter(s => !s.completed_at);
+        if (openSteps.length === 0) return null;
         const meta = phaseMeta(phase);
         const phaseP = progress(phaseSteps);
         const cardName = meta.weeksLong > 1 && week
@@ -758,8 +794,8 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
 
             {isOpen && (() => {
             // Goals and the like sit across the top of the card.
-            const banners = phaseSteps.filter(s => s.full_width);
-            const rest = phaseSteps.filter(s => !s.full_width);
+            const banners = openSteps.filter(s => s.full_width);
+            const rest = openSteps.filter(s => !s.full_width);
             const bannerRow = banners.length > 0 && (
               <div style={bannerStyle}>{banners.map(renderStep)}</div>
             );
@@ -1031,51 +1067,12 @@ function CreatePlanModal({ team, candidates, existingPlans, onClose, onCreated }
   );
 }
 
-// ─── plan list card ────────────────────────────────
-function PlanListCard({ plan, steps, subjectName, isCandidate, onOpen }) {
-  const p = progress(steps);
-  const statusCol = STATUS_COLORS[plan.status] || STATUS_COLORS.active;
-  return (
-    <a
-      href={`/development?plan=${plan.id}`}
-      onClick={(e) => {
-        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-        e.preventDefault();
-        onOpen(plan.id);
-      }}
-      style={{ textDecoration: "none", color: "inherit", display: "block", marginBottom: 10 }}
-    >
-      <Card style={{ cursor: "pointer" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{subjectName}</div>
-              <Pill fg={statusCol.fg} bg={statusCol.bg}>{statusCol.label}</Pill>
-              {isCandidate && <Pill fg={T.purple} bg={T.purpleLt}>Offer stage</Pill>}
-            </div>
-            <div style={{ fontSize: 11, color: T.slate500 }}>
-              {plan.role_snapshot || "—"}
-              {plan.role_category_snapshot ? ` · ${plan.role_category_snapshot}` : ""}
-              {" · "}Started {fmtDate(plan.start_date)}
-              {" · Day "}{daysBetween(plan.start_date)}
-            </div>
-          </div>
-          <div style={{ textAlign: "right", flexShrink: 0 }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: p.pct === 100 ? T.green : T.amber }}>{p.pct}%</div>
-            <div style={{ fontSize: 10, color: T.slate500 }}>{p.done}/{p.total}</div>
-          </div>
-        </div>
-        <div style={{ marginTop: 10, height: 4, background: T.slate100, borderRadius: 2, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${p.pct}%`, background: p.pct === 100 ? T.green : T.blue, transition: "width 0.4s" }} />
-        </div>
-      </Card>
-    </a>
-  );
-}
-
 // ─── left sidebar (admin) ───────────────────────────
-// New plan on top, then every plan, then the template. Peter 2026-09-21.
-function OnboardingSidebar({ plans, activePlanId, onTemplate, onNew, subjectName, progressFor, onSelectPlan, onSelectTemplate, isPhone }) {
+// New plan on top, then anyone at the offer stage, then every teammate's
+// development plan, then the template. The owner also gets Licensing under a
+// line of its own: everyone's licenses and CE in one place. Peter 2026-09-21,
+// 2026-10-06.
+function OnboardingSidebar({ people, candidatePlans, view, activePersonId, activePlanId, isOwner, subjectName, counts, openPlanFor, progressFor, onNew, onSelectPerson, onSelectPlan, onSelectTemplate, onSelectLicensing, isPhone }) {
   const divider = <div style={{ height: 1, background: T.slate200, margin: "8px 0" }} />;
   const itemStyle = (on) => ({
     display: "block", width: "100%", boxSizing: "border-box",
@@ -1085,6 +1082,9 @@ function OnboardingSidebar({ plans, activePlanId, onTemplate, onNew, subjectName
     background: on ? T.blueLt : "transparent",
     textDecoration: "none", ...wrapLongText,
   });
+  const sub = (text, color = T.slate400) => text ? (
+    <span style={{ display: "block", fontSize: 10, fontWeight: 500, color, marginTop: 1 }}>{text}</span>
+  ) : null;
   return (
     <nav style={{
       flex: isPhone ? "1 1 100%" : "0 0 190px", minWidth: 0,
@@ -1092,30 +1092,52 @@ function OnboardingSidebar({ plans, activePlanId, onTemplate, onNew, subjectName
       padding: 8, boxSizing: "border-box",
     }}>
       <Button variant="primary" onClick={onNew} style={{ width: "100%" }}>+ New plan</Button>
-      {plans.length > 0 && divider}
-      {plans.map(pl => {
-        const on = pl.id === activePlanId;
-        const pct = progressFor(pl.id);
+      {divider}
+      {candidatePlans.map(pl => (
+        <TabLink
+          key={pl.id}
+          href={hrefWithParams([["subtab", "plans", "plans"], ["person", null, null], ["plan", pl.id, null]])}
+          onSelect={() => onSelectPlan(pl.id)}
+          style={itemStyle(view === "plan" && pl.id === activePlanId)}
+        >
+          {subjectName(pl)}
+          {sub("Offer stage")}
+        </TabLink>
+      ))}
+      {people.map(t => {
+        const n = counts[t.id] || 0;
+        const plan = openPlanFor(t.id);
+        const note = n > 0 ? `${n} due`
+          : plan ? (plan.status === "active" ? `${progressFor(plan.id)}%` : (STATUS_COLORS[plan.status]?.label || plan.status))
+          : null;
         return (
           <TabLink
-            key={pl.id}
-            href={hrefWithParams([["subtab", "plans", "plans"], ["plan", pl.id, null]])}
-            onSelect={() => onSelectPlan(pl.id)}
-            style={itemStyle(on)}
+            key={t.id}
+            href={hrefWithParams([["subtab", "plans", "plans"], ["plan", null, null], ["person", t.id, null]])}
+            onSelect={() => onSelectPerson(t.id)}
+            style={itemStyle(view === "person" && t.id === activePersonId)}
           >
-            {subjectName(pl)}
-            <span style={{ display: "block", fontSize: 10, fontWeight: 500, color: T.slate400, marginTop: 1 }}>
-              {pl.status === "active" ? `${pct}%` : (STATUS_COLORS[pl.status]?.label || pl.status)}
-            </span>
+            {memberName(t)}
+            {sub(note, n > 0 ? T.amber : T.slate400)}
           </TabLink>
         );
       })}
       {divider}
       <TabLink
-        href={hrefWithParams([["subtab", "template", "plans"], ["plan", null, null]])}
+        href={hrefWithParams([["subtab", "template", "plans"], ["plan", null, null], ["person", null, null]])}
         onSelect={onSelectTemplate}
-        style={itemStyle(onTemplate)}
+        style={itemStyle(view === "template")}
       >Template</TabLink>
+      {isOwner && (
+        <>
+          {divider}
+          <TabLink
+            href={hrefWithParams([["subtab", "licensing", "plans"], ["plan", null, null], ["person", null, null]])}
+            onSelect={onSelectLicensing}
+            style={itemStyle(view === "licensing")}
+          >Licensing</TabLink>
+        </>
+      )}
     </nav>
   );
 }
@@ -1131,7 +1153,10 @@ export default function Onboarding({ userRole, userId }) {
   // useState + manual ?plan= useEffect pair — useTabParam handles both the
   // read on mount and the write on every setSelectedPlanId call.
   const [selectedPlanId, setSelectedPlanId] = useTabParam("plan", null);
-  const [tab, setTab, tabHref] = useTabParam("subtab", "plans", ["plans", "template"]);
+  // Whose development plan is open (admin sidebar).
+  const [selectedPersonId, setSelectedPersonId] = useTabParam("person", null);
+  const [tab, setTab, tabHref] = useTabParam("subtab", "plans", ["plans", "template", "licensing"]);
+  const counts = useOngoingCounts(isAdmin);
   const [showCreate, setShowCreate] = useState(false);
   const [actionError, setActionError] = useState("");
   const vp = useViewport();
@@ -1211,6 +1236,7 @@ export default function Onboarding({ userRole, userId }) {
     const { error: err } = await setStepDone(step.id, !step.completed_at, userId);
     if (err) { setActionError(err.message); return; }
     await reload();
+    developmentChanged();
   };
 
   // Ticking the last sub-item completes the step; unticking any re-opens it.
@@ -1223,6 +1249,7 @@ export default function Onboarding({ userRole, userId }) {
     const { error: err } = await setSubstepDone(step, label, !cur.includes(label), userId, answer);
     if (err) { setActionError(err.message); return err.message; }
     await reload();
+    developmentChanged();
     return null;
   };
 
@@ -1256,6 +1283,7 @@ export default function Onboarding({ userRole, userId }) {
   const handleCreated = async (newPlanId) => {
     setShowCreate(false);
     await reload();
+    setSelectedPersonId(null);
     setSelectedPlanId(newPlanId);
   };
 
@@ -1269,77 +1297,111 @@ export default function Onboarding({ userRole, userId }) {
     </div>;
   }
 
-  // Team-tier view. The database already hands back only the plans and
-  // cards this person may see: their own plan from Day 1, plus any card
-  // assigned to them on someone else's plan.
+  const isOpenPlan = (p) => p.status === "active" || p.status === "paused";
+  const openPlanFor = (teamId) => plans.find(p => p.team_member_id === teamId && isOpenPlan(p)) || null;
+
+  // One person's development plan: their Ongoing card over their own open
+  // onboarding cards. Without a plan it is just the Ongoing card.
+  const renderPerson = (person, plan) => {
+    const ongoing = (
+      <OngoingCard
+        key={person.id}
+        teamMemberId={person.id}
+        userId={userId}
+        isAdmin={isAdmin}
+        instructions={instructions}
+        icons={icons}
+        showEmpty={!plan}
+      />
+    );
+    if (!plan) {
+      return (
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em", marginBottom: 12 }}>
+            {memberName(person)}
+          </div>
+          {ongoing}
+        </div>
+      );
+    }
+    return (
+      <FormPopupProvider teamId={plan.team_member_id || null} onClosed={reload}>
+        <PlanDetail
+          plan={plan}
+          steps={stepsByPlan.get(plan.id) || []}
+          subjectName={subjectName(plan)}
+          isCandidate={false}
+          phaseMeta={phaseMeta}
+          ownerName={ownerName}
+          instructions={instructions}
+          icons={icons}
+          onBack={() => setSelectedPlanId(null)}
+          onToggleStep={handleToggleStep}
+          onToggleSubstep={handleToggleSubstep}
+          onUpdateStepNotes={handleUpdateStepNotes}
+          onDeletePlan={handleDeletePlan}
+          onChangeStatus={handleChangeStatus}
+          isAdmin={isAdmin}
+          isOwner={isOwner}
+          userId={userId}
+          onReload={reload}
+          showBack={false}
+          topCard={ongoing}
+        />
+      </FormPopupProvider>
+    );
+  };
+
+  // Team-tier view: their own development plan. Their part of anyone else's
+  // plan comes to them on their Ongoing card as it opens.
   if (!isAdmin) {
-    const open = plans.filter(p => p.status === "active" || p.status === "paused");
-    const list = open.length ? open : plans;
-    if (list.length === 0) {
+    const me = myTeamMemberId ? teamById.get(myTeamMemberId) : null;
+    if (!me) {
       return (
         <div style={{ padding: 20 }}>
           <Card>
-            <div style={{ fontSize: 14, color: T.slate800, marginBottom: 6, fontWeight: 600 }}>Nothing here for you yet</div>
             <div style={{ fontSize: 12, color: T.slate500 }}>
-              Your onboarding plan, and any onboarding card assigned to you, will show up here.
+              Your sign-in is not linked to a team record yet, so there is nothing to show here.
             </div>
           </Card>
         </div>
       );
     }
-    const chosen = list.find(p => p.id === selectedPlanId) || (list.length === 1 ? list[0] : null);
-    if (chosen) {
-      return (
-        <div style={{ padding: 20 }}>
-          <FormPopupProvider teamId={chosen.team_member_id || null} onClosed={reload}>
-          <PlanDetail
-            plan={chosen}
-            steps={stepsByPlan.get(chosen.id) || []}
-            subjectName={subjectName(chosen)}
-            isCandidate={!chosen.team_member_id}
-            phaseMeta={phaseMeta}
-            ownerName={ownerName}
-            instructions={instructions}
-            icons={icons}
-            onBack={() => setSelectedPlanId(null)}
-            onToggleStep={handleToggleStep}
-            onToggleSubstep={handleToggleSubstep}
-            onUpdateStepNotes={handleUpdateStepNotes}
-            onDeletePlan={handleDeletePlan}
-            onChangeStatus={handleChangeStatus}
-            isAdmin={false}
-            isOwner={isOwner}
-            userId={userId}
-            onReload={reload}
-            showBack={list.length > 1}
-          />
-          </FormPopupProvider>
-          {actionError && <Card style={{ marginTop: 10, background: T.redLt }}><div style={{ color: T.red, fontSize: 12 }}>{actionError}</div></Card>}
-        </div>
-      );
-    }
     return (
-      <div style={{ padding: 20 }}>
-        {list.map(plan => (
-          <PlanListCard
-            key={plan.id}
-            plan={plan}
-            steps={stepsByPlan.get(plan.id) || []}
-            subjectName={subjectName(plan)}
-            isCandidate={!plan.team_member_id}
-            onOpen={setSelectedPlanId}
-          />
-        ))}
+      <div style={{ padding: vp.isPhone ? 12 : 20 }}>
+        {renderPerson(me, openPlanFor(me.id))}
+        {actionError && <Card style={{ marginTop: 10, background: T.redLt }}><div style={{ color: T.red, fontSize: 12 }}>{actionError}</div></Card>}
       </div>
     );
   }
 
-  // Admin view. Left sidebar: New plan, every plan, Template.
-  const openPlans = plans.filter(p => p.status === "active" || p.status === "paused");
-  const selectedPlan = plans.find(p => p.id === selectedPlanId)
-    || (tab === "plans" ? (openPlans[0] || plans[0] || null) : null);
-  const statusRank = { active: 0, paused: 1, completed: 2, archived: 3 };
-  const sidebarPlans = [...plans].sort((a, b) => (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9));
+  // Admin view. Left sidebar: New plan, offer-stage plans, every teammate,
+  // Template, and for the owner, Licensing.
+  const people = (team || [])
+    .filter(t => t.is_active && !t.is_test_user && !t.archived_at)
+    .sort((a, b) => memberName(a).localeCompare(memberName(b)));
+  const candidatePlans = plans.filter(p => !p.team_member_id && isOpenPlan(p));
+
+  // What the main panel shows. An old ?plan= link for a teammate's plan opens
+  // that teammate's development plan.
+  let view = tab === "template" ? "template" : (tab === "licensing" && isOwner) ? "licensing" : null;
+  let person = null;
+  let candidatePlan = null;
+  if (!view) {
+    person = selectedPersonId ? (teamById.get(selectedPersonId) || null) : null;
+    if (!person && selectedPlanId) {
+      const pl = plans.find(p => p.id === selectedPlanId);
+      if (pl?.team_member_id) person = teamById.get(pl.team_member_id) || null;
+      else if (pl) candidatePlan = pl;
+    }
+    if (!person && !candidatePlan) {
+      const newest = plans.find(p => isOpenPlan(p) && p.team_member_id && teamById.get(p.team_member_id));
+      if (newest) person = teamById.get(newest.team_member_id);
+      else if (candidatePlans[0]) candidatePlan = candidatePlans[0];
+      else person = people[0] || null;
+    }
+    view = person ? "person" : candidatePlan ? "plan" : "none";
+  }
 
   return (
     <div style={{
@@ -1347,21 +1409,28 @@ export default function Onboarding({ userRole, userId }) {
       flexWrap: vp.isPhone ? "wrap" : "nowrap", boxSizing: "border-box",
     }}>
       <OnboardingSidebar
-        plans={sidebarPlans}
-        activePlanId={tab === "plans" ? selectedPlan?.id : null}
-        onTemplate={tab === "template"}
-        onNew={() => setShowCreate(true)}
+        people={people}
+        candidatePlans={candidatePlans}
+        view={view}
+        activePersonId={person?.id || null}
+        activePlanId={candidatePlan?.id || null}
+        isOwner={isOwner}
         subjectName={subjectName}
+        counts={counts}
+        openPlanFor={openPlanFor}
         progressFor={(id) => progress(stepsByPlan.get(id) || []).pct}
-        onSelectPlan={(id) => { setTab("plans"); setSelectedPlanId(id); }}
-        onSelectTemplate={() => { setSelectedPlanId(null); setTab("template"); }}
+        onNew={() => setShowCreate(true)}
+        onSelectPerson={(id) => { setTab("plans"); setSelectedPlanId(null); setSelectedPersonId(id); }}
+        onSelectPlan={(id) => { setTab("plans"); setSelectedPersonId(null); setSelectedPlanId(id); }}
+        onSelectTemplate={() => { setSelectedPlanId(null); setSelectedPersonId(null); setTab("template"); }}
+        onSelectLicensing={() => { setSelectedPlanId(null); setSelectedPersonId(null); setTab("licensing"); }}
         isPhone={vp.isPhone}
       />
 
       <div style={{ flex: "1 1 0", minWidth: 0 }}>
         {actionError && <Card style={{ marginBottom: 12, background: T.redLt }}><div style={{ color: T.red, fontSize: 12 }}>{actionError}</div></Card>}
 
-        {tab === "template" ? (
+        {view === "template" ? (
           <FormPopupProvider>
           <OnboardingTemplateEditor
             phaseMeta={phaseMeta}
@@ -1376,13 +1445,17 @@ export default function Onboarding({ userRole, userId }) {
             instructions={instructions}
           />
           </FormPopupProvider>
-        ) : selectedPlan ? (
-          <FormPopupProvider teamId={selectedPlan.team_member_id || null} onClosed={reload}>
+        ) : view === "licensing" ? (
+          <Licensing userRole={userRole} userId={userId} embedded />
+        ) : view === "person" ? (
+          renderPerson(person, openPlanFor(person.id))
+        ) : view === "plan" ? (
+          <FormPopupProvider teamId={null} onClosed={reload}>
           <PlanDetail
-            plan={selectedPlan}
-            steps={stepsByPlan.get(selectedPlan.id) || []}
-            subjectName={subjectName(selectedPlan)}
-            isCandidate={!selectedPlan.team_member_id}
+            plan={candidatePlan}
+            steps={stepsByPlan.get(candidatePlan.id) || []}
+            subjectName={subjectName(candidatePlan)}
+            isCandidate={true}
             phaseMeta={phaseMeta}
             ownerName={ownerName}
             instructions={instructions}
@@ -1402,9 +1475,9 @@ export default function Onboarding({ userRole, userId }) {
           </FormPopupProvider>
         ) : (
           <Card>
-            <div style={{ fontSize: 14, color: T.slate800, marginBottom: 6, fontWeight: 600 }}>No onboarding plans yet</div>
+            <div style={{ fontSize: 14, color: T.slate800, marginBottom: 6, fontWeight: 600 }}>No one on the team yet</div>
             <div style={{ fontSize: 12, color: T.slate500 }}>
-              Start one with New plan. The steps are pulled from the template for their role.
+              Start an onboarding plan with New plan. The steps are pulled from the template for their role.
             </div>
           </Card>
         )}
