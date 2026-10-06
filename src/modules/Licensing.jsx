@@ -58,7 +58,7 @@ const CE_ROW_TYPES = new Set([
 
 // ─── date helpers (all in America/Chicago) ──────────────────────
 
-function todayInCT() {
+export function todayInCT() {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Chicago",
     year: "numeric", month: "2-digit", day: "2-digit",
@@ -75,7 +75,7 @@ function daysBetween(aISO, bISO) {
   return Math.round((b - a) / 86400000);
 }
 
-function humanDate(iso) {
+export function humanDate(iso) {
   if (!iso) return "—";
   const [y, m, d] = iso.split("-").map(n => parseInt(n, 10));
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", {
@@ -83,8 +83,17 @@ function humanDate(iso) {
   });
 }
 
-function typeLabel(v) {
+export function typeLabel(v) {
   return LICENSE_TYPES.find(t => t.value === v)?.label || v;
+}
+
+// The one call that marks a license or CE done and rolls its due date on.
+// Licensing and the Ongoing card on Development both use it.
+export async function markLicenseComplete(rowId, completedOn) {
+  return supabase.rpc("mark_license_complete", {
+    p_license_id:  rowId,
+    p_completed_on: completedOn,
+  });
 }
 
 // ─── status badge ──────────────────────────────────────────
@@ -259,10 +268,7 @@ export default function Licensing({ userRole, userId, embedded = false }) {
   async function handleMarkComplete(rowId, completedOn) {
     setError("");
     try {
-      const { data, error: rpcErr } = await supabase.rpc("mark_license_complete", {
-        p_license_id:  rowId,
-        p_completed_on: completedOn,
-      });
+      const { data, error: rpcErr } = await markLicenseComplete(rowId, completedOn);
       if (rpcErr) throw rpcErr;
       setCompletingRow(null);
 
@@ -571,7 +577,7 @@ function LicenseCard({ row, member, isAdmin, showPersonName, justCompletedDue, o
   );
 }
 
-function MarkCompleteModal({ row, member, onClose, onConfirm }) {
+export function MarkCompleteModal({ row, member, onClose, onConfirm }) {
   const [completedOn, setCompletedOn] = useState(todayInCT());
   const [saving, setSaving] = useState(false);
   const isOneTime = row.cycle_months === null || row.cycle_months === undefined;
@@ -1047,7 +1053,7 @@ const twoCol = {
 // and general notes. Data lives in public.license_type_reference.
 // =========================================================================
 
-function LicenseReferenceModal({ reference, onClose }) {
+export function LicenseReferenceModal({ reference, onClose }) {
   const r = reference || {};
   const hasDiscounts = Array.isArray(r.discount_codes) && r.discount_codes.length > 0;
   const hasContacts  = Array.isArray(r.external_contacts) && r.external_contacts.length > 0;
