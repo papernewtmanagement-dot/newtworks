@@ -1089,6 +1089,9 @@ export function expandSelector(md, options) {
 // the chosen label on load and whenever the dropdown changes. The refresh
 // button beside it steps to the next customer for that label.
 // A block with no token anywhere renders where it was written.
+// [Roleplay: id | stored] never renders where it was written, only where a
+// token names it: a deck kept on this page for other pages (onboarding
+// pop-ups) that this page itself no longer shows (Peter 2026-10-06).
 // [Roleplay: id | shuffle] makes every card its own dropdown entry (objections):
 // a random one loads, and the refresh button jumps to another at random.
 const RP_START_RE = /^[ \t]*\*?\[Roleplay:\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
@@ -1216,7 +1219,9 @@ function expandRoleplays(md, options, slots) {
       const m = RP_START_RE.exec(line);
       if (m) {
         const [rawId, rawMode] = m[1].split("|");
-        cur = { id: rawId.trim().toLowerCase(), mode: String(rawMode || "").trim().toLowerCase(), scenarios: [] };
+        const modeText = String(rawMode || "").trim().toLowerCase();
+        const stored = modeText === "stored";
+        cur = { id: rawId.trim().toLowerCase(), mode: stored ? "" : modeText, stored, scenarios: [] };
         scen = null;
         continue;
       }
@@ -1247,7 +1252,7 @@ function expandRoleplays(md, options, slots) {
     used.add(id);
     return slotFor(id);
   });
-  out = out.replace(/^@@NWRPBLOCK:([^@\n]+)@@$/gm, (_m, id) => (used.has(id) ? "" : slotFor(id)));
+  out = out.replace(/^@@NWRPBLOCK:([^@\n]+)@@$/gm, (_m, id) => (used.has(id) || blocks.get(id)?.stored ? "" : slotFor(id)));
   out = out.replace(PICK_TOKEN_RE, (_m, raw) => {
     const [title, label] = String(raw).split("|").map((x) => x.trim());
     slots.push(renderPick(title, label || "", options));

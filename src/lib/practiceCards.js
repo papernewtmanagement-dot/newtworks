@@ -21,6 +21,12 @@ import { withRoleplayBlocks } from "./markdown.js";
 // Both day tokens take more than one onboarding week, in order:
 // {{practice: 3,5 | Monday}} (a kickoff week that condenses several onboarding
 // weeks, or Other Auto riding on the auto week; Peter 2026-10-03).
+// A day token can leave out onboarding items by name, comma-separated:
+// {{practice: 1 | Thursday | skip: Schedule Onboarding, Late pay call}}. The
+// name is the item's text before its count ("Late pay call" in "🎭 Late pay
+// call x3. [Late Pay script](…)"). For a kickoff week that drops a piece its
+// onboarding week keeps (Peter 2026-10-06: kickoff Week 1 drops Answer
+// Inbound, Late pay call and Schedule Onboarding). Onboarding is unchanged.
 //
 // Sources: onboarding_phases (week name), onboarding_step_templates (the
 // Practice card's day items, and the videos on every card of the week),
@@ -34,7 +40,7 @@ const VIDEO_TOKEN_RE = /\{\{practice-videos:\s*(\d+(?:\s*,\s*\d+)*)\s*\|\s*([A-Z
 const VIDEO_URL_RE = /\]\((https?:\/\/[^)]*(youtube\.com|youtu\.be|vimeo\.com|facebook\.com|fb\.watch|instagram\.com)[^)]*)\)/i;
 const STAIRS_RE = /stairs\s*&\s*buckets/i;
 const WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday"];
-const DAY_TOKEN_RE = /\{\{practice:\s*(\d+(?:\s*,\s*\d+)*)\s*\|\s*([A-Za-z]+)\s*\}\}/gi;
+const DAY_TOKEN_RE = /\{\{practice:\s*(\d+(?:\s*,\s*\d+)*)\s*\|\s*([A-Za-z]+)(?:\s*\|\s*skip:\s*([^}\n]*?))?\s*\}\}/gi;
 const RP_TOKEN_RE = /\{\{roleplay:\s*([a-z0-9_-]+)\s*\}\}/gi;
 const WEEK_OPEN_RE = /^[ \t]*\*?\[Week:\s*([^\]\n]+?)\s*\]\*?[ \t]*$/i;
 const WEEK_END_RE = /^[ \t]*\*?\[Week end\]\*?[ \t]*$/i;
@@ -130,9 +136,18 @@ function isShuffleDeck(id, md) {
   return re.test(md);
 }
 
-function dayBlock(data, weeks, day, md) {
+// "🎭 Late pay call x3. [Late Pay script](…)" → "late pay call"
+function itemName(label) {
+  const text = String(label || "").replace(ZWSP_RE, "").replace(/^\s*🎭\s*/, "");
+  const at = text.indexOf("[");
+  return (at >= 0 ? text.slice(0, at) : text).replace(/[.\s]+$/, "").replace(/\s+x\d+$/i, "").trim().toLowerCase();
+}
+
+function dayBlock(data, weeks, day, md, skip) {
+  const drop = new Set(String(skip || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
   const items = weeks.flatMap((week) => data?.weeks?.[week]?.days?.[String(day).toLowerCase()] || [])
-    .filter((it) => /^\s*🎭/.test(String(it || "")));
+    .filter((it) => /^\s*🎭/.test(String(it || "")))
+    .filter((it) => !drop.has(itemName(it)));
   if (!items.length) return "";
   const shown = new Set();
   const lines = new Set();
@@ -180,7 +195,7 @@ export function fillPractice(md, data) {
     else if (WEEK_END_RE.test(line)) inWeek = null;
     else if (inWeek && /\{\{practice:/i.test(line)) filledWeeks.add(inWeek);
   });
-  out = out.replace(DAY_TOKEN_RE, (_m, n, day) => (data ? dayBlock(data, weekList(n), day, src) : ""));
+  out = out.replace(DAY_TOKEN_RE, (_m, n, day, skip) => (data ? dayBlock(data, weekList(n), day, src, skip) : ""));
   if (!data || !filledWeeks.size) return out;
   // A deck from another week would be dropped by the week filter, so copy it
   // into the week that names it, just before that week's end.
