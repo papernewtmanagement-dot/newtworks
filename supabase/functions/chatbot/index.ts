@@ -1,7 +1,20 @@
-// chatbot edge function (v5)
+// chatbot edge function (v6)
 // Paper Newt — Pocket CFO/COO
-// Now supports both DMs and groups. Privacy mode ON means in groups the bot only
-// sees commands, @mentions, and replies — which is the intended UX.
+// Supports DMs and groups. Privacy mode is OFF on this bot, so in groups it sees
+// every message; the handler itself decides what it answers (see v6).
+//
+// v6 (2026-10-06):
+//   - Leslie's monthly goals answer is captured HERE. Paper Newt asks the
+//     question in the Paper Newt Management group, and Paper Newt is the only
+//     bot in that group. The v27 telegram (pjsagencybot) listener could never
+//     hear Marie; it is removed there. A Telegram reply to the question counts
+//     whenever it comes; a plain message from Marie counts inside the window;
+//     /goals <answer> any time. Rules live in public.leslie_monthly_record_reply.
+//   - In groups the bot only chats back when @mentioned or given a slash
+//     command. Answers to its reminders ("Done") are not chat.
+//   - Speaker lookup reads team.telegram_user_id. team_telegram_map was
+//     dropped 2026-07-16. Context block no longer reads the dropped
+//     book_snapshot and smvc_history tables; open tasks counts status 'open'.
 //
 // v5 (2026-07-06):
 //   - is_excluded → is_excluded_pjsagencybot rename (auto-map insert)
@@ -166,48 +179,35 @@ interface Speaker {
 }
 
 async function identifySpeaker(fromUser: any): Promise<Speaker> {
-  const { data: existing } = await sb.from("team_telegram_map")
-    .select("team_id, telegram_first_name, is_excluded_paper_newt_bot")
+  // Telegram ids live on team (team_telegram_map was dropped 2026-07-16).
+  const { data: byTg } = await sb.from("team")
+    .select("id, is_excluded_paper_newt_bot")
     .eq("agency_id", AGENCY_ID)
     .eq("telegram_user_id", fromUser.id)
     .maybeSingle();
 
-  if (existing?.is_excluded_paper_newt_bot) {
+  if (byTg?.is_excluded_paper_newt_bot) {
     return { team_id: null, first_name: fromUser.first_name ?? null, last_name: fromUser.last_name ?? null,
              username: fromUser.username ?? null, is_principal: false, role: null, excluded: true };
   }
 
-  let teamId: string | null = existing?.team_id ?? null;
+  let teamId: string | null = byTg?.id ?? null;
 
-  if (!existing) {
+  // Not stamped yet: fall back to a first-name or nickname match. Read only.
+  if (!teamId) {
     const firstName: string | null = fromUser.first_name ?? null;
-    let mappingMethod: "auto_first_name" | "auto_nickname" | "discovered_unmapped" = "discovered_unmapped";
     if (firstName) {
       const { data: byFirst } = await sb.from("team").select("id")
         .eq("agency_id", AGENCY_ID).ilike("first_name", firstName)
         .is("archived_at", null).neq("is_test_user", true).maybeSingle();
-      if (byFirst) { teamId = byFirst.id; mappingMethod = "auto_first_name"; }
+      if (byFirst) teamId = byFirst.id;
       else {
         const { data: byNick } = await sb.from("team").select("id")
           .eq("agency_id", AGENCY_ID).ilike("nickname", firstName)
           .is("archived_at", null).neq("is_test_user", true).maybeSingle();
-        if (byNick) { teamId = byNick.id; mappingMethod = "auto_nickname"; }
+        if (byNick) teamId = byNick.id;
       }
     }
-    await sb.from("team_telegram_map").insert({
-      agency_id: AGENCY_ID, team_id: teamId,
-      telegram_user_id: fromUser.id, telegram_username: fromUser.username ?? null,
-      telegram_first_name: firstName, telegram_last_name: fromUser.last_name ?? null,
-      is_excluded_pjsagencybot: false, is_excluded_paper_newt_bot: false, mapping_method: mappingMethod,
-    });
-  } else {
-    await sb.from("team_telegram_map").update({
-      last_seen_at: new Date().toISOString(),
-      telegram_username: fromUser.username ?? null,
-      telegram_first_name: fromUser.first_name ?? null,
-      telegram_last_name: fromUser.last_name ?? null,
-      updated_at: new Date().toISOString(),
-    }).eq("agency_id", AGENCY_ID).eq("telegram_user_id", fromUser.id);
   }
 
   if (!teamId) {
@@ -331,18 +331,8 @@ async function loadFreshContext(): Promise<string> {
   const lines: string[] = [];
   lines.push(`Date (UTC): ${today} ${dowNames[dow]}. Current Sun-Sat week starts: ${weekStartStr}.`);
 
-  const { data: book } = await sb.from("book_snapshot")
-    .select("snapshot_date, auto_pif, fire_pif, life_pif, health_pif, household_count")
-    .eq("agency_id", AGENCY_ID).order("snapshot_date", { ascending: false }).limit(1).maybeSingle();
-  if (book) lines.push(`Latest book snapshot (${book.snapshot_date}): Auto ${book.auto_pif ?? "?"} | Fire ${book.fire_pif ?? "?"} | Life ${book.life_pif ?? "?"} | Health ${book.health_pif ?? "?"} | Households ${book.household_count ?? "?"}.`);
-
-  const { data: smvc } = await sb.from("smvc_history")
-    .select("snapshot_date, smvc_period").eq("agency_id", AGENCY_ID)
-    .order("snapshot_date", { ascending: false }).limit(1).maybeSingle();
-  if (smvc) lines.push(`Latest SMVC (${smvc.snapshot_date}): period ${smvc.smvc_period ?? "?"}.`);
-
   const { count: openTasks } = await sb.from("tasks").select("*", { count: "exact", head: true })
-    .eq("agency_id", AGENCY_ID).neq("status", "done");
+    .eq("agency_id", AGENCY_ID).eq("status", "open");
   lines.push(`Open tasks: ${openTasks ?? 0}.`);
 
   return lines.join("\n");
@@ -364,7 +354,7 @@ function buildSystemPrompt(speaker: Speaker, chatType: string, chatTitle: string
 
 In group history, user turns are prefixed with [Name]: to show who said what. The bot (you) replies are not prefixed.
 
-In groups, you only see messages that either: address you with @${BOT_USERNAME}, reply to one of your messages, or use a slash command. So every message you see is one you should respond to. Be concise and useful — group chats aren't the place for long essays.
+In groups, you only get messages that address you with @${BOT_USERNAME} or use a slash command. So every message you see is one you should respond to. Be concise and useful — group chats aren't the place for long essays.
 
 `;
   } else {
@@ -413,7 +403,7 @@ Even though internal, the State Farm Agent's Agreement governs:
 
 You have two tools. Call them when the answer needs live data or specific stored knowledge — do not guess.
 
-- read_sql(sql): SELECT or WITH-prefixed CTE against the Newtworks Postgres. Read-only, capped at 1000 rows. Filter multi-tenant tables by agency_id = '126794dd-25ff-47d2-a436-724499733365'. Useful tables: agency, team, comp_recap, book_snapshot, smvc_history, tasks, ledger, payroll_runs, persistent_memory, core_principles, manuals, automation_recipes, automation_run_log, settings, and ~70 others.
+- read_sql(sql): SELECT or WITH-prefixed CTE against the Newtworks Postgres. Read-only, capped at 1000 rows. Filter multi-tenant tables by agency_id = '126794dd-25ff-47d2-a436-724499733365'. Useful tables: agency, agency_snapshot, team, comp_recap, tasks, ledger, payroll_runs, persistent_memory, core_principles, manuals, automation_recipes, automation_run_log, settings, and ~70 others.
 - search_knowledge(query, max_per_table): keyword search across persistent_memory, core_principles, handbook, and processes simultaneously.
 
 IMPORTANT: When you call a tool, use the structured tool_calls format the API expects. Do not write tool calls inline as text or in custom syntax — emit them through the standard function-calling channel.
@@ -694,7 +684,7 @@ async function handleCommand(
       let text = `Hey ${senderName} — Paper Newt here.\n\n`;
       if (isPeter) text += `I'm your Pocket CFO/COO. Same intelligence layer that runs the Newtworks, available wherever you are.\n\n`;
       else text += `I'm the agency's intelligence-layer assistant. Ask me about the agency, the handbook, processes, your production — whatever's in scope for your role.\n\n`;
-      if (inGroup) text += `In groups: @ me (@${BOT_USERNAME}), reply to my messages, or use slash commands. I won't see normal group chatter.\n\n`;
+      if (inGroup) text += `In groups: @ me (@${BOT_USERNAME}) or use slash commands. I stay out of normal group chatter.\n\n`;
       text += `Commands:\n/start, /help — this message\n/whoami — show what I know about you\n/reset — clear my memory of our conversation\n\nOtherwise, just talk to me.`;
       await sendMessage(chatId, text, messageId);
       return jsonResponse({ ok: true, command: cmd.command });
@@ -734,6 +724,54 @@ async function handleCommand(
 // Main webhook handler
 // ============================================================================
 
+function mentionsBot(text: string): boolean {
+  return new RegExp(`@${BOT_USERNAME}\\b`, "i").test(text);
+}
+
+// Leslie's monthly goals. Paper Newt asks Marie in the Paper Newt Management
+// group on the 1st. A Telegram reply to that question counts whenever it comes;
+// a plain message from Marie counts inside the window after it goes out;
+// /goals <answer> works any time. All the rules live in
+// public.leslie_monthly_record_reply; this just calls it. Returns a Response
+// when the message was handled as a goals answer, null to let it carry on.
+async function captureLeslieGoals(message: any): Promise<Response | null> {
+  const text = message.text as string;
+  const cmd = parseCommand(text);
+  const isGoalsCmd = cmd?.command === "goals";
+  if (cmd && !isGoalsCmd) return null;
+  const answer = isGoalsCmd ? cmd!.args.trim() : text;
+  const replyTo = message.reply_to_message?.message_id ?? null;
+  try {
+    const { data, error } = await sb.rpc("leslie_monthly_record_reply", {
+      p_agency_id: AGENCY_ID,
+      p_telegram_user_id: message.from.id,
+      p_text: answer,
+      p_message_id: message.message_id,
+      p_force: isGoalsCmd,
+      p_reply_to_message_id: replyTo,
+    });
+    if (error) throw error;
+    const res = data as any;
+    if (res?.recorded) {
+      await sendMessage(message.chat.id, "Got it - that is on the payroll page under Leslie's goals.", message.message_id);
+      return jsonResponse({ ok: true, leslie_goals: res });
+    }
+    if (isGoalsCmd) {
+      const why = res?.reason === "nothing_waiting"
+        ? "There is no goals question waiting on an answer right now."
+        : res?.reason === "not_the_answerer"
+        ? "Only Marie can answer the goals question."
+        : "I could not record that. Send /goals followed by the answer.";
+      await sendMessage(message.chat.id, why, message.message_id);
+      return jsonResponse({ ok: true, leslie_goals: res });
+    }
+    return null;
+  } catch (e) {
+    console.error("leslie goals capture failed:", e);
+    return isGoalsCmd ? jsonResponse({ ok: false, leslie_goals_error: String(e) }) : null;
+  }
+}
+
 async function handleWebhook(update: any): Promise<Response> {
   const message = update.message || update.edited_message;
   if (!message) return jsonResponse({ ok: true, ignored: "no_message" });
@@ -748,6 +786,19 @@ async function handleWebhook(update: any): Promise<Response> {
 
   const chatId = chat.id;
   const inGroup = chat.type !== "private";
+
+  // Paper Newt Management group: Leslie's monthly goals answer.
+  const mgmtGroupChatIdStr = await getSetting("paper_newt_management_group_chat_id");
+  if (mgmtGroupChatIdStr && String(chatId) === mgmtGroupChatIdStr) {
+    const goals = await captureLeslieGoals(message);
+    if (goals) return goals;
+  }
+
+  // Privacy mode is off, so groups deliver everything. Chat back only when
+  // someone @mentions the bot or sends it a slash command.
+  if (inGroup && !rawText.startsWith("/") && !mentionsBot(rawText)) {
+    return jsonResponse({ ok: true, ignored: "group_not_addressed" });
+  }
 
   // Identify the speaker (every turn)
   const speaker = await identifySpeaker(fromUser);
