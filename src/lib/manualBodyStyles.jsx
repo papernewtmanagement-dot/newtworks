@@ -199,6 +199,7 @@ export const MANUAL_BODY_CSS = `
         .newtworks-handbook-body > :is(table, .newtworks-table-wrap) {
           width: calc(100% - 12px);
         }
+        .newtworks-handbook-body .nw-rp-hint { font-size: 12px; line-height: 1.4; color: ${T.slate500}; margin: -4px 0 6px 0; }
         /* Pop-ups (src/lib/popups.js). A button in the page opens a dialog
            with the same content: full screen on a phone, a centered panel on
            a wider screen. Peter 2026-10-06. */

@@ -314,7 +314,7 @@ function transclusionEditButton(kind, title) {
 export function expandTransclusions(md, ctx, visited, depth) {
   if (depth > MAX_INCLUDE_DEPTH) return md;
   const { resolveInclude, resolveExcerpt, markEdit } = ctx || {};
-  const replaceOne = (kind, resolver) => (_match, rawTarget) => {
+  const replaceOne = (kind, resolver) => (match, rawTarget) => {
     // Unescape Confluence-style escaped asterisks in titles like `\*Extended Life Process`
     const target = String(rawTarget).replace(/\\\*/g, "*").trim();
     const key = kind + "::" + target.toLowerCase();
@@ -335,6 +335,13 @@ export function expandTransclusions(md, ctx, visited, depth) {
     const nextVisited = new Set(visited);
     nextVisited.add(key);
     const expanded = expandTransclusions(resolved.md, ctx, nextVisited, depth + 1);
+    // A marker indented inside a list keeps the fragment at that depth: every
+    // line gets the same indent, so a nested bullet can come from a shared
+    // excerpt (Peter 2026-10-07: Inbound Calls calls Generic Pivot inside its
+    // wrap-up list). No edit pencil there, since its HTML line would close the
+    // list around it; the pencil on the outer fragment still drills in.
+    const indent = /^[ \t]*/.exec(String(match))[0];
+    if (indent) return expanded.split("\n").map((l) => (l.trim() ? indent + l : l)).join("\n");
     return markEdit ? `${transclusionEditButton(kind, target)}\n\n${expanded}` : expanded;
   };
   let out = md;
@@ -1196,6 +1203,12 @@ function renderRoleplay(block, options) {
     ? `<button type="button" class="nw-rp-next" title="Pick another" aria-label="Pick another">↻</button>`
     : "";
   const bar = select || only || next ? `<div class="nw-rp-bar">${select}${only}${next}</div>` : "";
+  // One line saying who the card is for. Peter 2026-10-07: "not really sure
+  // how to use the green cards."
+  const again = next ? " Tap ↻ for another." : "";
+  const hint = mode === "pick" ? ""
+    : mode === "shuffle" ? `<div class="nw-rp-hint">The customer says the line under They say.${again}</div>`
+    : `<div class="nw-rp-hint">For whoever plays the customer. Your partner's page shows a different one.${again}</div>`;
   let shown = false;
   const cards = block.scenarios.map((sc) => {
     const slug = openerSlug(sc.label);
@@ -1204,7 +1217,7 @@ function renderRoleplay(block, options) {
     const body = mdToHtml(sc.lines.join("\n"), options);
     return `<div class="nw-rp-card" data-rp-label="${slug}"${show ? "" : " hidden"}>${body}</div>`;
   }).join("");
-  return `<div class="nw-rp"${mode ? ` data-rp-mode="${mode}"` : ""}>${bar}<div class="nw-rp-cards">${cards}</div></div>`;
+  return `<div class="nw-rp"${mode ? ` data-rp-mode="${mode}"` : ""}>${bar}${hint}<div class="nw-rp-cards">${cards}</div></div>`;
 }
 
 function expandRoleplays(md, options, slots) {
