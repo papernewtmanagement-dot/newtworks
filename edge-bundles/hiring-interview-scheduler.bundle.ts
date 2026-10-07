@@ -1119,7 +1119,7 @@ async function sendInterviewInvite(agencyId: string, candidateId: string): Promi
 async function getOffer(agencyId: string, token: string): Promise<Response> {
   const { data: c, error } = await sb
     .from("hiring_candidates")
-    .select("first_name, candidate_name, position, interview_slots_offered, interview_booking_expires_at, interview_booked_at, interview_scheduled_start, interview_meet_url, interview_confirmed_at")
+    .select("id, first_name, candidate_name, position, interview_slots_offered, interview_booking_expires_at, interview_booked_at, interview_scheduled_start, interview_meet_url, interview_confirmed_at")
     .eq("interview_invite_token", token)
     .maybeSingle();
   if (error || !c) return corsJson({ ok: false, error: "not_found" }, 404);
@@ -1141,7 +1141,19 @@ async function getOffer(agencyId: string, token: string): Promise<Response> {
   }
 
   const expired = c.interview_booking_expires_at ? new Date(c.interview_booking_expires_at).getTime() < Date.now() : false;
-  const slots = (c.interview_slots_offered as Slot[] | null) ?? [];
+  let slots = (c.interview_slots_offered as Slot[] | null) ?? [];
+  // Offered times go stale: a candidate who asked to reschedule, or opens
+  // the link days later, would otherwise see times that already passed.
+  // Any past time in the offer -> recompute and save a fresh set.
+  if (!expired && slots.some((s) => new Date(s.start).getTime() <= Date.now())) {
+    const fresh = await computeOfferedSlots(agencyId);
+    if (fresh) {
+      slots = fresh;
+      await sb.from("hiring_candidates").update({ interview_slots_offered: fresh }).eq("id", c.id);
+    } else {
+      slots = slots.filter((s) => new Date(s.start).getTime() > Date.now());
+    }
+  }
   return corsJson({
     ok: true,
     already_booked: false,

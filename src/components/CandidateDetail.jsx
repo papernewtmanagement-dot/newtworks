@@ -8,6 +8,7 @@ import MeetGreetModal from "./MeetGreetModal.jsx";
 import CtsResultPanel from "./CtsResultPanel.jsx";
 import { ROLE_LABELS } from "../lib/hiregaugeRoles.js";
 import CopyButton from "./CopyButton.jsx";
+import { interviewTimeLine, INTERVIEW_TIME_COLS } from "../lib/interviewTime.js";
 
 // ─── Constants ─────────────────────────────────────────────────────
 
@@ -1978,6 +1979,16 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   // same silent-swallow class as the Growth tab kanban bug (2026-08-05 sweep).
   const [detailError, setDetailError] = useState(false);
   const [detailRetryTick, setDetailRetryTick] = useState(0);
+  // Interview time lives on hiring_candidates, not in v_hiring_candidates,
+  // so it is read separately and kept apart from detail.
+  const [ivTime, setIvTime] = useState(null);
+  useEffect(() => {
+    if (!candidate?.id || !supabase) return;
+    let canceled = false;
+    supabase.from("hiring_candidates").select(INTERVIEW_TIME_COLS).eq("id", candidate.id).maybeSingle()
+      .then(({ data }) => { if (!canceled) setIvTime(data || null); });
+    return () => { canceled = true; };
+  }, [candidate?.id, detail?.status]);
   useEffect(() => {
     if (!candidate?.id || !supabase) return;
     let cancelled = false;
@@ -2523,6 +2534,13 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
           </div>
         )}
       </div>
+
+      {(() => {
+        const iv = interviewTimeLine(ivTime);
+        return iv ? (
+          <div style={{ marginTop: -12, marginBottom: 14, fontSize: 13, fontWeight: 600, color: iv.color }}>{iv.text}</div>
+        ) : null;
+      })()}
 
       {/* Pipeline stage stepper — tap a stage to move this candidate. */}
       <StageStepper status={detail?.status} saving={stageSaving} onPick={changeStage} />

@@ -1,6 +1,7 @@
 import { Fragment, useState, useMemo, useEffect } from "react";
 import { supabase, AGENCY_ID, BUSINESS_ENTITY_ID } from "../lib/supabase.js";
 import CandidateDetail from "../components/CandidateDetail.jsx";
+import { interviewTimeLine, INTERVIEW_TIME_COLS } from "../lib/interviewTime.js";
 import InterviewSlotsManager from "../components/InterviewSlotsManager.jsx";
 import HiringEmailTemplates from "../components/HiringEmailTemplates.jsx";
 import MemberAvatar from "../lib/MemberAvatar.jsx";
@@ -540,6 +541,10 @@ const RecruitingPipeline = ({ applicants, onUpdate, stages: stagesProp, userRole
                       )}
                     </div>
                   </div>
+                  {stage === "interview" && (() => {
+                    const iv = interviewTimeLine(app);
+                    return iv ? <div style={{ fontSize:9, fontWeight:600, color:iv.color, marginTop:4 }}>{iv.text}</div> : null;
+                  })()}
                 </TabLink>
               ))}
             </div>
@@ -3254,7 +3259,7 @@ export default function Team({ userRole }) {
       if (!isRetry) { setApplicantsLoading(true); setApplicantsError(false); }
       const { data, error } = await supabase
         .from("hiring_candidates")
-        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, assertiveness, compassion, resume_document_id, resume_url, reliability, cached_assessment_composite, cached_protocol_validity_v, cached_protocol_validity_label, cts_best_fit")
+        .select("id, first_name, last_name, candidate_name, email, phone, position, status, decline_reason, claude_summary, notes, created_at, team_member_id, assertiveness, compassion, resume_document_id, resume_url, reliability, cached_assessment_composite, cached_protocol_validity_v, cached_protocol_validity_label, cts_best_fit, " + INTERVIEW_TIME_COLS)
         .eq("agency_id", AGENCY_ID)
         .in("status", PIPELINE_STATUSES)
         .order("created_at", { ascending: false });
