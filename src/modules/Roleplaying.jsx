@@ -2168,6 +2168,60 @@ function MapUnder({ v, px }) {
 }
 // Metres down, told in feet (step 12d): 6,150 m is 20,180 feet.
 const mapDownText = (m) => `${Math.round(Number(m) / 0.3048).toLocaleString("en-US")} feet down`;
+// The battle grid under the ground (step 12d3; rpg_map_view: under.squares on the battle grid, rpg_session_state:
+// board.parts): each open square by what it is, the rest solid rock. floor = the floor of a passage or a room, rubble
+// = fallen rock (slow), pool = shallow water, column = a column of stone (no way through), shaft = climbed. The words
+// are the one home of how the page names them; the colors of the Maps tab and the fight board alike.
+const MAP_UNDER_PART = {
+  floor: { fill: "#A99A82", words: "cave floor" },
+  rubble: { fill: "#8C7D67", words: "fallen rock" },
+  pool: { fill: "#6E9EB8", words: "a pool" },
+  column: { fill: "#4A413A", words: "a column of stone, no way through" },
+  shaft: { fill: "#5E5560", words: "a shaft, climbed" },
+};
+const MAP_UNDER_ROCK = "#2B2420";
+// The open squares under a battle grid (Maps tab), over the dimmed land: rock dark, each open square its color, a
+// line where it meets the rock, stones on fallen rock, a ring on a column, a pool darker the deeper it is.
+function MapUnderGrid({ v, px }) {
+  const cols = Number(v.cols) || 12, rows = Number(v.rows) || 12, wide = cols * 100, high = rows * 100;
+  const sq = v.under && Array.isArray(v.under.squares) ? v.under.squares : [];
+  const open = {};
+  sq.forEach(s => { if (Array.isArray(s)) open[`${s[0]},${s[1]}`] = s; });
+  const edges = [];
+  sq.forEach(s => {
+    if (!Array.isArray(s)) return;
+    const [i, j] = s, x = i * 100, y = j * 100;
+    if (!open[`${i},${j - 1}`]) edges.push(`M${x} ${y}H${x + 100}`);
+    if (!open[`${i},${j + 1}`]) edges.push(`M${x} ${y + 100}H${x + 100}`);
+    if (!open[`${i - 1},${j}`]) edges.push(`M${x} ${y}V${y + 100}`);
+    if (!open[`${i + 1},${j}`]) edges.push(`M${x + 100} ${y}V${y + 100}`);
+  });
+  return (
+    <svg viewBox={`0 0 ${wide} ${high}`} preserveAspectRatio="none" aria-hidden="true"
+      style={{ position: "absolute", left: 16, top: 16, width: "calc(100% - 16px)", height: "calc(100% - 16px)", borderRadius: 4, pointerEvents: "none", display: "block", overflow: "hidden" }}>
+      <rect x="0" y="0" width={wide} height={high} fill={MAP_UNDER_ROCK} opacity={0.94} />
+      {sq.map((s, n) => {
+        if (!Array.isArray(s)) return null;
+        const [i, j, part, pct, water] = s, x = i * 100, y = j * 100, look = MAP_UNDER_PART[part] || MAP_UNDER_PART.floor;
+        // harder floor a little darker, as on the surface
+        const shade = part === "floor" ? Math.min(Number(pct) || 0, 400) / 400 * 0.28 : 0;
+        return (
+          <g key={n}>
+            <rect x={x} y={y} width="100" height="100" fill={look.fill} />
+            {shade > 0 && <rect x={x} y={y} width="100" height="100" fill="#1F1812" opacity={shade} />}
+            {part === "pool" && <rect x={x} y={y} width="100" height="100" fill="#1E4B66" opacity={Math.min(Number(water) || 0, 1) * 0.5} />}
+            {part === "rubble" && [[24, 30, 16], [64, 26, 12], [44, 64, 18], [78, 70, 10], [18, 76, 9]].map(([a, b, r], k) => (
+              <circle key={k} cx={x + a} cy={y + b} r={r} fill="#6F6150" stroke="#3E352C" strokeWidth={3} />
+            ))}
+            {part === "column" && <circle cx={x + 50} cy={y + 50} r={34} fill="#5B5149" stroke="#26201B" strokeWidth={6} />}
+            {part === "shaft" && <circle cx={x + 50} cy={y + 50} r={30} fill="none" stroke="#1C171A" strokeWidth={10} strokeDasharray="10 8" />}
+          </g>
+        );
+      })}
+      <path d={edges.join("")} fill="none" stroke="#120E0B" strokeWidth={Math.max(6, 2.2 / px)} strokeLinecap="square" />
+    </svg>
+  );
+}
 function MapArt({ art, px }) {
   const names = useMemo(() => mapNames(art.names, art.blocks, px, art.wide, art.high), [art, px]);
   return (
@@ -2484,7 +2538,15 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
   const [under, setUnder] = useState(false);
   const underLines = v.under && Array.isArray(v.under.lines) ? v.under.lines : [];
   const underHalls = v.under && Array.isArray(v.under.halls) ? v.under.halls : [];
-  const hasUnder = underLines.length > 0 || underHalls.length > 0;
+  // on the battle grid the squares under it (step 12d3)
+  const underSquares = v.under && Array.isArray(v.under.squares) ? v.under.squares : [];
+  const hasUnder = underLines.length > 0 || underHalls.length > 0 || underSquares.length > 0;
+  // the one whose turn it is stands under the ground on this battle grid: show it underground (step 12d3)
+  const curUnder = !!(journey && Array.isArray(journey.pieces) && underSquares.length > 0
+    && journey.pieces.some(p => p.id === journey.current && p.under && Array.isArray(p.spot)));
+  useEffect(() => { if (curUnder) setUnder(true); }, [curUnder]);
+  const underAt = {};
+  underSquares.forEach(s => { if (Array.isArray(s)) underAt[`${s[0] + 1},${s[1] + 1}`] = s; });
   const width = useElementWidth(boxRef);
   const level = Number(v.level) || 1;
   const cols = Number(v.cols) || 12;
@@ -2520,7 +2582,10 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
     const climb = Array.isArray(c.climb) ? `${c.climb[4]}, ${c.climb[1]} m up, climbed (Climbing against ${c.climb[3]})`
       // a square of a place to go into walked like the ground (step 12c)
       : c.feature ? ({ floor: "a floor", hearth: "a hearth", altar: "an altar", mouth: "the way in, underground" })[c.feature] || null : null;
-    const title = `${c.name} · ${climb ? `${climb} · ` : ""}${p ? [p.name, p.ground].filter(Boolean).join(" · ") : ground(c.kind)}${c.cost != null ? ` · this ${top ? "square" : "cell"}: +${c.cost}% time a square` : ""}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
+    const u = under && top ? underAt[`${c.x},${c.y}`] : null;
+    const title = under && top && underSquares.length > 0
+      ? `${c.name} · under the ground: ${u ? `${(MAP_UNDER_PART[u[2]] || MAP_UNDER_PART.floor).words}${u[4] ? `, ${u[4]} m deep` : ""}${u[3] != null ? ` · +${u[3]}% time a square` : ""} · ${Number(u[5]).toLocaleString("en-US")} feet down` : "solid rock"}`
+      : `${c.name} · ${climb ? `${climb} · ` : ""}${p ? [p.name, p.ground].filter(Boolean).join(" · ") : ground(c.kind)}${c.cost != null ? ` · this ${top ? "square" : "cell"}: +${c.cost}% time a square` : ""}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
     const style = { aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, boxSizing: "border-box", position: "relative", display: "block", cursor: c.open || onCell ? "pointer" : "default" };
     grid.push(onCell
       ? <button key={c.name} type="button" onClick={() => onCell(c)} title={title} aria-label={title} className="rpg-map-cell" style={{ ...style, background: "none", border: "none" }} />
@@ -2587,7 +2652,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
       <div ref={boxRef} style={{ width: `min(100%, max(340px, calc((100dvh - 300px) * ${cols / (Number(v.rows) || 12)} + 16px)))`, margin: "0 auto", userSelect: "none" }}>
         <div style={{ position: "relative", display: "grid", gridTemplateColumns: `16px repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: "16px" }}>
           <MapArt art={art} px={px} />
-          {under && hasUnder && <MapUnder v={v} px={px} />}
+          {under && hasUnder && (top ? <MapUnderGrid v={v} px={px} /> : <MapUnder v={v} px={px} />)}
           {grid}
           {tokens}
         </div>
@@ -2621,7 +2686,23 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
           </span>
         ))}
         {under && underLines.some(l => l[0] === "shaft") && <span>A ring: a shaft from a great hall up into the cave country over it.</span>}
-        {under && hasUnder && <span>Edged pale blue: the passage runs under the sea or a lake.</span>}
+        {under && hasUnder && !top && <span>Edged pale blue: the passage runs under the sea or a lake.</span>}
+        {under && top && underSquares.length > 0 && (
+          <>
+            <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 14, height: 14, borderRadius: 3, background: MAP_UNDER_ROCK, display: "inline-block" }} />Solid rock: no way in.
+            </span>
+            {["under_deep", "under_cave", "under_mine", "under_squeeze"].filter(k => grounds[k]).map(k => (
+              <span key={k}>{ground(k)}.</span>
+            ))}
+            {["rubble", "pool", "column", "shaft"].filter(k => underSquares.some(s => s[2] === k)).map(k => (
+              <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 14, height: 14, borderRadius: 3, background: MAP_UNDER_PART[k].fill, display: "inline-block" }} />
+                {({ rubble: "Fallen rock: the slowest floor.", pool: "A pool: waded, slower the deeper.", column: "A column of stone: no way through.", shaft: "A shaft: climbed." })[k]}
+              </span>
+            ))}
+          </>
+        )}
         {Array.isArray(v.houses) && v.houses.length > 0 && (
           <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <MapSwatch what="house" size={20} />Houses: their walls and roofs are climbed (see Climbing); a walk goes round them.
@@ -3457,19 +3538,24 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
       const p = at[k];
       const m = moveAt[k];
       const sea = !!g[3];
+      // under the ground (step 12d3) the no-way-in squares are rock, and each open one says what it is
+      const below = typeof b.under === "string";
+      const part = below && Array.isArray(b.parts) ? b.parts[j * w + i] : null;
+      const look = part ? MAP_UNDER_PART[part] : null;
       const n = Number(g[0]) || 0;
       const steps = Math.min(n, 600) / 100;
       const forest = !!g[1];
       const fire = !!g[2];
-      const title = `${nameOf(x, y)}${sea ? " · sea" : ""}${n ? ` · +${n}% time to cross` : ""}${forest ? " · forest" : ""}${fire ? ` · burning (+${s.burn_cost}% more to step into)` : ""}${p ? ` · ${p.name}${p.out ? ` (${p.out})` : ""}` : ""}${m ? ` · ${m.ticks} ticks to get here` : ""}`;
+      const title = `${nameOf(x, y)}${sea ? (below ? (part === "column" ? ` · ${MAP_UNDER_PART.column.words}` : " · solid rock") : " · sea") : look ? ` · ${look.words}` : ""}${n ? ` · +${n}% time to cross` : ""}${forest ? " · forest" : ""}${fire ? ` · burning (+${s.burn_cost}% more to step into)` : ""}${p ? ` · ${p.name}${p.out ? ` (${p.out})` : ""}` : ""}${m ? ` · ${m.ticks} ticks to get here` : ""}`;
       const live = pending || (isParent && mode !== "move") || m;
       cells.push(
         <button key={k} type="button" title={title} onClick={() => click(x, y, g)}
           style={{ aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, position: "relative", borderRadius: 3, fontFamily: "inherit",
                    border: m ? `2px solid ${T.blue}` : `1px solid ${T.slate200}`, cursor: live ? "pointer" : "default",
-                   background: sea ? "#B9D3DE" : fire ? `hsl(24, 90%, ${86 - steps * 6}%)` : forest ? `hsl(130, 32%, ${88 - steps * 8}%)` : n > 0 ? `hsl(75, 28%, ${92 - steps * 9}%)` : T.slate50,
+                   background: below && sea ? (part === "column" ? MAP_UNDER_PART.column.fill : MAP_UNDER_ROCK) : sea ? "#B9D3DE" : fire ? `hsl(24, 90%, ${86 - steps * 6}%)` : forest ? `hsl(130, 32%, ${88 - steps * 8}%)`
+                     : look && part !== "floor" ? look.fill : below ? `hsl(36, 16%, ${80 - steps * 8}%)` : n > 0 ? `hsl(75, 28%, ${92 - steps * 9}%)` : T.slate50,
                    display: "flex", alignItems: "center", justifyContent: "center" }}>
-          {n > 0 && <span style={{ position: "absolute", top: 0, left: 2, fontSize: 8, lineHeight: 1.2, color: n >= 300 ? T.white : T.slate600 }}>{n}</span>}
+          {n > 0 && <span style={{ position: "absolute", top: 0, left: 2, fontSize: 8, lineHeight: 1.2, color: n >= 300 || (below && part !== "floor") ? T.white : T.slate600 }}>{n}</span>}
           {(fire || forest) && <span style={{ position: "absolute", top: 0, right: 1, fontSize: 8, lineHeight: 1.2 }}>{fire ? "🔥" : "🌲"}</span>}
           {p ? (
             <span style={{ width: "76%", height: "76%", borderRadius: "50%", background: p.color || T.slate400, opacity: p.out ? 0.35 : 1,
@@ -3484,10 +3570,12 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
   }
   const far = parts.filter(p => p.pos_x != null && away[p.id] != null);
   const off = parts.filter(p => p.pos_x == null);
+  const under = typeof b.under === "string" ? b.under : null;
   return (
     <div style={{ ...card, display: "grid", gap: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <div style={label}>Board</div>
+        {under && <div style={{ fontSize: 12, color: T.slate700, fontWeight: 600 }}>{under}. Dark squares are solid rock.</div>}
         {pending ? (
           <>
             <div style={{ fontSize: 12, color: T.slate800, fontWeight: 600 }}>Tap a square for {pending.name}.</div>
