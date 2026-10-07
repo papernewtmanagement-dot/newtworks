@@ -1703,9 +1703,10 @@ function mapFantasy(v, byId) {
       pads.push({ d: mapCircle((i + 0.5) * unit, (j + 0.5) * unit, detail ? 12 : unit * 0.26), fill: MAP_INK });
       names.push({ text: String(here.length), x: (i + 0.5) * unit, y: (j + 0.5) * unit, count: true });
     } else {
-      // a grid drawn fine puts each smaller place at its own middle, a twentieth of the long side of the map wide,
+      // a grid drawn fine puts each smaller place at its own middle, a twentieth of the long side of the map wide (on
+      // the World grid three hundredths: a symbol there only marks where a thing is, step 14d, Peter 2026-10-07),
       // stepping round any it would cover (mapAside); any other grid sets them side by side in their cell
-      const s = detail ? Math.max(cols, rows) * 5 : unit * [0, 0.62, 0.46, 0.42][here.length];
+      const s = detail ? Math.max(cols, rows) * (level === 1 ? 3 : 5) : unit * [0, 0.62, 0.46, 0.42][here.length];
       const spots = [[], [[0.5, 0.5]], [[0.27, 0.5], [0.73, 0.5]], [[0.27, 0.29], [0.73, 0.29], [0.5, 0.73]]][here.length];
       here.forEach((k, n) => {
         const sk = s * (MAP_MARK_SIZE[k.icon] || 1) * mapMarkScale(k);
