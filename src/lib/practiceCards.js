@@ -132,7 +132,7 @@ function itemLine(label) {
 }
 
 function isShuffleDeck(id, md) {
-  const re = new RegExp(`^[ \\t]*\\*?\\[Roleplay:\\s*${id.replace(/[-]/g, "\\-")}\\s*\\|\\s*shuffle\\s*\\]`, "im");
+  const re = new RegExp(`^[ \\t]*\\*?\\[Roleplay:\\s*${id.replace(/[-]/g, "\\-")}\\s*\\|\\s*shuffle\\s*(?:\\|[^\\]\\n]*)?\\]`, "im");
   return re.test(md);
 }
 

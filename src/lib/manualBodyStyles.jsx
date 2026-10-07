@@ -200,6 +200,19 @@ export const MANUAL_BODY_CSS = `
           width: calc(100% - 12px);
         }
         .newtworks-handbook-body .nw-rp-hint { font-size: 12px; line-height: 1.4; color: ${T.slate500}; margin: -4px 0 6px 0; }
+        /* [Choose:] blocks (src/lib/choices.js): rows of buttons that pick a
+           panel. The row stays in view while the panel scrolls. */
+        .newtworks-handbook-body .nw-choose-bar {
+          position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; gap: 8px;
+          margin: 8px 0 4px 0; padding: 8px 0; background: #fff;
+        }
+        .newtworks-handbook-body .nw-choose-seg { display: inline-flex; border: 1px solid ${T.slate200}; border-radius: 999px; overflow: hidden; }
+        .newtworks-handbook-body .nw-choose-opt {
+          font: inherit; font-size: 13px; font-weight: 600; line-height: 1.2; padding: 7px 12px;
+          border: none; background: #fff; color: ${T.slate700}; cursor: pointer;
+        }
+        .newtworks-handbook-body .nw-choose-opt + .nw-choose-opt { border-left: 1px solid ${T.slate200}; }
+        .newtworks-handbook-body .nw-choose-opt[aria-pressed="true"] { background: ${T.blue}; color: #fff; }
         /* Pop-ups (src/lib/popups.js). A button in the page opens a dialog
            with the same content: full screen on a phone, a centered panel on
            a wider screen. Peter 2026-10-06. */

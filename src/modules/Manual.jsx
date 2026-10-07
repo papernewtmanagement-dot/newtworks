@@ -31,6 +31,7 @@ import { T } from "../lib/theme.js";
 import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 import { wireRoleplayPickers } from "../lib/roleplayPickers.js";
 import { wirePopups } from "../lib/popups.js";
+import { wireChoices } from "../lib/choices.js";
 import { MarkdownTextarea } from "../lib/markdownEditor.jsx";
 import { handleModuleLinkClick, useTabParam } from "../lib/routing.jsx";
 import { fillLiveFormulas } from "../lib/liveFormulas.js";
@@ -1857,6 +1858,8 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   // Pop-ups: <details class="nw-popup"> becomes a button and a dialog
   // (Peter 2026-10-06). See src/lib/popups.js.
   useEffect(() => { wirePopups(bodyRef.current); }, [html]);
+  // [Choose:] blocks: rows of buttons that pick a panel. See src/lib/choices.js.
+  useEffect(() => wireChoices(bodyRef.current), [html]);
   // A closed expander is hidden by the browser itself, so its text would be
   // missing from a printed page even though it is sitting right there in the
   // document. This opens every expander the moment the print dialog is asked

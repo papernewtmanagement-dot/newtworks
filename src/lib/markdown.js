@@ -1231,10 +1231,10 @@ function expandRoleplays(md, options, slots) {
     if (!cur) {
       const m = RP_START_RE.exec(line);
       if (m) {
-        const [rawId, rawMode] = m[1].split("|");
-        const modeText = String(rawMode || "").trim().toLowerCase();
-        const stored = modeText === "stored";
-        cur = { id: rawId.trim().toLowerCase(), mode: stored ? "" : modeText, stored, scenarios: [] };
+        // [Roleplay: id | shuffle | stored]: flags after the id, any order.
+        const [rawId, ...flags] = m[1].split("|").map((x) => x.trim().toLowerCase());
+        const stored = flags.includes("stored");
+        cur = { id: rawId, mode: flags.find((f) => f && f !== "stored") || "", stored, scenarios: [] };
         scen = null;
         continue;
       }
@@ -1374,6 +1374,73 @@ function expandPageHosts(md, slots) {
   });
 }
 
+// ─── Choices ──────────────────────────────────────────────────
+// A block of panels picked by one or more rows of buttons (Peter 2026-10-07:
+// the kickoff role play, "team member or customer" and "inbound or outbound"
+// in one row, then the script for that pair):
+//
+//   [Choose: Team member, Customer | Inbound, Outbound]
+//   [Choice: Team member | Inbound]
+//   ...markdown...
+//   [Choice: Customer | Outbound]
+//   ...markdown...
+//   [Choose end]
+//
+// Each group of buttons comes from one "|" part of the Choose line; the first
+// button in each group starts pressed. A panel shows when its Choice line
+// names the pressed button in every group. src/lib/choices.js wires the clicks.
+const CHOOSE_START_RE = /^[ \t]*\[Choose:\s*([^\]\n]+?)\s*\][ \t]*$/i;
+const CHOICE_RE = /^[ \t]*\[Choice:\s*([^\]\n]+?)\s*\][ \t]*$/i;
+const CHOOSE_END_RE = /^[ \t]*\[Choose end\][ \t]*$/i;
+
+function renderChoices(block, options) {
+  const firsts = block.groups.map((g) => openerSlug(g[0] || ""));
+  const bar = block.groups.map((g, gi) =>
+    `<div class="nw-choose-seg" role="group">` +
+    g.map((label, i) => `<button type="button" class="nw-choose-opt" data-group="${gi}" data-val="${openerSlug(label)}" aria-pressed="${i === 0 ? "true" : "false"}">${escapeHtml(label)}</button>`).join("") +
+    `</div>`
+  ).join("");
+  const start = firsts.join("|");
+  const panels = block.panels.map((p) =>
+    `<div class="nw-choose-panel" data-choice="${p.key}"${p.key === start ? "" : " hidden"}>${mdToHtml(p.lines.join("\n"), options)}</div>`
+  ).join("");
+  return `<div class="nw-choose"><div class="nw-choose-bar">${bar}</div>${panels}</div>`;
+}
+
+function expandChoices(md, options, slots) {
+  if (md.indexOf("[Choose:") === -1) return md;
+  const kept = [];
+  let cur = null;
+  let panel = null;
+  for (const line of md.split(/\r?\n/)) {
+    if (!cur) {
+      const m = CHOOSE_START_RE.exec(line);
+      if (m) {
+        cur = { groups: m[1].split("|").map((g) => g.split(",").map((x) => x.trim()).filter(Boolean)), panels: [] };
+        panel = null;
+        continue;
+      }
+      kept.push(line);
+      continue;
+    }
+    if (CHOOSE_END_RE.test(line)) {
+      slots.push(renderChoices(cur, options));
+      kept.push(RP_SLOT(slots.length - 1));
+      cur = null; panel = null;
+      continue;
+    }
+    const c = CHOICE_RE.exec(line);
+    if (c) {
+      panel = { key: c[1].split("|").map((x) => openerSlug(x.trim())).join("|"), lines: [] };
+      cur.panels.push(panel);
+      continue;
+    }
+    if (panel) panel.lines.push(line);
+  }
+  if (cur) { slots.push(renderChoices(cur, options)); kept.push(RP_SLOT(slots.length - 1)); }
+  return kept.join("\n");
+}
+
 function applyRoleplaySlots(html, slots) {
   if (!slots.length) return html;
   return html.replace(/(?:<p>\s*)?NWRPSLOT(\d+)END(?:\s*<\/p>)?/g, (_m, n) => slots[Number(n)] || "");
@@ -1420,6 +1487,8 @@ export function mdToHtml(md, options = {}) {
   src = expandRows(src);
   src = expandSelector(src, options);
   const rpSlots = [];
+  // Choices first, so each panel renders whole (its own role plays, picks).
+  src = expandChoices(src, options, rpSlots);
   src = expandRoleplays(src, options, rpSlots);
   src = expandCommits(src, rpSlots);
   src = expandPageHosts(src, rpSlots);
