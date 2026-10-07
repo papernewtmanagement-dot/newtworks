@@ -2324,6 +2324,26 @@ function MapJourney({ j, busy, note, mode, setMode, act, atHref, setAt, onFight,
               <div style={{ fontSize: 12, color: T.slate600 }}>A fight is on. {cur.creature ? (isParent ? "The creature" : "The game master plays the creature; it") : cur.name} moves and acts on the fight board.</div>
               <div><button type="button" style={btn("primary", true)} onClick={() => onFight(j.id)}>Open the fight board</button></div>
             </>
+          ) : cur.under ? (
+            <>
+              <div style={{ fontSize: 12, color: T.slate600 }}>{cur.under}. {cur.day_left} of walking left today.</div>
+              {Array.isArray(cur.ways) && cur.ways.length > 0 ? (
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
+                  {cur.ways.map(w => (
+                    <button key={w[0]} type="button" disabled={busy} style={{ ...btn("soft", true), textAlign: "left", whiteSpace: "normal", lineHeight: 1.35 }}
+                      onClick={() => act("rpg_map_under_walk", { p_participant_id: cur.id, p_to: w[0] })}>{w[1]}</button>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: T.slate600 }}>No way on that anyone knows. Search here, or go back the way you came.</div>
+              )}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {cur.mouth && <button type="button" disabled={busy} style={btn("primary", true)} onClick={() => act("rpg_map_under_leave", { p_participant_id: cur.id })}>Come up</button>}
+                {cur.search && <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => act("rpg_map_under_search", { p_participant_id: cur.id })}>Search for ways up · 1 h</button>}
+                <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => act("rpg_map_camp", { p_participant_id: cur.id })}>Camp 16 h</button>
+                <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => act("rpg_session_next_turn", { p_session_id: j.id })}>End turn</button>
+              </div>
+            </>
           ) : cur.placed ? (
             <>
               <div style={{ fontSize: 12, color: T.slate600 }}>{cur.day_left} of walking left today.</div>
@@ -2333,6 +2353,9 @@ function MapJourney({ j, busy, note, mode, setMode, act, atHref, setAt, onFight,
                 {Array.isArray(cur.walk_to) && (
                   <button type="button" disabled={busy} style={btn("soft", true)}
                     onClick={() => act("rpg_map_walk", { p_participant_id: cur.id, p_x: cur.walk_to[0], p_y: cur.walk_to[1] })}>Keep walking · {cur.to_go}</button>
+                )}
+                {cur.cave && (
+                  <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => act("rpg_map_under_enter", { p_participant_id: cur.id })}>Go into {cur.cave}</button>
                 )}
                 <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => act("rpg_map_camp", { p_participant_id: cur.id })}>Camp 16 h</button>
                 <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => act("rpg_session_next_turn", { p_session_id: j.id })}>End turn</button>
@@ -2360,7 +2383,7 @@ function MapJourney({ j, busy, note, mode, setMode, act, atHref, setAt, onFight,
                   ? <TabLink href={atHref(p.find)} onSelect={() => setAt(p.find)} style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{p.name}</TabLink>
                   : <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>{p.name}</span>}
                 <span style={{ display: "block", fontSize: 12, color: T.slate600 }}>
-                  {[p.out || (p.creature ? "creature" : null), !p.placed ? "Not on the map" : p.cell ? `On ${p.cell}` : "Elsewhere", p.fight && !p.creature ? "in a fight" : null, j.current === p.id && !setup ? "its turn" : p.next ? `next turn in ${p.next}` : null].filter(Boolean).join(" · ")}
+                  {[p.out || (p.creature ? "creature" : null), !p.placed ? "Not on the map" : p.under ? p.under : p.cell ? `On ${p.cell}` : "Elsewhere", p.fight && !p.creature ? "in a fight" : null, j.current === p.id && !setup ? "its turn" : p.next ? `next turn in ${p.next}` : null].filter(Boolean).join(" · ")}
                 </span>
               </span>
               {isParent && (
@@ -2515,9 +2538,9 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
     const n = shared[k] = (shared[k] || 0) + 1;
     const turn = journey.status === "active" && journey.current === p.id;
     return (
-      <span key={p.id} title={p.name} aria-hidden="true"
+      <span key={p.id} title={p.under ? `${p.name} · ${p.under}` : p.name} aria-hidden="true"
         style={{ position: "absolute", left: `calc(16px + (100% - 16px) * ${p.spot[0] / (cols * 1000)} + ${(n - 1) * 12}px)`, top: `calc(16px + (100% - 16px) * ${p.spot[1] / (rows * 1000)})`,
-          transform: "translate(-50%, -50%)", width: 22, height: 22, background: p.color || T.slate500, border: "2px solid #fff",
+          transform: "translate(-50%, -50%)", width: 22, height: 22, background: p.color || T.slate500, border: p.under ? "2px dashed #fff" : "2px solid #fff",
           boxShadow: turn ? `0 0 0 3px ${T.blue}, 0 1px 3px rgba(0,0,0,.4)` : "0 1px 3px rgba(0,0,0,.4)", color: "#fff", fontSize: 11, fontWeight: 800,
           borderRadius: p.creature ? 5 : "50%", borderColor: p.creature ? "#5A1E1E" : "#fff", opacity: p.out ? 0.4 : 1,
           display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", boxSizing: "border-box", zIndex: turn ? 3 : 2 }}>
