@@ -103,8 +103,9 @@ const PRODUCTS = [
   { key: "variable", label: "Variable",             short: "Variable" },
   { key: "bank",     label: "Bank",                 short: "Bank" },
 ];
-const PRODUCT_LABEL = Object.fromEntries(PRODUCTS.map(p => [p.key, p.label]));
-const PRODUCT_SHORT = Object.fromEntries(PRODUCTS.map(p => [p.key, p.short]));
+// Peter 2026-10-07: a pivot can be Generic, a hand-off that names no product. Pivots only.
+const PRODUCT_LABEL = { ...Object.fromEntries(PRODUCTS.map(p => [p.key, p.label])), generic: "Generic" };
+const PRODUCT_SHORT = { ...Object.fromEntries(PRODUCTS.map(p => [p.key, p.short])), generic: "Generic" };
 const SERVICE_PREFIX = "service_task";
 // RELATIONSHIPS and REVIEW_SITES are the Log's own choices, in src/lib/logChoices.js.
 // Peter 2026-10-03: a policy review names the policy reviewed (line, and type where
@@ -813,6 +814,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           <select style={inputBase} value={a.line ? `${a.line}|${a.type || ""}` : ""}
                   onChange={e => { const [line, type] = e.target.value.split("|"); editActivity(a.id, { line: line || "", type: type || "", pick: null }); }}>
             <option value="">Pick one</option>
+            {!withOnFile && <option value="generic|">Generic</option>}
             {PRODUCTS.map(pr => (types[pr.key] || []).length
               ? <optgroup key={pr.key} label={pr.label}>{types[pr.key].map(t => <option key={t.type_key} value={`${pr.key}|${t.type_key}`}>{t.label}</option>)}</optgroup>
               : <option key={pr.key} value={`${pr.key}|`}>{pr.label}</option>)}
