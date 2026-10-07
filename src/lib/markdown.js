@@ -1409,31 +1409,53 @@ const CHOICE_RE = /^[ \t]*\[Choice:\s*([^\]\n]+?)\s*\][ \t]*$/i;
 const CHOOSE_END_RE = /^[ \t]*\[Choose end\][ \t]*$/i;
 
 function renderChoices(block, options) {
+  // The level starts on the one set for the day the page is showing (Peter
+  // 2026-10-07: Monday easy, objection days medium, Friday hard), else the first.
+  const level = block.groups.find((g) => g.kind === "level");
+  const byDay = block.groups.find((g) => g.kind === "days");
+  const daySlug = openerSlug(String(options?.openerState?.day || ""));
+  const levelSlugs = level ? level.opts.map((o) => openerSlug(o)) : [];
+  const dayLevel = byDay && daySlug ? byDay.map[daySlug] : "";
+  const startLevel = levelSlugs.includes(dayLevel) ? dayLevel : (levelSlugs[0] || "");
   const firsts = block.groups.filter((g) => g.kind === "panel").map((g) => openerSlug(g.opts[0] || ""));
   const bar = block.groups.map((g) => {
+    if (g.kind === "days") return "";
     if (g.kind === "refresh") {
       return `<button type="button" class="nw-choose-next" title="Next customer" aria-label="Next customer">↻ <span class="nw-choose-num"></span></button>`;
     }
     const lv = g.kind === "level";
     return `<div class="nw-choose-seg${lv ? " nw-choose-levels" : ""}" role="group">` +
-      g.opts.map((label, i) => `<button type="button" class="nw-choose-opt" data-val="${openerSlug(label)}" aria-pressed="${i === 0 ? "true" : "false"}">${escapeHtml(label)}</button>`).join("") +
+      g.opts.map((label, i) => {
+        const on = lv ? openerSlug(label) === startLevel : i === 0;
+        return `<button type="button" class="nw-choose-opt" data-val="${openerSlug(label)}" aria-pressed="${on ? "true" : "false"}">${escapeHtml(label)}</button>`;
+      }).join("") +
       `</div>`;
   }).join("");
   const start = firsts.join("|");
   const panels = block.panels.map((p) =>
     `<div class="nw-choose-panel" data-choice="${p.key}"${p.key === start ? "" : " hidden"}>${mdToHtml(p.lines.join("\n"), options)}</div>`
   ).join("");
-  const level = block.groups.find((g) => g.kind === "level");
-  const lvAttr = level ? ` data-level="${openerSlug(level.opts[0] || "")}"` : "";
+  const lvAttr = level ? ` data-level="${startLevel}"` : "";
   return `<div class="nw-choose"${lvAttr}><div class="nw-choose-bar">${bar}</div>${panels}</div>`;
 }
 
 // One "|" part of a Choose line: "refresh" is the next-customer button for
 // [Cycle:] blocks, "level: Easy, Medium, Hard" picks which {{easy:}} /
 // {{medium:}} / {{hard:}} lines show (only while the shown panel has any),
-// anything else is a group of buttons that picks the panel.
+// "level by day: Monday Easy, Tuesday Medium, ..." sets which level is pressed
+// when the page is showing that day; anything else is a group of buttons that
+// picks the panel.
 function chooseGroup(part) {
   const p = part.trim();
+  const byDay = /^level by day:\s*(.*)$/i.exec(p);
+  if (byDay) {
+    const map = {};
+    byDay[1].split(",").forEach((pair) => {
+      const [day, ...rest] = pair.trim().split(/\s+/);
+      if (day && rest.length) map[openerSlug(day)] = openerSlug(rest.join(" "));
+    });
+    return { kind: "days", opts: [], map };
+  }
   if (/^(refresh|↻)$/i.test(p)) return { kind: "refresh", opts: [] };
   const lv = /^level:\s*(.*)$/i.exec(p);
   const list = (s) => s.split(",").map((x) => x.trim()).filter(Boolean);
