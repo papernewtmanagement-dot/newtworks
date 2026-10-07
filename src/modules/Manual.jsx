@@ -1860,6 +1860,25 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
   useEffect(() => { wirePopups(bodyRef.current); }, [html]);
   // [Choose:] blocks: rows of buttons that pick a panel. See src/lib/choices.js.
   useEffect(() => wireChoices(bodyRef.current), [html]);
+  // A link ending in #heading-id (e.g. an onboarding study line pointing at
+  // Uncover the Gap) lands on that heading once the body has rendered. The
+  // browser's own jump fires before the page loads, so it never finds it.
+  // Jumps once per address, so later re-renders don't yank the page back.
+  const jumpedTo = useRef("");
+  useEffect(() => {
+    if (!html || typeof window === "undefined") return;
+    const hash = window.location.hash || "";
+    if (!hash || hash.length < 2) return;
+    const key = `${window.location.pathname}${hash}`;
+    if (jumpedTo.current === key) return;
+    let id = hash.slice(1);
+    try { id = decodeURIComponent(id); } catch { /* keep raw */ }
+    const root = bodyRef.current;
+    const el = root ? Array.from(root.querySelectorAll("[id]")).find((n) => n.id === id) : null;
+    if (!el) return;
+    jumpedTo.current = key;
+    requestAnimationFrame(() => el.scrollIntoView({ block: "start" }));
+  }, [html]);
   // A closed expander is hidden by the browser itself, so its text would be
   // missing from a printed page even though it is sitting right there in the
   // document. This opens every expander the moment the print dialog is asked
