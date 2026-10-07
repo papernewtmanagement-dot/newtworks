@@ -864,6 +864,82 @@ const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["forest", "t
 // line's width in screen pixels by its size, 2 a great river down to 5 a brook.
 const MAP_RIVER_W = { 2: 4.6, 3: 3.3, 4: 2.2, 5: 1.4 };
 const MAP_RIVER = "#5E93AB";
+// The rivers traced as lines (step 14c, Peter 2026-10-07: rivers wind at every zoom and never cross;
+// rpg_map_river_trace through rpg_map_view: river_lines): the pieces [size, x1, y1, x2, y2] (thousandths of a cell
+// from the first one) meet end to end, so each river is one chain of them, drawn as one smooth line. A river never
+// loops: a closed chain shorter than three cells is left out, a longer one is opened where it started. A scrap shorter
+// than one and a half cells that joins nothing is left out. A smaller river that meets a bigger one ends a little short
+// of it, where the trace stops on its own bank: its end is carried onto the bigger river's line when that lies within
+// half a cell, so it joins it. Returns the lines by size, as runs.
+function mapRiverRuns(list, unit) {
+  const by = {};
+  list.forEach(p => { if (Array.isArray(p) && p.length >= 5) (by[p[0]] = by[p[0]] || []).push(p); });
+  const pt = (x, y) => [x / 1000 * unit, y / 1000 * unit];
+  const chains = {};
+  Object.keys(by).forEach(k => {
+    const segs = by[k], at = new Map();
+    const key = (x, y) => x + "," + y;
+    segs.forEach((p, n) => { [key(p[1], p[2]), key(p[3], p[4])].forEach(e => { if (!at.has(e)) at.set(e, []); at.get(e).push(n); }); });
+    const used = new Set();
+    const walk = (n, fromEnd) => {
+      // follow the chain from segment n, entering it at fromEnd (its other end is where it goes on)
+      const out = [];
+      let cur = n, enter = fromEnd;
+      while (cur != null && !used.has(cur)) {
+        used.add(cur);
+        const p = segs[cur];
+        const a = enter === 0 ? [p[1], p[2]] : [p[3], p[4]], b = enter === 0 ? [p[3], p[4]] : [p[1], p[2]];
+        if (!out.length) out.push(a);
+        out.push(b);
+        const next = (at.get(key(b[0], b[1])) || []).filter(m => m !== cur && !used.has(m));
+        if (next.length !== 1 || (at.get(key(b[0], b[1])) || []).length > 2) break;
+        cur = next[0];
+        const q = segs[cur];
+        enter = q[1] === b[0] && q[2] === b[1] ? 0 : 1;
+      }
+      return out;
+    };
+    const list2 = [];
+    // chains from their ends first, then what is left (loops), each opened where it starts
+    segs.forEach((p, n) => {
+      if (used.has(n)) return;
+      const e0 = (at.get(key(p[1], p[2])) || []).length, e1 = (at.get(key(p[3], p[4])) || []).length;
+      if (e0 !== 2) list2.push(walk(n, 0)); else if (e1 !== 2) list2.push(walk(n, 1));
+    });
+    segs.forEach((p, n) => { if (!used.has(n)) list2.push(walk(n, 0)); });
+    chains[k] = list2.filter(c => c.length >= 2);
+  });
+  // carry the ends of smaller rivers onto a bigger river's line within half a cell
+  const near = (q, k) => {
+    let best = null, bd = 500 * 500;
+    Object.keys(by).forEach(j => {
+      if (Number(j) >= Number(k)) return;
+      by[j].forEach(p => {
+        const ax = p[1], ay = p[2], dx = p[3] - ax, dy = p[4] - ay, l = dx * dx + dy * dy;
+        const t = l > 0 ? Math.max(0, Math.min(1, ((q[0] - ax) * dx + (q[1] - ay) * dy) / l)) : 0;
+        const x = ax + t * dx, y = ay + t * dy, d = (x - q[0]) * (x - q[0]) + (y - q[1]) * (y - q[1]);
+        if (d < bd) { bd = d; best = [x, y]; }
+      });
+    });
+    return best;
+  };
+  const runs = {};
+  Object.keys(chains).forEach(k => {
+    chains[k].forEach(c0 => {
+      let c = c0, len = 0;
+      for (let i = 1; i < c.length; i++) len += Math.hypot(c[i][0] - c[i - 1][0], c[i][1] - c[i - 1][1]);
+      // a ring (the line closes on itself): a short one is left out, a longer one is opened
+      const ring = c.length > 3 && c[0][0] === c[c.length - 1][0] && c[0][1] === c[c.length - 1][1];
+      if (ring && len < 3000) return;
+      if (ring) c = c.slice(0, -1);
+      const a = ring ? null : near(c[0], k), b = ring ? null : near(c[c.length - 1], k);
+      if (len < 1500 && !a && !b) return;
+      const line = (a ? [a] : []).concat(c, b ? [b] : []).map(p => pt(p[0], p[1]));
+      runs[k] = (runs[k] || "") + mapBend(line);
+    });
+  });
+  return runs;
+}
 // How much of a ground's battle-grid color the fantasy map takes; the rest is paper.
 const MAP_TINT = 0.42;
 // The ground the group has not found yet (the kids login): dark, with specks of light, like nothing else on the map.
@@ -1527,10 +1603,13 @@ function mapFantasy(v, byId) {
   // water darker blue
   layers.push(...mapHardShade(C, R, (i, j) => (mapWet(get(i, j).k) ? null : get(i, j).h), unit, 0.45, undefined, wob));
   layers.push(...mapHardShade(C, R, (i, j) => (mapWet(get(i, j).k) ? get(i, j).h : null), unit, 0.45, "#123A5A", wob));
-  // rivers too narrow for this grid's cells: a line through the point of each cell where the river truly runs, so it
+  // rivers too narrow for this grid's cells: traced as lines (step 14c: v.river_lines, mapRiverRuns); the world and a
+  // place shown whole draw their detail's rivers as a line through the point of each square where the river runs, so it
   // lies where the next zoom shows it; thinner for smaller rivers; a diagonal step only where no straight one joins the
   // two and never across a corner of sea; a scrap of fewer than three cells that does not run off the grid is left out
-  const runs = {};
+  const traced = detail ? null : v.river_lines;
+  const runs = Array.isArray(traced) ? mapRiverRuns(traced, unit) : {};
+  if (!Array.isArray(traced)) {
   const flow = (i, j) => (i >= 0 && j >= 0 && i < C && j < R && grid[j * C + i] && grid[j * C + i].rv > 0 ? grid[j * C + i].rv : 0);
   const wet = (i, j) => { const k = get(i, j).k; return k === "sea" || k === "unknown"; };
   const pt = (i, j) => { const g = grid[j * C + i]; return [(i + 0.5 + g.rx) * unit, (j + 0.5 + g.ry) * unit]; };
@@ -1596,6 +1675,7 @@ function mapFantasy(v, byId) {
       });
     });
   });
+  }
   Object.keys(runs).sort().reverse().forEach(k => layers.push({ d: runs[k], line: MAP_RIVER, w: MAP_RIVER_W[k] || 1 }));
   layers.push({ d: land, line: MAP_INK, w: 1.25 });
   const strokes = mapRows(unit * (detail ? 1 : 0.12));
