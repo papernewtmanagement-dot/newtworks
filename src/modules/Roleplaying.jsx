@@ -889,6 +889,20 @@ const MAP_ROADS = [
 const MAP_MARK_TEXT = { village: 10.5, town: 12, city: 13, great_city: 14.5, peak: 12, castle: 12, tower: 11, stones: 11, stone: 10.5, rock: 10.5, cairn: 10.5 };
 // The grounds drawn thick with symbols, where a landmark's mark gets a disc of paper behind it (step 12b).
 const MAP_BUSY = ["mountains", "hills", "forest", "pine", "jungle", "swamp"];
+// The squares a landmark stands on, seen from above on the battle grid (step 12b2; rpg_map_view: cells' climb, part
+// first): cut stone for a keep, a castle wall and a tower, weathered stone for a ruin, grey slabs for standing stones,
+// rough rock for a boulder, loose stones for a cairn, turf for a motte. round = how rounded the outline is; joints =
+// draw the courses of the masonry.
+const MAP_BUILT = {
+  mound: { fill: "#8E9B5C", line: "#5E6A3A", w: 1, round: 0.45, o: 0.7 },
+  curtain: { fill: "#C9C0AE", line: "#5C5446", w: 1.6, round: 0.05, joints: true },
+  keep: { fill: "#BCB2A0", line: "#4E473B", w: 2, round: 0.02, joints: true },
+  tower: { fill: "#C2B8A6", line: "#4E473B", w: 2, round: 0.45, joints: true },
+  ruin: { fill: "#B7B29B", line: "#6B6450", w: 1.4, round: 0.15, joints: true },
+  stone: { fill: "#A8A397", line: "#4F4A40", w: 1.4, round: 0.4 },
+  boulder: { fill: "#A39C90", line: "#4F4A40", w: 1.6, round: 0.45 },
+  cairn: { fill: "#BDB6AA", line: "#5C5446", w: 1.2, round: 0.45, pile: true },
+};
 // Bridges and fords (step 11; rpg_map_view: crossings), as the key names them: 1 a bridge, 2 a ford where a road
 // crosses, 3 a planned ford off the roads.
 const MAP_CROSSINGS = { 1: "Bridge", 2: "Ford", 3: "Ford" };
@@ -1962,8 +1976,31 @@ function mapBattle(v, byId) {
   const layers = mapTop(cols, rows, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0, (i, j) => get(i, j).what, washes, false, (i, j) => get(i, j).h, slope, (i, j) => (inGrid(i, j) ? get(i, j).cliff : null));
   // the houses stand on the ground (step 8c)
   layers.push(...mapRoofs(v.houses, 100));
+  // and the landmarks (step 12b2)
+  layers.push(...mapBuilt(cols, rows, cells));
   const fog = mapFog(cols, rows, 100, (i, j) => get(i, j).what === "unknown", 0.3, cols, rows, 7, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0);
   return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat([{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }], fog), names: [], blocks: [] };
+}
+// The squares landmarks stand on (step 12b2), over the ground and the houses: each kind as one outline of its squares,
+// a castle wall, a keep or a ruin with the courses of its stones, a cairn with its stones.
+function mapBuilt(cols, rows, cells) {
+  const at = new Map();
+  cells.forEach(c => { if (Array.isArray(c.climb) && MAP_BUILT[c.climb[0]]) at.set((c.y - 1) * cols + (c.x - 1), c.climb[0]); });
+  const out = [];
+  Object.entries(MAP_BUILT).forEach(([part, look]) => {
+    const mine = Array.from(at.entries()).filter(([, p]) => p === part).map(([n]) => n);
+    if (!mine.length) return;
+    const d = mapOutline(cols, rows, (i, j) => i >= 0 && j >= 0 && i < cols && j < rows && at.get(j * cols + i) === part, 100, look.round);
+    if (d) out.push({ d, fill: look.fill, line: look.line, w: look.w, o: look.o });
+    let marks = "";
+    mine.forEach(n => {
+      const x = (n % cols) * 100, y = Math.floor(n / cols) * 100;
+      if (look.joints) marks += `M${x + 8} ${y + 34}H${x + 92}M${x + 8} ${y + 67}H${x + 92}M${x + 50} ${y + 8}V${y + 34}M${x + 28} ${y + 34}V${y + 67}M${x + 72} ${y + 34}V${y + 67}M${x + 50} ${y + 67}V${y + 92}`;
+      if (look.pile) [[35, 38, 16], [64, 40, 14], [48, 64, 17]].forEach(([u, v, r]) => { marks += mapCircle(x + u, y + v, r); });
+    });
+    if (marks) out.push({ d: marks, line: look.line, w: 0.8, o: 0.55 });
+  });
+  return out;
 }
 // The strokes as SVG. A stroke's line is w screen pixels wide (thinner on a small map), or `units` of the drawing
 // wide less `inset` screen pixels (the fill of a road inside its inked edge) but never under `min` screen pixels (a
@@ -2319,10 +2356,9 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
     const marks = (Array.isArray(c.marks) ? c.marks : []).map(id => byId[id]).filter(Boolean);
     if (p) drawn.add(p.id);
     marks.forEach(k => drawn.add(k.id));
-    // a square a house stands on (step 8c): its wall or roof, climbed (climb: part, metres, degrees, difficulty)
-    const climb = Array.isArray(c.climb)
-      ? (c.climb[0] === "wall" ? `the wall of a house, ${c.climb[1]} m up, climbed (Climbing against ${c.climb[3]})` : `a ${c.climb[2]}-degree roof, ${c.climb[1]} m up a square, climbed (Climbing against ${c.climb[3]})`)
-      : null;
+    // a square something built stands on (step 8c: a house; step 12b2: a landmark), climbed (climb: part, metres,
+    // degrees, difficulty, what it is in words)
+    const climb = Array.isArray(c.climb) ? `${c.climb[4]}, ${c.climb[1]} m up, climbed (Climbing against ${c.climb[3]})` : null;
     const title = `${c.name} · ${climb ? `${climb} · ` : ""}${p ? [p.name, p.ground].filter(Boolean).join(" · ") : ground(c.kind)}${c.cost != null ? ` · this ${top ? "square" : "cell"}: +${c.cost}% time a square` : ""}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
     const style = { aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, boxSizing: "border-box", position: "relative", display: "block", cursor: c.open || onCell ? "pointer" : "default" };
     grid.push(onCell
@@ -2413,6 +2449,9 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
           <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <MapSwatch what="house" size={20} />Houses: their walls and roofs are climbed (see Climbing); a walk goes round them.
           </span>
+        )}
+        {cells.some(c => Array.isArray(c.climb) && MAP_BUILT[c.climb[0]]) && (
+          <span>Walls, towers, standing stones and boulders are climbed too (see Climbing): a castle wall 40 feet high is sheer, Climbing against 10; a walk goes round them.</span>
         )}
         {ways.map(r => (
           <span key={r.k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
