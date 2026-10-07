@@ -2114,6 +2114,60 @@ function mapNames(names, blocks, px, wide, high) {
   return out;
 }
 // The picture under the cells of the grid: the strokes, an aged edge and a neat line on the fantasy map, the names.
+// The world under the ground (step 12d; rpg_map_view: under), drawn over the dimmed land when the Underground switch is
+// on: the Deeps purple and thick, cave country gold, the own passage of a cave or a mine cream, a passage joining a cave
+// or a mine to cave country or the Deeps dashed, a shaft a ring; a passage under the sea or a lake edged pale blue (by
+// the ground of the cell its middle lies in); the great halls of the Deeps dots, named from the Country grid down. Each
+// passage swings to one side by its bend (a share of a quarter of its length), drawn as one curve.
+const MAP_UNDER = {
+  deep: { line: "#B48CF0", w: 3.2 },
+  cave: { line: "#E0B060", w: 1.6 },
+  own: { line: "#F3E6C8", w: 2 },
+  join: { line: "#E0B060", w: 1.3, dash: "5 3" },
+  delve: { line: "#B48CF0", w: 1.6, dash: "6 3" },
+  shaft: { line: "#B48CF0", w: 1.6 },
+};
+const mapUnderWet = (k) => k === "sea" || k === "deep" || k === "water";
+function MapUnder({ v, px }) {
+  const cols = Number(v.cols) || 12, rows = Number(v.rows) || 12, wide = cols * 100, high = rows * 100;
+  const under = v.under && typeof v.under === "object" ? v.under : {};
+  const lines = Array.isArray(under.lines) ? under.lines : [];
+  const halls = Array.isArray(under.halls) ? under.halls : [];
+  const cells = Array.isArray(v.cells) ? v.cells : [];
+  const wet = (x, y) => { const i = Math.floor(x / 100), j = Math.floor(y / 100); const c = i >= 0 && j >= 0 && i < cols && j < rows ? cells[j * cols + i] : null; return !!c && mapUnderWet(c.kind); };
+  const paths = lines.map((l, n) => {
+    const [kind, ax, ay, bx, by, , , bend] = l;
+    const look = MAP_UNDER[kind] || MAP_UNDER.cave;
+    const x0 = ax / 10, y0 = ay / 10, x1 = bx / 10, y1 = by / 10, dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy);
+    if (kind === "shaft") return { n, kind, look, ring: [x0, y0], wet: wet(x0, y0) };
+    const k = (Number(bend) || 0) / 100 * 0.25, cx = (x0 + x1) / 2 - dy * k, cy = (y0 + y1) / 2 + dx * k;
+    return { n, kind, look, d: `M${mapNum(x0)} ${mapNum(y0)}Q${mapNum(cx)} ${mapNum(cy)} ${mapNum(x1)} ${mapNum(y1)}`, wet: len > 0 && wet((x0 + 2 * cx + x1) / 4, (y0 + 2 * cy + y1) / 4) };
+  });
+  const order = ["cave", "join", "own", "deep", "delve", "shaft"];
+  paths.sort((p, q) => order.indexOf(p.kind) - order.indexOf(q.kind));
+  return (
+    <svg viewBox={`0 0 ${wide} ${high}`} preserveAspectRatio="none" aria-hidden="true"
+      style={{ position: "absolute", left: 16, top: 16, width: "calc(100% - 16px)", height: "calc(100% - 16px)", borderRadius: 4, pointerEvents: "none", display: "block", overflow: "hidden" }}>
+      <rect x="0" y="0" width={wide} height={high} fill="#17131D" opacity={0.62} />
+      {paths.filter(p => p.wet && p.d).map(p => <path key={`w${p.n}`} d={p.d} fill="none" stroke="#6FB7DF" strokeOpacity={0.55} strokeWidth={(p.look.w + 3.4) / px} strokeLinecap="round" />)}
+      {paths.map(p => (p.ring
+        ? <circle key={p.n} cx={mapNum(p.ring[0])} cy={mapNum(p.ring[1])} r={6 / px} fill="none" stroke={p.look.line} strokeWidth={p.look.w / px} />
+        : <path key={p.n} d={p.d} fill="none" stroke={p.look.line} strokeWidth={p.look.w / px} strokeLinecap="round"
+            strokeDasharray={p.look.dash ? p.look.dash.split(" ").map(q => Number(q) / px).join(" ") : undefined} />))}
+      {halls.map((h, n) => (
+        <g key={`h${n}`}>
+          <circle cx={mapNum(h[1] / 10)} cy={mapNum(h[2] / 10)} r={(Number(v.level) >= 3 ? 4.5 : 2.6) / px} fill="#B48CF0" stroke="#17131D" strokeWidth={1 / px} />
+          {Number(v.level) >= 3 && (
+            <text x={mapNum(h[1] / 10)} y={mapNum(h[2] / 10 - 8 / px)} textAnchor="middle" fontSize={mapNum(11 / px)} fontFamily={MAP_SERIF} fontStyle="italic"
+              fill="#E9DDFB" stroke="#17131D" strokeOpacity={0.9} strokeWidth={mapNum(3 / px)} strokeLinejoin="round" style={{ paintOrder: "stroke" }}>{h[0]}</text>
+          )}
+        </g>
+      ))}
+    </svg>
+  );
+}
+// Metres down, told in feet (step 12d): 6,150 m is 20,180 feet.
+const mapDownText = (m) => `${Math.round(Number(m) / 0.3048).toLocaleString("en-US")} feet down`;
 function MapArt({ art, px }) {
   const names = useMemo(() => mapNames(art.names, art.blocks, px, art.wide, art.high), [art, px]);
   return (
@@ -2355,6 +2409,8 @@ function MapSide({ v, atHref, setAt, order }) {
   const marks = (Array.isArray(v.landmarks) ? v.landmarks : []).filter(p => !p.location);
   // and the places to go into (step 12c)
   const inside = (Array.isArray(v.landmarks) ? v.landmarks : []).filter(p => p.location);
+  // the great halls of the Deeps under this grid (step 12d), from the Country grid down
+  const halls = Number(v.level) >= 3 && v.under && Array.isArray(v.under.halls) ? v.under.halls : [];
   const row = (p, kind) => (
     <TabLink key={p.id} href={atHref(p.view || null)} onSelect={() => setAt(p.view || null)}
       style={{ display: "flex", gap: 10, alignItems: "flex-start", width: "100%", padding: "8px 0 0", borderTop: `1px solid ${T.slate100}`, marginTop: 8 }}>
@@ -2378,6 +2434,15 @@ function MapSide({ v, atHref, setAt, order }) {
       {others.length > 0 && <Fold title={`Other places (${others.length})`}>{others.map(p => row(p, true))}</Fold>}
       {marks.length > 0 && <Fold title={`Landmarks (${marks.length})`}>{marks.map(p => row(p, true))}</Fold>}
       {inside.length > 0 && <Fold title={`Places to go into (${inside.length})`}>{inside.map(p => row(p, true))}</Fold>}
+      {halls.length > 0 && (
+        <Fold title={`Great halls of the Deeps (${halls.length})`}>
+          {halls.map(h => (
+            <div key={h[0]} style={{ fontSize: 13, color: T.slate700, padding: "6px 0 0", borderTop: `1px solid ${T.slate100}`, marginTop: 6 }}>
+              <b style={{ color: T.slate900 }}>{h[0]}</b> · {mapDownText(h[3])}
+            </div>
+          ))}
+        </Fold>
+      )}
       <Fold title="The grids">
         {ladder.map(l => (
           <div key={l.name} style={{ fontSize: 13, color: T.slate700, padding: "3px 0" }}><b style={{ color: T.slate900 }}>{l.name}.</b> {l.line}</div>
@@ -2392,6 +2457,11 @@ function MapSide({ v, atHref, setAt, order }) {
 // grid inside it. Under the map: the scale, then the key to the grounds and places drawn on this grid.
 function MapGrid({ v, atHref, setAt, journey, onCell }) {
   const boxRef = useRef(null);
+  // the Underground switch (step 12d): the passages under this grid, drawn over the dimmed land
+  const [under, setUnder] = useState(false);
+  const underLines = v.under && Array.isArray(v.under.lines) ? v.under.lines : [];
+  const underHalls = v.under && Array.isArray(v.under.halls) ? v.under.halls : [];
+  const hasUnder = underLines.length > 0 || underHalls.length > 0;
   const width = useElementWidth(boxRef);
   const level = Number(v.level) || 1;
   const cols = Number(v.cols) || 12;
@@ -2478,8 +2548,12 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
               <span style={{ color: T.slate400 }}>›</span>
             </span>
           )))}
+        {hasUnder && (
+          <button type="button" onClick={() => setUnder(u => !u)} aria-pressed={under} title="Show the caves, mines and the Deeps under this grid"
+            style={{ ...btn(under ? "primary" : "soft", true), marginLeft: "auto" }}>Underground</button>
+        )}
         {moves && (
-          <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+          <div style={{ display: "flex", gap: 4, marginLeft: hasUnder ? 0 : "auto" }}>
             {MAP_MOVES.map(([k, t]) => (
               <TabLink key={k} href={atHref(moves[k] || null)} onSelect={() => setAt(moves[k])} disabled={!moves[k]} title={`The next grid ${k}`} ariaLabel={`The next grid ${k}`}
                 style={{ ...btn("soft", true), minWidth: 30, textAlign: "center", opacity: moves[k] ? 1 : 0.35 }}>{t}</TabLink>
@@ -2490,6 +2564,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
       <div ref={boxRef} style={{ width: `min(100%, max(340px, calc((100dvh - 300px) * ${cols / (Number(v.rows) || 12)} + 16px)))`, margin: "0 auto", userSelect: "none" }}>
         <div style={{ position: "relative", display: "grid", gridTemplateColumns: `16px repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: "16px" }}>
           <MapArt art={art} px={px} />
+          {under && hasUnder && <MapUnder v={v} px={px} />}
           {grid}
           {tokens}
         </div>
@@ -2513,6 +2588,17 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
           </span>
         ))}
         {landKinds.length > 0 && <span>Landmarks are seen from far off: a keep 100 feet tall from about 13 miles. The list beside the map says how far for each.</span>}
+        {under && hasUnder && ["deep", "cave", "own", "join"].filter(k => underLines.some(l => l[0] === k || (k === "join" && l[0] === "delve"))).map(k => (
+          <span key={`u${k}`} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <svg width="22" height="10" aria-hidden="true"><path d="M1 5H21" stroke={MAP_UNDER[k].line} strokeWidth={Math.min(MAP_UNDER[k].w, 3)} strokeDasharray={MAP_UNDER[k].dash} /></svg>
+            {({ deep: "The Deeps: 13,000 to 26,000 feet below the sea, a great hall about every 86 miles; most halls join one network round the world, under the seas too.",
+               cave: "Cave country: chambers 100 to 9,800 feet down, about one every 2.4 miles where the rock holds caves (3 in 10 of the land).",
+               own: "A cave or mine's own passage, from its mouth into the hill: a great cave up to 3 miles long, mine workings down a shaft up to 13,000 feet.",
+               join: "Dashed: a cave or mine that breaks into cave country or down into the Deeps." })[k]}
+          </span>
+        ))}
+        {under && underLines.some(l => l[0] === "shaft") && <span>A ring: a shaft from a great hall up into the cave country over it.</span>}
+        {under && hasUnder && <span>Edged pale blue: the passage runs under the sea or a lake.</span>}
         {Array.isArray(v.houses) && v.houses.length > 0 && (
           <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <MapSwatch what="house" size={20} />Houses: their walls and roofs are climbed (see Climbing); a walk goes round them.
