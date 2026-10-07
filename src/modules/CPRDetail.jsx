@@ -5031,6 +5031,10 @@ function MarketingBonusBreakdown({ weekDate }) {
   const weeksInQtd      = Number(data.weeks_in_qtd || 0);
   const quarterStart    = data.quarter_start;
   const quarterEnd      = data.quarter_end;
+  const cp              = data.checkpoint || {};
+  const cpOn            = !!cp.active;
+  const cpSurplus       = Number(cp.surplus_after_points || 0);
+  const cpPace          = Number(cp.pace_pct || 0);
 
   const row = (label, value, hint) => (
     <tr>
@@ -5062,33 +5066,67 @@ function MarketingBonusBreakdown({ weekDate }) {
       </table>
 
       {/* ───── 2. SPEND + UNDERSPEND ───── */}
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>2. Actual spend vs envelope</div>
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>{cpOn ? "2. Bills vs budget at the last checkpoint" : "2. Actual spend vs envelope"}</div>
       <div style={{ color: T.slate500, fontSize: 11, marginBottom: 6, lineHeight: 1.5 }}>
-        Spend source: {spend.source || "—"}
+        {cpOn
+          ? `Checked at weeks 4, 8 and 13 of the cycle. Last checkpoint: ${cp.week ? `week ${cp.week} (ends ${cp.ends})` : "none yet"}${cp.next_week ? `. Next: week ${cp.next_week}` : ""}. Only bills posted by that date count.`
+          : `Spend source: ${spend.source || "—"}`}
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
-          {row("QTD envelope target", qtdTarget, "quarterly × weeks_elapsed / weeks_in_quarter")}
-          {row("− QTD actual marketing spend", -spendQtd, "GL — 0003 MARKETING envelope + descendants")}
-          <tr>
-            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>= QTD raw underspend</Td>
-            <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCentsR(underspendQtd)}</Td>
-            <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
-          </tr>
-          {row("− Bare-minimum spiffs (already paid)", -(underspendQtd - adjUnderspend), "reviews, referrals, quotes — cash already out")}
-          <tr>
-            <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>= Adjusted underspend</Td>
-            <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCentsR(adjUnderspend)}</Td>
-            <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
-          </tr>
+          {cpOn ? (
+            cp.week ? (
+              <>
+                {row(`Budget through week ${cp.week}`, Number(cp.envelope_to_date || 0), "quarterly budget × weeks ÷ 13")}
+                {row("− Bills posted through that week", -Number(cp.spend_to_date || 0), "GL marketing + advertising accounts")}
+                {row("− Marketing points through that week", -Number(cp.points_to_date || 0), "already paid through payroll")}
+                <tr>
+                  <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>= Surplus after points</Td>
+                  <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCentsR(cpSurplus)}</Td>
+                  <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
+                </tr>
+              </>
+            ) : (
+              <tr>
+                <Td colSpan={3} style={{ paddingLeft: 14, color: T.slate700 }}>No checkpoint yet. Nothing is released before week 4.</Td>
+              </tr>
+            )
+          ) : (
+            <>
+              {row("QTD envelope target", qtdTarget, "quarterly × weeks_elapsed / weeks_in_quarter")}
+              {row("− QTD actual marketing spend", -spendQtd, "GL — 0003 MARKETING envelope + descendants")}
+              <tr>
+                <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>= QTD raw underspend</Td>
+                <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCentsR(underspendQtd)}</Td>
+                <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
+              </tr>
+              {row("− Bare-minimum spiffs (already paid)", -(underspendQtd - adjUnderspend), "reviews, referrals, quotes — cash already out")}
+              <tr>
+                <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>= Adjusted underspend</Td>
+                <Td align="right" style={{ color: T.slate900, fontWeight: 700, borderTop: `1px solid ${T.slate300}` }}>{fmtMoneyCentsR(adjUnderspend)}</Td>
+                <Td style={{ borderTop: `1px solid ${T.slate300}` }} />
+              </tr>
+            </>
+          )}
         </tbody>
       </table>
 
       {/* ───── 3. POOL ───── */}
-      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>3. Team pool (share of adjusted underspend)</div>
+      <div style={{ fontWeight: 700, marginTop: 14, marginBottom: 6, color: T.slate900 }}>{cpOn ? "3. Team pool (surplus × points pace)" : "3. Team pool (share of adjusted underspend)"}</div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <tbody>
-          {row(`× ${(teamSharePct * 100).toFixed(0)}% team share of underspend`, poolQtd, "50% to team, 50% stays with agency")}
+          {cpOn ? (
+            <>
+              {row("Surplus after points", cpSurplus, "from the last checkpoint")}
+              <tr>
+                <Td style={{ paddingLeft: 14, color: T.slate700 }}>× Points pace</Td>
+                <Td align="right" style={{ color: T.slate900, fontWeight: 600 }}>{`${cpPace.toFixed(1)}%`}</Td>
+                <Td style={{ paddingLeft: 10, color: T.slate500, fontSize: 11 }}>{`team points to date ÷ 13, against last cycle's ${fmtMoneyCentsR(Number(cp.pace_reference_weekly || 0))} a week. The rest stays with the agency.`}</Td>
+              </tr>
+            </>
+          ) : (
+            row(`× ${(teamSharePct * 100).toFixed(0)}% team share of underspend`, poolQtd, `${(teamSharePct * 100).toFixed(0)}% to team, the rest stays with agency`)
+          )}
           <tr>
             <Td style={{ paddingLeft: 14, color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>= QTD Marketing bonus pool</Td>
             <Td align="right" style={{ color: T.slate900, fontWeight: 800, borderTop: `2px solid ${T.slate300}` }}>{fmtMoneyCentsR(poolQtd)}</Td>
