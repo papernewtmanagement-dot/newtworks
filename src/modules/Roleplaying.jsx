@@ -872,7 +872,8 @@ const MAP_FOG = { dark: "#1F2029", speck: "#EDE6D3", line: "#FFFFFF" };
 // the room its cell gives a mark, and the size of its name. A village a little smaller, a city a little bigger, a great
 // city (step 12a) bigger still.
 // A landmark (step 12b; rpg_map_view: landmarks) by its symbol: a peak bigger, a standing stone or a cairn smaller.
-const MAP_MARK_SIZE = { village: 0.8, town: 0.95, city: 1.1, great_city: 1.05, peak: 1.35, castle: 1.05, tower: 0.9, stones: 0.85, stone: 0.7, rock: 0.75, cairn: 0.7 };
+const MAP_MARK_SIZE = { village: 0.8, town: 0.95, city: 1.1, great_city: 1.05, peak: 1.35, castle: 1.05, tower: 0.9, stones: 0.85, stone: 0.7, rock: 0.75, cairn: 0.7,
+  cave: 0.85, mine: 0.85, shrine: 0.8, camp: 0.85, hut: 0.75 };
 // A great city's mark grows with its people (rpg_map_view: towns' people), by the fourth root about the middle of their
 // range (63,000): 20,000 draws at 0.75, 200,000 at 1.33. A landmark wider than its cell (its spot's width, thousandths of
 // a cell) draws bigger, up to 1.8 times.
@@ -886,7 +887,8 @@ const MAP_ROADS = [
   { k: 2, name: "Road", edge: { line: "#7A5A3A", min: 2.3 }, mid: { line: "#E8D6A6", inset: 2 } },
   { k: 1, name: "Highway", edge: { line: MAP_INK, min: 4.4 }, mid: { line: "#EDDDB0", inset: 2.2, min: 2 } },
 ];
-const MAP_MARK_TEXT = { village: 10.5, town: 12, city: 13, great_city: 14.5, peak: 12, castle: 12, tower: 11, stones: 11, stone: 10.5, rock: 10.5, cairn: 10.5 };
+const MAP_MARK_TEXT = { village: 10.5, town: 12, city: 13, great_city: 14.5, peak: 12, castle: 12, tower: 11, stones: 11, stone: 10.5, rock: 10.5, cairn: 10.5,
+  cave: 10.5, mine: 10.5, shrine: 10.5, camp: 10.5, hut: 10.5 };
 // The grounds drawn thick with symbols, where a landmark's mark gets a disc of paper behind it (step 12b).
 const MAP_BUSY = ["mountains", "hills", "forest", "pine", "jungle", "swamp"];
 // The squares a landmark stands on, seen from above on the battle grid (step 12b2; rpg_map_view: cells' climb, part
@@ -902,6 +904,23 @@ const MAP_BUILT = {
   stone: { fill: "#A8A397", line: "#4F4A40", w: 1.4, round: 0.4 },
   boulder: { fill: "#A39C90", line: "#4F4A40", w: 1.6, round: 0.45 },
   cairn: { fill: "#BDB6AA", line: "#5C5446", w: 1.2, round: 0.45, pile: true },
+  // the places to go into (step 12c): wattle for a hut, cut stone for a shrine and a wayside cross, bare rock round the
+  // mouth of a cave or a mine, grey spoil heaps, a timber palisade, canvas tents
+  hut: { fill: "#9C7A4E", line: "#5A4228", w: 1.6, round: 0.3 },
+  shrine: { fill: "#C9C0AE", line: "#5C5446", w: 1.6, round: 0.1, joints: true },
+  cross: { fill: "#B5AE9F", line: "#4F4A40", w: 1.4, round: 0.1 },
+  outcrop: { fill: "#9F9787", line: "#4F4A40", w: 1.6, round: 0.4 },
+  spoil: { fill: "#A9A296", line: "#6A6458", w: 1, round: 0.45, pile: true },
+  palisade: { fill: "#A47E52", line: "#5E4426", w: 1.4, round: 0.1 },
+  tent: { fill: "#E6DCC2", line: "#8A7A5A", w: 1.2, round: 0.3 },
+};
+// The squares of a place to go into walked like the ground (step 12c; rpg_map_view: cells' feature): the floor of a hut
+// or a shrine, its hearth or altar, the mouth of a cave or a mine.
+const MAP_FEATURE = {
+  floor: { fill: "#D8C49A", line: "#9C8660", w: 0.8 },
+  hearth: { fill: "#D8C49A", line: "#9C8660", w: 0.8, mark: { fill: "#C8642E", line: "#6E3218", r: 22 } },
+  altar: { fill: "#D8C49A", line: "#9C8660", w: 0.8, mark: { fill: "#E4DDCB", line: "#4F4A40", r: 0, box: 26 } },
+  mouth: { fill: "#2B211A", line: "#1A130E", w: 1, round: 0.3 },
 };
 // Bridges and fords (step 11; rpg_map_view: crossings), as the key names them: 1 a bridge, 2 a ford where a road
 // crosses, 3 a planned ford off the roads.
@@ -1255,6 +1274,32 @@ const MAP_ART = {
         for (let k = 0; k < n; k++) add(b - row * 0.01, "stone", mapCircle(x + 0.5 * s + (k - (n - 1) / 2) * r * 1.9, py, r));
       });
     },
+    // the places to go into (step 12c; rpg_map_location_kinds): a cave, a dark mouth in a knoll of rock
+    cave(add, x, y, s, rnd, few) {
+      const cx = x + s * 0.5, base = y + s * 0.9, w = s * 0.92, h = s * 0.48;
+      add(base, "stone", `M${mapPt([cx - w / 2, base])}C${mapPt([cx - w * 0.42, base - h * 1.2])} ${mapPt([cx + w * 0.1, base - h * 1.45])} ${mapPt([cx + w * 0.22, base - h * 1.1])}C${mapPt([cx + w * 0.4, base - h * 1.05])} ${mapPt([cx + w * 0.5, base - h * 0.5])} ${mapPt([cx + w / 2, base])}Z`);
+      add(base, "hole", `M${mapPt([cx - w * 0.16, base])}C${mapPt([cx - w * 0.16, base - h * 0.85])} ${mapPt([cx + w * 0.16, base - h * 0.85])} ${mapPt([cx + w * 0.16, base])}Z`);
+    },
+    // a mine: an adit in a hillside, its timber frame, a heap of spoil beside it
+    mine(add, x, y, s, rnd, few) {
+      const cx = x + s * 0.42, base = y + s * 0.9, w = s * 0.13, h = s * 0.3;
+      mapHump(add, cx, base, s * 0.8, s * 0.42);
+      add(base, "hole", mapPoly([[cx - w, base], [cx - w, base - h], [cx + w, base - h], [cx + w, base]]));
+      add(base, "door", mapLine([[cx - w * 1.2, base], [cx - w * 1.2, base - h * 1.1], [cx + w * 1.2, base - h * 1.1], [cx + w * 1.2, base]]));
+      [[0.78, 0.07], [0.88, 0.055], [0.83, 0.05]].forEach(([u, r], k) => add(base + 0.01 * k, "stone", mapCircle(x + u * s, base - r * s * (k === 2 ? 2.4 : 1), r * s)));
+    },
+    // a shrine: a small chapel under a steep roof
+    shrine(add, x, y, s, rnd, few) { mapSpire(add, x + s * 0.5, y + s * 0.94, s * 0.8); },
+    // a camp: two tents
+    camp(add, x, y, s, rnd, few) {
+      [[0.34, 0.86, 0.5], [0.68, 0.94, 0.42]].forEach(([u, v, k]) => {
+        const cx = x + u * s, b = y + v * s, w = s * k / 2, h = s * k * 0.75;
+        add(b, "wall", mapPoly([[cx - w, b], [cx, b - h], [cx + w, b]]));
+        add(b, "door", mapLine([[cx, b - h], [cx, b]]) + mapLine([[cx, b - h], [cx - w * 0.25, b]]));
+      });
+    },
+    // a hut: one small house
+    hut(add, x, y, s, rnd, few) { mapHouse(add, x + s * 0.5, y + s * 0.92, s * 0.9); },
     ruins(add, x, y, s, rnd, few) {
       if (!few && rnd(1) > 0.3) { if (rnd(2) < 0.4) mapTuft(add, x + (0.3 + rnd(3) * 0.4) * s, y + (0.4 + rnd(4) * 0.4) * s, s * 0.11); return; }
       const k = few ? 1.5 : 1, base = y + s * (few ? 0.84 : 0.55 + rnd(5) * 0.35), cx = x + s * (few ? 0.5 : 0.3 + rnd(6) * 0.4), w = s * 0.05 * k;
@@ -1987,6 +2032,24 @@ function mapBuilt(cols, rows, cells) {
   const at = new Map();
   cells.forEach(c => { if (Array.isArray(c.climb) && MAP_BUILT[c.climb[0]]) at.set((c.y - 1) * cols + (c.x - 1), c.climb[0]); });
   const out = [];
+  // the floors and mouths (step 12c)
+  const ft = new Map();
+  cells.forEach(c => { if (c.feature && MAP_FEATURE[c.feature]) ft.set((c.y - 1) * cols + (c.x - 1), c.feature === "mouth" ? "mouth" : "floor"); });
+  ["floor", "mouth"].forEach(kind => {
+    const look = MAP_FEATURE[kind];
+    const d = mapOutline(cols, rows, (i, j) => i >= 0 && j >= 0 && i < cols && j < rows && ft.get(j * cols + i) === kind, 100, look.round || 0.05);
+    if (d) out.push({ d, fill: look.fill, line: look.line, w: look.w });
+  });
+  let boards = "";
+  cells.forEach(c => {
+    const look = MAP_FEATURE[c.feature];
+    if (!look || c.feature === "mouth") return;
+    const x = (c.x - 1) * 100, y = (c.y - 1) * 100;
+    boards += `M${x} ${y + 33}H${x + 100}M${x} ${y + 67}H${x + 100}`;
+    if (look.mark && look.mark.r) out.push({ d: mapCircle(x + 50, y + 50, look.mark.r), fill: look.mark.fill, line: look.mark.line, w: 1 });
+    if (look.mark && look.mark.box) out.push({ d: mapPoly([[x + 50 - look.mark.box, y + 50 - look.mark.box * 0.6], [x + 50 + look.mark.box, y + 50 - look.mark.box * 0.6], [x + 50 + look.mark.box, y + 50 + look.mark.box * 0.6], [x + 50 - look.mark.box, y + 50 + look.mark.box * 0.6]]), fill: look.mark.fill, line: look.mark.line, w: 1.2 });
+  });
+  if (boards) out.push({ d: boards, line: MAP_FEATURE.floor.line, w: 0.6, o: 0.5 });
   Object.entries(MAP_BUILT).forEach(([part, look]) => {
     const mine = Array.from(at.entries()).filter(([, p]) => p === part).map(([n]) => n);
     if (!mine.length) return;
@@ -2289,7 +2352,9 @@ function MapSide({ v, atHref, setAt, order }) {
   const listed = places.filter(p => p.listed).concat(towns.filter(t => t.listed));
   const others = places.filter(p => !p.listed);
   // the landmarks this grid shows (rpg_map_view: landmarks; step 12b), biggest first
-  const marks = Array.isArray(v.landmarks) ? v.landmarks : [];
+  const marks = (Array.isArray(v.landmarks) ? v.landmarks : []).filter(p => !p.location);
+  // and the places to go into (step 12c)
+  const inside = (Array.isArray(v.landmarks) ? v.landmarks : []).filter(p => p.location);
   const row = (p, kind) => (
     <TabLink key={p.id} href={atHref(p.view || null)} onSelect={() => setAt(p.view || null)}
       style={{ display: "flex", gap: 10, alignItems: "flex-start", width: "100%", padding: "8px 0 0", borderTop: `1px solid ${T.slate100}`, marginTop: 8 }}>
@@ -2312,6 +2377,7 @@ function MapSide({ v, atHref, setAt, order }) {
       )}
       {others.length > 0 && <Fold title={`Other places (${others.length})`}>{others.map(p => row(p, true))}</Fold>}
       {marks.length > 0 && <Fold title={`Landmarks (${marks.length})`}>{marks.map(p => row(p, true))}</Fold>}
+      {inside.length > 0 && <Fold title={`Places to go into (${inside.length})`}>{inside.map(p => row(p, true))}</Fold>}
       <Fold title="The grids">
         {ladder.map(l => (
           <div key={l.name} style={{ fontSize: 13, color: T.slate700, padding: "3px 0" }}><b style={{ color: T.slate900 }}>{l.name}.</b> {l.line}</div>
@@ -2358,7 +2424,9 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
     marks.forEach(k => drawn.add(k.id));
     // a square something built stands on (step 8c: a house; step 12b2: a landmark), climbed (climb: part, metres,
     // degrees, difficulty, what it is in words)
-    const climb = Array.isArray(c.climb) ? `${c.climb[4]}, ${c.climb[1]} m up, climbed (Climbing against ${c.climb[3]})` : null;
+    const climb = Array.isArray(c.climb) ? `${c.climb[4]}, ${c.climb[1]} m up, climbed (Climbing against ${c.climb[3]})`
+      // a square of a place to go into walked like the ground (step 12c)
+      : c.feature ? ({ floor: "a floor", hearth: "a hearth", altar: "an altar", mouth: "the way in, underground" })[c.feature] || null : null;
     const title = `${c.name} · ${climb ? `${climb} · ` : ""}${p ? [p.name, p.ground].filter(Boolean).join(" · ") : ground(c.kind)}${c.cost != null ? ` · this ${top ? "square" : "cell"}: +${c.cost}% time a square` : ""}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
     const style = { aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, boxSizing: "border-box", position: "relative", display: "block", cursor: c.open || onCell ? "pointer" : "default" };
     grid.push(onCell
@@ -2448,6 +2516,11 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
         {Array.isArray(v.houses) && v.houses.length > 0 && (
           <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <MapSwatch what="house" size={20} />Houses: their walls and roofs are climbed (see Climbing); a walk goes round them.
+          </span>
+        )}
+        {cells.some(c => c.feature === "mouth") && (
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 14, height: 14, borderRadius: 4, background: MAP_FEATURE.mouth.fill, display: "inline-block" }} />The way into a cave or a mine: it leads underground.
           </span>
         )}
         {cells.some(c => Array.isArray(c.climb) && MAP_BUILT[c.climb[0]]) && (
