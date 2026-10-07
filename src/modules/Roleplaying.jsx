@@ -2122,7 +2122,8 @@ function mapNames(names, blocks, px, wide, high) {
 // the battle grid cuts into squares) and the tunnel is drawn along it, as wide as it runs at each point (step 14a2,
 // Peter 2026-10-07: the battle grid did not match the grid above it); elsewhere it is drawn along its curve at its
 // middle width (line 8), never thinner than its kind's least width on the screen. Nothing of the page's own bends: the
-// shape is the server's. The room at each node it reaches is a cave of the same rock-and-floor, its ragged edge through
+// shape is the server's. Its stream, where it carries one, runs down its middle, and a room's lake lies inside it (step
+// 14b, rpg_map_under_water: the same water the battle grid wades and swims). The room at each node it reaches is a cave of the same rock-and-floor, its ragged edge through
 // the eight knots the battle grid uses (rooms); a shaft a dark round hole; the great halls of the Deeps named from the
 // Country grid down; the coast above a faint line. The Continent and Country grids carry the Deeps alone (step 14a2),
 // drawn fine there so the network reads as threads through the rock. The colours are the one home for the Maps tab
@@ -2136,6 +2137,8 @@ const MAP_UNDER = {
   shaft: { floor: "#8F8798", min: 0 },
 };
 const MAP_UNDER_ROCK = "#2B2420";
+// the water under the ground (step 14b): waded, and deep enough to swim
+const MAP_UNDER_WATER = { shallow: "#4A8DB0", deep: "#24587A" };
 const MAP_UNDER_WALL = "#120D0A";
 // A closed outline in whole units, always turning the same way round (by its signed area), so many of them laid in
 // one shape fill as one where they overlap instead of cutting holes in each other.
@@ -2225,9 +2228,13 @@ function MapUnder({ v, px }) {
       const w = Math.max((Number(width) || 0) / 10, least);
       if (kind === "shaft") return { n, kind, look, hole: p0, w: Math.max(w, 5 / px) };
       // the passage as the battle grid cuts it, where the server sends it (rpg_map_under_trace)
+      // its stream (step 14b; line 10: [share of its width, metres deep x 10]): the same middle, part of its width, never
+      // thinner than 0.6 screen pixels nor wider than the passage
+      const wet = Array.isArray(l[10]) ? { part: Number(l[10][0]) / 1000, deep: Number(l[10][1]) / 10 } : null;
+      const water = (pts) => (wet ? mapUnderPath(pts.map(q => [q[0], q[1], Math.min(q[2], Math.max(q[2] * wet.part, 0.3 / px))]), [true, true]) : "");
       if (Array.isArray(l[9]) && l[9].length > 1) {
         const pts = l[9].map(q => [Number(q[0]) / 10, Number(q[1]) / 10, Math.max(Number(q[2]) / 10, least / 2)]);
-        return { n, kind, look, w, d: mapUnderPath(pts, [true, true]) };
+        return { n, kind, look, w, d: mapUnderPath(pts, [true, true]), wet, water: water(pts) };
       }
       // else its curve (rpg_map_under_curve: the middle pulled to one side by bend x a quarter of its length) at its
       // middle width, only the stretch near the map, a point every 9 screen pixels
@@ -2241,21 +2248,29 @@ function MapUnder({ v, px }) {
       const L = Math.hypot(c[0] - p0[0], c[1] - p0[1]) + Math.hypot(p1[0] - c[0], p1[1] - c[1]);
       const cnt = Math.min(Math.max(Math.ceil((t1 - t0) * L * px / 9), 2), 200), pts = [];
       for (let s = 0; s <= cnt; s++) { const q = at(t0 + (t1 - t0) * s / cnt); pts.push([q[0], q[1], w / 2]); }
-      return { n, kind, look, w, d: mapUnderPath(pts, [true, true]) };
+      return { n, kind, look, w, d: mapUnderPath(pts, [true, true]), wet, water: water(pts) };
     });
     // a great hall (where the Deeps meet) never smaller than 10 screen pixels across the middle, any other cave 4
     // (the Continent and Country grids: as fine says)
     const hallAt = new Set(halls.map(h => `${h[1]},${h[2]}`));
     const caves = rooms.map((r, n) => {
       const rr = Math.max((Number(r[2]) || 0) / 10, (fine ? fine.hall : hallAt.has(`${r[0]},${r[1]}`) ? 10 : 4) / 2 / px);
-      return { n, d: mapUnderRoom(r[0] / 10, r[1] / 10, rr, r[3], px) };
+      // its lake (step 14b; rooms' 5th: [middle off the room's (thousandths of its half-width) across, down, size as a
+      // share of the room's, its eight knots, metres deep x 10]), sized with the room as drawn
+      const lk = Array.isArray(r[4]) ? r[4] : null;
+      const lake = lk ? { deep: Number(lk[4]) / 10, d: mapUnderRoom(r[0] / 10 + Number(lk[0]) / 1000 * rr, r[1] / 10 + Number(lk[1]) / 1000 * rr, Number(lk[2]) / 1000 * rr, lk[3], px) } : null;
+      return { n, d: mapUnderRoom(r[0] / 10, r[1] / 10, rr, r[3], px), lake };
     });
     // every wall in one shape and the floors of each colour in one shape each, so the drawing stays light
     const walls = caves.map(c => c.d).concat(tunnels.filter(t => !t.hole).map(t => t.d)).join("");
     const floors = {};
     caves.forEach(c => { floors[MAP_UNDER.cave.floor] = (floors[MAP_UNDER.cave.floor] || "") + c.d; });
     tunnels.filter(t => !t.hole).forEach(t => { floors[t.look.floor] = (floors[t.look.floor] || "") + t.d; });
-    return { flecks, coast, tunnels, walls, floors };
+    // the water: wadable in one shape, deep enough to swim in a darker one (map_swim_depth, 1.2 m)
+    const shallow = [], deep = [];
+    tunnels.forEach(t => { if (t.water) (t.wet.deep >= 1.2 ? deep : shallow).push(t.water); });
+    caves.forEach(c => { if (c.lake) (c.lake.deep >= 1.2 ? deep : shallow).push(c.lake.d); });
+    return { flecks, coast, tunnels, walls, floors, shallow: shallow.join(""), deep: deep.join("") };
   }, [v, px]);
   const wall = (fine ? fine.wall : 2.4) / px;
   return (
@@ -2268,6 +2283,8 @@ function MapUnder({ v, px }) {
       <path d={drawn.walls} fill={MAP_UNDER_WALL} stroke={MAP_UNDER_WALL} strokeWidth={wall * 2} strokeLinejoin="round" />
       {drawn.tunnels.filter(t => t.hole).map(t => <circle key={`tw${t.n}`} cx={mapNum(t.hole[0])} cy={mapNum(t.hole[1])} r={mapNum(t.w / 2 + wall)} fill={MAP_UNDER_WALL} />)}
       {Object.entries(drawn.floors).map(([fill, d]) => <path key={fill} d={d} fill={fill} />)}
+      {drawn.shallow && <path d={drawn.shallow} fill={MAP_UNDER_WATER.shallow} />}
+      {drawn.deep && <path d={drawn.deep} fill={MAP_UNDER_WATER.deep} />}
       {drawn.tunnels.filter(t => t.hole).map(t => <circle key={`ts${t.n}`} cx={mapNum(t.hole[0])} cy={mapNum(t.hole[1])} r={mapNum(t.w / 2)} fill="#050403" stroke={t.look.floor} strokeWidth={1 / px} />)}
       {Number(v.level) >= 3 && halls.map((h, n) => (
         <text key={`h${n}`} x={mapNum(h[1] / 10)} y={mapNum(h[2] / 10 - 10 / px)} textAnchor="middle" fontSize={mapNum(11 / px)} fontFamily={MAP_SERIF} fontStyle="italic"
@@ -2285,7 +2302,7 @@ const mapDownText = (m) => `${Math.round(Number(m) / 0.3048).toLocaleString("en-
 const MAP_UNDER_PART = {
   floor: { fill: "#A99A82", words: "cave floor" },
   rubble: { fill: "#8C7D67", words: "fallen rock" },
-  pool: { fill: "#6E9EB8", words: "a pool" },
+  pool: { fill: "#6E9EB8", words: "water" },
   column: { fill: "#4A413A", words: "a column of stone, no way through" },
   shaft: { fill: "#5E5560", words: "a shaft, climbed" },
 };
@@ -2810,6 +2827,12 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
         ))}
         {under && hasUnder && !top && underLines.some(l => l[0] === "shaft") && <span>A dark hole: a shaft from a great hall up into the cave country over it.</span>}
         {under && hasUnder && !top && cells.some(c => c.kind === "sea") && <span>Dashed: the coast above.</span>}
+        {under && hasUnder && !top && (underLines.some(l => Array.isArray(l[10])) || (Array.isArray(v.under.rooms) && v.under.rooms.some(r => Array.isArray(r[4])))) && (
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <svg width="24" height="12" aria-hidden="true"><rect width="12" height="12" rx="2" fill={MAP_UNDER_WATER.shallow} /><rect x="12" width="12" height="12" rx="2" fill={MAP_UNDER_WATER.deep} /></svg>
+            A stream or a lake under the ground: light is waded, dark is over 4 feet deep and swum.
+          </span>
+        )}
         {under && hasUnder && !top && level <= 3 && <span>The Deeps alone at this size: caves and mines show from the Region grid down.</span>}
         {under && top && underSquares.length === 0 && <span>Solid rock: no passage runs under this battle grid. The arrows slide it half a grid.</span>}
         {under && top && underSquares.length > 0 && (
