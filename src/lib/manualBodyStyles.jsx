@@ -200,6 +200,20 @@ export const MANUAL_BODY_CSS = `
           width: calc(100% - 12px);
         }
         .newtworks-handbook-body .nw-rp-hint { font-size: 12px; line-height: 1.4; color: ${T.slate500}; margin: -4px 0 6px 0; }
+        /* Pop-up openers written inline (popups.js): an info icon on a line,
+           or a small button inside a heading. */
+        .newtworks-handbook-body .nw-popup-icon {
+          display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+          margin: 0 0 0 6px; padding: 0; vertical-align: -4px; border: 1.5px solid ${T.blue}; border-radius: 50%;
+          background: #fff; color: ${T.blue}; font: italic 700 13px/1 Georgia, serif; cursor: pointer;
+        }
+        .newtworks-handbook-body .nw-popup-icon:hover, .newtworks-handbook-body .nw-popup-icon:focus-visible { background: ${T.blue}11; outline: none; }
+        .newtworks-handbook-body .nw-popup-btn.nw-popup-inline { margin: 0 0 0 10px; padding: 5px 12px; font-size: 13px; vertical-align: middle; }
+        .newtworks-handbook-body .nw-choose-seg[hidden] { display: none; }
+        .newtworks-handbook-body .nw-choose-next {
+          font: inherit; font-size: 13px; font-weight: 600; line-height: 1.2; padding: 7px 12px; cursor: pointer;
+          border: 1px solid ${T.slate200}; border-radius: 999px; background: #fff; color: ${T.slate700};
+        }
         /* [Choose:] blocks (src/lib/choices.js): rows of buttons that pick a
            panel. The row stays in view while the panel scrolls. */
         .newtworks-handbook-body .nw-choose-bar {

@@ -137,6 +137,20 @@ function inlineMd(s) {
   out = out.replace(/\{\{them:\s*([\s\S]+?)\s*\}\}/g, (m, t) =>
     `<span class="newtworks-them" style="${THEM_STYLE}">${t}</span>`
   );
+  // Level lines (Peter 2026-10-07: the kickoff customer's Easy, Medium or Hard
+  // version). {{easy: ...}}, {{medium: ...}}, {{hard: ...}} show only while
+  // that level is picked in the [Choose:] block around them (choices.js).
+  // Runs after say/them so those can sit inside.
+  out = out.replace(/\{\{(easy|medium|hard):\s*([\s\S]+?)\s*\}\}/gi, (m, lv, t) =>
+    `<span class="nw-lv" data-lv="${lv.toLowerCase()}">${t}</span>`
+  );
+  // Pop-up openers (popups.js) for <details class="nw-popup" data-popup="id">:
+  // {{popup: id}} is an info icon, {{popup: id | Label}} a small button.
+  out = out.replace(/\{\{popup:\s*([a-z0-9_-]+)\s*(?:\|\s*([^}\n]+?))?\s*\}\}/gi, (m, id, label) =>
+    protect(label
+      ? `<button type="button" class="nw-popup-btn nw-popup-inline" data-nw-popup-open="${id.toLowerCase()}">${escapeHtml(label)}</button>`
+      : `<button type="button" class="nw-popup-icon" data-nw-popup-open="${id.toLowerCase()}" aria-label="More">i</button>`)
+  );
 
   // ─── Fill-in placeholders ──────────────────────────────────
   // Script placeholders are authored as <NAME>, <ME>, <$$$>, <ALL/MOST>.
@@ -208,6 +222,7 @@ const PASSTHROUGH_TAGS = ["details", "summary", "blockquote", "table", "div", "f
 function slugifyHeading(text) {
   return String(text)
     .replace(/<[^>]+>/g, "")                          // strip inline HTML
+    .replace(/\{\{[^}]*\}\}/g, "")                     // strip {{tokens}} (pop-up buttons)
     .replace(/`([^`\n]+)`/g, "$1")                   // inline code
     .replace(/\*\*([^*\n]+)\*\*/g, "$1")         // bold **
     .replace(/__([^_\n]+)__/g, "$1")                 // bold __
@@ -1394,17 +1409,70 @@ const CHOICE_RE = /^[ \t]*\[Choice:\s*([^\]\n]+?)\s*\][ \t]*$/i;
 const CHOOSE_END_RE = /^[ \t]*\[Choose end\][ \t]*$/i;
 
 function renderChoices(block, options) {
-  const firsts = block.groups.map((g) => openerSlug(g[0] || ""));
-  const bar = block.groups.map((g, gi) =>
-    `<div class="nw-choose-seg" role="group">` +
-    g.map((label, i) => `<button type="button" class="nw-choose-opt" data-group="${gi}" data-val="${openerSlug(label)}" aria-pressed="${i === 0 ? "true" : "false"}">${escapeHtml(label)}</button>`).join("") +
-    `</div>`
-  ).join("");
+  const firsts = block.groups.filter((g) => g.kind === "panel").map((g) => openerSlug(g.opts[0] || ""));
+  const bar = block.groups.map((g) => {
+    if (g.kind === "refresh") {
+      return `<button type="button" class="nw-choose-next" title="Next customer" aria-label="Next customer">↻ <span class="nw-choose-num"></span></button>`;
+    }
+    const lv = g.kind === "level";
+    return `<div class="nw-choose-seg${lv ? " nw-choose-levels" : ""}" role="group">` +
+      g.opts.map((label, i) => `<button type="button" class="nw-choose-opt" data-val="${openerSlug(label)}" aria-pressed="${i === 0 ? "true" : "false"}">${escapeHtml(label)}</button>`).join("") +
+      `</div>`;
+  }).join("");
   const start = firsts.join("|");
   const panels = block.panels.map((p) =>
     `<div class="nw-choose-panel" data-choice="${p.key}"${p.key === start ? "" : " hidden"}>${mdToHtml(p.lines.join("\n"), options)}</div>`
   ).join("");
-  return `<div class="nw-choose"><div class="nw-choose-bar">${bar}</div>${panels}</div>`;
+  const level = block.groups.find((g) => g.kind === "level");
+  const lvAttr = level ? ` data-level="${openerSlug(level.opts[0] || "")}"` : "";
+  return `<div class="nw-choose"${lvAttr}><div class="nw-choose-bar">${bar}</div>${panels}</div>`;
+}
+
+// One "|" part of a Choose line: "refresh" is the next-customer button for
+// [Cycle:] blocks, "level: Easy, Medium, Hard" picks which {{easy:}} /
+// {{medium:}} / {{hard:}} lines show (only while the shown panel has any),
+// anything else is a group of buttons that picks the panel.
+function chooseGroup(part) {
+  const p = part.trim();
+  if (/^(refresh|↻)$/i.test(p)) return { kind: "refresh", opts: [] };
+  const lv = /^level:\s*(.*)$/i.exec(p);
+  const list = (s) => s.split(",").map((x) => x.trim()).filter(Boolean);
+  return lv ? { kind: "level", opts: list(lv[1]) } : { kind: "panel", opts: list(p) };
+}
+
+// [Cycle: name] [Card] ... [Card] ... [Cycle end]: one card shows at a time.
+// Every cycle in a [Choose:] block shares one place in line, so the refresh
+// button moves the inbound and outbound customers (and the team member's
+// matching lead) together. The day sets the starting card, so two teammates
+// on separate screens open on the same customer (choices.js).
+const CYCLE_START_RE = /^[ \t]*\[Cycle:\s*([^\]\n]+?)\s*\][ \t]*$/i;
+const CARD_RE = /^[ \t]*\[Card\][ \t]*$/i;
+const CYCLE_END_RE = /^[ \t]*\[Cycle end\][ \t]*$/i;
+
+function expandCycles(md, options, slots) {
+  if (md.indexOf("[Cycle:") === -1) return md;
+  const kept = [];
+  let cur = null;
+  let card = null;
+  const flush = () => {
+    const html = cur.cards.map((c, i) => `<div class="nw-cycle-card"${i === 0 ? "" : " hidden"}>${mdToHtml(c.join("\n"), options)}</div>`).join("");
+    slots.push(`<div class="nw-cycle" data-cycle="${openerSlug(cur.name)}">${html}</div>`);
+    kept.push(RP_SLOT(slots.length - 1));
+    cur = null; card = null;
+  };
+  for (const line of md.split(/\r?\n/)) {
+    if (!cur) {
+      const m = CYCLE_START_RE.exec(line);
+      if (m) { cur = { name: m[1], cards: [] }; card = null; continue; }
+      kept.push(line);
+      continue;
+    }
+    if (CYCLE_END_RE.test(line)) { flush(); continue; }
+    if (CARD_RE.test(line)) { card = []; cur.cards.push(card); continue; }
+    if (card) card.push(line);
+  }
+  if (cur) flush();
+  return kept.join("\n");
 }
 
 function expandChoices(md, options, slots) {
@@ -1416,7 +1484,7 @@ function expandChoices(md, options, slots) {
     if (!cur) {
       const m = CHOOSE_START_RE.exec(line);
       if (m) {
-        cur = { groups: m[1].split("|").map((g) => g.split(",").map((x) => x.trim()).filter(Boolean)), panels: [] };
+        cur = { groups: m[1].split("|").map(chooseGroup), panels: [] };
         panel = null;
         continue;
       }
@@ -1489,6 +1557,7 @@ export function mdToHtml(md, options = {}) {
   const rpSlots = [];
   // Choices first, so each panel renders whole (its own role plays, picks).
   src = expandChoices(src, options, rpSlots);
+  src = expandCycles(src, options, rpSlots);
   src = expandRoleplays(src, options, rpSlots);
   src = expandCommits(src, rpSlots);
   src = expandPageHosts(src, rpSlots);
