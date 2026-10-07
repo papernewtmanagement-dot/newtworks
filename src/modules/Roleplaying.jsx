@@ -1676,7 +1676,9 @@ function mapFantasy(v, byId) {
     });
   });
   }
-  Object.keys(runs).sort().reverse().forEach(k => layers.push({ d: runs[k], line: MAP_RIVER, w: MAP_RIVER_W[k] || 1 }));
+  // kept to the land as drawn (step 14d3, Peter 2026-10-07: rivers ran over the sea where the coast is drawn rounder
+  // than its cells): a river never shows over the sea or ground not found yet
+  Object.keys(runs).sort().reverse().forEach(k => layers.push({ d: runs[k], line: MAP_RIVER, w: MAP_RIVER_W[k] || 1, clip: land }));
   layers.push({ d: land, line: MAP_INK, w: 1.25 });
   const strokes = mapRows(unit * (detail ? 1 : 0.12));
   const marked = mapRows(unit * 0.12);
@@ -1704,9 +1706,10 @@ function mapFantasy(v, byId) {
       names.push({ text: String(here.length), x: (i + 0.5) * unit, y: (j + 0.5) * unit, count: true });
     } else {
       // a grid drawn fine puts each smaller place at its own middle, a twentieth of the long side of the map wide (on
-      // the World grid three hundredths: a symbol there only marks where a thing is, step 14d, Peter 2026-10-07),
-      // stepping round any it would cover (mapAside); any other grid sets them side by side in their cell
-      const s = detail ? Math.max(cols, rows) * (level === 1 ? 3 : 5) : unit * [0, 0.62, 0.46, 0.42][here.length];
+      // the World grid three four-hundredths: a symbol there only marks where a thing is, step 14d, Peter 2026-10-07:
+      // a quarter of the size 14d drew), stepping round any it would cover (mapAside); any other grid sets them side by
+      // side in their cell
+      const s = detail ? Math.max(cols, rows) * (level === 1 ? 0.75 : 5) : unit * [0, 0.62, 0.46, 0.42][here.length];
       const spots = [[], [[0.5, 0.5]], [[0.27, 0.5], [0.73, 0.5]], [[0.27, 0.29], [0.73, 0.29], [0.5, 0.73]]][here.length];
       here.forEach((k, n) => {
         const sk = s * (MAP_MARK_SIZE[k.icon] || 1) * mapMarkScale(k);
