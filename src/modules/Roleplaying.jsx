@@ -1992,7 +1992,8 @@ function mapRoofs(houses, unit) {
 function mapBattle(v, byId) {
   const cols = Number(v.cols) || 12, rows = Number(v.rows) || 12;
   const cells = Array.isArray(v.cells) ? v.cells : [];
-  const m = /^(\d+)-(\d+)-(\d+)$/.exec(v.view || "");
+  // where the battle grid starts in the world (step 14a2: it may be slid half a grid)
+  const o0 = mapOrigin(v);
   const grid = new Array(cols * rows).fill(null);
   // a square carried over water by a bridge, or in a ford, draws as that (step 11; rpg_map_view: cells' cross)
   cells.forEach(c => { const p = c.place && !mapWet(c.kind) ? byId[c.place] : null; grid[(c.y - 1) * cols + (c.x - 1)] = { what: c.cross === "bridge" || c.cross === "ford" ? c.cross : p ? (MAP_ART.top[p.icon] ? p.icon : "plain") : c.kind, id: c.place || null, h: c.hard == null ? null : Number(c.hard), cliff: c.cliff == null ? null : Number(c.cliff) }; });
@@ -2017,13 +2018,13 @@ function mapBattle(v, byId) {
     const gx = det ? (xr * yy - yr * xy) / det : 0, gy = det ? (yr * xx - xr * xy) / det : 0, len = Math.hypot(gx, gy);
     if (len > 0) slope = { ux: gx / len, uy: gy / len };
   }
-  if (!slope && cells.some(c => c.kind === "mountains" || c.kind === "hills")) { const t = mapRand(7, m ? Number(m[2]) : 0, m ? Number(m[3]) : 0, 800) * 2 * Math.PI; slope = { ux: Math.cos(t), uy: Math.sin(t) }; }
-  const layers = mapTop(cols, rows, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0, (i, j) => get(i, j).what, washes, false, (i, j) => get(i, j).h, slope, (i, j) => (inGrid(i, j) ? get(i, j).cliff : null));
+  if (!slope && cells.some(c => c.kind === "mountains" || c.kind === "hills")) { const t = mapRand(7, Math.floor(o0[0] / cols), Math.floor(o0[1] / rows), 800) * 2 * Math.PI; slope = { ux: Math.cos(t), uy: Math.sin(t) }; }
+  const layers = mapTop(cols, rows, o0[0], o0[1], (i, j) => get(i, j).what, washes, false, (i, j) => get(i, j).h, slope, (i, j) => (inGrid(i, j) ? get(i, j).cliff : null));
   // the houses stand on the ground (step 8c)
   layers.push(...mapRoofs(v.houses, 100));
   // and the landmarks (step 12b2)
   layers.push(...mapBuilt(cols, rows, cells));
-  const fog = mapFog(cols, rows, 100, (i, j) => get(i, j).what === "unknown", 0.3, cols, rows, 7, m ? Number(m[2]) * cols : 0, m ? Number(m[3]) * rows : 0);
+  const fog = mapFog(cols, rows, 100, (i, j) => get(i, j).what === "unknown", 0.3, cols, rows, 7, o0[0], o0[1]);
   return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat([{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }], fog), names: [], blocks: [] };
 }
 // The squares landmarks stand on (step 12b2), over the ground and the houses: each kind as one outline of its squares,
@@ -2116,12 +2117,16 @@ function mapNames(names, blocks, px, wide, high) {
 // The picture under the cells of the grid: the strokes, an aged edge and a neat line on the fantasy map, the names.
 // The world under the ground (step 12d; rpg_map_view: under), drawn in place of the land when the Underground switch is
 // on (step 14a, Peter 2026-10-07: a switch that takes the land away, and tunnels and caves rather than coloured lines):
-// solid rock, flecked; each passage a tunnel cut into it, a dark wall either side of a pale floor, as wide as it runs
-// (its middle width, line 8) wherever that shows on the screen and never thinner than its kind's least width on the
-// screen, winding and widening and narrowing as it goes (mapUnderTunnel); the room at each node it reaches a cave of the same rock-and-floor, its ragged edge through the eight knots
-// the battle grid uses (rooms); a shaft a dark round hole; the great halls of the Deeps named from the Country grid down;
-// the coast above a faint line, so the map can be read against the land. Each passage swings to one side by its bend
-// (a share of a quarter of its length), drawn as one curve. The colours are the one home for the Maps tab and its key.
+// solid rock, flecked; each passage a tunnel cut into it, a dark wall either side of a pale floor. Where the passage is
+// wide enough on the map for its bends to show, the server sends its path (line 9: rpg_map_under_trace, the passage
+// the battle grid cuts into squares) and the tunnel is drawn along it, as wide as it runs at each point (step 14a2,
+// Peter 2026-10-07: the battle grid did not match the grid above it); elsewhere it is drawn along its curve at its
+// middle width (line 8), never thinner than its kind's least width on the screen. Nothing of the page's own bends: the
+// shape is the server's. The room at each node it reaches is a cave of the same rock-and-floor, its ragged edge through
+// the eight knots the battle grid uses (rooms); a shaft a dark round hole; the great halls of the Deeps named from the
+// Country grid down; the coast above a faint line. The Continent and Country grids carry the Deeps alone (step 14a2),
+// drawn fine there so the network reads as threads through the rock. The colours are the one home for the Maps tab
+// and its key.
 const MAP_UNDER = {
   deep: { floor: "#8F8798", min: 7, words: "The Deeps: 13,000 to 26,000 feet below the sea, a great hall about every 86 miles; most halls join one network round the world, under the seas too." },
   cave: { floor: "#A6957B", min: 5, words: "Cave country: chambers 100 to 9,800 feet down, about one every 2.4 miles where the rock holds caves (3 in 10 of the land)." },
@@ -2165,37 +2170,35 @@ function mapUnderRoom(x, y, r, knots, px) {
   }
   return mapUnderShape(pts);
 }
-// A tunnel as a shape (step 14a): along the passage's curve (from p0, pulled toward c, to p1), winding to either side
-// and widening and narrowing as it goes, steady for that passage (seed). Its bends come about every ten of its widths
-// but never closer than 30 screen pixels, measured along the passage, and swing a sixth of a bend out (never more than
-// twice its width), so a thin tunnel winds gently rather than shaking. Only the part near the map (box: wide, high, with
-// a margin) is drawn, a point every 9 screen pixels. w = its middle width in units; px = screen pixels a unit.
-// The two walls are walked out and back as one closed outline.
-function mapUnderTunnel(p0, c, p1, w, seed, px, wide, high) {
-  const at = (t) => [(1 - t) * (1 - t) * p0[0] + 2 * t * (1 - t) * c[0] + t * t * p1[0], (1 - t) * (1 - t) * p0[1] + 2 * t * (1 - t) * c[1] + t * t * p1[1]];
-  const L = Math.hypot(c[0] - p0[0], c[1] - p0[1]) + Math.hypot(p1[0] - c[0], p1[1] - c[1]);
-  if (!(L > 0)) return "";
-  const r = (k) => mapRand(seed[0], seed[1], seed[2], k);
-  const lam = Math.max(10 * w, 30 / px) * (0.8 + 0.4 * r(741)), amp = Math.min(lam / 6, 2 * w);
-  // the stretch of the passage near the map
-  const pad = lam + 4 * w, near = (q) => q[0] > -pad && q[1] > -pad && q[0] < wide + pad && q[1] < high + pad;
-  let t0 = 1, t1 = 0;
-  for (let s = 0; s <= 400; s++) { const t = s / 400; if (near(at(t))) { t0 = Math.min(t0, t); t1 = Math.max(t1, t); } }
-  if (t1 < t0) return "";
-  t0 = Math.max(0, t0 - 1 / 400); t1 = Math.min(1, t1 + 1 / 400);
-  const n = Math.min(Math.max(Math.ceil((t1 - t0) * L * px / 9), 6), 300);
-  const left = [], right = [];
-  for (let s = 0; s <= n; s++) {
-    const t = t0 + (t1 - t0) * s / n, p = at(t), q = at(Math.min(t + 0.001, 1)), o = at(Math.max(t - 0.001, 0));
-    const dx = q[0] - o[0], dy = q[1] - o[1], len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
-    const u = t * L / lam, taper = Math.min(1, t * L / lam, (1 - t) * L / lam);
-    const wander = amp * taper * (0.75 * Math.sin(2 * Math.PI * (u + r(742))) + 0.25 * Math.sin(2 * Math.PI * (1.9 * u + r(743))));
-    const half = w / 2 * (0.75 + 0.5 * (0.5 + 0.5 * Math.sin(2 * Math.PI * (1.3 * u + r(744)))));
-    const m = [p[0] + nx * wander, p[1] + ny * wander];
-    left.push([m[0] + nx * half, m[1] + ny * half]);
-    right.push([m[0] - nx * half, m[1] - ny * half]);
+// Where a grid or a block starts in the world, in its own cells: v.origin (the first cell of the block), else the grid
+// named by the view (level-x-y).
+function mapOrigin(v) {
+  if (Array.isArray(v.origin) && v.origin.length === 2) return [Number(v.origin[0]) || 0, Number(v.origin[1]) || 0];
+  const cols = Number(v.cols) || 12, rows = Number(v.rows) || 12, m = /^(\d+)-(\d+)-(\d+)$/.exec(v.view || "");
+  return m ? [Number(m[2]) * cols, Number(m[3]) * rows] : [0, 0];
+}
+// A tunnel as a shape along points of its middle, each [x, y, half its width] in units (step 14a2): the two walls walked
+// out and back as one closed outline, each point moved to either side across the line through its neighbours; a round
+// end where the tunnel ends on the map (end: [at its first point, at its last]).
+function mapUnderPath(pts, end) {
+  if (!Array.isArray(pts) || pts.length < 2) return "";
+  const left = [], right = [], n = pts.length;
+  for (let s = 0; s < n; s++) {
+    const a = pts[Math.max(s - 1, 0)], b = pts[Math.min(s + 1, n - 1)];
+    const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len, h = pts[s][2];
+    left.push([pts[s][0] + nx * h, pts[s][1] + ny * h]);
+    right.push([pts[s][0] - nx * h, pts[s][1] - ny * h]);
   }
-  return mapUnderShape(left.concat(right.reverse()));
+  const cap = (p, q, h) => {
+    // a half round past p, away from q
+    const dx = p[0] - q[0], dy = p[1] - q[1], len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len, out = [];
+    for (let k = 1; k < 6; k++) { const a = Math.PI * k / 6; out.push([p[0] + (-uy * Math.cos(a) + ux * Math.sin(a)) * h, p[1] + (ux * Math.cos(a) + uy * Math.sin(a)) * h]); }
+    return out;
+  };
+  // the end caps: past the last point from the left wall round to the right, past the first from the right round to the left
+  const tail = end && end[1] ? cap(pts[n - 1], pts[n - 2], pts[n - 1][2]) : [];
+  const head = end && end[0] ? cap(pts[0], pts[1], pts[0][2]) : [];
+  return mapUnderShape(left.concat(tail, right.reverse(), head));
 }
 function MapUnder({ v, px }) {
   const cols = Number(v.cols) || 12, rows = Number(v.rows) || 12, wide = cols * 100, high = rows * 100;
@@ -2205,11 +2208,10 @@ function MapUnder({ v, px }) {
   const rooms = Array.isArray(under.rooms) ? under.rooms : [];
   const cells = Array.isArray(v.cells) ? v.cells : [];
   const lvl = Number(v.level) || 1;
-  const m = /^(\d+)-(\d+)-(\d+)$/.exec(v.view || "");
-  const x0 = m ? Number(m[2]) * cols : 0, y0 = m ? Number(m[3]) * rows : 0;
-  // the Continent grid holds hundreds of halls and passages: their least sizes there are 0.4 of the rest, the Country
-  // grid 0.75, so the network still reads as tunnels and not as a solid mass
-  const thin = lvl <= 2 ? 0.4 : lvl === 3 ? 0.75 : 1;
+  const [x0, y0] = mapOrigin(v);
+  // the Continent and Country grids carry the Deeps alone, drawn fine (step 14a2): a passage at least 1 screen pixel
+  // wide on the Continent grid and 2 on the Country grid, a great hall 3 and 6 across; finer grids by each kind's least
+  const fine = lvl <= 2 ? { line: 1, hall: 3, wall: 0.8 } : lvl === 3 ? { line: 2, hall: 6, wall: 1.2 } : null;
   const drawn = useMemo(() => {
     const flecks = mapUnderFlecks(wide, high, px, lvl, x0, y0);
     // the coast above: land cells (not sea, not unknown) outlined
@@ -2219,17 +2221,33 @@ function MapUnder({ v, px }) {
       const [kind, ax, ay, bx, by, , , bend, width] = l;
       const look = MAP_UNDER[kind] || MAP_UNDER.cave;
       const p0 = [ax / 10, ay / 10], p1 = [bx / 10, by / 10], dx = p1[0] - p0[0], dy = p1[1] - p0[1];
-      const w = Math.max((Number(width) || 0) / 10, look.min * thin / px);
+      const least = (fine ? fine.line : look.min) / px;
+      const w = Math.max((Number(width) || 0) / 10, least);
       if (kind === "shaft") return { n, kind, look, hole: p0, w: Math.max(w, 5 / px) };
+      // the passage as the battle grid cuts it, where the server sends it (rpg_map_under_trace)
+      if (Array.isArray(l[9]) && l[9].length > 1) {
+        const pts = l[9].map(q => [Number(q[0]) / 10, Number(q[1]) / 10, Math.max(Number(q[2]) / 10, least / 2)]);
+        return { n, kind, look, w, d: mapUnderPath(pts, [true, true]) };
+      }
+      // else its curve (rpg_map_under_curve: the middle pulled to one side by bend x a quarter of its length) at its
+      // middle width, only the stretch near the map, a point every 9 screen pixels
       const k = (Number(bend) || 0) / 100 * 0.25, c = [(p0[0] + p1[0]) / 2 - dy * k, (p0[1] + p1[1]) / 2 + dx * k];
-      // steady for this passage wherever it is drawn on this level: its first end counted across the world
-      const seed = [lvl * 977 + (kind.length * 31), Math.round(x0 * 1000 + ax) % 2147483647, Math.round(y0 * 1000 + ay) % 2147483647];
-      return { n, kind, look, w, d: mapUnderTunnel(p0, c, p1, w, seed, px, wide, high) };
+      const at = (t) => [(1 - t) * (1 - t) * p0[0] + 2 * t * (1 - t) * c[0] + t * t * p1[0], (1 - t) * (1 - t) * p0[1] + 2 * t * (1 - t) * c[1] + t * t * p1[1]];
+      const pad = 2 * w + 20 / px, near = (q) => q[0] > -pad && q[1] > -pad && q[0] < wide + pad && q[1] < high + pad;
+      let t0 = 1, t1 = 0;
+      for (let s = 0; s <= 200; s++) { const t = s / 200; if (near(at(t))) { t0 = Math.min(t0, t); t1 = Math.max(t1, t); } }
+      if (t1 < t0) return { n, kind, look, w, d: "" };
+      t0 = Math.max(0, t0 - 1 / 200); t1 = Math.min(1, t1 + 1 / 200);
+      const L = Math.hypot(c[0] - p0[0], c[1] - p0[1]) + Math.hypot(p1[0] - c[0], p1[1] - c[1]);
+      const cnt = Math.min(Math.max(Math.ceil((t1 - t0) * L * px / 9), 2), 200), pts = [];
+      for (let s = 0; s <= cnt; s++) { const q = at(t0 + (t1 - t0) * s / cnt); pts.push([q[0], q[1], w / 2]); }
+      return { n, kind, look, w, d: mapUnderPath(pts, [true, true]) };
     });
     // a great hall (where the Deeps meet) never smaller than 10 screen pixels across the middle, any other cave 4
+    // (the Continent and Country grids: as fine says)
     const hallAt = new Set(halls.map(h => `${h[1]},${h[2]}`));
     const caves = rooms.map((r, n) => {
-      const rr = Math.max((Number(r[2]) || 0) / 10, (hallAt.has(`${r[0]},${r[1]}`) ? 10 : 4) * thin / px);
+      const rr = Math.max((Number(r[2]) || 0) / 10, (fine ? fine.hall : hallAt.has(`${r[0]},${r[1]}`) ? 10 : 4) / 2 / px);
       return { n, d: mapUnderRoom(r[0] / 10, r[1] / 10, rr, r[3], px) };
     });
     // every wall in one shape and the floors of each colour in one shape each, so the drawing stays light
@@ -2239,7 +2257,7 @@ function MapUnder({ v, px }) {
     tunnels.filter(t => !t.hole).forEach(t => { floors[t.look.floor] = (floors[t.look.floor] || "") + t.d; });
     return { flecks, coast, tunnels, walls, floors };
   }, [v, px]);
-  const wall = 2.4 / px;
+  const wall = (fine ? fine.wall : 2.4) / px;
   return (
     <svg viewBox={`0 0 ${wide} ${high}`} preserveAspectRatio="none" aria-hidden="true"
       style={{ position: "absolute", left: 16, top: 16, width: "calc(100% - 16px)", height: "calc(100% - 16px)", borderRadius: 4, pointerEvents: "none", display: "block", overflow: "hidden" }}>
@@ -2280,8 +2298,7 @@ const MAP_UNDER_PART = {
 function MapUnderGrid({ v, px }) {
   const cols = Number(v.cols) || 12, rows = Number(v.rows) || 12, wide = cols * 100, high = rows * 100;
   const sq = v.under && Array.isArray(v.under.squares) ? v.under.squares : [];
-  const m = /^(\d+)-(\d+)-(\d+)$/.exec(v.view || "");
-  const lvl = Number(v.level) || 7, x0 = m ? Number(m[2]) * cols : 0, y0 = m ? Number(m[3]) * rows : 0;
+  const lvl = Number(v.level) || 7, [x0, y0] = mapOrigin(v);
   const id = `rpg-under-${v.view || "grid"}`;
   const drawn = useMemo(() => {
     const at = {};
@@ -2399,8 +2416,10 @@ function MapsTab({ isParent, onError, onFight }) {
     if (seen.current.has(key)) { setV(seen.current.get(key)); return undefined; }
     const m = /^(\d+)-(\d+)-(\d+)$/.exec(key);
     const place = /^p-([0-9a-f-]{36})$/.exec(key);
+    const slid = /^s-(\d+)-(\d+)$/.exec(key);
     (async () => {
       const { data, error } = place ? await supabase.rpc("rpg_map_place_view", { p_place: place[1] })
+        : slid ? await supabase.rpc("rpg_map_battle_view", { p_x0: Number(slid[1]), p_y0: Number(slid[2]) })
         : await supabase.rpc("rpg_map_view", m ? { p_level: Number(m[1]), p_x: Number(m[2]), p_y: Number(m[3]) } : {});
       if (!alive) return;
       if (error) { onError(error.message); if (at) setAt(null); return; }
@@ -2644,7 +2663,8 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
   const underHalls = v.under && Array.isArray(v.under.halls) ? v.under.halls : [];
   // on the battle grid the squares under it (step 12d3)
   const underSquares = v.under && Array.isArray(v.under.squares) ? v.under.squares : [];
-  const hasUnder = underLines.length > 0 || underHalls.length > 0 || underSquares.length > 0;
+  // every grid from the Continent grid down has a world under it, even where it is solid rock (step 14a2)
+  const hasUnder = !!(v.under && typeof v.under === "object");
   // the one whose turn it is stands under the ground on this battle grid: show it underground (step 12d3)
   const curUnder = !!(journey && Array.isArray(journey.pieces) && underSquares.length > 0
     && journey.pieces.some(p => p.id === journey.current && p.under && Array.isArray(p.spot)));
@@ -2658,7 +2678,8 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
   const places = Array.isArray(v.places) ? v.places : [];
   const crumbs = Array.isArray(v.crumbs) ? v.crumbs : [];
   const within = Array.isArray(v.within) ? v.within : [];
-  const moves = v.moves && typeof v.moves === "object" ? v.moves : null;
+  const moves = v.slides && typeof v.slides === "object" ? v.slides : v.moves && typeof v.moves === "object" ? v.moves : null;
+  const slides = !!(v.slides && typeof v.slides === "object");
   const grounds = v.grounds && typeof v.grounds === "object" ? v.grounds : {};
   const detail = v.detail && Array.isArray(v.detail.cells) ? v.detail : null;
   // the last grid of the ladder is the battle grid, seen from above
@@ -2688,7 +2709,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
       // a square of a place to go into walked like the ground (step 12c)
       : c.feature ? ({ floor: "a floor", hearth: "a hearth", altar: "an altar", mouth: "the way in, underground" })[c.feature] || null : null;
     const u = under && top ? underAt[`${c.x},${c.y}`] : null;
-    const title = under && top && underSquares.length > 0
+    const title = under && top && hasUnder
       ? `${c.name} · under the ground: ${u ? `${(MAP_UNDER_PART[u[2]] || MAP_UNDER_PART.floor).words}${u[4] ? `, ${u[4]} m deep` : ""}${u[3] != null ? ` · +${u[3]}% time a square` : ""} · ${Number(u[5]).toLocaleString("en-US")} feet down` : "solid rock"}`
       : `${c.name} · ${climb ? `${climb} · ` : ""}${p ? [p.name, p.ground].filter(Boolean).join(" · ") : ground(c.kind)}${c.cost != null ? ` · this ${top ? "square" : "cell"}: +${c.cost}% time a square` : ""}${marks.length ? ` · also here: ${marks.map(k => k.name).join(", ")}` : ""}`;
     const style = { aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, boxSizing: "border-box", position: "relative", display: "block", cursor: c.open || onCell ? "pointer" : "default" };
@@ -2748,7 +2769,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
         {moves && (
           <div style={{ display: "flex", gap: 4, marginLeft: hasUnder ? 0 : "auto" }}>
             {MAP_MOVES.map(([k, t]) => (
-              <TabLink key={k} href={atHref(moves[k] || null)} onSelect={() => setAt(moves[k])} disabled={!moves[k]} title={`The next grid ${k}`} ariaLabel={`The next grid ${k}`}
+              <TabLink key={k} href={atHref(moves[k] || null)} onSelect={() => setAt(moves[k])} disabled={!moves[k]} title={slides ? `Slide half a grid ${k}` : `The next grid ${k}`} ariaLabel={slides ? `Slide half a grid ${k}` : `The next grid ${k}`}
                 style={{ ...btn("soft", true), minWidth: 30, textAlign: "center", opacity: moves[k] ? 1 : 0.35 }}>{t}</TabLink>
             ))}
           </div>
@@ -2789,6 +2810,8 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
         ))}
         {under && hasUnder && !top && underLines.some(l => l[0] === "shaft") && <span>A dark hole: a shaft from a great hall up into the cave country over it.</span>}
         {under && hasUnder && !top && cells.some(c => c.kind === "sea") && <span>Dashed: the coast above.</span>}
+        {under && hasUnder && !top && level <= 3 && <span>The Deeps alone at this size: caves and mines show from the Region grid down.</span>}
+        {under && top && underSquares.length === 0 && <span>Solid rock: no passage runs under this battle grid. The arrows slide it half a grid.</span>}
         {under && top && underSquares.length > 0 && (
           <>
             <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
