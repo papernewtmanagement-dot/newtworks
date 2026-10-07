@@ -2114,54 +2114,146 @@ function mapNames(names, blocks, px, wide, high) {
   return out;
 }
 // The picture under the cells of the grid: the strokes, an aged edge and a neat line on the fantasy map, the names.
-// The world under the ground (step 12d; rpg_map_view: under), drawn over the dimmed land when the Underground switch is
-// on: the Deeps purple and thick, cave country gold, the own passage of a cave or a mine cream, a passage joining a cave
-// or a mine to cave country or the Deeps dashed, a shaft a ring; a passage under the sea or a lake edged pale blue (by
-// the ground of the cell its middle lies in); the great halls of the Deeps dots, named from the Country grid down. Each
-// passage swings to one side by its bend (a share of a quarter of its length), drawn as one curve.
+// The world under the ground (step 12d; rpg_map_view: under), drawn in place of the land when the Underground switch is
+// on (step 14a, Peter 2026-10-07: a switch that takes the land away, and tunnels and caves rather than coloured lines):
+// solid rock, flecked; each passage a tunnel cut into it, a dark wall either side of a pale floor, as wide as it runs
+// (its middle width, line 8) wherever that shows on the screen and never thinner than its kind's least width on the
+// screen, winding and widening and narrowing as it goes (mapUnderTunnel); the room at each node it reaches a cave of the same rock-and-floor, its ragged edge through the eight knots
+// the battle grid uses (rooms); a shaft a dark round hole; the great halls of the Deeps named from the Country grid down;
+// the coast above a faint line, so the map can be read against the land. Each passage swings to one side by its bend
+// (a share of a quarter of its length), drawn as one curve. The colours are the one home for the Maps tab and its key.
 const MAP_UNDER = {
-  deep: { line: "#B48CF0", w: 3.2 },
-  cave: { line: "#E0B060", w: 1.6 },
-  own: { line: "#F3E6C8", w: 2 },
-  join: { line: "#E0B060", w: 1.3, dash: "5 3" },
-  delve: { line: "#B48CF0", w: 1.6, dash: "6 3" },
-  shaft: { line: "#B48CF0", w: 1.6 },
+  deep: { floor: "#8F8798", min: 7, words: "The Deeps: 13,000 to 26,000 feet below the sea, a great hall about every 86 miles; most halls join one network round the world, under the seas too." },
+  cave: { floor: "#A6957B", min: 5, words: "Cave country: chambers 100 to 9,800 feet down, about one every 2.4 miles where the rock holds caves (3 in 10 of the land)." },
+  own: { floor: "#BCA98B", min: 5.5, words: "A cave or mine's own passage, from its mouth into the hill: a great cave up to 3 miles long, mine workings down a shaft up to 13,000 feet." },
+  join: { floor: "#A6957B", min: 2.4, words: "A narrow squeeze: where a cave or mine breaks into cave country or down into the Deeps." },
+  delve: { floor: "#8F8798", min: 2.4 },
+  shaft: { floor: "#8F8798", min: 0 },
 };
-const mapUnderWet = (k) => k === "sea" || k === "deep" || k === "water";
+const MAP_UNDER_ROCK = "#2B2420";
+const MAP_UNDER_WALL = "#120D0A";
+// A closed outline in whole units, always turning the same way round (by its signed area), so many of them laid in
+// one shape fill as one where they overlap instead of cutting holes in each other.
+function mapUnderShape(pts) {
+  let a = 0;
+  for (let k = 0; k < pts.length; k++) { const p = pts[k], q = pts[(k + 1) % pts.length]; a += p[0] * q[1] - q[0] * p[1]; }
+  const run = a < 0 ? pts.slice().reverse() : pts;
+  return "M" + run.map(p => `${Math.round(p[0])} ${Math.round(p[1])}`).join("L") + "Z";
+}
+// Flecks of lighter and darker stone over the rock, about one every 26 screen pixels, steady for each spot of the world.
+function mapUnderFlecks(wide, high, px, lvl, x0, y0) {
+  const step = 26 / px, out = [];
+  for (let y = 0; y < high; y += step) for (let x = 0; x < wide; x += step) {
+    const gx = Math.floor((x0 * 100 + x) / step), gy = Math.floor((y0 * 100 + y) / step);
+    const a = mapRand(lvl, gx, gy, 701), b = mapRand(lvl, gx, gy, 702), c = mapRand(lvl, gx, gy, 703);
+    out.push({ x: x + a * step, y: y + b * step, r: (0.8 + 1.8 * c) / px, light: c > 0.55 });
+  }
+  return out;
+}
+// A room's edge (rpg_map_under_room): points round its middle, from the west going north as the knots run, each
+// 0.75 + 0.5 x the knot of r out, smooth between knots (the battle grid's sum).
+function mapUnderRoom(x, y, r, knots, px) {
+  const k = Array.isArray(knots) && knots.length === 8 ? knots.map(n => Number(n) / 1000) : new Array(8).fill(0.5);
+  const pts = [];
+  // 32 points round a cave more than 15 screen pixels across the middle, 16 round a smaller one
+  const each = r * px > 15 ? 4 : 2;
+  for (let s = 0; s < 8 * each; s++) {
+    const f = s / each, i = Math.floor(f), t = f - i, sm = t * t * (3 - 2 * t);
+    const q = k[i % 8] + (k[(i + 1) % 8] - k[i % 8]) * sm;
+    const a = -Math.PI + f * Math.PI / 4;
+    pts.push([x + Math.cos(a) * r * (0.75 + 0.5 * q), y + Math.sin(a) * r * (0.75 + 0.5 * q)]);
+  }
+  return mapUnderShape(pts);
+}
+// A tunnel as a shape (step 14a): along the passage's curve (from p0, pulled toward c, to p1), winding to either side
+// and widening and narrowing as it goes, steady for that passage (seed). Its bends come about every ten of its widths
+// but never closer than 30 screen pixels, measured along the passage, and swing a sixth of a bend out (never more than
+// twice its width), so a thin tunnel winds gently rather than shaking. Only the part near the map (box: wide, high, with
+// a margin) is drawn, a point every 9 screen pixels. w = its middle width in units; px = screen pixels a unit.
+// The two walls are walked out and back as one closed outline.
+function mapUnderTunnel(p0, c, p1, w, seed, px, wide, high) {
+  const at = (t) => [(1 - t) * (1 - t) * p0[0] + 2 * t * (1 - t) * c[0] + t * t * p1[0], (1 - t) * (1 - t) * p0[1] + 2 * t * (1 - t) * c[1] + t * t * p1[1]];
+  const L = Math.hypot(c[0] - p0[0], c[1] - p0[1]) + Math.hypot(p1[0] - c[0], p1[1] - c[1]);
+  if (!(L > 0)) return "";
+  const r = (k) => mapRand(seed[0], seed[1], seed[2], k);
+  const lam = Math.max(10 * w, 30 / px) * (0.8 + 0.4 * r(741)), amp = Math.min(lam / 6, 2 * w);
+  // the stretch of the passage near the map
+  const pad = lam + 4 * w, near = (q) => q[0] > -pad && q[1] > -pad && q[0] < wide + pad && q[1] < high + pad;
+  let t0 = 1, t1 = 0;
+  for (let s = 0; s <= 400; s++) { const t = s / 400; if (near(at(t))) { t0 = Math.min(t0, t); t1 = Math.max(t1, t); } }
+  if (t1 < t0) return "";
+  t0 = Math.max(0, t0 - 1 / 400); t1 = Math.min(1, t1 + 1 / 400);
+  const n = Math.min(Math.max(Math.ceil((t1 - t0) * L * px / 9), 6), 300);
+  const left = [], right = [];
+  for (let s = 0; s <= n; s++) {
+    const t = t0 + (t1 - t0) * s / n, p = at(t), q = at(Math.min(t + 0.001, 1)), o = at(Math.max(t - 0.001, 0));
+    const dx = q[0] - o[0], dy = q[1] - o[1], len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
+    const u = t * L / lam, taper = Math.min(1, t * L / lam, (1 - t) * L / lam);
+    const wander = amp * taper * (0.75 * Math.sin(2 * Math.PI * (u + r(742))) + 0.25 * Math.sin(2 * Math.PI * (1.9 * u + r(743))));
+    const half = w / 2 * (0.75 + 0.5 * (0.5 + 0.5 * Math.sin(2 * Math.PI * (1.3 * u + r(744)))));
+    const m = [p[0] + nx * wander, p[1] + ny * wander];
+    left.push([m[0] + nx * half, m[1] + ny * half]);
+    right.push([m[0] - nx * half, m[1] - ny * half]);
+  }
+  return mapUnderShape(left.concat(right.reverse()));
+}
 function MapUnder({ v, px }) {
   const cols = Number(v.cols) || 12, rows = Number(v.rows) || 12, wide = cols * 100, high = rows * 100;
   const under = v.under && typeof v.under === "object" ? v.under : {};
   const lines = Array.isArray(under.lines) ? under.lines : [];
   const halls = Array.isArray(under.halls) ? under.halls : [];
+  const rooms = Array.isArray(under.rooms) ? under.rooms : [];
   const cells = Array.isArray(v.cells) ? v.cells : [];
-  const wet = (x, y) => { const i = Math.floor(x / 100), j = Math.floor(y / 100); const c = i >= 0 && j >= 0 && i < cols && j < rows ? cells[j * cols + i] : null; return !!c && mapUnderWet(c.kind); };
-  const paths = lines.map((l, n) => {
-    const [kind, ax, ay, bx, by, , , bend] = l;
-    const look = MAP_UNDER[kind] || MAP_UNDER.cave;
-    const x0 = ax / 10, y0 = ay / 10, x1 = bx / 10, y1 = by / 10, dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy);
-    if (kind === "shaft") return { n, kind, look, ring: [x0, y0], wet: wet(x0, y0) };
-    const k = (Number(bend) || 0) / 100 * 0.25, cx = (x0 + x1) / 2 - dy * k, cy = (y0 + y1) / 2 + dx * k;
-    return { n, kind, look, d: `M${mapNum(x0)} ${mapNum(y0)}Q${mapNum(cx)} ${mapNum(cy)} ${mapNum(x1)} ${mapNum(y1)}`, wet: len > 0 && wet((x0 + 2 * cx + x1) / 4, (y0 + 2 * cy + y1) / 4) };
-  });
-  const order = ["cave", "join", "own", "deep", "delve", "shaft"];
-  paths.sort((p, q) => order.indexOf(p.kind) - order.indexOf(q.kind));
+  const lvl = Number(v.level) || 1;
+  const m = /^(\d+)-(\d+)-(\d+)$/.exec(v.view || "");
+  const x0 = m ? Number(m[2]) * cols : 0, y0 = m ? Number(m[3]) * rows : 0;
+  // the Continent grid holds hundreds of halls and passages: their least sizes there are 0.4 of the rest, the Country
+  // grid 0.75, so the network still reads as tunnels and not as a solid mass
+  const thin = lvl <= 2 ? 0.4 : lvl === 3 ? 0.75 : 1;
+  const drawn = useMemo(() => {
+    const flecks = mapUnderFlecks(wide, high, px, lvl, x0, y0);
+    // the coast above: land cells (not sea, not unknown) outlined
+    const kind = (i, j) => { const c = i >= 0 && j >= 0 && i < cols && j < rows ? cells[j * cols + i] : null; return c ? c.kind : null; };
+    const coast = cells.some(c => c.kind === "sea") ? mapOutline(cols, rows, (i, j) => { const k = kind(i, j); return k != null && k !== "sea" && k !== "unknown"; }, 100, 0.45, { lvl, x0, y0 }) : "";
+    const tunnels = lines.map((l, n) => {
+      const [kind, ax, ay, bx, by, , , bend, width] = l;
+      const look = MAP_UNDER[kind] || MAP_UNDER.cave;
+      const p0 = [ax / 10, ay / 10], p1 = [bx / 10, by / 10], dx = p1[0] - p0[0], dy = p1[1] - p0[1];
+      const w = Math.max((Number(width) || 0) / 10, look.min * thin / px);
+      if (kind === "shaft") return { n, kind, look, hole: p0, w: Math.max(w, 5 / px) };
+      const k = (Number(bend) || 0) / 100 * 0.25, c = [(p0[0] + p1[0]) / 2 - dy * k, (p0[1] + p1[1]) / 2 + dx * k];
+      // steady for this passage wherever it is drawn on this level: its first end counted across the world
+      const seed = [lvl * 977 + (kind.length * 31), Math.round(x0 * 1000 + ax) % 2147483647, Math.round(y0 * 1000 + ay) % 2147483647];
+      return { n, kind, look, w, d: mapUnderTunnel(p0, c, p1, w, seed, px, wide, high) };
+    });
+    // a great hall (where the Deeps meet) never smaller than 10 screen pixels across the middle, any other cave 4
+    const hallAt = new Set(halls.map(h => `${h[1]},${h[2]}`));
+    const caves = rooms.map((r, n) => {
+      const rr = Math.max((Number(r[2]) || 0) / 10, (hallAt.has(`${r[0]},${r[1]}`) ? 10 : 4) * thin / px);
+      return { n, d: mapUnderRoom(r[0] / 10, r[1] / 10, rr, r[3], px) };
+    });
+    // every wall in one shape and the floors of each colour in one shape each, so the drawing stays light
+    const walls = caves.map(c => c.d).concat(tunnels.filter(t => !t.hole).map(t => t.d)).join("");
+    const floors = {};
+    caves.forEach(c => { floors[MAP_UNDER.cave.floor] = (floors[MAP_UNDER.cave.floor] || "") + c.d; });
+    tunnels.filter(t => !t.hole).forEach(t => { floors[t.look.floor] = (floors[t.look.floor] || "") + t.d; });
+    return { flecks, coast, tunnels, walls, floors };
+  }, [v, px]);
+  const wall = 2.4 / px;
   return (
     <svg viewBox={`0 0 ${wide} ${high}`} preserveAspectRatio="none" aria-hidden="true"
       style={{ position: "absolute", left: 16, top: 16, width: "calc(100% - 16px)", height: "calc(100% - 16px)", borderRadius: 4, pointerEvents: "none", display: "block", overflow: "hidden" }}>
-      <rect x="0" y="0" width={wide} height={high} fill="#17131D" opacity={0.62} />
-      {paths.filter(p => p.wet && p.d).map(p => <path key={`w${p.n}`} d={p.d} fill="none" stroke="#6FB7DF" strokeOpacity={0.55} strokeWidth={(p.look.w + 3.4) / px} strokeLinecap="round" />)}
-      {paths.map(p => (p.ring
-        ? <circle key={p.n} cx={mapNum(p.ring[0])} cy={mapNum(p.ring[1])} r={6 / px} fill="none" stroke={p.look.line} strokeWidth={p.look.w / px} />
-        : <path key={p.n} d={p.d} fill="none" stroke={p.look.line} strokeWidth={p.look.w / px} strokeLinecap="round"
-            strokeDasharray={p.look.dash ? p.look.dash.split(" ").map(q => Number(q) / px).join(" ") : undefined} />))}
-      {halls.map((h, n) => (
-        <g key={`h${n}`}>
-          <circle cx={mapNum(h[1] / 10)} cy={mapNum(h[2] / 10)} r={(Number(v.level) >= 3 ? 4.5 : 2.6) / px} fill="#B48CF0" stroke="#17131D" strokeWidth={1 / px} />
-          {Number(v.level) >= 3 && (
-            <text x={mapNum(h[1] / 10)} y={mapNum(h[2] / 10 - 8 / px)} textAnchor="middle" fontSize={mapNum(11 / px)} fontFamily={MAP_SERIF} fontStyle="italic"
-              fill="#E9DDFB" stroke="#17131D" strokeOpacity={0.9} strokeWidth={mapNum(3 / px)} strokeLinejoin="round" style={{ paintOrder: "stroke" }}>{h[0]}</text>
-          )}
-        </g>
+      <rect x="0" y="0" width={wide} height={high} fill={MAP_UNDER_ROCK} />
+      {drawn.flecks.map((f, n) => <circle key={`f${n}`} cx={mapNum(f.x)} cy={mapNum(f.y)} r={mapNum(f.r)} fill={f.light ? "#4A3F36" : "#1C1713"} />)}
+      {drawn.coast && <path d={drawn.coast} fill="none" stroke="#6B5D4E" strokeOpacity={0.55} strokeWidth={1.2 / px} strokeDasharray={`${4 / px} ${3 / px}`} />}
+      {/* the walls of every tunnel and cave first, then the floors over them, so where they meet they open into one */}
+      <path d={drawn.walls} fill={MAP_UNDER_WALL} stroke={MAP_UNDER_WALL} strokeWidth={wall * 2} strokeLinejoin="round" />
+      {drawn.tunnels.filter(t => t.hole).map(t => <circle key={`tw${t.n}`} cx={mapNum(t.hole[0])} cy={mapNum(t.hole[1])} r={mapNum(t.w / 2 + wall)} fill={MAP_UNDER_WALL} />)}
+      {Object.entries(drawn.floors).map(([fill, d]) => <path key={fill} d={d} fill={fill} />)}
+      {drawn.tunnels.filter(t => t.hole).map(t => <circle key={`ts${t.n}`} cx={mapNum(t.hole[0])} cy={mapNum(t.hole[1])} r={mapNum(t.w / 2)} fill="#050403" stroke={t.look.floor} strokeWidth={1 / px} />)}
+      {Number(v.level) >= 3 && halls.map((h, n) => (
+        <text key={`h${n}`} x={mapNum(h[1] / 10)} y={mapNum(h[2] / 10 - 10 / px)} textAnchor="middle" fontSize={mapNum(11 / px)} fontFamily={MAP_SERIF} fontStyle="italic"
+          fill="#F1E8D6" stroke={MAP_UNDER_WALL} strokeOpacity={0.9} strokeWidth={mapNum(3 / px)} strokeLinejoin="round" style={{ paintOrder: "stroke" }}>{h[0]}</text>
       ))}
     </svg>
   );
@@ -2171,7 +2263,7 @@ const mapDownText = (m) => `${Math.round(Number(m) / 0.3048).toLocaleString("en-
 // The battle grid under the ground (step 12d3; rpg_map_view: under.squares on the battle grid, rpg_session_state:
 // board.parts): each open square by what it is, the rest solid rock. floor = the floor of a passage or a room, rubble
 // = fallen rock (slow), pool = shallow water, column = a column of stone (no way through), shaft = climbed. The words
-// are the one home of how the page names them; the colors of the Maps tab and the fight board alike.
+// are the one home of how the page names them; the colours of the Maps tab and the fight board alike.
 const MAP_UNDER_PART = {
   floor: { fill: "#A99A82", words: "cave floor" },
   rubble: { fill: "#8C7D67", words: "fallen rock" },
@@ -2179,46 +2271,58 @@ const MAP_UNDER_PART = {
   column: { fill: "#4A413A", words: "a column of stone, no way through" },
   shaft: { fill: "#5E5560", words: "a shaft, climbed" },
 };
-const MAP_UNDER_ROCK = "#2B2420";
-// The open squares under a battle grid (Maps tab), over the dimmed land: rock dark, each open square its color, a
-// line where it meets the rock, stones on fallen rock, a ring on a column, a pool darker the deeper it is.
+// The open squares under a battle grid (Maps tab), in place of the land (step 14a: a tunnel, not a block of squares):
+// flecked rock; the floor of every open square as one shape with a soft, wandering wall (mapOutline, as the land's
+// edges are drawn), a dark wall round it and a shadow along the inside of the wall; harder floor a little darker; pools
+// their own soft shape, darker the deeper; stones on fallen rock, a boulder on a column, a dark hole for a shaft; the
+// squares' lines faint on the floor only. The squares are the rules: a square is open or rock as the server says, the
+// soft edge is the picture.
 function MapUnderGrid({ v, px }) {
   const cols = Number(v.cols) || 12, rows = Number(v.rows) || 12, wide = cols * 100, high = rows * 100;
   const sq = v.under && Array.isArray(v.under.squares) ? v.under.squares : [];
-  const open = {};
-  sq.forEach(s => { if (Array.isArray(s)) open[`${s[0]},${s[1]}`] = s; });
-  const edges = [];
-  sq.forEach(s => {
-    if (!Array.isArray(s)) return;
-    const [i, j] = s, x = i * 100, y = j * 100;
-    if (!open[`${i},${j - 1}`]) edges.push(`M${x} ${y}H${x + 100}`);
-    if (!open[`${i},${j + 1}`]) edges.push(`M${x} ${y + 100}H${x + 100}`);
-    if (!open[`${i - 1},${j}`]) edges.push(`M${x} ${y}V${y + 100}`);
-    if (!open[`${i + 1},${j}`]) edges.push(`M${x + 100} ${y}V${y + 100}`);
-  });
+  const m = /^(\d+)-(\d+)-(\d+)$/.exec(v.view || "");
+  const lvl = Number(v.level) || 7, x0 = m ? Number(m[2]) * cols : 0, y0 = m ? Number(m[3]) * rows : 0;
+  const id = `rpg-under-${v.view || "grid"}`;
+  const drawn = useMemo(() => {
+    const at = {};
+    sq.forEach(s => { if (Array.isArray(s)) at[`${s[0]},${s[1]}`] = s; });
+    const wob = { lvl, x0, y0 };
+    // the floor runs one ring past the grid where the squares at the edge are open, so a tunnel runs off the map
+    const open = (i, j) => !!at[`${Math.min(Math.max(i, 0), cols - 1)},${Math.min(Math.max(j, 0), rows - 1)}`];
+    const floor = sq.length ? mapOutline(cols, rows, open, 100, 0.35, wob) : "";
+    const pool = sq.some(s => s[2] === "pool") ? mapOutline(cols, rows, (i, j) => { const s = at[`${i},${j}`]; return !!s && s[2] === "pool"; }, 100, 0.45, wob) : "";
+    const lines = [];
+    for (let i = 1; i < cols; i++) lines.push(mapLine([[i * 100, 0], [i * 100, high]]));
+    for (let j = 1; j < rows; j++) lines.push(mapLine([[0, j * 100], [wide, j * 100]]));
+    // harder floor darker, in soft patches as on the surface (mapHardShade): its percent of time, +400% the darkest
+    const shade = mapHardShade(cols, rows, (i, j) => { const s = at[`${i},${j}`]; return s && (s[2] === "floor" || s[2] === "rubble") ? Math.min(Number(s[3]) || 0, 400) / 40 : null; }, 100, 0.45, "#1F1812", wob);
+    // a pool darker the deeper, in soft patches: 0.9 m the darkest
+    const deep = mapHardShade(cols, rows, (i, j) => { const s = at[`${i},${j}`]; return s && s[2] === "pool" ? Math.min(Number(s[4]) || 0, 1) * 10 : null; }, 100, 0.45, "#1E4B66", wob);
+    return { at, floor, pool, shade, deep, grid: lines.join(""), flecks: mapUnderFlecks(wide, high, px, lvl, x0, y0) };
+  }, [v, px]);
   return (
     <svg viewBox={`0 0 ${wide} ${high}`} preserveAspectRatio="none" aria-hidden="true"
       style={{ position: "absolute", left: 16, top: 16, width: "calc(100% - 16px)", height: "calc(100% - 16px)", borderRadius: 4, pointerEvents: "none", display: "block", overflow: "hidden" }}>
-      <rect x="0" y="0" width={wide} height={high} fill={MAP_UNDER_ROCK} opacity={0.94} />
+      <defs><clipPath id={id}><path d={drawn.floor} /></clipPath></defs>
+      <rect x="0" y="0" width={wide} height={high} fill={MAP_UNDER_ROCK} />
+      {drawn.flecks.map((f, n) => <circle key={`f${n}`} cx={mapNum(f.x)} cy={mapNum(f.y)} r={mapNum(f.r)} fill={f.light ? "#4A3F36" : "#1C1713"} />)}
+      {drawn.floor && <path d={drawn.floor} fill="none" stroke={MAP_UNDER_WALL} strokeWidth={22} strokeLinejoin="round" />}
+      {drawn.floor && <path d={drawn.floor} fill={MAP_UNDER_PART.floor.fill} />}
+      <g clipPath={`url(#${id})`}>
+        {drawn.shade.map((l, n) => <path key={`s${n}`} d={l.d} fill={l.fill} opacity={l.o * 1.6} />)}
+        {drawn.pool && <path d={drawn.pool} fill={MAP_UNDER_PART.pool.fill} stroke="#4C7F9A" strokeWidth={6} />}
+        {drawn.deep.map((l, n) => <path key={`p${n}`} d={l.d} fill={l.fill} opacity={l.o * 2} />)}
+        <path d={drawn.floor} fill="none" stroke="#000" strokeOpacity={0.35} strokeWidth={46} strokeLinejoin="round" />
+        <path d={drawn.grid} fill="none" stroke="#000" strokeOpacity={0.12} strokeWidth={Math.max(1, 1 / px)} />
+      </g>
       {sq.map((s, n) => {
         if (!Array.isArray(s)) return null;
-        const [i, j, part, pct, water] = s, x = i * 100, y = j * 100, look = MAP_UNDER_PART[part] || MAP_UNDER_PART.floor;
-        // harder floor a little darker, as on the surface
-        const shade = part === "floor" ? Math.min(Number(pct) || 0, 400) / 400 * 0.28 : 0;
-        return (
-          <g key={n}>
-            <rect x={x} y={y} width="100" height="100" fill={look.fill} />
-            {shade > 0 && <rect x={x} y={y} width="100" height="100" fill="#1F1812" opacity={shade} />}
-            {part === "pool" && <rect x={x} y={y} width="100" height="100" fill="#1E4B66" opacity={Math.min(Number(water) || 0, 1) * 0.5} />}
-            {part === "rubble" && [[24, 30, 16], [64, 26, 12], [44, 64, 18], [78, 70, 10], [18, 76, 9]].map(([a, b, r], k) => (
-              <circle key={k} cx={x + a} cy={y + b} r={r} fill="#6F6150" stroke="#3E352C" strokeWidth={3} />
-            ))}
-            {part === "column" && <circle cx={x + 50} cy={y + 50} r={34} fill="#5B5149" stroke="#26201B" strokeWidth={6} />}
-            {part === "shaft" && <circle cx={x + 50} cy={y + 50} r={30} fill="none" stroke="#1C171A" strokeWidth={10} strokeDasharray="10 8" />}
-          </g>
-        );
+        const [i, j, part] = s, x = i * 100, y = j * 100, r = (k) => mapRand(lvl, x0 + i, y0 + j, k);
+        if (part === "rubble") return <g key={`r${n}`}>{[0, 1, 2, 3, 4].map(k => <circle key={k} cx={x + 15 + 70 * r(710 + k)} cy={y + 15 + 70 * r(720 + k)} r={7 + 11 * r(730 + k)} fill="#6F6150" stroke="#3E352C" strokeWidth={3} />)}</g>;
+        if (part === "column") return <path key={`c${n}`} d={mapStar(x + 50, y + 50, 40, 10, 0.86, r)} fill="#5B5149" stroke={MAP_UNDER_WALL} strokeWidth={6} />;
+        if (part === "shaft") return <circle key={`h${n}`} cx={x + 50} cy={y + 50} r={36} fill="#050403" stroke="#3A322B" strokeWidth={6} />;
+        return null;
       })}
-      <path d={edges.join("")} fill="none" stroke="#120E0B" strokeWidth={Math.max(6, 2.2 / px)} strokeLinecap="square" />
     </svg>
   );
 }
@@ -2562,7 +2666,8 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
   // the place cards and the villages, towns and cities (rpg_map_view: towns), by id: cells name both the same way
   const towns = Array.isArray(v.towns) ? v.towns : [];
   const byId = useMemo(() => { const all = {}; (Array.isArray(v.places) ? v.places : []).concat(Array.isArray(v.towns) ? v.towns : [], Array.isArray(v.landmarks) ? v.landmarks : []).forEach(p => { all[p.id] = p; }); return all; }, [v]);
-  const art = useMemo(() => (top ? mapBattle : mapFantasy)(v, byId), [v, byId, top]);
+  // the land is not drawn while the Underground switch shows the world under the ground in its place (step 14a)
+  const art = useMemo(() => (under && hasUnder ? null : (top ? mapBattle : mapFantasy)(v, byId)), [v, byId, top, under, hasUnder]);
   // how many screen pixels one unit of the drawing takes (a cell is 100 units)
   const px = width > 16 ? (width - 16) / (cols * 100) : 1;
   const ground = (k) => { const g = grounds[k]; return g && typeof g === "object" ? [g.name, g.penalty].filter(Boolean).join(" · ") : String(g || k); };
@@ -2651,7 +2756,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
       </div>
       <div ref={boxRef} style={{ width: `min(100%, max(340px, calc((100dvh - 300px) * ${cols / (Number(v.rows) || 12)} + 16px)))`, margin: "0 auto", userSelect: "none" }}>
         <div style={{ position: "relative", display: "grid", gridTemplateColumns: `16px repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: "16px" }}>
-          <MapArt art={art} px={px} />
+          {art && <MapArt art={art} px={px} />}
           {under && hasUnder && (top ? <MapUnderGrid v={v} px={px} /> : <MapUnder v={v} px={px} />)}
           {grid}
           {tokens}
@@ -2676,17 +2781,14 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
           </span>
         ))}
         {landKinds.length > 0 && <span>Landmarks are seen from far off: a keep 100 feet tall from about 13 miles. The list beside the map says how far for each.</span>}
-        {under && hasUnder && ["deep", "cave", "own", "join"].filter(k => underLines.some(l => l[0] === k || (k === "join" && l[0] === "delve"))).map(k => (
+        {under && hasUnder && !top && ["deep", "cave", "own", "join"].filter(k => underLines.some(l => l[0] === k || (k === "join" && l[0] === "delve"))).map(k => (
           <span key={`u${k}`} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <svg width="22" height="10" aria-hidden="true"><path d="M1 5H21" stroke={MAP_UNDER[k].line} strokeWidth={Math.min(MAP_UNDER[k].w, 3)} strokeDasharray={MAP_UNDER[k].dash} /></svg>
-            {({ deep: "The Deeps: 13,000 to 26,000 feet below the sea, a great hall about every 86 miles; most halls join one network round the world, under the seas too.",
-               cave: "Cave country: chambers 100 to 9,800 feet down, about one every 2.4 miles where the rock holds caves (3 in 10 of the land).",
-               own: "A cave or mine's own passage, from its mouth into the hill: a great cave up to 3 miles long, mine workings down a shaft up to 13,000 feet.",
-               join: "Dashed: a cave or mine that breaks into cave country or down into the Deeps." })[k]}
+            <svg width="24" height="12" aria-hidden="true"><rect width="24" height="12" rx="2" fill={MAP_UNDER_ROCK} /><path d="M2 6H22" stroke={MAP_UNDER_WALL} strokeWidth="7" strokeLinecap="round" /><path d="M2 6H22" stroke={MAP_UNDER[k].floor} strokeWidth={k === "join" ? 2.5 : 4.5} strokeLinecap="round" /></svg>
+            {MAP_UNDER[k].words}
           </span>
         ))}
-        {under && underLines.some(l => l[0] === "shaft") && <span>A ring: a shaft from a great hall up into the cave country over it.</span>}
-        {under && hasUnder && !top && <span>Edged pale blue: the passage runs under the sea or a lake.</span>}
+        {under && hasUnder && !top && underLines.some(l => l[0] === "shaft") && <span>A dark hole: a shaft from a great hall up into the cave country over it.</span>}
+        {under && hasUnder && !top && cells.some(c => c.kind === "sea") && <span>Dashed: the coast above.</span>}
         {under && top && underSquares.length > 0 && (
           <>
             <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
