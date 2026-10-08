@@ -75,7 +75,7 @@ function useProducerROI() {
 
         const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes, aippRes, aippTrackRes, lapseRes] = await Promise.all([
           supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, rates_are_defaults").eq("id", AGENCY_ID).maybeSingle(),
-          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, annual_benefits_value, weekly_life_benefit_agency_paid, weekly_health_benefit_agency_paid, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, authorized, license_states, compliance_flag, nickname, is_admin_backoffice, photo_storage_path, signature_title, nmls_number, credentials_line, address_line1, address_line2, city, state, zip_code, license_number, languages, born_raised, moved_here, started_industry, biggest_impact, why_statement, need_to_make, want_to_make, motivator_ranking, gift_card, fun_relax, fav_restaurant, fav_lunch, fav_snack, fav_beverage, shirt_size, shoe_size, fav_color, travel_spots").eq("agency_id", AGENCY_ID),
+          supabase.from("team").select("id, user_id, first_name, last_name, role, role_category, role_level, category, archived_at, start_date, pay_rate, pay_type, pay_frequency, annual_benefits_value, weekly_life_benefit_agency_paid, weekly_health_benefit_agency_paid, employment_type, is_active, email_personal, phone_personal, sf_alias, account_alpha, email_sf, phone_extension, notes, license_pc, license_lh, license_ips, authorized, license_states, compliance_flag, nickname, is_admin_backoffice, photo_storage_path, signature_title, nmls_number, credentials_line, address_line1, address_line2, city, state, zip_code, license_number, languages, born_raised, moved_here, started_industry, biggest_impact, why_statement, need_to_make, want_to_make, motivator_ranking, gift_card, fun_relax, fav_restaurant, fav_lunch, fav_snack, fav_beverage, shirt_size, travel_spots, local_trip_ideas").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("team_member_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("team_member_id, gross_pay, payroll_run_id").eq("business_entity_id", BUSINESS_ENTITY_ID),
           supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("business_entity_id", BUSINESS_ENTITY_ID).order("pay_date",{ascending:false}).limit(24),
@@ -2257,10 +2257,12 @@ const StaffDirectory = ({ staff }) => {
                     .sort((a, b) => Number(a[1]) - Number(b[1]))
                     .map(([k, v]) => v + ". " + (MOTIVATOR_LABEL[k] || k)).join("   ");
                   const travel = Array.isArray(member.travel_spots) ? member.travel_spots.map((t, i) => (i + 1) + ". " + t).join("   ") : "";
+                  const localTrips = Array.isArray(member.local_trip_ideas) ? member.local_trip_ideas.map((t, i) => (i + 1) + ". " + t).join("   ") : "";
                   const items = [
                     { label:"Needs to make", value:money(member.need_to_make) },
                     { label:"Wants to make", value:money(member.want_to_make) },
                     { label:"Motivated by", value:ranked, wide:true },
+                    { label:"Local trips", value:localTrips, wide:true },
                     { label:"Where they want to go", value:travel, wide:true },
                     { label:"Born and raised", value:member.born_raised },
                     { label:"Moved to San Antonio", value:member.moved_here },
@@ -2272,8 +2274,6 @@ const StaffDirectory = ({ staff }) => {
                     { label:"Snack", value:member.fav_snack },
                     { label:"Drink", value:member.fav_beverage },
                     { label:"Shirt size", value:member.shirt_size },
-                    { label:"Shoe size", value:member.shoe_size },
-                    { label:"Favorite color", value:member.fav_color },
                   ].filter(d => d.value);
                   const long = [
                     { label:"Their why", value:member.why_statement },

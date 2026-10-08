@@ -257,8 +257,22 @@ function CombinedForm({ data, setData, secure, setSecure, needs = {}, onBehalf =
           <Field label="Favorite snack"><Text value={data.fav_snack} onChange={set("fav_snack")} /></Field>
           <Field label="Favorite beverage"><Text value={data.fav_beverage} onChange={set("fav_beverage")} /></Field>
           <Field label="Shirt size"><Text value={data.shirt_size} onChange={set("shirt_size")} /></Field>
-          <Field label="Shoe size"><Text value={data.shoe_size} onChange={set("shoe_size")} /></Field>
-          <Field label="Favorite color"><Text value={data.fav_color} onChange={set("fav_color")} /></Field>
+        </Grid>
+      </Section>
+
+      <Section title="Three local trips you'd love"
+        note="A day trip or a weekend within a few hours of San Antonio.">
+        <Grid min={180}>
+          {[0, 1, 2].map(i => (
+            <Field key={i} label={`${i + 1}.`}>
+              <Text value={(data.local_trips || [])[i]}
+                onChange={v => {
+                  const next = [...(data.local_trips || ["", "", ""])];
+                  next[i] = v;
+                  setData({ ...data, local_trips: next });
+                }} />
+            </Field>
+          ))}
         </Grid>
       </Section>
 

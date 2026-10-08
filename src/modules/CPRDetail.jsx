@@ -5,6 +5,7 @@ import { fmtMoney as _fmtMoney, fmtMoneyR as _fmtMoneyR } from "../lib/format.js
 import { addDaysISO, currentWeekSaturdayCT } from "../lib/weeks.js";
 import { ChangeGroups, groupChangesByOwner } from "../lib/changeLog.jsx";
 import { checklistBands } from "../lib/checklist.js";
+import TripOutlook from "../components/TripOutlook.jsx";
 
 
 // Sales Points band badge colours (Peter 2026-08-28). The badge shows the
@@ -6067,34 +6068,6 @@ function PrizeCartSpinner({ mvp, prizeCart, weekDate, drawsAllotted, onClose, on
   );
 }
 
-// The viewer's own top travel spots, from their Onboarding form (Peter 2026-10-08), so
-// the Win the Quarter trip has a place in mind. Read off the viewer's own team row,
-// which only they and an admin can read; nobody else's list ever shows here.
-function MyTravelSpots({ viewerTeamMemberId }) {
-  const [spots, setSpots] = useState([]);
-  useEffect(() => {
-    let alive = true;
-    if (!supabase || !viewerTeamMemberId) { setSpots([]); return () => { alive = false; }; }
-    supabase.from("team").select("travel_spots").eq("id", viewerTeamMemberId).maybeSingle()
-      .then(({ data }) => { if (alive) setSpots(Array.isArray(data?.travel_spots) ? data.travel_spots : []); });
-    return () => { alive = false; };
-  }, [viewerTeamMemberId]);
-  if (spots.length === 0) return null;
-  return (
-    <div style={{
-      border: `1px solid ${T.slate200}`, background: T.white, borderRadius: 10,
-      padding: "10px 14px", marginBottom: 16,
-    }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: T.slate800, marginBottom: 4 }}>
-        Where you want to go
-      </div>
-      <div style={{ fontSize: 12.5, color: T.slate700, lineHeight: 1.6 }}>
-        {spots.map((t, i) => (i + 1) + ". " + t).join("   ")}
-      </div>
-    </div>
-  );
-}
-
 // Quarter Close Banner — renders only on the CPR for the LAST week of a quarter, i.e.
 // when the week being viewed IS the cycle end. Carries the quarter-close items: the
 // Win the Quarter trip result written by quarter_close_wtq, and the receipts reminder.
@@ -6836,7 +6809,8 @@ export default function CPRDetail({ weekDate, onClose = () => {}, onNavigateWeek
         team={data.team}
       />
 
-      <MyTravelSpots viewerTeamMemberId={viewerTeamMemberId} />
+      {/* The viewer's own trip money, local trips and travel spots, marked by what is in reach. */}
+      <TripOutlook teamId={viewerTeamMemberId} style={{ marginBottom: 16 }} />
 
       {/* 1. Opener */}
       <Section>

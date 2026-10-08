@@ -4,6 +4,7 @@ import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { useTabParam, TabLink } from "../lib/routing.jsx";
 import { useViewport } from "../lib/hooks.js";
 import { fmtMoney } from "../lib/format.jsx";
+import TripOutlook from "./TripOutlook.jsx";
 
 // Team > Earning Potential. Read-only. One chart: production across the
 // bottom (weekly sales points; annual life premium for the Life Specialist
@@ -918,29 +919,18 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
         )}
       </div>
 
-      {/* One person's why and travel spots, from their Onboarding form. Only the
+      {/* One person's why, from their Onboarding form, and their trip outlook. Only the
           person and an admin get these back. */}
-      {focus && (focus.why_statement || (Array.isArray(focus.travel_spots) && focus.travel_spots.length > 0)) && (
-        <div style={{ ...card, display: "grid", gap: 12 }}>
-          {focus.why_statement && (
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>
-                {focus.is_me ? "Your why" : focus.first_name + "'s why"}
-              </div>
-              <div style={{ fontSize: 13, color: T.slate700, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{focus.why_statement}</div>
-            </div>
-          )}
-          {Array.isArray(focus.travel_spots) && focus.travel_spots.length > 0 && (
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>
-                {focus.is_me ? "Where you want to go" : "Where " + focus.first_name + " wants to go"}
-              </div>
-              <div style={{ fontSize: 13, color: T.slate700, lineHeight: 1.6 }}>
-                {focus.travel_spots.map((t, i) => <div key={i}>{(i + 1) + ". " + t}</div>)}
-              </div>
-            </div>
-          )}
+      {focus && focus.why_statement && (
+        <div style={card}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>
+            {focus.is_me ? "Your why" : focus.first_name + "'s why"}
+          </div>
+          <div style={{ fontSize: 13, color: T.slate700, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{focus.why_statement}</div>
         </div>
+      )}
+      {focus && focus.mine && focus.team_member_id && (
+        <TripOutlook teamId={focus.team_member_id} isMe={!!focus.is_me} firstName={focus.first_name} />
       )}
 
       {/* Sales and Retention: first-year path to $100k. Both curves read the same pay-scale rows
