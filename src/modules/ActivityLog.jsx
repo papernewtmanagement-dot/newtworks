@@ -5117,10 +5117,48 @@ function LiveTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, n
 // Canceled tab is gone: No keeps today's entry page, Yes drops the
 // cancelation search in its place, same code as before, no popup.
 // =====================================================================
+// Still open (Peter 2026-10-08: on the dashboard, not by email). One line per miss, only the
+// person missing it sees it, and a line goes away once it is done. Peter and Marie see everyone's.
+// The list is rp_retention_miss_lines, read through rp_my_open_items.
+function StillOpen({ isAdmin, refreshKey }) {
+  const [rows, setRows] = useState([]);
+  const [open, setOpen] = useState(!isAdmin);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data, error } = await supabase.rpc("rp_my_open_items");
+      if (alive) setRows(!error && Array.isArray(data) ? data : []);
+    })();
+    return () => { alive = false; };
+  }, [refreshKey]);
+  if (!rows.length) return null;
+  const people = [];
+  for (const r of rows) {
+    let p = people.find(x => x.id === r.team_member_id);
+    if (!p) { p = { id: r.team_member_id, name: r.first_name, lines: [] }; people.push(p); }
+    p.lines.push(r.line_text);
+  }
+  return (
+    <div style={{ ...cardStyle, padding: "12px 16px", borderLeft: `4px solid ${T.amber}` }}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+              style={{ all: "unset", cursor: "pointer", fontSize: 13, fontWeight: 700, color: T.slate900 }}>
+        Still open ({rows.length}) {open ? "▾" : "▸"}
+      </button>
+      {open && people.map(p => (
+        <div key={p.id} style={{ marginTop: 8 }}>
+          {isAdmin && <div style={{ fontSize: 12, fontWeight: 700, color: T.slate600 }}>{p.name}</div>}
+          {p.lines.map((t, i) => <div key={i} style={{ fontSize: 13, color: T.slate800, padding: "2px 0 2px 10px" }}>• {t}</div>)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function LogTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, onLogged, refreshKey }) {
   const [canceling, setCanceling] = useState(false);
   return (
     <div style={{ display: "grid", gap: 16 }}>
+      <StillOpen isAdmin={isAdmin} refreshKey={refreshKey} />
       <div style={{ ...cardStyle, padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: T.slate900 }}>Canceling something?</span>
         <div style={chipRow}>
