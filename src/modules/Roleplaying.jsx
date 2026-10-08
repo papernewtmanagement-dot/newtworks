@@ -2512,6 +2512,37 @@ function MapsTab({ isParent, onError, onFight }) {
   const [note, setNote] = useState(null);
   // what a tap on a cell does: open the grid inside it (null), walk the piece whose turn it is, or place a piece
   const [mode, setMode] = useState(null);
+  // Full screen, the same as the Gridstrike computer version: the map fills the window under a bar with an Exit
+  // button, so there is always a visible way out (an iPhone or iPad has no Escape key). Where the browser allows it,
+  // its own full screen is used too, to hide the address bar; leaving that with Escape also closes the view. The
+  // same box is restyled, never remounted, so the grid and the journey stay as they are going in and out.
+  const bigRef = useRef(null);
+  const [big, setBig] = useState(false);
+  const openBig = () => {
+    setBig(true);
+    try {
+      const p = bigRef.current?.requestFullscreen?.();
+      if (p?.catch) p.catch(() => {});
+    } catch { /* the window-filling view works without it */ }
+  };
+  const closeBig = () => {
+    setBig(false);
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  };
+  useEffect(() => {
+    if (!big) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") setBig(false); };
+    const onFs = () => { if (!document.fullscreenElement) setBig(false); };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("fullscreenchange", onFs);
+    const before = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("fullscreenchange", onFs);
+      document.body.style.overflow = before;
+    };
+  }, [big]);
   useEffect(() => {
     let alive = true;
     const key = at || "";
@@ -2552,6 +2583,19 @@ function MapsTab({ isParent, onError, onFight }) {
   } : null;
   const journey = v ? <MapJourney j={j} busy={busy} note={note} mode={live ? mode : null} setMode={setMode} act={act} atHref={atHref} setAt={setAt} onFight={onFight} isParent={isParent} /> : null;
   return (
+    <div ref={bigRef} style={big ? { position: "fixed", inset: 0, zIndex: 9999, background: T.white, display: "flex", flexDirection: "column" } : undefined}>
+    {big ? (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 10px",
+        borderBottom: `1px solid ${T.slate200}`, background: T.slate50, flex: "0 0 auto" }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: T.slate800 }}>World map</span>
+        <button type="button" onClick={closeBig} style={btn("primary")}>Exit full screen</button>
+      </div>
+    ) : (
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+        <button type="button" onClick={openBig} style={btn("primary")}>Full screen</button>
+      </div>
+    )}
+    <div style={big ? { flex: "1 1 auto", minHeight: 0, overflow: "auto", padding: 12, boxSizing: "border-box" } : undefined}>
     <div ref={rootRef} style={{ display: "grid", gridTemplateColumns: wide ? `${MAP_SIDE}px minmax(0, 1fr)` : "minmax(0, 1fr)", gap: 12, alignItems: "start" }}>
       {!v ? <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div> : wide ? (
         <>
@@ -2565,6 +2609,8 @@ function MapsTab({ isParent, onError, onFight }) {
           <MapSide v={v} atHref={atHref} setAt={setAt} order={2} />
         </>
       )}
+    </div>
+    </div>
     </div>
   );
 }
