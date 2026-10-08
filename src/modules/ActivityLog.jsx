@@ -110,10 +110,10 @@ const SERVICE_PREFIX = "service_task";
 // RELATIONSHIPS and REVIEW_SITES are the Log's own choices, in src/lib/logChoices.js.
 // Peter 2026-10-03: a policy review names the policy reviewed (line, and type where
 // the line has types); a pivot names the line it pivoted to.
-const LINE_REQUIRED = { policy_review: "type", pivot: "type" };   // Peter 2026-10-05: a pivot names its product too
+const LINE_REQUIRED = { policy_review: "type", pivot: "type", claims_touch: "type" };   // Peter 2026-10-05: a pivot names its product too; 2026-10-08: a Claims Touch names the policy the claim is on
 // Peter 2026-10-03: service work is for a customer already on the books, so any of
 // these sets the relationship to Existing. Not autopay: it can ride on a new sale.
-const EXISTING_ONLY = new Set(["pivot", "policy_review", "service_task", "service_task_company",
+const EXISTING_ONLY = new Set(["pivot", "policy_review", "claims_touch", "service_task", "service_task_company",
   "service_task_coi", "cancelation_saved"]);
 const TABS = ["live", "log", "checklist", "hours", "deposits", "week", "issued", "development", "changes", "spotcheck", "backfill", "history", "billing"];
 // Earnings tab: whole team again (Peter 2026-10-05, evening). Inside the tab the Retention and
@@ -838,6 +838,7 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
     if (list.some(a => a.key === "cancelation_saved" && (!a.line || (needsType(a.line) && !a.type) || !(a.reason || "").trim()))) out.push("Each save needs the policy line, its type, and the reason the customer gave.");
     if (list.some(a => a.key === "policy_review") && !note.trim()) out.push("The policy review needs a note on what you covered.");
     if (list.some(a => a.key === "policy_review" && lineMissing(a))) out.push("Pick the policy reviewed.");
+    if (list.some(a => a.key === "claims_touch" && lineMissing(a))) out.push("Pick the policy the claim is on.");
     if (list.some(a => a.key === "pivot" && lineMissing(a))) out.push("The pivot needs the product it pivoted to.");
     if (list.some(a => a.key === "autopay_enrollment" && (!a.line || (needsType(a.line) && !a.type) || a.premium === "" || !(Number(a.premium) >= 0)))) out.push("Each autopay needs the policy line, type, and premium.");
     return out;
@@ -1218,8 +1219,8 @@ function EntryPage({ values, sources, types, isOwner, roster, onLogged, refreshK
           ))}
           {activities.filter(a => LINE_REQUIRED[a.key] && !a.done).map(a => (
             <div key={a.id} style={{ ...wrapRow, marginTop: 10, padding: 10, background: T.slate50, borderRadius: 8 }}>
-              <div style={{ fontWeight: 700, color: T.slate800, flex: "0 0 auto", paddingBottom: 10 }}>{a.key === "pivot" ? "Pivoted to" : "Policy reviewed"}</div>
-              {policyFields(a, a.key === "policy_review")}
+              <div style={{ fontWeight: 700, color: T.slate800, flex: "0 0 auto", paddingBottom: 10 }}>{a.key === "pivot" ? "Pivoted to" : a.key === "claims_touch" ? "Claim is on" : "Policy reviewed"}</div>
+              {policyFields(a, a.key !== "pivot")}
             </div>
           ))}
           {activities.filter(a => a.key === "cancelation_saved").map(a => (
@@ -1779,6 +1780,10 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
   // Policy Changes whose note says something came off, but not clearly a vehicle, with an added auto for the
   // same household within 30 days. Peter says swap or not (rp_vehicle_swap_review, 2026-09-26).
   const [swaps, setSwaps] = useState([]);
+  // Cancelations whose note reads like a clawback exemption (death, State Farm nonrenewal, joined another
+  // household we insure), with review or claims-touch points at stake. Nothing is exempt until Peter or
+  // Marie says so here (Peter 2026-10-08, rp_clawback_exempt_review).
+  const [exempts, setExempts] = useState([]);
   // Two views (Peter 2026-09-26): what is still to check, and what has already been checked, a day or a week
   // at a time, with the same buttons plus Undo. The view, Day or Week, and the day or week picked all live in
   // the URL, so a refresh stays put.
@@ -1814,16 +1819,18 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
     if (!isAdmin || !week || view !== "tocheck") return undefined;
     let alive = true;
     (async () => {
-      const [sample, cancels, sw] = await Promise.all([
+      const [sample, cancels, sw, ex] = await Promise.all([
         supabase.rpc("rp_spot_check_sample", { p_week_end: week, p_limit: 10 }),
         supabase.rpc("rp_cancel_word_review", { p_week_end: week }),
         supabase.rpc("rp_vehicle_swap_review"),
+        supabase.rpc("rp_clawback_exempt_review"),
       ]);
       if (!alive) return;
       if (sample.error) { setErr(errText(sample.error)); return; }
       if (cancels.error) { setErr(errText(cancels.error)); return; }
       if (sw.error) { setErr(errText(sw.error)); return; }
       setSwaps(Array.isArray(sw.data) ? sw.data : []);
+      setExempts(!ex.error && Array.isArray(ex.data) ? ex.data : []);
       const list = Array.isArray(sample.data) ? sample.data : [];
       setRows(list);
       setRemaining(list.length ? Number(list[0].remaining) : 0);
@@ -2072,6 +2079,38 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                         onClick={() => act(() => supabase.rpc("rp_vehicle_swap_decide", { p_removal_id: w.removal_id, p_product_id: w.product_id, p_swap: true }), w.removal_id)}>Swap</button>
                 <button style={btnGhost} disabled={busyId === w.removal_id}
                         onClick={() => act(() => supabase.rpc("rp_vehicle_swap_decide", { p_removal_id: w.removal_id, p_product_id: w.product_id, p_swap: false }), w.removal_id)}>Not a swap</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {view === "tocheck" && exempts.length > 0 && (
+        <div style={{ border: `1px solid ${T.amber}`, background: "#fffbeb", borderRadius: 10, padding: 12, marginBottom: 14 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>
+            {exempts.length === 1 ? "A cancelation might not take review points back" : `${exempts.length} cancelations might not take review points back`}
+          </div>
+          <div style={{ fontSize: 12, color: T.slate600, marginBottom: 6 }}>
+            The note reads like a death, a State Farm nonrenewal, or joining another household we insure. Until you confirm it, the points still come off.
+          </div>
+          {exempts.map(x => (
+            <div key={x.cancelation_id} style={{ padding: "10px 0", borderTop: `1px solid ${T.slate100}` }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>
+                {x.customer_label} · {typeLabel(types, x.policy_line, x.product_type) || PRODUCT_LABEL[x.policy_line] || x.policy_line}
+                <span style={{ color: T.slate500, fontWeight: 400 }}> canceled {fmtDate(x.canceled_on)}</span>
+              </div>
+              <div style={{ fontSize: 13, color: T.slate800, marginTop: 2 }}>“{x.note || ""}” <span style={{ color: T.slate500 }}>{x.logged_by || ""}</span></div>
+              <div style={{ fontSize: 13, color: T.slate800, marginTop: 2 }}>
+                {fmtPts(x.points_at_stake)} points at stake: {(x.touches || []).map(t => `${t.activity_key === "claims_touch" ? "Claims Touch" : "Policy Review"} ${fmtDate(t.touch_on)} (${t.who || "—"})`).join(", ")}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 6 }}>
+                {x.ecrm_url && <a href={x.ecrm_url} target="ecrm" rel="noreferrer" style={{ color: T.blue, fontSize: 13, marginRight: 6 }}>ECRM</a>}
+                {[["death", "Death"], ["nonrenewal", "State Farm nonrenewal"], ["joined_household", "Joined a household we insure"]].map(([k, lbl]) => (
+                  <button key={k} style={{ ...btnGhost, color: x.exempt_guess === k ? T.green : T.slate700, fontWeight: x.exempt_guess === k ? 700 : 400 }}
+                          disabled={busyId === x.cancelation_id}
+                          onClick={() => act(() => supabase.rpc("rp_clawback_exempt_decide", { p_id: x.cancelation_id, p_reason: k }), x.cancelation_id)}>{lbl}</button>
+                ))}
+                <button style={{ ...btnGhost, color: T.red }} disabled={busyId === x.cancelation_id}
+                        onClick={() => act(() => supabase.rpc("rp_clawback_exempt_decide", { p_id: x.cancelation_id, p_reason: "none" }), x.cancelation_id)}>Not exempt</button>
               </div>
             </div>
           ))}
@@ -4719,7 +4758,7 @@ function liveRecorded(rec, values, types) {
   for (const a of rec.activities || []) {
     if (a.key === "pivot") out.push(`Pivot to ${typeLabel(types, a.line, a.type) || PRODUCT_LABEL[a.line] || a.line}`);
     else if (a.key === "google_review") out.push(`${label(a.key)} · ${reviewSiteLabel(a.site)}`);
-    else if (a.key === "policy_review") out.push(`${label(a.key)} · ${PRODUCT_LABEL[a.line] || a.line}`);
+    else if (a.key === "policy_review" || a.key === "claims_touch") out.push(`${label(a.key)} · ${PRODUCT_LABEL[a.line] || a.line}`);
     else out.push(label(a.key));
   }
   for (const p of rec.policies || []) {
@@ -5590,8 +5629,82 @@ function CustomerAccount({ token, values, sources, types, isOwner, roster, onLog
 // still where History opens. Admin-only sub-tabs show plum and sit last.
 // =====================================================================
 const KIND_SUBTABS = CHANGE_KINDS.map(k => k.key);
-const HISTORY_SUBTABS = [...KIND_SUBTABS, "history", "spotcheck", "backfill"];
+const HISTORY_SUBTABS = [...KIND_SUBTABS, "history", "spotcheck", "backfill", "lookback"];
 const MOVED_UNDER_HISTORY = ["changes", "spotcheck", "backfill"];
+// Lookback (Peter 2026-10-08): every cancelation in the range with who sold it, every touch on the
+// household since the sale, and the cause sorted from the note (price, moved, replaced, sold item,
+// service, claim, none given) for analysis. Peter and Marie only (rp_cancel_lookback). No reason
+// field on the form: the cause comes from the note.
+const CAUSES = ["price", "moved", "replaced", "sold item", "service", "claim", "none given"];
+function CancelLookback({ types }) {
+  const [from, setFrom] = useState(addDays(todayCentral(), -90));
+  const [to, setTo] = useState(todayCentral());
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const [cause, setCause] = useState("");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data, error } = await supabase.rpc("rp_cancel_lookback", { p_from: from, p_to: to });
+      if (!alive) return;
+      if (error) { setErr(errText(error)); setRows([]); return; }
+      setErr(""); setRows(Array.isArray(data) ? data : []);
+    })();
+    return () => { alive = false; };
+  }, [from, to]);
+  const list = (rows || []).filter(r => !cause || r.cause === cause);
+  const counts = CAUSES.map(c => [c, (rows || []).filter(r => r.cause === c).length]).filter(([, n]) => n > 0);
+  return (
+    <div style={cardStyle}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Lookback</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+          <input type="date" style={{ ...inputBase, width: "auto" }} value={from} onChange={e => e.target.value && setFrom(e.target.value)} />
+          <span style={{ color: T.slate500 }}>to</span>
+          <input type="date" style={{ ...inputBase, width: "auto" }} value={to} onChange={e => e.target.value && setTo(e.target.value)} />
+        </div>
+      </div>
+      <div style={{ fontSize: 12, color: T.slate500, marginBottom: 10 }}>
+        Each cancelation, who sold it, and everything done for the household since. The cause is read from the note.
+      </div>
+      {counts.length > 0 && (
+        <div style={{ ...chipRow, marginBottom: 10 }}>
+          <span style={chip(!cause)} onClick={() => setCause("")}>All {rows.length}</span>
+          {counts.map(([c, n]) => <span key={c} style={chip(cause === c)} onClick={() => setCause(cause === c ? "" : c)}>{c} {n}</span>)}
+        </div>
+      )}
+      {err && <Notice kind="error">{err}</Notice>}
+      {rows === null ? <div style={{ color: T.slate500, fontSize: 13 }}>Loading…</div>
+        : list.length === 0 ? <div style={{ color: T.slate500, fontSize: 13 }}>No cancelations in this range.</div>
+        : list.map(r => (
+          <div key={r.cancelation_id} style={{ padding: "10px 0", borderTop: `1px solid ${T.slate100}` }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>
+              {r.ecrm_url ? <a href={r.ecrm_url} target="ecrm" rel="noreferrer" style={{ color: T.blue }}>{r.customer_label}</a> : r.customer_label}
+              {" · "}{typeLabel(types, r.policy_line, r.product_type) || PRODUCT_LABEL[r.policy_line] || r.policy_line}
+              <span style={{ color: T.slate500, fontWeight: 400 }}> canceled {fmtDate(r.canceled_on)}</span>
+            </div>
+            <div style={{ fontSize: 13, color: T.slate700, marginTop: 2 }}>
+              Cause: <b>{r.cause}</b>{r.is_replacement ? " (our own replacement)" : ""}
+              {" · "}Sold {r.sold_on ? `${fmtDate(r.sold_on)} by ${r.sold_by || "—"}` : "before our logs"}
+              {" · "}Logged by {r.logged_by || "—"}
+              {Number(r.clawback_points) > 0 ? <span style={{ color: T.red }}> · {fmtPts(r.clawback_points)} points taken back</span> : null}
+            </div>
+            {r.note ? <div style={{ fontSize: 13, color: T.slate600, marginTop: 2 }}>“{r.note}”</div> : null}
+            <div style={{ marginTop: 4 }}>
+              {(r.touches || []).length === 0
+                ? <div style={{ fontSize: 12, color: T.slate500 }}>Nothing logged on this household since the sale.</div>
+                : (r.touches || []).map((t, i) => (
+                  <div key={i} style={{ fontSize: 12, color: t.this_policy ? T.slate800 : T.slate500, paddingLeft: 10 }}>
+                    {fmtDate(t.on)} · {t.label} · {t.who || "—"}{Number(t.points) ? ` · ${fmtPts(t.points)} pts` : ""}{t.this_policy ? "" : " (other policy)"}
+                  </div>
+                ))}
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
 function HistoryGroup({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, refreshKey, onChanged }) {
   const [sub, setSub, subHref] = useTabParam("htab", "history", [...HISTORY_SUBTABS, "changes"]);
   // Each kind's count for the week or list on screen, sent up by ChangesTab.
@@ -5602,6 +5715,7 @@ function HistoryGroup({ values, sources, types, isOwner, isAdmin, myTeamId, rost
     { id: "history", label: "History" },
     { id: "spotcheck", label: "Spot-check", adminOnly: true },  // monthly check of self-logged entries, owner and managers only (Peter 2026-09-16)
     { id: "backfill", label: "Backfill", adminOnly: true },  // gaps on older records: phone, marketing source, ECRM link (Peter 2026-09-17)
+    { id: "lookback", label: "Lookback", adminOnly: true },  // each cancelation: who sold it, every touch since, cause from the note (Peter 2026-10-08)
   ], isAdmin);
   const want = sub === "changes" ? KIND_SUBTABS[0] : sub;
   const cur = subs.some(s => s.id === want) ? want : "history";
@@ -5627,6 +5741,7 @@ function HistoryGroup({ values, sources, types, isOwner, isAdmin, myTeamId, rost
       {cur === "spotcheck" && isAdmin && <SpotCheck isAdmin={isAdmin} values={values} sources={sources}
         types={types} isOwner={isOwner} roster={roster} />}
       {cur === "backfill" && isAdmin && <BackfillTab sources={sources} roster={roster} types={types} />}
+      {cur === "lookback" && isAdmin && <CancelLookback types={types} />}
     </div>
   );
 }
