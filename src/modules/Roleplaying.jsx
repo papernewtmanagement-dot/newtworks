@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 import { T } from "../lib/theme.js";
 import { useViewport, useElementWidth } from "../lib/hooks.js";
@@ -2655,11 +2656,16 @@ function MapsTab({ isParent, onError, onFight }) {
   // Full screen, the same as the Gridstrike computer version: the map fills the window under a bar with an Exit
   // button, so there is always a visible way out (an iPhone or iPad has no Escape key). Where the browser allows it,
   // its own full screen is used too, to hide the address bar; leaving that with Escape also closes the view. The
-  // same box is restyled, never remounted, so the grid and the journey stay as they are going in and out.
+  // same box is restyled, so the grid open and the journey stay as they are going in and out.
   const bigRef = useRef(null);
   const [big, setBig] = useState(false);
+  // (Peter 2026-10-07 22:51) full screen starts with the map alone: the journey, the lists and the key wait in a panel
+  // that slides over from the side at a tap, and stays open while a piece is walked on the map beside it
+  const [panel, setPanel] = useState(false);
+  const [keyEl, setKeyEl] = useState(null);
   const openBig = () => {
     setBig(true);
+    setPanel(false);
     try {
       const p = bigRef.current?.requestFullscreen?.();
       if (p?.catch) p.catch(() => {});
@@ -2725,12 +2731,13 @@ function MapsTab({ isParent, onError, onFight }) {
     else act("rpg_place", { p_participant_id: mode.id, p_x: c.to[0], p_y: c.to[1] });
   } : null;
   const journey = v ? <MapJourney j={j} busy={busy} note={note} mode={live ? mode : null} setMode={setMode} act={act} atHref={atHref} setAt={setAt} onFight={onFight} isParent={isParent} /> : null;
+  const fsBar = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 10px",
+    borderBottom: `1px solid ${T.slate200}`, background: T.slate50, flex: "0 0 auto" };
   return (
     <div ref={bigRef} style={big ? { position: "fixed", inset: 0, zIndex: 9999, background: T.white, display: "flex", flexDirection: "column" } : undefined}>
     {big ? (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 10px",
-        borderBottom: `1px solid ${T.slate200}`, background: T.slate50, flex: "0 0 auto" }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: T.slate800 }}>World map</span>
+      <div style={fsBar}>
+        <button type="button" onClick={() => setPanel(o => !o)} aria-expanded={panel} style={btn(panel ? "primary" : "soft")}>{panel ? "Hide journey and key" : "Journey and key"}</button>
         <button type="button" onClick={closeBig} style={btn("primary")}>Exit full screen</button>
       </div>
     ) : (
@@ -2738,7 +2745,28 @@ function MapsTab({ isParent, onError, onFight }) {
         <button type="button" onClick={openBig} style={btn("primary")}>Full screen</button>
       </div>
     )}
-    <div style={big ? { flex: "1 1 auto", minHeight: 0, overflow: "auto", padding: 12, boxSizing: "border-box" } : undefined}>
+    {big ? (
+      <div style={{ flex: "1 1 auto", minHeight: 0, position: "relative" }}>
+        <div style={{ position: "absolute", inset: 0, overflow: "auto", padding: 12, boxSizing: "border-box" }}>
+          <div ref={rootRef}>
+            {!v ? <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div>
+              : <MapGrid v={v} atHref={atHref} setAt={setAt} journey={j} onCell={onCell} big keyEl={keyEl} />}
+          </div>
+        </div>
+        {/* the side panel: kept in place while closed (slid out of sight) so the key drawn into it stays current */}
+        <div aria-hidden={!panel} style={{ position: "absolute", top: 0, bottom: 0, left: 0, width: `min(${MAP_SIDE + 60}px, 88vw)`, overflow: "auto",
+          padding: 12, boxSizing: "border-box", background: T.white, borderRight: `1px solid ${T.slate200}`, boxShadow: panel ? "4px 0 16px rgba(0,0,0,.18)" : "none",
+          transform: panel ? "translateX(0)" : "translateX(-105%)", visibility: panel ? "visible" : "hidden", transition: "transform .2s ease, visibility .2s", zIndex: 5 }}>
+          {v && (
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
+              {journey}
+              <MapSide v={v} atHref={atHref} setAt={setAt} order={0} />
+              <div style={card}><div style={{ ...label, marginBottom: 8 }}>Key</div><div ref={setKeyEl} /></div>
+            </div>
+          )}
+        </div>
+      </div>
+    ) : (
     <div ref={rootRef} style={{ display: "grid", gridTemplateColumns: wide ? `${MAP_SIDE}px minmax(0, 1fr)` : "minmax(0, 1fr)", gap: 12, alignItems: "start" }}>
       {!v ? <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div> : wide ? (
         <>
@@ -2753,7 +2781,7 @@ function MapsTab({ isParent, onError, onFight }) {
         </>
       )}
     </div>
-    </div>
+    )}
     </div>
   );
 }
@@ -2763,13 +2791,12 @@ function MapsTab({ isParent, onError, onFight }) {
 function MapJourney({ j, busy, note, mode, setMode, act, atHref, setAt, onFight, isParent }) {
   const [pick, setPick] = useState("");
   if (!j) {
-    return (
-      <div style={{ ...card, marginBottom: 12 }}>
-        <div style={label}>Journey</div>
-        <div style={{ fontSize: 13, color: T.slate600, margin: "6px 0 10px" }}>{isParent ? "Walk the group across the map, one turn at a time." : "No journey yet. The game master starts one."}</div>
-        {isParent && <button type="button" style={btn("primary")} disabled={busy} onClick={() => act("rpg_session_new", { p_name: null, p_on_map: true })}>Start a journey</button>}
+    // (Peter 2026-10-07 22:51) just the button, nothing round it; the game master starts one, so a kid sees nothing
+    return isParent ? (
+      <div style={{ marginBottom: 12 }}>
+        <button type="button" style={btn("primary")} disabled={busy} onClick={() => act("rpg_session_new", { p_name: null, p_on_map: true })}>Start a journey</button>
       </div>
-    );
+    ) : null;
   }
   const pieces = Array.isArray(j.pieces) ? j.pieces : [];
   const join = Array.isArray(j.can_join) ? j.can_join : [];
@@ -2946,7 +2973,7 @@ function MapSide({ v, atHref, setAt, order }) {
 // The map itself. It is as wide as the space it gets, held to what the height of the screen can show whole. The
 // picture (MapArt) lies under a grid of clear cells; each cell carries its name and what is in it, and opens the
 // grid inside it. Under the map: the scale, then the key to the grounds and places drawn on this grid.
-function MapGrid({ v, atHref, setAt, journey, onCell }) {
+function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl }) {
   const boxRef = useRef(null);
   // the Underground switch (step 12d): the passages under this grid, drawn over the dimmed land
   const [under, setUnder] = useState(false);
@@ -3058,7 +3085,8 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
             style={{ ...btn(under ? "primary" : "soft", true), marginLeft: "auto" }}>Underground</button>
         )}
         {moves && (
-          <div style={{ display: "flex", gap: 4, marginLeft: hasUnder ? 0 : "auto" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: hasUnder ? 0 : "auto" }}>
+            {slides && <span style={{ fontSize: 12, fontWeight: 600, color: T.slate600, marginRight: 2 }}>Slide half a grid</span>}
             {MAP_MOVES.map(([k, t]) => (
               <TabLink key={k} href={atHref(moves[k] || null)} onSelect={() => setAt(moves[k])} disabled={!moves[k]} title={slides ? `Slide half a grid ${k}` : `The next grid ${k}`} ariaLabel={slides ? `Slide half a grid ${k}` : `The next grid ${k}`}
                 style={{ ...btn("soft", true), minWidth: 30, textAlign: "center", opacity: moves[k] ? 1 : 0.35 }}>{t}</TabLink>
@@ -3066,7 +3094,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
           </div>
         )}
       </div>
-      <div ref={boxRef} style={{ width: `min(100%, max(340px, calc((100dvh - 300px) * ${cols / (Number(v.rows) || 12)} + 16px)))`, margin: "0 auto", userSelect: "none" }}>
+      <div ref={boxRef} style={{ width: `min(100%, max(340px, calc((100dvh - ${big ? 150 : 300}px) * ${cols / (Number(v.rows) || 12)} + 16px)))`, margin: "0 auto", userSelect: "none" }}>
         <div style={{ position: "relative", display: "grid", gridTemplateColumns: `16px repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: "16px" }}>
           {art && <MapArt art={art} px={px} />}
           {under && hasUnder && (top ? <MapUnderGrid v={v} px={px} /> : <MapUnder v={v} px={px} />)}
@@ -3074,6 +3102,8 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
           {tokens}
         </div>
       </div>
+      {/* the key under the map; in full screen it sits in the side panel instead (keyEl), out of the map's way */}
+      {(() => { const key = (
       <div style={{ display: "flex", gap: "6px 14px", flexWrap: "wrap", alignItems: "center", fontSize: 12, color: T.slate600 }}>
         <span>{within.length > 0 ? `In ${within.slice().reverse().join(", ")}. ` : ""}{v.scale}{onCell ? " Tap a cell: the piece goes to its middle." : cells.some(c => c.open) ? " Tap a cell to open the grid inside it." : ""}</span>
         {shown.map(p => (
@@ -3167,6 +3197,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
         {costly && <span>Each square adds its own share of time to cross it, inside its ground's range; darker is harder. At +60% a square takes 5 × 1.6 = 8 ticks instead of 5 at Speed 10.</span>}
         {(cells.some(c => c.kind === "unknown") || (detail && detail.cells.some(row => String(row).includes("?")))) && <span style={{ display: "flex", alignItems: "center", gap: 5 }}><MapSwatch what="unknown" size={20} />Not found yet</span>}
       </div>
+      ); return keyEl ? createPortal(key, keyEl) : big ? null : key; })()}
     </div>
   );
 }
