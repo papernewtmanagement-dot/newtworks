@@ -116,24 +116,32 @@ const rateSentence = (p) => {
     ? ` Your average has earned the $${Math.round(next)} step, which takes effect at the quarter close.`
     : "");
 };
-// Biggest gap to the next raise (Peter 2026-10-07): the line furthest under the
-// person's own best finished quarter, and what matching it again would do.
-const gapAmount = (g, v) => g?.measure === "apps"
-  ? `${Math.round(Number(v) || 0)} ${String(g.line_label || "").toLowerCase()} apps`
-  : `$${Math.round(Number(v) || 0).toLocaleString()} of ${String(g.line_label || "").toLowerCase()} premium`;
-const gapSentence = (p, add) => {
+// Biggest gap to the next raise (Peter 2026-10-07). Two scenarios from raise_gap_scenario:
+// the tier imbalance (one more sale a month on the line that moves pay most) and getting
+// back to the person's own best finished quarter.
+const gapLow = (g) => String(g?.line_label || "").toLowerCase();
+const gapAmount = (g, v) => g?.line === "life"
+  ? `$${Math.round(Number(v) || 0).toLocaleString()} of life premium`
+  : `${Math.round(Number(v) || 0)} ${gapLow(g)} apps`;
+const gapScenarios = (p) => {
   const g = p?.gap;
-  if (!g) return "";
-  const me = !!p.is_me;
-  const head = `${me ? "Your" : (p.first_name || "Their") + "'s"} biggest gap: ${g.line_label}. `;
-  const had = `${me ? "You wrote" : (p.first_name || "They") + " wrote"} ${gapAmount(g, g.last_value)} in ${g.last_quarter}, against ${gapAmount(g, g.best_value)} in ${g.best_quarter}. `;
-  const pace = `Back at that best quarter, the weekly average climbs from ${Math.round(Number(p.x) || 0)} to about ${Math.round(Number(g.x) || 0)} points, worth about ${fmtK(add)} more a year in total pay`;
+  if (!g) return [];
+  return [g, g.best].filter(s => s && Number.isFinite(Number(s.x)));
+};
+const gapLine = (p, g, add, first) => {
+  const who = p.is_me ? "Your" : (p.first_name || "Their") + "'s";
+  const head = first ? `${who} biggest gap: ${g.line_label}. ` : "";
   const next = Number(p?.next_hourly);
   const wk = Number(g.weeks_to_next);
   const step = Number.isFinite(wk) && wk > 0 && Number.isFinite(next)
     ? `, and it earns the $${Math.round(next)} rate in about ${wk} weeks.`
-    : ". On its own that isn't enough to reach the next raise.";
-  return head + had + pace + step;
+    : ", though on its own that isn't enough for the next raise.";
+  const to = Math.round(Number(g.x) || 0);
+  const more = `about ${fmtK(add)} more a year`;
+  if (g.kind === "imbalance") {
+    return `${head}One more ${gapLow(g)} sale a month, at the $${Math.round(Number(g.avg_premium) || 0).toLocaleString()} average premium, lifts the weekly average from ${Math.round(Number(p.x) || 0)} to about ${to} points, ${more}${step}`;
+  }
+  return `${head}Getting back to the best ${gapLow(g)} quarter (${gapAmount(g, g.best_value)} in ${g.best_quarter}, against ${gapAmount(g, g.last_value)} in ${g.last_quarter}) lifts it to about ${to} points, ${more}${step}`;
 };
 
 // The window the average covers, in quarters when it is whole quarters.
@@ -350,13 +358,13 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
   // own label gets out of the way wherever a marker stands.
   const markerXs = (Array.isArray(positions) ? positions : [])
     .map(p => Math.min(Math.max(Number(p?.x) || 0, 0), xMax));
-  const gapRows = (Array.isArray(positions) ? positions : [])
-    .filter(p => p?.gap && Number.isFinite(Number(p.gap.x)))
-    .map(p => {
-      const from = Math.min(Math.max(Number(p.x) || 0, 0), xMax);
-      const to = Math.min(Math.max(Number(p.gap.x) || 0, 0), xMax);
-      return { p, from, to, add: valueAt("total", to) - valueAt("total", from) };
+  const gapRows = (Array.isArray(positions) ? positions : []).flatMap(p => {
+    const from = Math.min(Math.max(Number(p?.x) || 0, 0), xMax);
+    return gapScenarios(p).map((g, i) => {
+      const to = Math.min(Math.max(Number(g.x) || 0, 0), xMax);
+      return { p, g, i, from, to, add: valueAt("total", to) - valueAt("total", from) };
     });
+  });
   const clearOfMarkers = (xs) =>
     xs.filter(x => !markerXs.some(m => Math.abs(xFor(m) - xFor(x)) < minGapPx + 12));
   const labelXs = {
@@ -491,15 +499,15 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
         );
       })}
       {/* Gap plugged: hollow point on the total line at the pace the person would hold */}
-      {gapRows.map(({ p, from, to, add }) => {
+      {gapRows.map(({ p, g, i, from, to, add }) => {
         const fromPay = Number.isFinite(Number(p?.y)) ? Number(p.y) : valueAt("total", from);
         const px = xFor(to), py = yFor(valueAt("total", to));
         const anchor = px > padL + chartW - 30 ? "end" : "middle";
         return (
-          <g key={"gap-" + (p.team_member_id || p.first_name)}>
-            <line x1={xFor(from)} y1={yFor(fromPay)} x2={px} y2={py} stroke={T.purple} strokeWidth="1.5" strokeDasharray="4 3" opacity="0.7" />
-            <circle cx={px} cy={py} r={5.5} fill={T.white} stroke={T.purple} strokeWidth="2" />
-            <text x={px} y={py - 10} textAnchor={anchor} fontSize={isPhone ? 9.5 : 10.5} fontWeight={800} fill={T.purple}>{"+" + fmtK(add) + "/yr"}</text>
+          <g key={"gap-" + (p.team_member_id || p.first_name) + "-" + i}>
+            <line x1={xFor(from)} y1={yFor(fromPay)} x2={px} y2={py} stroke={T.purple} strokeWidth="1.5" strokeDasharray="4 3" opacity={i === 0 ? 0.7 : 0.4} />
+            <circle cx={px} cy={py} r={i === 0 ? 5.5 : 4} fill={T.white} stroke={T.purple} strokeWidth="2" opacity={i === 0 ? 1 : 0.6} />
+            <text x={px} y={py - (i === 0 ? 10 : 9)} textAnchor={anchor} fontSize={isPhone ? 9.5 : 10.5} fontWeight={800} fill={T.purple} opacity={i === 0 ? 1 : 0.7}>{(i === 0 ? g.line_label + " " : "") + "+" + fmtK(add) + "/yr"}</text>
           </g>
         );
       })}
@@ -549,9 +557,9 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
         ))}
       </g>
     </svg>
-    {gapRows.map(({ p, add }) => (
+    {(Array.isArray(positions) ? positions : []).filter(p => gapScenarios(p).length > 0).map(p => (
       <div key={"gapnote-" + (p.team_member_id || p.first_name)} style={{ marginTop: 8, fontSize: 11.5, color: T.slate700, background: T.purpleLt, border: `1px dashed ${T.purple}`, borderRadius: 7, padding: "7px 10px" }}>
-        {gapSentence(p, add)}
+        {gapRows.filter(r => r.p === p).map(r => gapLine(p, r.g, r.add, r.i === 0)).join(" ")}
       </div>
     ))}
     </>
