@@ -747,11 +747,24 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
   const tiers = Array.isArray(role?.tiers) ? role.tiers : [];
   const curve = role?.curve || null;
   const hotTier = tiers.find(t => t.tier_key === highlighted) || tiers[0] || null;
+  // Whose view the chart shows (Peter 2026-10-07): a teammate sees their own point with
+  // its gap by default, or the whole team's plain points; an admin picks the plain team
+  // view or any one person's view.
+  const [view, setView, viewHref] = useTabParam("eview", "", []);
   const rolePositions = useMemo(
     () => (Array.isArray(positions) ? positions : [])
       .filter(p => p?.role_key === role?.role_key && Number.isFinite(Number(p?.x))),
     [positions, role]
   );
+  const peopleInRole = rolePositions.filter(p => p?.team_member_id);
+  const viewKey = view || (isAdmin ? "team" : "mine");
+  const focus = viewKey === "team" ? null
+    : viewKey === "mine" ? rolePositions.find(p => p?.is_me) || null
+    : rolePositions.find(p => p?.team_member_id === viewKey) || null;
+  const chartPositions = focus ? [focus] : rolePositions.map(p => ({ ...p, gap: null }));
+  const viewChoices = isAdmin
+    ? [{ key: "team", label: "Team" }, ...peopleInRole.map(p => ({ key: p.team_member_id, label: p.first_name }))]
+    : (rolePositions.some(p => p?.is_me) ? [{ key: "mine", label: "Mine" }, { key: "team", label: "Team" }] : []);
 
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "14px 16px" : "16px 20px";
   const card = { background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 10, padding: _pad };
@@ -807,14 +820,29 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
       <div style={card}>
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected annual pay by {curve?.x_label ? curve.x_label.toLowerCase() : "production level"}</div>
-          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{rolePositions.length > 0 ? " The purple points are real: production is the same weekly average the raise review uses for each person's next step, pay is the same on-time annual figure the weekly CPR shows, and a manager's title amount shows under their name, paid on top of the ladder step. A hollow point shows where closing their biggest gap would put them." : ""}</div>
+          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{rolePositions.length > 0 ? " Purple points are real people: the weekly average their next raise uses, and their on-time pay this year. A hollow point shows where closing their biggest gap would put them." : ""}</div>
         </div>
+        {viewChoices.length > 1 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "6px 0 8px" }}>
+            {viewChoices.map(c => {
+              const on = c.key === (focus ? (focus.is_me && !isAdmin ? "mine" : focus.team_member_id) : "team");
+              return (
+                <TabLink key={c.key} href={viewHref(c.key)} onSelect={() => setView(c.key)}
+                  style={{ padding: "4px 11px", fontSize: 11.5, fontWeight: on ? 700 : 500, borderRadius: 999,
+                           color: on ? T.white : T.slate700, background: on ? T.purple : T.white,
+                           border: `1px solid ${on ? T.purple : T.slate200}`, cursor: "pointer", flexShrink: 0 }}>
+                  {c.label}
+                </TabLink>
+              );
+            })}
+          </div>
+        )}
         {curve ? (
-          <EarningsCurveChart curve={curve} ladder={role.raise_ladder} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} positions={rolePositions} />
+          <EarningsCurveChart curve={curve} ladder={role.raise_ladder} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} positions={chartPositions} />
         ) : (
           <div style={{ fontSize: 12, color: T.slate500, padding: "14px 0" }}>No curve data returned for this role.</div>
         )}
-        {myPos && myPos.role_key === role.role_key && (
+        {myPos && myPos.role_key === role.role_key && focus === myPos && (
           <div style={{ marginTop: 8, fontSize: 11.5, color: T.slate700, background: T.purpleLt, border: `1px solid ${T.purple}`, borderRadius: 7, padding: "7px 10px" }}>
             You are averaging {Math.round(Number(myPos.x) || 0)} sales points a week over {windowText(myPos)}, the same average your next raise is measured on{Number.isFinite(Number(myPos.y)) ? ", and you are on time for " + fmtMoney(Number(myPos.y)) + " this year" : ""}. Your point on the chart is those two figures together.{rateSentence(myPos)}
           </div>
