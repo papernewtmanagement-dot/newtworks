@@ -200,9 +200,6 @@ function CombinedForm({ data, setData, secure, setSecure, needs = {} }) {
           <Field label="When did you move to San Antonio, and why?">
             <Text value={data.moved_here} onChange={set("moved_here")} />
           </Field>
-          <Field label="What are you licensed in?">
-            <Text value={data.licensed_in} onChange={set("licensed_in")} />
-          </Field>
           <Field label="When did you start in risk and wealth management?">
             <Text value={data.started_industry} onChange={set("started_industry")} />
           </Field>
@@ -285,7 +282,12 @@ function CombinedForm({ data, setData, secure, setSecure, needs = {} }) {
             </Field>
           </Grid>
         )}
-        {banks.map((b, i) => (
+        {needs.bank === false && (
+          <div style={{ marginTop: 12, fontSize: 13, color: T.slate600 }}>
+            Your bank details are on file.
+          </div>
+        )}
+        {needs.bank !== false && banks.map((b, i) => (
           <div key={i} style={{
             marginTop: 16, padding: 14, border: `1px solid ${T.slate200}`,
             borderRadius: 10, background: T.slate50, boxSizing: "border-box",
@@ -310,7 +312,7 @@ function CombinedForm({ data, setData, secure, setSecure, needs = {} }) {
           </div>
         ))}
 
-        {banks.length < 3 && (
+        {needs.bank !== false && banks.length < 3 && (
           <div style={{ marginTop: 12 }}>
             <Button tone="quiet" onClick={() => setSecure({ ...secure, banks: [...banks, { ...EMPTY_BANK }] })}>
               Add another bank
@@ -1038,7 +1040,10 @@ function readyToSubmit(formType, data, secure, needs = {}) {
     return !!data.why_statement &&
       !!String(data.need_to_make || "").trim() &&
       !!String(data.want_to_make || "").trim() &&
-      (secure.banks || []).some(b => b.bank_name && b.account_number && b.routing_number) &&
+      (needs.bank === false || (secure.banks || []).some(b =>
+        String(b.bank_name || "").trim() &&
+        String(b.routing_number || "").replace(/[^0-9]/g, "").length === 9 &&
+        String(b.account_number || "").replace(/[^0-9]/g, "").length >= 4)) &&
       (!needs.ssn || String(secure.ssn || "").replace(/[^0-9]/g, "").length === 9) &&
       (!needs.birthday || !!secure.dob);
   }
@@ -1061,19 +1066,21 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
   // The offer form is where the Social Security number and birthday are asked.
   // Someone hired without it gets those two boxes on the Onboarding form, and
   // only while they are missing.
-  const [needs, setNeeds] = useState({ ssn: false, birthday: false });
+  // Bank starts as needed and only drops off once a usable one is found on file.
+  const [needs, setNeeds] = useState({ ssn: false, birthday: false, bank: true });
   useEffect(() => {
     let alive = true;
-    if (preview || locked || form.id !== "combined_onboarding" || !supabase || !teamId) {
+    if (preview || form.id !== "combined_onboarding" || !supabase || !teamId) {
       return () => { alive = false; };
     }
     (async () => {
-      const [{ data: onFile }, { data: row }] = await Promise.all([
+      const [{ data: onFile }, { data: row }, { data: bankOnFile }] = await Promise.all([
         supabase.rpc("onboarding_ssn_on_file", { p_team_id: teamId }),
         supabase.from("team").select("date_of_birth").eq("id", teamId).maybeSingle(),
+        supabase.rpc("onboarding_bank_on_file", { p_team_id: teamId }),
       ]);
       if (!alive) return;
-      setNeeds({ ssn: onFile === false, birthday: !!row && !row.date_of_birth });
+      setNeeds({ ssn: onFile === false, birthday: !!row && !row.date_of_birth, bank: bankOnFile !== true });
     })();
     return () => { alive = false; };
   }, [form.id, teamId, preview, locked]);
@@ -1281,6 +1288,8 @@ export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, em
   const [subs, setSubs] = useState([]);
   const [docs, setDocs] = useState({});
   const [hasSecure, setHasSecure] = useState(0);
+  const [secureRows, setSecureRows] = useState([]);
+  const [showSecure, setShowSecure] = useState(false);
   // The open form rides in the URL (?form=i9), so a link can go straight to it.
   // In a pop-up (onlyForm) the open form lives here, not in the page address,
   // and closing it closes the pop-up.
@@ -1311,12 +1320,13 @@ export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, em
     if (isAdmin) {
       const ids = (sb?.data || []).map(s => s.id);
       if (ids.length) {
-        const { count } = await supabase
+        const { data: sec } = await supabase
           .from("team_form_secure")
-          .select("id", { count: "exact", head: true })
+          .select("id, ssn, banks")
           .in("submission_id", ids);
-        setHasSecure(count || 0);
-      } else setHasSecure(0);
+        setSecureRows(sec || []);
+        setHasSecure((sec || []).length);
+      } else { setSecureRows([]); setHasSecure(0); }
     }
     setLoading(false);
   }, [teamId, isAdmin]);
@@ -1430,6 +1440,31 @@ export default function TeamForms({ teamId: teamIdProp, isAdmin: isAdminProp, em
                   ? "A Social Security number and bank details are stored for this person. Enter them in SurePayroll, then destroy them."
                   : "Nothing sensitive is stored for this person."}
               </div>
+              {hasSecure > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <Button tone="quiet" onClick={() => setShowSecure(v => !v)}>
+                    {showSecure ? "Hide details" : "Show details"}
+                  </Button>
+                  {showSecure && secureRows.map(r => (
+                    <div key={r.id} style={{
+                      marginTop: 12, padding: 12, background: T.white, borderRadius: 8,
+                      border: `1px solid ${T.slate200}`, fontSize: 13, color: T.slate800,
+                      lineHeight: 1.7, boxSizing: "border-box", fontFamily: MONO,
+                    }}>
+                      <div>Social Security number: {r.ssn || "not given"}</div>
+                      {(Array.isArray(r.banks) ? r.banks : []).length === 0 && <div>No bank given.</div>}
+                      {(Array.isArray(r.banks) ? r.banks : []).map((b, i) => (
+                        <div key={i} style={{ marginTop: 8 }}>
+                          <div>Bank: {b?.bank_name || "—"}</div>
+                          <div>Routing: {b?.routing_number || "—"}</div>
+                          <div>Account: {b?.account_number || "—"}</div>
+                          <div>{b?.account_type === "savings" ? "Savings" : "Checking"}{b?.percent ? ` · ${b.percent}% of pay` : ""}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
               {hasSecure > 0 && (
                 <div style={{ marginTop: 14 }}>
                   <Button tone="danger" onClick={destroy} disabled={purging}>
