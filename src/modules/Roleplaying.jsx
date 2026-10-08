@@ -2604,7 +2604,7 @@ function MapsTab({ isParent, onError, onFight }) {
     };
   }, [big]);
   useEffect(() => {
-    let alive = true;
+    let alive = true, retry = null;
     const key = at || "";
     if (seen.current.has(key)) { setV(seen.current.get(key)); return undefined; }
     const m = /^(\d+)-(\d+)-(\d+)$/.exec(key);
@@ -2616,10 +2616,13 @@ function MapsTab({ isParent, onError, onFight }) {
         : await supabase.rpc("rpg_map_view", m ? { p_level: Number(m[1]), p_x: Number(m[2]), p_y: Number(m[3]) } : {});
       if (!alive) return;
       if (error) { onError(error.message); if (at) setAt(null); return; }
-      if (data) seen.current.set(key, data);
+      // (step 14e) a District grid whose buildings are still being worked out in the background comes back with
+      // houses_pending: show it now (with the town symbols) and ask again in a few seconds, without keeping it
+      if (data && data.houses_pending) retry = setTimeout(() => { if (alive) setTick(t => t + 1); }, 6000);
+      else if (data) seen.current.set(key, data);
       setV(data || null);
     })();
-    return () => { alive = false; };
+    return () => { alive = false; if (retry) clearTimeout(retry); };
   }, [at, setAt, onError, tick]);
   const act = useCallback(async (fn, args) => {
     if (busy) return;
