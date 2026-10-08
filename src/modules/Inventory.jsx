@@ -814,7 +814,7 @@ function PrizeCartReview({ setErr }) {
                     style={{ ...input, flex: "1 1 180px", minWidth: 0, fontSize: 12 }} />
                   {it.url && <a href={it.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.blue, fontWeight: 600 }}>Open</a>}
                   {it.proposed ? <span style={{ fontSize: 11, color: T.slate700, background: T.amberLt, borderRadius: 999, padding: "2px 8px" }}>New</span>
-                    : !it.new ? <span style={{ fontSize: 11, color: T.slate500 }}>Carried over</span> : null}
+                    : !it.new ? <span style={{ fontSize: 11, color: T.slate500 }}>Carried over · not counted</span> : null}
                   {changed(it) && <button style={btn("primary", true)} disabled={!!busy} onClick={() => save(it)}>Save</button>}
                   {!it.drawn && <button style={btn("soft", true)} disabled={!!busy} onClick={() => remove(it)}>Remove</button>}
                 </div>
