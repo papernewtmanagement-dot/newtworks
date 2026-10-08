@@ -249,7 +249,12 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
   });
   const valOf = (p, key) => Number(p?.[key]) || 0;
 
-  const allY = drawn.flatMap(p => [p.total, p.base, p.base_comm]);
+  // One person's view carries their "want to make" from the Onboarding form
+  // (Peter 2026-10-08). It only comes back for the person and an admin.
+  const goalPos = Array.isArray(positions) && positions.length === 1 ? positions[0] : null;
+  const goal = Number(goalPos?.want_to_make) > 0 ? Number(goalPos.want_to_make) : null;
+
+  const allY = [...drawn.flatMap(p => [p.total, p.base, p.base_comm]), ...(goal ? [goal] : [])];
   const { max: maxY, step: tickStep } = axisFor(Math.max(0, ...allY));
   const yTicks = [];
   for (let v = 0; v <= maxY; v += tickStep) yTicks.push(v);
@@ -283,6 +288,21 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
     const f = Math.min(1, Math.max(0, (x - x0) / (x1 - x0)));
     return t0 + f * (t1 - t0);
   };
+
+  // The weekly pace where the total line first reaches the goal, or null if it
+  // never does inside this chart.
+  const goalX = (() => {
+    if (!goal || drawn.length === 0) return null;
+    if (drawn[0].total >= goal) return drawn[0].x;
+    for (let i = 0; i < drawn.length - 1; i++) {
+      const a = drawn[i], b = drawn[i + 1];
+      if (a.total < goal && b.total >= goal) {
+        const f = b.total === a.total ? 0 : (goal - a.total) / (b.total - a.total);
+        return a.x + f * (b.x - a.x);
+      }
+    }
+    return null;
+  })();
 
   // Total pay at each band's production level, for the threshold markers.
   const markers = useMemo(() => bands.map((b, i) => {
@@ -516,6 +536,26 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
           </g>
         );
       })}
+      {/* Their goal: what they said they want to make, and the pace that pays it */}
+      {goal && (
+        <g>
+          <line x1={padL} y1={yFor(goal)} x2={padL + chartW} y2={yFor(goal)}
+            stroke={T.gold} strokeWidth="2" strokeDasharray="6 4" />
+          <text x={padL + 6} y={yFor(goal) - 6} textAnchor="start" fontSize={isPhone ? 10 : 11.5}
+            fontWeight={800} fill={T.gold}>
+            {"Goal " + fmtK(goal) + (goalX != null
+              ? (isPremium ? " \u00b7 " + fmtK(goalX) + " a year" : " \u00b7 " + Math.round(goalX) + " pts a week")
+              : " \u00b7 past the right edge")}
+          </text>
+          {goalX != null && (
+            <>
+              <line x1={xFor(goalX)} y1={yFor(goal)} x2={xFor(goalX)} y2={padT + chartH}
+                stroke={T.gold} strokeWidth="1.25" strokeDasharray="2 3" opacity="0.8" />
+              <circle cx={xFor(goalX)} cy={yFor(goal)} r={5} fill={T.gold} stroke={T.white} strokeWidth="1.5" />
+            </>
+          )}
+        </g>
+      )}
       {/* Where each person actually sits: the weekly average their raise review uses */}
       {(Array.isArray(positions) ? positions : [])
         .map(p => ({ ...p, xv: Math.min(Math.max(Number(p?.x) || 0, 0), xMax) }))
@@ -849,7 +889,7 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
         )}
         {myPos && myPos.role_key === role.role_key && focus === myPos && (
           <div style={{ marginTop: 8, fontSize: 11.5, color: T.slate700, background: T.purpleLt, border: `1px solid ${T.purple}`, borderRadius: 7, padding: "7px 10px" }}>
-            You are averaging {Math.round(Number(myPos.x) || 0)} sales points a week over {windowText(myPos)}, the same average your next raise is measured on{Number.isFinite(Number(myPos.y)) ? ", and you are on time for " + fmtMoney(Number(myPos.y)) + " this year" : ""}. Your point on the chart is those two figures together.{rateSentence(myPos)}
+            You are averaging {Math.round(Number(myPos.x) || 0)} sales points a week over {windowText(myPos)}, the same average your next raise is measured on{Number.isFinite(Number(myPos.y)) ? ", and you are on time for " + fmtMoney(Number(myPos.y)) + " this year" : ""}. Your point on the chart is those two figures together.{rateSentence(myPos)}{Number(myPos.want_to_make) > 0 ? " The gold line is your goal: the " + fmtMoney(Number(myPos.want_to_make)) + " a year you said you want to make." : ""}
           </div>
         )}
         <div style={{ marginTop: 4, fontSize: 10.5, color: T.slate400 }}>
