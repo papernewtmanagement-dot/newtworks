@@ -685,11 +685,14 @@ const TaskModal = ({
   //   epic  -> none (epics are top-level)
   //   story -> any epic
   //   task  -> any story OR any task (lets us nest task-under-task if needed)
+  // Only the person creating the task sees their own items as parent options.
+  // The parent already on an edited task stays listed so it isn't dropped.
+  const isMineOrCurrent = t => t.assigned_to === currentUserId || t.id === form.parent_task_id;
   const eligibleParents = (() => {
     if (form.task_type === "epic") return [];
-    if (form.task_type === "story") return allTasks.filter(t => t.task_type === "epic" && t.status !== "completed");
+    if (form.task_type === "story") return allTasks.filter(t => t.task_type === "epic" && t.status !== "completed" && isMineOrCurrent(t));
     // task
-    return allTasks.filter(t => (t.task_type === "story" || t.task_type === "task") && t.status !== "completed");
+    return allTasks.filter(t => (t.task_type === "story" || t.task_type === "task") && t.status !== "completed" && isMineOrCurrent(t));
   })();
 
   const typ = typeConfig(form.task_type);
