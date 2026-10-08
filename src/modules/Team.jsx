@@ -799,21 +799,20 @@ const StaffDirectory = ({ staff }) => {
     (async () => {
       setSeatLoading(true);
       try {
-        const [wt, pr, wtA, prA, wtB, prB] = await Promise.all([
-          supabase.rpc('compute_warning_trigger', { p_agency_id: AGENCY_ID, p_week_end_date: seatWeekEnd }),
-          supabase.rpc('compute_seat_projections_for_agency', { p_agency_id: AGENCY_ID, p_baseline_date: seatWeekEnd, p_max_months: 60 }),
-          supabase.rpc('compute_warning_trigger', { p_agency_id: AGENCY_ID, p_week_end_date: seatWeekEnd, p_override_lapse: SEAT_SCENARIO_LAPSE_A }),
-          supabase.rpc('compute_seat_projections_for_agency', { p_agency_id: AGENCY_ID, p_baseline_date: seatWeekEnd, p_max_months: 60, p_override_lapse: SEAT_SCENARIO_LAPSE_A }),
-          supabase.rpc('compute_warning_trigger', { p_agency_id: AGENCY_ID, p_week_end_date: seatWeekEnd, p_override_lapse: SEAT_SCENARIO_LAPSE_B }),
-          supabase.rpc('compute_seat_projections_for_agency', { p_agency_id: AGENCY_ID, p_baseline_date: seatWeekEnd, p_max_months: 60, p_override_lapse: SEAT_SCENARIO_LAPSE_B }),
-        ]);
+        // One call: the bonus pool runs once and feeds all six result sets. Six separate
+        // calls each re-ran the pool and all hit the 8 s database timeout (2026-10-07).
+        const { data, error } = await supabase.rpc('get_seat_profitability_bundle', {
+          p_agency_id: AGENCY_ID, p_week_end_date: seatWeekEnd,
+          p_lapse_a: SEAT_SCENARIO_LAPSE_A, p_lapse_b: SEAT_SCENARIO_LAPSE_B, p_max_months: 60,
+        });
         if (cancelled) return;
-        if (!wt.error) setSeatRows(wt.data || []);
-        if (!pr.error) setSeatProjections(pr.data || []);
-        if (!wtA.error) setSeatScenARows(wtA.data || []);
-        if (!prA.error) setSeatScenAProjections(prA.data || []);
-        if (!wtB.error) setSeatScenBRows(wtB.data || []);
-        if (!prB.error) setSeatScenBProjections(prB.data || []);
+        if (error) { console.error('Seat profitability load error:', error); return; }
+        setSeatRows(data?.rows || []);
+        setSeatProjections(data?.projections || []);
+        setSeatScenARows(data?.rows_a || []);
+        setSeatScenAProjections(data?.projections_a || []);
+        setSeatScenBRows(data?.rows_b || []);
+        setSeatScenBProjections(data?.projections_b || []);
       } catch (e) {
         console.error('Seat profitability load error:', e);
         if (!cancelled) { setSeatRows([]); setSeatProjections([]); setSeatScenARows([]); setSeatScenAProjections([]); setSeatScenBRows([]); setSeatScenBProjections([]); }
