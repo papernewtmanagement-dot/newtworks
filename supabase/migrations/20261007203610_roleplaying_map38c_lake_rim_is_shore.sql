@@ -146,3 +146,4 @@ SELECT b.x, b.y, coalesce(max(dep.depth), 0), coalesce(min(dep.line), 0), coales
 $function$;
 
 SELECT public.rpg_map_cache_clear();
+

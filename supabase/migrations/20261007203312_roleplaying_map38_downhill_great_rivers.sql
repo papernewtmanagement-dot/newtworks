@@ -2297,3 +2297,4 @@ UPDATE public.rpg_rules
 -- what a cell is has changed (great lakes; the great rivers' water): forget the saved map; the World and Continent
 -- grids and the downhill rivers are saved again at once in the background
 SELECT public.rpg_map_cache_clear();
+
