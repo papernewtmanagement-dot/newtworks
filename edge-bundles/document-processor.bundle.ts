@@ -13100,6 +13100,103 @@ const TERMINAL_DOC_STATUSES = [
   "archive_failed", "duplicate", "duplicate_ingest", "unpacked",
 ] as const;
 
+/**
+ * MISSING-RESUME REQUEST — added 2026-10-08 (Peter's standing rule).
+ *
+ * Marie's recruiting emails list every resume file by name in the body
+ * ("Indeed: a.pdf; b.pdf ..."). On 2026-10-06 the body listed
+ * ResumeAhmanMelles.pdf but the file was never attached, and nothing noticed.
+ * Rule: any time her email says it has a resume we do not have, ask her for it
+ * again.
+ *
+ * Each routine run reads her recruiting emails from the last 7 days, pulls the
+ * listed .pdf/.docx names, and treats a name as received when it is attached
+ * to that email or already known to intake (a documents row or a classifier
+ * skip row, so a file resent later in the thread counts). Anything else gets
+ * ONE reply in her thread naming the files. "Already asked" is read from Gmail
+ * itself: a sent message to her containing the file name means we asked, so
+ * no state is stored and a hand-written request counts too.
+ *
+ * Never fatal: a failure here is logged and intake carries on.
+ */
+const RECRUIT_SENDER = "alvipelo@gmail.com";
+
+function listedResumeFiles(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of String(text ?? "").split(/[;\r\n]+/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith(">")) continue;
+    const m = line.match(/^(?:[^:]{1,40}:\s*)?(.+?\.(?:pdf|docx))\s*$/i);
+    if (m && !out.includes(m[1].trim())) out.push(m[1].trim());
+  }
+  return out;
+}
+
+async function fileKnownToIntake(ctx: RunCtx, fileName: string): Promise<boolean> {
+  for (const table of ["documents", "document_classifier_skips"]) {
+    const { data, error } = await sb.from(table).select("id")
+      .eq("agency_id", ctx.agencyId).ilike("file_name", fileName).limit(1);
+    if (error) throw new Error(`${table} lookup failed: ${error.message}`);
+    if ((data ?? []).length > 0) return true;
+  }
+  return false;
+}
+
+async function requestMissingRecruitingResumes(ctx: RunCtx): Promise<number> {
+  const listRes = await callComposio({
+    apiKey: ctx.composioApiKey,
+    userId: ctx.composioUserId,
+    connectedAccountId: ctx.gmailAccountId,
+    toolSlug: "GMAIL_FETCH_EMAILS",
+    toolArguments: {
+      query: `from:${RECRUIT_SENDER} newer_than:7d (subject:recruiting OR subject:resume OR subject:resumes OR subject:applicants)`,
+      max_results: 25,
+    },
+  });
+  if (!listRes.ok) throw new Error(`recruiting email fetch failed: ${listRes.error}`);
+  const messages: any[] = listRes.data?.messages ?? listRes.data ?? [];
+  let asked = 0;
+
+  for (const m of messages) {
+    const threadId = m.threadId ?? m.thread_id ?? m.messageId ?? m.id;
+    const attached = new Set(
+      ((m?.attachmentList ?? []) as any[]).map((a) => String(a?.filename ?? "").toLowerCase()),
+    );
+    const missing: string[] = [];
+    for (const name of listedResumeFiles(m?.messageText ?? m?.preview?.body ?? "")) {
+      if (attached.has(name.toLowerCase())) continue;
+      if (await fileKnownToIntake(ctx, name)) continue;
+      const sent = await callComposio({
+        apiKey: ctx.composioApiKey,
+        userId: ctx.composioUserId,
+        connectedAccountId: ctx.gmailAccountId,
+        toolSlug: "GMAIL_FETCH_EMAILS",
+        toolArguments: { query: `in:sent to:${RECRUIT_SENDER} "${name.replace(/"/g, "")}"`, max_results: 1 },
+      });
+      if (!sent.ok) throw new Error(`sent-mail check failed: ${sent.error}`);
+      const prior: any[] = sent.data?.messages ?? sent.data ?? [];
+      if (prior.length > 0) continue;
+      missing.push(name);
+    }
+    if (missing.length === 0) continue;
+
+    const body = missing.length === 1
+      ? `Hi Alvi,\n\nThis email lists ${missing[0]}, but that file wasn't attached. Could you send it again?\n\nThanks,\nPeter`
+      : `Hi Alvi,\n\nThis email lists these files, but they weren't attached:\n${missing.map((n) => `- ${n}`).join("\n")}\n\nCould you send them again?\n\nThanks,\nPeter`;
+    const reply = await callComposio({
+      apiKey: ctx.composioApiKey,
+      userId: ctx.composioUserId,
+      connectedAccountId: ctx.gmailAccountId,
+      toolSlug: "GMAIL_REPLY_TO_THREAD",
+      toolArguments: { thread_id: threadId, recipient_email: RECRUIT_SENDER, message_body: body },
+    });
+    if (!reply.ok) throw new Error(`missing-resume reply failed: ${reply.error}`);
+    console.log(`[missing-resume] asked for ${missing.length} file(s) in thread ${threadId}: ${missing.join(", ")}`);
+    asked += missing.length;
+  }
+  return asked;
+}
+
 async function maybeArchiveThread(
   ctx: RunCtx, threadId: string | null | undefined, docType?: string, accountCode?: string | null,
 ): Promise<void> {
@@ -14607,11 +14704,23 @@ async function run(req: Request): Promise<Response> {
     console.error(`[archive-sweep] failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // Missing-resume request — routine runs only; a gmail_query override is a
+  // targeted re-read and should not also send mail.
+  let missingResumesRequested = 0;
+  if (typeof body?.gmail_query !== "string") {
+    try {
+      missingResumesRequested = await requestMissingRecruitingResumes(ctx);
+    } catch (e) {
+      console.error(`[missing-resume] failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   const summary = {
     started_at: startedAt,
     finished_at: new Date().toISOString(),
     attachments_seen: attachments.length,
     archive_sweep_threads: sweepArchived,
+    missing_resumes_requested: missingResumesRequested,
     items_total: allResults.length, // includes inner files from zips
     processed: allResults.filter((p) => p.status === "processed").length,
     skipped: allResults.filter((p) => p.status === "skipped").length,
