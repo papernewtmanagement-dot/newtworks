@@ -3,7 +3,7 @@ import { supabase, AGENCY_ID } from "./supabase.js";
 import { T } from "./theme.js";
 
 // =========================================================================
-// familyGames.jsx — shared by the Family games (WordWorm.jsx, MathBlast.jsx).
+// familyGames.jsx — shared by the Family games (SpellingQuest.jsx, MathBlast.jsx).
 // One job each:
 //   useFamilyPlayers(game)   the active kids, their chore-chart animal and saved bests for that game
 //   recordFamilyGame(...)    saves one finished game (database: family_game_record)
