@@ -138,6 +138,7 @@ const NAV_ITEMS = [
   { id: "course",      label: "Course",      icon: "graduation",    roles: FAMILY_ROLES },
   { id: "gridstrike",  label: "Gridstrike",  icon: "target",        roles: FAMILY_ROLES },
   { id: "wordworm",    label: "Word Worm",   icon: "letters",       roles: FAMILY_ROLES },
+  { id: "spellingquest", label: "Spelling Quest", icon: "shield",  roles: FAMILY_ROLES },
   { id: "mathblast",   label: "Math Blast",  icon: "rocket",        roles: FAMILY_ROLES },
 ];
 // Peter 2026-10-04: every link below the last divider is owner, admin and the
@@ -728,6 +729,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     course:      <ErrorBoundary key="course" name="Course"><Manual manualType="financial_literacy" userRole={userRole} /></ErrorBoundary>,
     gridstrike:  <ErrorBoundary name="Gridstrike"><Gridstrike userRole={userRole} /></ErrorBoundary>,
     wordworm:    <ErrorBoundary name="Word Worm"><WordWorm /></ErrorBoundary>,
+    spellingquest: <ErrorBoundary key="spellingquest" name="Spelling Quest"><WordWorm quest /></ErrorBoundary>,
     mathblast:   <ErrorBoundary name="Math Blast"><MathBlast /></ErrorBoundary>,
   };
   // Access guard — enforce nav role at the module level so direct URL

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { T } from "../lib/theme.js";
 import { useViewport } from "../lib/hooks.js";
 import { useFamilyPlayers, recordFamilyGame, PlayerPicker } from "../lib/familyGames.jsx";
+import { useDancers, CritterIcon, DoneDancerStyles } from "../components/Critters.jsx";
 
 // =========================================================================
 // WordWorm.jsx — Family game in the style of Bookworm. A board of letter tiles,
@@ -15,7 +16,14 @@ import { useFamilyPlayers, recordFamilyGame, PlayerPicker } from "../lib/familyG
 // reaches the bottom. Use a fire tile in a word to put it out.
 // Dictionary: public/games/words.txt — about 72,000 everyday English words
 // (SCOWL lists up to size 60, 3 to 12 letters), loaded once when the game opens.
-// Bests saved per kid on family_kids.game_bests.bookworm. Guest games aren't saved.
+// Spelling Quest (nav item of its own, <WordWorm quest />): the battle version, like
+// Bookworm Adventures. Each player picks their hero from the family's dancing
+// characters (dancers table); a kid starts on their own chore-chart animal. No fire. Each word hits the monster for a
+// tenth of its points (CAT = 35 points = 4 damage). The monster hits back after every
+// word that doesn't finish it. Beat it and the next, tougher one comes; you get some
+// health back. The game ends when your health runs out.
+// Bests saved per kid on family_kids.game_bests: bookworm (fire), bookworm_battle (battle).
+// Guest games aren't saved.
 // =========================================================================
 
 const COLS = 7;
@@ -39,6 +47,34 @@ const GEM_LOOK = {
   gold:    { bg: "linear-gradient(160deg,#FFE9A6,#E2B13C)", border: "#A8801F", ink: "#4A3500", label: "+100%" },
   diamond: { bg: "linear-gradient(160deg,#E3F6FF,#8CCFF2)", border: "#3F8DB8", ink: "#0E3550", label: "+200%" },
 };
+// Battle mode: the monsters in order. After the last one they come round again, 40% tougher each time.
+const HERO_HP = 40;
+const HEAL_ON_WIN = 12;
+const MONSTERS = [
+  { name: "Dust Bunny",    hp: 24,  hit: [2, 4],  body: "#C9C2B8", look: "ears" },
+  { name: "Ink Blot",      hp: 32,  hit: [3, 5],  body: "#4A477E", look: "blob" },
+  { name: "Paper Moth",    hp: 40,  hit: [3, 6],  body: "#D9C9A3", look: "wings" },
+  { name: "Riddle Rat",    hp: 50,  hit: [4, 7],  body: "#8C7B6B", look: "ears" },
+  { name: "Grumble Gnome", hp: 60,  hit: [5, 8],  body: "#6E8B4E", look: "hat" },
+  { name: "Spell Slug",    hp: 72,  hit: [6, 9],  body: "#8DBA5E", look: "blob" },
+  { name: "Shelf Troll",   hp: 86,  hit: [7, 11], body: "#7A6A8C", look: "horns" },
+  { name: "Page Dragon",   hp: 100, hit: [8, 13], body: "#B8483A", look: "dragon" },
+];
+function monsterFor(stage) {
+  const base = MONSTERS[(stage - 1) % MONSTERS.length];
+  const round = Math.floor((stage - 1) / MONSTERS.length);
+  const k = 1 + 0.4 * round;
+  return {
+    ...base,
+    name: round ? `${base.name} ${round + 1}` : base.name,
+    hp: Math.round(base.hp * k),
+    hit: [Math.round(base.hit[0] * k), Math.round(base.hit[1] * k)],
+  };
+}
+const ri = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+const damageFor = points => Math.max(1, Math.round(points / 10));
+const freshBattle = () => { const m = monsterFor(1); return { stage: 1, monster: m, mhp: m.hp, hp: HERO_HP, beaten: 0, hurt: null }; };
+
 const levelAt = lv => 300 * (lv * (lv - 1)) / 2; // score where level lv starts: 0, 300, 900, 1800…
 
 let DICT_PROMISE = null;
@@ -100,10 +136,15 @@ function scoreWord(tiles) {
   return Math.round(base * 10 * mult * (1 + gem));
 }
 
-export default function WordWorm() {
+export default function WordWorm({ quest = false }) {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
-  const { players, loading, error, reload } = useFamilyPlayers("bookworm");
+  const mode = quest ? "battle" : "fire";
+  const { all: heroes, ready: heroesReady } = useDancers();
+  const [heroKey, setHeroKey] = useState(null);
+  const gameKey = mode === "battle" ? "bookworm_battle" : "bookworm";
+  const { players, loading, error, reload } = useFamilyPlayers(gameKey);
+  const [battle, setBattle] = useState(null);
 
   const [dict, setDict] = useState(null);
   const [dictError, setDictError] = useState(null);
@@ -131,6 +172,13 @@ export default function WordWorm() {
   }, [screen]);
 
   const player = players.find(p => p.id === playerId) || null;
+  // A kid's hero starts as their own chore-chart animal; Guest starts on the first character.
+  const choosePlayer = id => {
+    setPlayerId(id);
+    const kid = players.find(p => p.id === id);
+    if (kid?.animal) setHeroKey(kid.animal);
+  };
+  const hero = heroes.find(h => h.key === heroKey) || heroes[0] || null;
   const level = useMemo(() => { let lv = 1; while (score >= levelAt(lv + 1)) lv += 1; return lv; }, [score]);
 
   const selTiles = useMemo(() => {
@@ -151,23 +199,26 @@ export default function WordWorm() {
   const start = () => {
     NEXT_ID = 1;
     setBoard(newBoard()); setSel([]); setScore(0); setWords([]); setResult(null); setMessage(null);
+    setBattle(mode === "battle" ? freshBattle() : null);
     setScreen("play");
   };
 
-  const finish = useCallback(async (finalScore, finalWords) => {
+  // fight = { beaten, monster } in battle mode, null in the fire game.
+  const finish = useCallback(async (finalScore, finalWords, fight) => {
     const best = [...finalWords].sort((a, b) => b.points - a.points)[0] || null;
     const longest = [...finalWords].sort((a, b) => b.word.length - a.word.length)[0] || null;
-    const summary = { score: finalScore, count: finalWords.length, best, longest, saved: null, isBest: false };
+    const summary = { score: finalScore, count: finalWords.length, best, longest, fight: fight || null, saved: null, isBest: false };
     setResult(summary);
     setScreen("over");
     if (player) {
-      const r = await recordFamilyGame(player.id, "bookworm", finalScore, {
+      const r = await recordFamilyGame(player.id, gameKey, finalScore, {
         words: finalWords.length, best_word: best?.word || null, best_word_points: best?.points || 0, longest_word: longest?.word || null,
+        ...(fight ? { beaten: fight.beaten, hero: fight.hero || null } : {}),
       });
       setResult({ ...summary, saved: r.saved, isBest: r.isBest, bestScore: r.bests?.best });
       reload();
     }
-  }, [player, reload]);
+  }, [player, reload, gameKey]);
 
   const tap = (tile) => {
     if (!board) return;
@@ -186,7 +237,7 @@ export default function WordWorm() {
     const putOut = selTiles.filter(t => t.kind === "fire").length;
     const gemKind = GEM_FOR_LEN(letterCount);
     const lv = level;
-    const fireChance = letterCount <= 3 ? Math.min(0.7, 0.25 + 0.05 * lv) : letterCount === 4 ? Math.min(0.4, 0.05 * lv) : 0;
+    const fireChance = mode === "battle" ? 0 : letterCount <= 3 ? Math.min(0.7, 0.25 + 0.05 * lv) : letterCount === 4 ? Math.min(0.4, 0.05 * lv) : 0;
     const addFire = Math.random() < fireChance;
 
     // 1. Take out the spelled tiles and drop new ones in from the top.
@@ -202,7 +253,7 @@ export default function WordWorm() {
     // 2. Fires that were already on the board burn the tile under them and sink a row.
     // Lowest fire first, looked up fresh each time because each burn shifts the column.
     let lost = false;
-    for (let c = 0; c < COLS; c++) {
+    for (let c = 0; c < COLS && mode !== "battle"; c++) {
       const fires = b[c].filter(t => t.kind === "fire" && !t.fresh).map(t => t.id).reverse();
       for (const id of fires) {
         const r = b[c].findIndex(t => t.id === id);
@@ -213,8 +264,30 @@ export default function WordWorm() {
       }
     }
 
-    const newScore = score + points;
+    let newScore = score + points;
     const newWords = [{ word, points }, ...words];
+
+    if (mode === "battle" && battle) {
+      const dmg = damageFor(points);
+      const mhp = battle.mhp - dmg;
+      if (mhp <= 0) {
+        const bonus = 100 * battle.stage;
+        newScore += bonus;
+        const next = monsterFor(battle.stage + 1);
+        setBattle({ stage: battle.stage + 1, monster: next, mhp: next.hp, hp: Math.min(HERO_HP, battle.hp + HEAL_ON_WIN), beaten: battle.beaten + 1, hurt: null });
+        setBoard(b); setSel([]); setScore(newScore); setWords(newWords);
+        say(`${word.toUpperCase()} beat ${battle.monster.name}! +${bonus} · here comes ${next.name}`, "good");
+        return;
+      }
+      const hit = ri(battle.monster.hit[0], battle.monster.hit[1]);
+      const hp = battle.hp - hit;
+      setBattle({ ...battle, mhp, hp: Math.max(0, hp), hurt: "both" });
+      setBoard(b); setSel([]); setScore(newScore); setWords(newWords);
+      if (hp <= 0) { finish(newScore, newWords, { beaten: battle.beaten, monster: battle.monster.name, hero: hero?.key }); return; }
+      say(`${word.toUpperCase()} hits for ${dmg} · ${battle.monster.name} hits you for ${hit}`, "warn");
+      return;
+    }
+
     setBoard(b); setSel([]); setScore(newScore); setWords(newWords);
     if (lost) { finish(newScore, newWords); return; }
     const bits = [`${word.toUpperCase()} +${points}`];
@@ -228,6 +301,16 @@ export default function WordWorm() {
     if (!board) return;
     const b = cloneBoard(board);
     for (const col of b) for (const t of col) if (t.kind === "normal") t.ch = randomLetter(b);
+    if (mode === "battle" && battle) {
+      // In battle a shuffle costs a turn: the monster hits you.
+      const hit = ri(battle.monster.hit[0], battle.monster.hit[1]);
+      const hp = battle.hp - hit;
+      setBoard(b); setSel([]);
+      setBattle({ ...battle, hp: Math.max(0, hp), hurt: "you" });
+      if (hp <= 0) { finish(score, words, { beaten: battle.beaten, monster: battle.monster.name, hero: hero?.key }); return; }
+      say(`Shuffled · ${battle.monster.name} hits you for ${hit}`, "warn");
+      return;
+    }
     const top = [];
     for (let c = 0; c < COLS; c++) if (b[c][0].kind === "normal") top.push(b[c][0]);
     if (top.length) { const t = pick(top); t.kind = "fire"; t.fresh = true; }
@@ -237,8 +320,10 @@ export default function WordWorm() {
 
   const header = (
     <div style={{ marginBottom: 12 }}>
-      <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900 }}>Word Worm</div>
-      <div style={{ fontSize: 13, color: T.slate500 }}>Spell words with touching letters. Keep the fire off the bottom row.</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900 }}>{quest ? "Spelling Quest" : "Word Worm"}</div>
+      <div style={{ fontSize: 13, color: T.slate500 }}>
+        {mode === "battle" ? "Spell words with touching letters to beat the monsters." : "Spell words with touching letters. Keep the fire off the bottom row."}
+      </div>
     </div>
   );
 
@@ -250,8 +335,30 @@ export default function WordWorm() {
         <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 14, padding: 16, display: "grid", gap: 16 }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: T.slate600, marginBottom: 8 }}>Who's playing?</div>
-            {loading ? <div style={{ color: T.slate400, fontSize: 13 }}>Loading…</div> : <PlayerPicker players={players} value={playerId} onChange={setPlayerId} accent={T.teal} />}
+            {loading ? <div style={{ color: T.slate400, fontSize: 13 }}>Loading…</div> : <PlayerPicker players={players} value={playerId} onChange={choosePlayer} accent={T.teal} />}
           </div>
+          {quest ? (
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: T.slate600, marginBottom: 8 }}>
+                Pick your hero{hero ? <span style={{ fontWeight: 500, color: T.slate500 }}> · {hero.label}</span> : null}
+              </div>
+              {!heroesReady ? <div style={{ color: T.slate400, fontSize: 13 }}>Loading…</div> : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(56px, 1fr))", gap: 6 }}>
+                  {heroes.map(h => {
+                    const on = hero?.key === h.key;
+                    return (
+                      <button key={h.key} type="button" onClick={() => setHeroKey(h.key)} title={h.label} aria-label={h.label} style={{
+                        padding: 4, borderRadius: 12, cursor: "pointer", display: "flex", justifyContent: "center",
+                        border: `2px solid ${on ? T.teal : "transparent"}`, background: on ? T.tealLt : T.slate50,
+                      }}>
+                        <CritterIcon which={h.key} size={44} />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : null}
           {player?.bests?.best_detail?.best_word ? (
             <div style={{ fontSize: 13, color: T.slate600 }}>
               {player.name}'s best word: <b>{String(player.bests.best_detail.best_word).toUpperCase()}</b> ({Number(player.bests.best_detail.best_word_points || 0).toLocaleString()} pts)
@@ -272,10 +379,14 @@ export default function WordWorm() {
       <div style={{ padding: _pad, maxWidth: 640, margin: "0 auto" }}>
         {header}
         <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 14, padding: 20, textAlign: "center", display: "grid", gap: 10 }}>
-          <div style={{ fontSize: 15, color: T.slate500 }}>The fire reached the bottom · {player ? player.name : "Guest"}</div>
+          <div style={{ fontSize: 15, color: T.slate500 }}>
+            {result.fight ? `${result.fight.monster} won this time` : "The fire reached the bottom"} · {player ? player.name : "Guest"}
+          </div>
           <div style={{ fontSize: 44, fontWeight: 800, color: T.slate900 }}>{result.score.toLocaleString()}</div>
           {result.isBest ? <div style={{ fontSize: 16, fontWeight: 700, color: T.gold }}>New best score!</div> : null}
-          <div style={{ fontSize: 15, color: T.slate700 }}>{result.count} words</div>
+          <div style={{ fontSize: 15, color: T.slate700 }}>
+            {result.count} words{result.fight ? ` · beat ${result.fight.beaten} monster${result.fight.beaten === 1 ? "" : "s"}` : ""}
+          </div>
           {result.best ? <div style={{ fontSize: 15, color: T.slate700 }}>Best word: <b>{result.best.word.toUpperCase()}</b> ({result.best.points.toLocaleString()} pts)</div> : null}
           {result.longest && result.longest.word !== result.best?.word ? <div style={{ fontSize: 15, color: T.slate700 }}>Longest: <b>{result.longest.word.toUpperCase()}</b></div> : null}
           {player && result.saved === false ? <div style={{ fontSize: 13, color: T.red }}>Couldn't save this score.</div> : null}
@@ -299,8 +410,12 @@ export default function WordWorm() {
     <div style={{ padding: _pad, maxWidth: 640, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
         <div style={{ fontSize: 18, fontWeight: 800, color: T.slate900 }}>{score.toLocaleString()} pts</div>
-        <div style={{ fontSize: 13, color: T.slate600 }}>Level {level} · next at {nextAt.toLocaleString()}</div>
+        <div style={{ fontSize: 13, color: T.slate600 }}>
+          {battle ? `Monster ${battle.stage} · beaten ${battle.beaten}` : `Level ${level} · next at ${nextAt.toLocaleString()}`}
+        </div>
       </div>
+
+      {battle ? <BattleBar battle={battle} hero={hero} /> : null}
 
       {/* Word being spelled */}
       <div style={{
@@ -310,7 +425,7 @@ export default function WordWorm() {
         <div style={{ flex: "1 1 160px", fontSize: 24, fontWeight: 800, letterSpacing: 2, color: valid ? T.slate900 : T.slate500, minWidth: 0, overflowWrap: "anywhere" }}>
           {word ? word.toUpperCase() : <span style={{ fontSize: 14, fontWeight: 500, letterSpacing: 0, color: T.slate400 }}>Tap touching letters</span>}
         </div>
-        {valid ? <div style={{ fontSize: 14, fontWeight: 700, color: T.green }}>+{preview}</div> : null}
+        {valid ? <div style={{ fontSize: 14, fontWeight: 700, color: T.green }}>+{preview}{battle ? ` · ${damageFor(preview)} dmg` : ""}</div> : null}
         <button type="button" onClick={() => setSel([])} disabled={!sel.length} style={{ ...btn(T.slate400), padding: "8px 12px", opacity: sel.length ? 1 : 0.5 }}>Clear</button>
         <button type="button" onClick={submit} disabled={!valid} style={{ ...btn(T.teal), opacity: valid ? 1 : 0.4 }}>Go</button>
       </div>
@@ -336,7 +451,7 @@ export default function WordWorm() {
       ) : null}
 
       <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap", marginTop: 12 }}>
-        <button type="button" onClick={scramble} style={{ ...btn(T.amber), padding: "8px 14px", fontSize: 14 }}>Shuffle (adds fire)</button>
+        <button type="button" onClick={scramble} style={{ ...btn(T.amber), padding: "8px 14px", fontSize: 14 }}>{battle ? "Shuffle (monster gets a turn)" : "Shuffle (adds fire)"}</button>
         <button type="button" onClick={() => finish(score, words)} style={{ ...btn(T.slate400), padding: "8px 14px", fontSize: 14 }}>End game</button>
       </div>
 
@@ -388,5 +503,76 @@ function Tile({ tile, size, left, top, order, danger, onTap }) {
         <span style={{ position: "absolute", left: 4, top: 2, fontSize: Math.max(9, Math.round(size * 0.2)), fontWeight: 700, opacity: 0.85 }}>{order + 1}</span>
       ) : null}
     </button>
+  );
+}
+
+function Bar({ value, max, color, label }) {
+  const pct = Math.max(0, Math.min(100, (value / max) * 100));
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600, color: T.slate700, marginBottom: 2 }}>
+        <span>{label}</span><span>{Math.max(0, value)} / {max}</span>
+      </div>
+      <div style={{ height: 10, borderRadius: 6, background: T.slate200, overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: color, transition: "width 0.35s" }} />
+      </div>
+    </div>
+  );
+}
+
+function BattleBar({ battle, hero }) {
+  const m = battle.monster;
+  return (
+    <div style={{ display: "flex", gap: 10, alignItems: "center", padding: 10, marginBottom: 10, borderRadius: 12, background: T.white, border: `1px solid ${T.slate200}` }}>
+      <DoneDancerStyles />
+      {hero ? (
+        <div key={`h-${battle.hp}`} style={{ flexShrink: 0, animation: battle.hurt ? "wwHit 0.35s" : "none" }}>
+          <span className="nw-bop" style={{ display: "inline-block", lineHeight: 0 }}><CritterIcon which={hero.key} size={64} /></span>
+        </div>
+      ) : null}
+      <style>{"@keyframes wwHit{0%{transform:translateX(0)}25%{transform:translateX(-6px)}50%{transform:translateX(6px)}75%{transform:translateX(-3px)}100%{transform:none}}"}</style>
+      <div key={`${battle.stage}-${battle.mhp}`} style={{ flexShrink: 0, animation: battle.mhp < m.hp ? "wwHit 0.35s" : "none" }}>
+        <Monster m={m} size={72} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0, display: "grid", gap: 8 }}>
+        <Bar value={battle.mhp} max={m.hp} color={T.red} label={m.name} />
+        <div key={`hp-${battle.hp}`} style={{ animation: battle.hurt ? "wwHit 0.35s" : "none" }}>
+          <Bar value={battle.hp} max={HERO_HP} color={T.green} label={hero ? `You · ${hero.label}` : "You"} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Original monsters: one body with a few add-ons, colored per monster.
+function Monster({ m, size }) {
+  const c = m.body;
+  return (
+    <svg viewBox="0 0 100 100" width={size} height={size} aria-label={m.name}>
+      {m.look === "wings" || m.look === "dragon" ? (
+        <g fill={c} opacity="0.75" stroke="#2D2F26" strokeWidth="2">
+          <path d="M28 50 L4 26 L10 58 Z" /><path d="M72 50 L96 26 L90 58 Z" />
+        </g>
+      ) : null}
+      {m.look === "ears" ? (
+        <g fill={c} stroke="#2D2F26" strokeWidth="2"><ellipse cx="34" cy="20" rx="8" ry="16" /><ellipse cx="66" cy="20" rx="8" ry="16" /></g>
+      ) : null}
+      {m.look === "horns" || m.look === "dragon" ? (
+        <g fill="#F2E8D5" stroke="#2D2F26" strokeWidth="2"><path d="M32 30 L26 8 L42 26 Z" /><path d="M68 30 L74 8 L58 26 Z" /></g>
+      ) : null}
+      {m.look === "blob" ? (
+        <path d="M14 78 C10 50 26 26 50 26 C74 26 92 48 86 78 C80 92 20 92 14 78 Z" fill={c} stroke="#2D2F26" strokeWidth="2.5" />
+      ) : (
+        <ellipse cx="50" cy="60" rx="32" ry="30" fill={c} stroke="#2D2F26" strokeWidth="2.5" />
+      )}
+      {m.look === "hat" ? <path d="M24 38 L50 2 L76 38 Z" fill="#B8483A" stroke="#2D2F26" strokeWidth="2" /> : null}
+      <circle cx="38" cy="56" r="8" fill="#fff" stroke="#2D2F26" strokeWidth="1.5" />
+      <circle cx="62" cy="56" r="8" fill="#fff" stroke="#2D2F26" strokeWidth="1.5" />
+      <circle cx="40" cy="58" r="3.5" fill="#2D2F26" />
+      <circle cx="60" cy="58" r="3.5" fill="#2D2F26" />
+      <path d="M30 46 L44 50 M70 46 L56 50" stroke="#2D2F26" strokeWidth="3" strokeLinecap="round" />
+      <path d="M38 76 Q50 68 62 76" fill="none" stroke="#2D2F26" strokeWidth="3" strokeLinecap="round" />
+      {m.look === "dragon" ? <path d="M42 77 L45 82 L48 77 M52 77 L55 82 L58 77" fill="#fff" stroke="#2D2F26" strokeWidth="1" /> : null}
+    </svg>
   );
 }

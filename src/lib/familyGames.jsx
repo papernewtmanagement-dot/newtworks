@@ -5,7 +5,7 @@ import { T } from "./theme.js";
 // =========================================================================
 // familyGames.jsx — shared by the Family games (WordWorm.jsx, MathBlast.jsx).
 // One job each:
-//   useFamilyPlayers(game)   the active kids with their saved bests for that game
+//   useFamilyPlayers(game)   the active kids, their chore-chart animal and saved bests for that game
 //   recordFamilyGame(...)    saves one finished game (database: family_game_record)
 //   PlayerPicker             the "who's playing?" chips, Guest included
 //   ageOf(birthday)          whole years
@@ -34,7 +34,7 @@ export function useFamilyPlayers(game) {
     (async () => {
       const { data, error: err } = await supabase
         .from("family_kids")
-        .select("id,name,birthday,sort_order,game_bests")
+        .select("id,name,birthday,sort_order,animal,game_bests")
         .eq("agency_id", AGENCY_ID)
         .eq("is_active", true)
         .order("sort_order");
@@ -44,6 +44,7 @@ export function useFamilyPlayers(game) {
         id: k.id,
         name: k.name,
         age: ageOf(k.birthday),
+        animal: k.animal || null, // their chore-chart character (dancers.key)
         bests: (k.game_bests && k.game_bests[game]) || {},
       })));
       setLoading(false);
