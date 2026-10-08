@@ -177,7 +177,7 @@ const RANKABLE = [
 ];
 const EMPTY_BANK = { bank_name: "", routing_number: "", account_number: "", account_type: "checking", percent: "" };
 
-function CombinedForm({ data, setData, secure, setSecure, needs = {} }) {
+function CombinedForm({ data, setData, secure, setSecure, needs = {}, onBehalf = false }) {
   const set = (k) => (v) => setData({ ...data, [k]: v });
   const banks = secure.banks && secure.banks.length ? secure.banks : [{ ...EMPTY_BANK }];
   const setBank = (i, k, v) => {
@@ -273,6 +273,9 @@ function CombinedForm({ data, setData, secure, setSecure, needs = {} }) {
         </Grid>
       </Section>
 
+      {/* Someone looking at another person's form sees payroll under Payroll
+          details on the forms list, not here. */}
+      {!onBehalf && (
       <Section title="Payroll"
         note="This goes straight into SurePayroll and is then destroyed. It is never shown back to you, and nobody but Peter and a manager can read it.">
         {needs.ssn && (
@@ -320,6 +323,7 @@ function CombinedForm({ data, setData, secure, setSecure, needs = {} }) {
           </div>
         )}
       </Section>
+      )}
     </div>
   );
 }
@@ -1032,7 +1036,7 @@ function W4Form({ data, setData }) {
   );
 }
 
-function readyToSubmit(formType, data, secure, needs = {}) {
+function readyToSubmit(formType, data, secure, needs = {}, onBehalf = false) {
   if (formType === "non_compete" || formType === "handbook_ack") return !!data.agreed;
   if (formType === "i9") return !!data.attested && !!data.signature && !!data.status;
   if (formType === "w4") return !!data.filing_status;
@@ -1040,11 +1044,11 @@ function readyToSubmit(formType, data, secure, needs = {}) {
     return !!data.why_statement &&
       !!String(data.need_to_make || "").trim() &&
       !!String(data.want_to_make || "").trim() &&
-      (needs.bank === false || (secure.banks || []).some(b =>
+      (onBehalf || needs.bank === false || (secure.banks || []).some(b =>
         String(b.bank_name || "").trim() &&
         String(b.routing_number || "").replace(/[^0-9]/g, "").length === 9 &&
         String(b.account_number || "").replace(/[^0-9]/g, "").length >= 4)) &&
-      (!needs.ssn || String(secure.ssn || "").replace(/[^0-9]/g, "").length === 9) &&
+      (onBehalf || !needs.ssn || String(secure.ssn || "").replace(/[^0-9]/g, "").length === 9) &&
       (!needs.birthday || !!secure.dob);
   }
   return false;
@@ -1062,6 +1066,8 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
   // Save button (the packet info).
   const noSubmit = !!(form.readOnly || form.savesItself);
   const doc = docFor(form.id, docs);
+  // A manager or Peter filling in someone else's form.
+  const onBehalf = !!isAdmin && !!meId && meId !== teamId;
 
   // The offer form is where the Social Security number and birthday are asked.
   // Someone hired without it gets those two boxes on the Onboarding form, and
@@ -1174,7 +1180,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
 
   const canSubmit = form.id === "i9" && isAdmin && submission?.employee_submitted_at
     ? !!employer.attested
-    : readyToSubmit(form.id, data, secure, needs);
+    : readyToSubmit(form.id, data, secure, needs, onBehalf);
 
   return (
     <div>
@@ -1217,7 +1223,7 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
         {form.id === "login_packet_info" &&
           <LoginPacketInfoForm teamId={teamId} preview={preview} />}
         {form.id === "combined_onboarding" &&
-          <CombinedForm data={data} setData={setData} secure={secure} setSecure={setSecure} needs={needs} />}
+          <CombinedForm data={data} setData={setData} secure={secure} setSecure={setSecure} needs={needs} onBehalf={onBehalf} />}
         {form.id === "w4" && <W4Form data={data} setData={setData} />}
         {form.id === "non_compete" && <NonCompeteForm doc={doc} data={data} setData={setData} />}
         {form.id === "handbook_ack" && <HandbookForm doc={doc} data={data} setData={setData} teamId={teamId} />}
