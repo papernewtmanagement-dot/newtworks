@@ -958,6 +958,13 @@ const mapMarkScale = (k) => (k.icon === "great_city" && k.people > 0 ? Math.min(
 // The roads (step 8b), smallest first so the bigger lie on top: the inked edge (min = screen pixels wide at the least,
 // dash for a lane) and the light middle (inset = screen pixels in from the edge; min for a highway, whose middle shows
 // however far out the map is drawn).
+// (step 3) the streets inside a town or city on the District grid: paved, a grey way between darker edges; a lane
+// narrower; the market place an open paved square as wide as it truly is
+const MAP_STREETS = {
+  4: { edge: "#6E675B", mid: "#BDB6A6", min: 3, inset: 1.6 },
+  5: { edge: "#6E675B", mid: "#B3AC9E", min: 2.2, inset: 1.4 },
+  6: { edge: "#7C7466", mid: "#B8B1A3", min: 1.4, inset: 1 },
+};
 const MAP_ROADS = [
   { k: 3, name: "Lane", edge: { line: "#8A6A48", min: 1.5, dash: [5, 3.5] }, mid: { line: "#E8D6A6", inset: 1.6 } },
   { k: 2, name: "Road", edge: { line: "#7A5A3A", min: 2.3 }, mid: { line: "#E8D6A6", inset: 2 } },
@@ -990,10 +997,20 @@ const MAP_BUILT = {
   palisade: { fill: "#A47E52", line: "#5E4426", w: 1.4, round: 0.1 },
   tent: { fill: "#E6DCC2", line: "#8A7A5A", w: 1.2, round: 0.3 },
 };
+// The walls of a building on the battle grid (step 3; rpg_map_view: cells' climb, part first): a house's or a barn's
+// timber-framed walls, a church's stone walls (masonry), the walls inside a house.
+const MAP_WALLS = {
+  wall: { fill: "#5E452D", line: "#2E2012", w: 1.4, round: 0.02 },
+  masonry: { fill: "#A49B89", line: "#4E473B", w: 1.6, round: 0.02, joints: true },
+  inner: { fill: "#8A6D4C", line: "#4A3520", w: 1, round: 0.02 },
+};
 // The squares of a place to go into walked like the ground (step 12c; rpg_map_view: cells' feature): the floor of a hut
-// or a shrine, its hearth or altar, the mouth of a cave or a mine.
+// or a shrine, its hearth or altar, the mouth of a cave or a mine; and (step 3) a building's floor (boards), a church's
+// stone flags and a door.
 const MAP_FEATURE = {
   floor: { fill: "#D8C49A", line: "#9C8660", w: 0.8 },
+  flags: { fill: "#CFC8B8", line: "#8D8676", w: 0.8 },
+  door: { fill: "#D2BC8E", line: "#9C8660", w: 0.8 },
   hearth: { fill: "#D8C49A", line: "#9C8660", w: 0.8, mark: { fill: "#C8642E", line: "#6E3218", r: 22 } },
   altar: { fill: "#D8C49A", line: "#9C8660", w: 0.8, mark: { fill: "#E4DDCB", line: "#4F4A40", r: 0, box: 26 } },
   mouth: { fill: "#2B211A", line: "#1A130E", w: 1, round: 0.3 },
@@ -1475,11 +1492,15 @@ const MAP_ART = {
     forest:    { tones: ["#6F8F4A", "#6C8C47", "#72924D"], blade: 0.5, bush: 0.11, tree: 0.04, big: 0.013, pebble: 0.04 },
     hills:     { tones: ["#A9AE6A", "#A6AB67", "#ACB16D"], blade: 0.5, rock: 0.14, pebble: 0.3 },
     mountains: { tones: ["#A29C91", "#9E988D", "#A6A095"], crack: 0.5, slab: 0.4, rock: 0.22, pebble: 0.45 },
+    // the yards and gardens of a settlement (step 3: its streets are paved squares of their own, below)
     village:   { tones: ["#CBB78C", "#C8B489", "#CEBA8F"], cobble: 0.45, pebble: 0.2, blade: 0.08 },
-    town:      { tones: ["#C8B48A", "#C5B187", "#CBB78D"], cobble: 0.6, pebble: 0.16, blade: 0.05 },
-    city:      { tones: ["#C3B69E", "#C0B39B", "#C6B9A1"], cobble: 0.85, pebble: 0.1, block: 0.03 },
-    great_city: { tones: ["#BEB4A0", "#BBB19D", "#C1B7A3"], cobble: 0.9, pebble: 0.08, block: 0.05 },
+    town:      { tones: ["#B9B07A", "#B6AD77", "#BCB37D"], blade: 0.45, pebble: 0.2, cobble: 0.08, bush: 0.03 },
+    city:      { tones: ["#B8AE84", "#B5AB81", "#BBB187"], blade: 0.35, pebble: 0.2, cobble: 0.1, bush: 0.02 },
+    great_city: { tones: ["#B6AC88", "#B3A985", "#B9AF8B"], blade: 0.3, pebble: 0.2, cobble: 0.12, bush: 0.02 },
     road:      { tones: ["#B99C6C", "#B69969", "#BC9F6F"], streak: 0.7, pebble: 0.25 },
+    // (step 3) a paved street of a town or city: setts laid in courses; its market place: big stone flags
+    street:    { tones: ["#A69F92", "#A39C8F", "#A9A295"], sett: true },
+    market:    { tones: ["#B9B2A2", "#B6AF9F", "#BCB5A5"], flag: true },
     // a bridge (step 11): the road carried over the water on planks laid across it; a ford: knee-deep water over gravel
     // and flat stones, a little stiller than the river round it
     bridge:    { tones: ["#9C7A4E", "#99774B", "#9F7D51"], plank: true },
@@ -1503,6 +1524,7 @@ const MAP_ART = {
   paint: [
     { k: "blade", line: "#5E7E39", w: 1 }, { k: "streak", line: "#927952", w: 1.6 }, { k: "wave", line: "#CFE6EC", w: 1.4 }, { k: "crack", line: "#6F6A62", w: 1 },
     { k: "plank", line: "#5E4426", w: 1 }, { k: "plankLit", line: "#C9A66E", w: 0.8, o: 0.6 },
+    { k: "sett", line: "#6F685C", w: 0.9, o: 0.75 }, { k: "flag", line: "#7D7667", w: 1.2, o: 0.7 },
     { k: "reed", line: "#4E5D2B", w: 1.1 }, { k: "ripple", line: "#B49C67", w: 1.3 }, { k: "frost", line: "#AFC5D1", w: 1.2 },
     { k: "puddle", fill: "#8AA6AD", line: "#B9CDD0", w: 1 }, { k: "root", line: "#4E3B29", w: 2.6 }, { k: "drift", fill: "#FAFBFB", line: "#D5E0E5", w: 0.8 },
     { k: "pebble", fill: "#9B958A" }, { k: "slab", fill: "#B9B4A9" }, { k: "petal", fill: "#F6F2DC" }, { k: "gold", fill: "#E6C552" },
@@ -1780,6 +1802,21 @@ function mapFantasy(v, byId) {
   const roadways = [];
   MAP_ROADS.forEach(({ k, edge, mid }) => { if (paths[k]) roadways.push({ d: paths[k], line: edge.line, units: wide(k), min: edge.min, dash: edge.dash, cap: edge.dash ? "butt" : "round" }); });
   MAP_ROADS.forEach(({ k, edge, mid }) => { if (paths[k]) roadways.push({ d: paths[k], line: mid.line, units: wide(k), inset: mid.inset, min: mid.min }); });
+  // (step 3) the streets, lanes and market places of the District grid, paved, over the roads they meet: each street
+  // or lane piece [5 or 6, x0, y0, ...], a market place [4, its width, x0, y0, x1, y1], thousandths of a cell
+  const streets = { 5: "", 6: "" }, markets = [];
+  (Array.isArray(v.roads) ? v.roads : []).forEach(r => {
+    if (!Array.isArray(r)) return;
+    const k = Number(r[0]), from = k === 4 ? 2 : 1, pts = [];
+    if (k < 4 || k > 6) return;
+    for (let n = from; n + 1 < r.length; n += 2) pts.push([r[n] / 10, r[n + 1] / 10]);
+    if (pts.length < 2) return;
+    if (k === 4) markets.push({ d: mapLine(pts), w: (Number(r[1]) || 0) / 1000 * unit });
+    else streets[k] += mapBend(pts);
+  });
+  markets.forEach(m => roadways.push({ d: m.d, line: MAP_STREETS[4].edge, units: m.w, min: MAP_STREETS[4].min, cap: "butt" }, { d: m.d, line: MAP_STREETS[4].mid, units: m.w, inset: MAP_STREETS[4].inset, min: MAP_STREETS[4].min, cap: "butt" }));
+  [6, 5].forEach(k => { if (streets[k]) roadways.push({ d: streets[k], line: MAP_STREETS[k].edge, units: wide(k), min: MAP_STREETS[k].min }); });
+  [6, 5].forEach(k => { if (streets[k]) roadways.push({ d: streets[k], line: MAP_STREETS[k].mid, units: wide(k), inset: MAP_STREETS[k].inset, min: MAP_STREETS[k].min }); });
   // the bridges and fords (step 11; rpg_map_view: crossings): each [kind, river, road, x, y, angle, span], x and y in
   // thousandths of a cell, angle the way across the water (degrees, clockwise from east), span the width of the water
   // there; drawn a little longer than the water is wide, and never too small to see
@@ -1955,7 +1992,7 @@ function mapTop(cols, rows, x0, y0, what, washes, show, hard, slope, cliff) {
   if (wet) layers.push({ d: mapOutline(cols, rows, dry, U, 0.3), line: "#E6DFC2", units: 9, o: 0.9 });
   // run of the road: along the longer side of what this grid shows of it (a bridge is the road over the water)
   let across = 0, down = 0;
-  const onRoad = (i, j) => what(i, j) === "road" || what(i, j) === "bridge";
+  const onRoad = (i, j) => what(i, j) === "road" || what(i, j) === "bridge" || what(i, j) === "street";
   for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) if (onRoad(i, j)) { if (i + 1 < cols && onRoad(i + 1, j)) across += 1; if (j + 1 < rows && onRoad(i, j + 1)) down += 1; }
   const tall = down > across;
   const trees = [];
@@ -1978,6 +2015,21 @@ function mapTop(cols, rows, x0, y0, what, washes, show, hard, slope, cliff) {
       const t = (n + 0.5) / 3 * U + (rnd(160 + n) - 0.5) * U * 0.04;
       add("plank", tall ? mapLine([[i * U, j * U + t], [(i + 1) * U, j * U + t]]) : mapLine([[i * U + t, j * U], [i * U + t, (j + 1) * U]]));
       add("plankLit", tall ? mapLine([[i * U, j * U + t + U * 0.045], [(i + 1) * U, j * U + t + U * 0.045]]) : mapLine([[i * U + t + U * 0.045, j * U], [i * U + t + U * 0.045, (j + 1) * U]]));
+    }
+    // setts (step 3): four courses a square, each sett a third of a square long, every other course half a sett along,
+    // laid across the way the street runs; flags: two by two big stones, their joints a little off true
+    if (a.sett) for (let n = 1; n < 4; n++) {
+      const t = n * U / 4;
+      add("sett", tall ? mapLine([[i * U, j * U + t], [(i + 1) * U, j * U + t]]) : mapLine([[i * U + t, j * U], [i * U + t, (j + 1) * U]]));
+    }
+    if (a.sett) for (let n = 0; n < 4; n++) for (let m = 0; m < 3; m++) {
+      const t = n * U / 4, o = (n % 2 ? U / 6 : 0) + m * U / 3;
+      if (o <= 0) continue;
+      add("sett", tall ? mapLine([[i * U + o, j * U + t], [i * U + o, j * U + t + U / 4]]) : mapLine([[i * U + t, j * U + o], [i * U + t + U / 4, j * U + o]]));
+    }
+    if (a.flag) {
+      const mx = U * (0.42 + rnd(170) * 0.16), my = U * (0.42 + rnd(171) * 0.16);
+      add("flag", mapLine([[i * U + mx, j * U], [i * U + mx + (rnd(172) - 0.5) * U * 0.06, (j + 1) * U]]) + mapLine([[i * U, j * U + my], [(i + 1) * U, j * U + my + (rnd(173) - 0.5) * U * 0.06]]));
     }
     if (a.crack && rnd(33) < a.crack) {
       // on a slope the cracks run straight down it, as gullies do
@@ -2141,7 +2193,9 @@ function mapBattle(v, byId) {
   const o0 = mapOrigin(v);
   const grid = new Array(cols * rows).fill(null);
   // a square carried over water by a bridge, or in a ford, draws as that (step 11; rpg_map_view: cells' cross)
-  cells.forEach(c => { const p = c.place && !mapWet(c.kind) ? byId[c.place] : null; grid[(c.y - 1) * cols + (c.x - 1)] = { what: c.cross === "bridge" || c.cross === "ford" ? c.cross : p ? (MAP_ART.top[p.icon] ? p.icon : "plain") : c.kind, id: c.place || null, h: c.hard == null ? null : Number(c.hard), cliff: c.cliff == null ? null : Number(c.cliff) }; });
+  // (step 3) a paved square of a town or city draws as its street or market place, and a road or a lane through a
+  // village as the road, though each carries its settlement as its place (for its wash and its name)
+  cells.forEach(c => { const p = c.place && !mapWet(c.kind) ? byId[c.place] : null; grid[(c.y - 1) * cols + (c.x - 1)] = { what: c.cross === "bridge" || c.cross === "ford" ? c.cross : c.paved === 2 ? "market" : c.paved === 1 ? "street" : c.kind === "road" || c.kind === "pass" ? c.kind : p ? (MAP_ART.top[p.icon] ? p.icon : "plain") : c.kind, id: c.place || null, h: c.hard == null ? null : Number(c.hard), cliff: c.cliff == null ? null : Number(c.cliff) }; });
   const get = (i, j) => grid[(j < 0 ? 0 : j >= rows ? rows - 1 : j) * cols + (i < 0 ? 0 : i >= cols ? cols - 1 : i)] || { what: "plain" };
   const washes = [];
   Array.from(new Set(grid.filter(g => g && g.id).map(g => g.id))).forEach(id => { const p = byId[id]; if (p && p.color) washes.push({ d: mapOutline(cols, rows, (i, j) => get(i, j).id === id, 100, 0.3), fill: p.color, o: 0.14 }); });
@@ -2165,9 +2219,7 @@ function mapBattle(v, byId) {
   }
   if (!slope && cells.some(c => c.kind === "mountains" || c.kind === "hills")) { const t = mapRand(7, Math.floor(o0[0] / cols), Math.floor(o0[1] / rows), 800) * 2 * Math.PI; slope = { ux: Math.cos(t), uy: Math.sin(t) }; }
   const layers = mapTop(cols, rows, o0[0], o0[1], (i, j) => get(i, j).what, washes, false, (i, j) => get(i, j).h, slope, (i, j) => (inGrid(i, j) ? get(i, j).cliff : null));
-  // the houses stand on the ground (step 8c)
-  layers.push(...mapRoofs(v.houses, 100));
-  // and the landmarks (step 12b2)
+  // the buildings (step 3: their floor plans, walls, doors and floors, square by square) and the landmarks (step 12b2)
   layers.push(...mapBuilt(cols, rows, cells));
   const fog = mapFog(cols, rows, 100, (i, j) => get(i, j).what === "unknown", 0.3, cols, rows, 7, o0[0], o0[1]);
   return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat([{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }], fog), names: [], blocks: [] };
@@ -2180,22 +2232,50 @@ function mapBuilt(cols, rows, cells) {
   const out = [];
   // the floors and mouths (step 12c)
   const ft = new Map();
-  cells.forEach(c => { if (c.feature && MAP_FEATURE[c.feature]) ft.set((c.y - 1) * cols + (c.x - 1), c.feature === "mouth" ? "mouth" : "floor"); });
-  ["floor", "mouth"].forEach(kind => {
+  cells.forEach(c => { if (c.feature && MAP_FEATURE[c.feature]) ft.set((c.y - 1) * cols + (c.x - 1), ["mouth", "flags", "door"].includes(c.feature) ? c.feature : "floor"); });
+  ["floor", "flags", "door", "mouth"].forEach(kind => {
     const look = MAP_FEATURE[kind];
     const d = mapOutline(cols, rows, (i, j) => i >= 0 && j >= 0 && i < cols && j < rows && ft.get(j * cols + i) === kind, 100, look.round || 0.05);
     if (d) out.push({ d, fill: look.fill, line: look.line, w: look.w });
   });
-  let boards = "";
+  let boards = "", flags = "", leaves = "";
   cells.forEach(c => {
     const look = MAP_FEATURE[c.feature];
     if (!look || c.feature === "mouth") return;
     const x = (c.x - 1) * 100, y = (c.y - 1) * 100;
+    // stone flags: two by two a square; a door: its leaf standing a little open in the doorway
+    if (c.feature === "flags") { flags += `M${x + 50} ${y}V${y + 100}M${x} ${y + 50}H${x + 100}`; return; }
+    if (c.feature === "door") {
+      // the leaf lies along the wall the door is in (the wall runs on through the squares beside it), hinged at one
+      // end and standing a little open, with the sill across the doorway
+      const at = (i, j) => { const k = cells.find(q => q.x === i && q.y === j); return k && Array.isArray(k.climb) && MAP_WALLS[k.climb[0]]; };
+      const across = at(c.x - 1, c.y) || at(c.x + 1, c.y);
+      leaves += across ? `M${x + 6} ${y + 44}L${x + 84} ${y + 30}L${x + 86} ${y + 42}L${x + 8} ${y + 56}Z` : `M${x + 44} ${y + 6}L${x + 30} ${y + 84}L${x + 42} ${y + 86}L${x + 56} ${y + 8}Z`;
+      return;
+    }
     boards += `M${x} ${y + 33}H${x + 100}M${x} ${y + 67}H${x + 100}`;
     if (look.mark && look.mark.r) out.push({ d: mapCircle(x + 50, y + 50, look.mark.r), fill: look.mark.fill, line: look.mark.line, w: 1 });
     if (look.mark && look.mark.box) out.push({ d: mapPoly([[x + 50 - look.mark.box, y + 50 - look.mark.box * 0.6], [x + 50 + look.mark.box, y + 50 - look.mark.box * 0.6], [x + 50 + look.mark.box, y + 50 + look.mark.box * 0.6], [x + 50 - look.mark.box, y + 50 + look.mark.box * 0.6]]), fill: look.mark.fill, line: look.mark.line, w: 1.2 });
   });
   if (boards) out.push({ d: boards, line: MAP_FEATURE.floor.line, w: 0.6, o: 0.5 });
+  if (flags) out.push({ d: flags, line: MAP_FEATURE.flags.line, w: 0.8, o: 0.6 });
+  if (leaves) out.push({ d: leaves, fill: "#8A6238", line: "#4A3018", w: 1.2 });
+  // the walls of the buildings (step 3), over their floors and doors: each kind as one outline of its squares, timber
+  // walls plain, stone walls with their courses
+  const wl = new Map();
+  cells.forEach(c => { if (Array.isArray(c.climb) && MAP_WALLS[c.climb[0]]) wl.set((c.y - 1) * cols + (c.x - 1), c.climb[0]); });
+  Object.entries(MAP_WALLS).forEach(([part, look]) => {
+    const mine = Array.from(wl.entries()).filter(([, p]) => p === part).map(([n]) => n);
+    if (!mine.length) return;
+    const d = mapOutline(cols, rows, (i, j) => i >= 0 && j >= 0 && i < cols && j < rows && wl.get(j * cols + i) === part, 100, look.round);
+    if (d) out.push({ d, fill: look.fill, line: look.line, w: look.w });
+    let marks = "";
+    mine.forEach(n => {
+      const x = (n % cols) * 100, y = Math.floor(n / cols) * 100;
+      if (look.joints) marks += `M${x + 8} ${y + 34}H${x + 92}M${x + 8} ${y + 67}H${x + 92}M${x + 50} ${y + 8}V${y + 34}M${x + 28} ${y + 34}V${y + 67}M${x + 72} ${y + 34}V${y + 67}M${x + 50} ${y + 67}V${y + 92}`;
+    });
+    if (marks) out.push({ d: marks, line: look.line, w: 0.8, o: 0.55 });
+  });
   Object.entries(MAP_BUILT).forEach(([part, look]) => {
     const mine = Array.from(at.entries()).filter(([, p]) => p === part).map(([n]) => n);
     if (!mine.length) return;
@@ -2918,7 +2998,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
     // degrees, difficulty, what it is in words)
     const climb = Array.isArray(c.climb) ? `${c.climb[4]}, ${c.climb[1]} m up, climbed (Climbing against ${c.climb[3]})`
       // a square of a place to go into walked like the ground (step 12c)
-      : c.feature ? ({ floor: "a floor", hearth: "a hearth", altar: "an altar", mouth: "the way in, underground" })[c.feature] || null : null;
+      : c.feature ? ({ floor: "a floor", flags: "a stone floor", door: "a door", hearth: "a hearth", altar: "an altar", mouth: "the way in, underground" })[c.feature] || null : null;
     const u = under && top ? underAt[`${c.x},${c.y}`] : null;
     const title = under && top && hasUnder
       ? `${c.name} · under the ground: ${u ? `${(MAP_UNDER_PART[u[2]] || MAP_UNDER_PART.floor).words}${u[4] ? `, ${u[4]} m deep` : ""}${u[3] != null ? ` · +${u[3]}% time a square` : ""} · ${Number(u[5]).toLocaleString("en-US")} feet down` : "solid rock"}`
@@ -3045,9 +3125,19 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
             ))}
           </>
         )}
-        {Array.isArray(v.houses) && v.houses.length > 0 && (
+        {Array.isArray(v.houses) && v.houses.length > 0 && !top && (
           <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <MapSwatch what="house" size={20} />Buildings (houses, barns, churches): their walls and roofs are climbed (see Climbing); a walk goes round them.
+          </span>
+        )}
+        {top && cells.some(c => Array.isArray(c.climb) && MAP_WALLS[c.climb[0]]) && (
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 14, height: 14, borderRadius: 3, background: MAP_WALLS.wall.fill, display: "inline-block" }} />Buildings, seen inside: walls are climbed (see Climbing); doors and floors are walked.
+          </span>
+        )}
+        {top && cells.some(c => c.paved) && (
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 14, height: 14, borderRadius: 3, background: MAP_ART.top.street.tones[0], display: "inline-block" }} />Paved streets and the market place.
           </span>
         )}
         {cells.some(c => c.feature === "mouth") && (
