@@ -1424,7 +1424,8 @@ function renderChoices(block, options) {
       return `<button type="button" class="nw-choose-next" title="Next customer" aria-label="Next customer">↻ <span class="nw-choose-num"></span></button>`;
     }
     const lv = g.kind === "level";
-    return `<div class="nw-choose-seg${lv ? " nw-choose-levels" : ""}" role="group">` +
+    const tk = g.kind === "track";
+    return `<div class="nw-choose-seg${lv ? " nw-choose-levels" : ""}${tk ? " nw-choose-track" : ""}" role="group">` +
       g.opts.map((label, i) => {
         const on = lv ? openerSlug(label) === startLevel : i === 0;
         return `<button type="button" class="nw-choose-opt" data-val="${openerSlug(label)}" aria-pressed="${on ? "true" : "false"}">${escapeHtml(label)}</button>`;
@@ -1435,7 +1436,8 @@ function renderChoices(block, options) {
   const panels = block.panels.map((p) =>
     `<div class="nw-choose-panel" data-choice="${p.key}"${p.key === start ? "" : " hidden"}>${mdToHtml(p.lines.join("\n"), options)}</div>`
   ).join("");
-  const lvAttr = level ? ` data-level="${startLevel}"` : "";
+  const track = block.groups.find((g) => g.kind === "track");
+  const lvAttr = (level ? ` data-level="${startLevel}"` : "") + (track ? ` data-track="${openerSlug(track.opts[0] || "")}"` : "");
   return `<div class="nw-choose"${lvAttr}><div class="nw-choose-bar">${bar}</div>${panels}</div>`;
 }
 
@@ -1457,6 +1459,10 @@ function chooseGroup(part) {
     return { kind: "days", opts: [], map };
   }
   if (/^(refresh|↻)$/i.test(p)) return { kind: "refresh", opts: [] };
+  // "track: Authorized, Not authorized" picks which tagged cards show
+  // ([Card: ... | authorized]); it only appears while today's cards have one.
+  const tr = /^track:\s*(.*)$/i.exec(p);
+  if (tr) return { kind: "track", opts: tr[1].split(",").map((x) => x.trim()).filter(Boolean) };
   const lv = /^level:\s*(.*)$/i.exec(p);
   const list = (s) => s.split(",").map((x) => x.trim()).filter(Boolean);
   return lv ? { kind: "level", opts: list(lv[1]) } : { kind: "panel", opts: list(p) };
@@ -1468,7 +1474,20 @@ function chooseGroup(part) {
 // matching lead) together. The day sets the starting card, so two teammates
 // on separate screens open on the same customer (choices.js).
 const CYCLE_START_RE = /^[ \t]*\[Cycle:\s*([^\]\n]+?)\s*\][ \t]*$/i;
-const CARD_RE = /^[ \t]*\[Card\][ \t]*$/i;
+// A card can name the days it's in play and a track (Peter 2026-10-08: weeks
+// with several plays spread them over Tuesday to Thursday, and Life Reviews
+// split "authorized" people onto holding the review):
+//   [Card: Wednesday, Thursday, Friday | authorized]
+// Cards for other days are left out when the page is showing a day.
+const CARD_RE = /^[ \t]*\[Card(?::\s*([^\]\n]*?))?\s*\][ \t]*$/i;
+const dayKey = (s) => (String(s || "").trim() ? openerSlug(String(s).trim()).slice(0, 3) : "");
+function cardTags(raw) {
+  const [days, track] = String(raw || "").split("|");
+  return {
+    days: String(days || "").split(",").map(dayKey).filter(Boolean),
+    track: String(track || "").trim() ? openerSlug(String(track).trim()) : "",
+  };
+}
 const CYCLE_END_RE = /^[ \t]*\[Cycle end\][ \t]*$/i;
 
 function expandCycles(md, options, slots) {
@@ -1477,7 +1496,9 @@ function expandCycles(md, options, slots) {
   let cur = null;
   let card = null;
   const flush = () => {
-    const html = cur.cards.map((c, i) => `<div class="nw-cycle-card"${i === 0 ? "" : " hidden"}>${mdToHtml(c.join("\n"), options)}</div>`).join("");
+    const today = dayKey(options?.openerState?.day);
+    const cards = cur.cards.filter((c) => !today || !c.tags.days.length || c.tags.days.includes(today));
+    const html = cards.map((c, i) => `<div class="nw-cycle-card"${c.tags.track ? ` data-track="${c.tags.track}"` : ""}${i === 0 ? "" : " hidden"}>${mdToHtml(c.lines.join("\n"), options)}</div>`).join("");
     slots.push(`<div class="nw-cycle" data-cycle="${openerSlug(cur.name)}">${html}</div>`);
     kept.push(RP_SLOT(slots.length - 1));
     cur = null; card = null;
@@ -1490,8 +1511,9 @@ function expandCycles(md, options, slots) {
       continue;
     }
     if (CYCLE_END_RE.test(line)) { flush(); continue; }
-    if (CARD_RE.test(line)) { card = []; cur.cards.push(card); continue; }
-    if (card) card.push(line);
+    const cm = CARD_RE.exec(line);
+    if (cm) { card = { lines: [], tags: cardTags(cm[1]) }; cur.cards.push(card); continue; }
+    if (card) card.lines.push(line);
   }
   if (cur) flush();
   return kept.join("\n");
