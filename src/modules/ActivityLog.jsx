@@ -2056,10 +2056,10 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
       {view === "tocheck" && swaps.length > 0 && (
         <div style={{ border: `1px solid ${T.amber}`, background: "#fffbeb", borderRadius: 10, padding: 12, marginBottom: 14 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>
-            {swaps.length === 1 ? "A Policy Change might be a vehicle swap" : `${swaps.length} Policy Changes might be vehicle swaps`}
+            {swaps.length === 1 ? "A Policy Transaction might be a vehicle swap" : `${swaps.length} Policy Transactions might be vehicle swaps`}
           </div>
           <div style={{ fontSize: 12, color: T.slate600, marginBottom: 6 }}>
-            The note says something came off, and the household added an auto within 30 days. Swap turns the added auto into a replacement Policy Change.
+            The note says something came off, and the household added an auto within 30 days. Swap turns the added auto into a replacement Policy Transaction.
           </div>
           {swaps.map(w => (
             <div key={`${w.removal_id}-${w.product_id}`} style={{ padding: "10px 0", borderTop: `1px solid ${T.slate100}` }}>
@@ -2068,7 +2068,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
                 {w.phone_last4 ? <span style={{ color: T.slate400, fontWeight: 400 }}> ·{w.phone_last4}</span> : null}
               </div>
               <div style={{ fontSize: 13, color: T.slate800, marginTop: 2 }}>
-                Policy Change {fmtDate(w.removal_on)}, {w.removal_by || "—"}: “{w.removal_note || ""}”
+                Policy Transaction {fmtDate(w.removal_on)}, {w.removal_by || "—"}: “{w.removal_note || ""}”
               </div>
               <div style={{ fontSize: 13, color: T.slate800, marginTop: 2 }}>
                 Added {w.sale_label} {fmtDate(w.sold_on)}, {w.sold_by || "—"}: {fmtMoney(w.premium)}{Number(w.vehicle_count) > 1 ? `, ${w.vehicle_count} cars` : ""}
@@ -2100,7 +2100,7 @@ function SpotCheck({ isAdmin, values, sources, types, isOwner, roster }) {
               </div>
               <div style={{ fontSize: 13, color: T.slate800, marginTop: 2 }}>“{x.note || ""}” <span style={{ color: T.slate500 }}>{x.logged_by || ""}</span></div>
               <div style={{ fontSize: 13, color: T.slate800, marginTop: 2 }}>
-                {fmtPts(x.points_at_stake)} points at stake: {(x.touches || []).map(t => `${t.activity_key === "claims_touch" ? "Claims Touch" : "Policy Review"} ${fmtDate(t.touch_on)} (${t.who || "—"})`).join(", ")}
+                {fmtPts(x.points_at_stake)} points at stake: {(x.touches || []).map(t => `${t.activity_key === "claims_touch" ? "Claims Touch" : "Welcome/Review"} ${fmtDate(t.touch_on)} (${t.who || "—"})`).join(", ")}
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 6 }}>
                 {x.ecrm_url && <a href={x.ecrm_url} target="ecrm" rel="noreferrer" style={{ color: T.blue, fontSize: 13, marginRight: 6 }}>ECRM</a>}
