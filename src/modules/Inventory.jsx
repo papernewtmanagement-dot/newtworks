@@ -26,13 +26,14 @@ import { DayDoneStyles, Dancer, CritterIcon, useDancers } from "../components/Cr
 // the site then learns it from use and predicts nothing until it has measured a cycle.
 //
 // The same screen runs the office list (Peter 2026-10-08). The team's "Requests" page
-// (place="office") shows the office checklist plus two requests. The office list and snack
-// requests are only for teammates working in the office (office_can_stock()); everyone
-// can send prize cart ideas:
-//   office_request_snack()   puts a snack on the office list if it's new, then taps it Running low
-//   prize_cart_idea_add()    a prize idea; it goes to Alvi with the quarter's prize cart close
-//   prize_cart_ideas_mine()  the person's own ideas that haven't gone to Alvi yet
-//   prize_cart_idea_remove() take one back before it goes
+// (place="office") shows the office checklist plus two requests. Everyone sees what the office
+// has asked for and every prize idea. Tapping Running low and requesting snacks are only for
+// teammates working in the office (office_can_stock()); everyone can send prize cart ideas:
+//   office_request_snack()       puts a snack on the office list if it's new, then taps it Running low
+//   prize_cart_idea_add()        a prize idea; it goes to Alvi with the quarter's prize cart close
+//   prize_cart_ideas_list()      every idea not yet used, who sent it; ideas stay until used
+//   prize_cart_idea_mark_used()  admins: this one went on the prize cart, take it off the list
+//   prize_cart_idea_remove()     take back your own idea (admins: any)
 // Alvi orders both lists from Inventory > Admin, which shows Home and Office apart.
 // =========================================================================
 
@@ -118,11 +119,10 @@ export default function Inventory({ userRole, place: pagePlace = "home" }) {
 
   const load = useCallback(async () => {
     if (isOfficePage) {
-      // Only teammates working in the office see and stock the office list.
+      // Everyone sees the office list; only teammates working in the office can tap it.
       const { data: ok, error: okErr } = await supabase.rpc("office_can_stock");
-      if (okErr) { setErr(okErr.message); setLoading(false); return; }
+      if (okErr) setErr(okErr.message);
       setCanStock(ok === true);
-      if (ok !== true) { setRows([]); setLoading(false); return; }
     }
     const { data, error } = await supabase.rpc("family_inventory_board", { p_location: place });
     if (error) setErr(error.message);
@@ -183,8 +183,9 @@ export default function Inventory({ userRole, place: pagePlace = "home" }) {
       {activeTab === "checklist" && canStock && (
         <Checklist rows={rows} busy={busy} onToggle={toggleLow} isParent={isParent} place={place} onAdd={() => setEditing({})} />
       )}
+      {isOfficePage && !canStock && <AskedFor rows={rows} />}
       {isOfficePage && (
-        <OfficeRequests rows={rows} allDancers={allDancers} canStock={canStock} onChanged={load} setErr={setErr} />
+        <OfficeRequests rows={rows} allDancers={allDancers} canStock={canStock} isParent={isParent} onChanged={load} setErr={setErr} />
       )}
       {activeTab === "admin" && isParent && (
         <>
@@ -616,20 +617,38 @@ function MealGroceries({ today, rows, onChanged, setErr }) {
 // A snack request lands on the office list as Running low (new snacks go under Kitchen Supplies),
 // so Alvi sees it with the rest of the office order. Prize ideas wait until the quarter's
 // prize cart close, which sends them to Alvi.
-function OfficeRequests({ rows, allDancers, canStock, onChanged, setErr }) {
+// What the office has asked for, for teammates who don't stock it (read only).
+function AskedFor({ rows }) {
+  const low = rows.filter(r => r.is_low);
+  return (
+    <div style={card}>
+      <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Asked for at the office</div>
+      {!low.length && <div style={{ fontSize: 13, color: T.slate500, marginTop: 6 }}>Nothing right now.</div>}
+      {low.map((r, i) => (
+        <div key={r.item_id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderTop: i ? `1px solid ${T.slate100}` : "none", marginTop: i ? 0 : 6 }}>
+          <CritterIcon which={r.dancer} size={26} />
+          <span style={{ fontSize: 14, fontWeight: 600, color: T.slate900, overflowWrap: "anywhere" }}>{r.name}</span>
+          <span style={{ fontSize: 12, color: T.slate500 }}>{r.section}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OfficeRequests({ rows, allDancers, canStock, isParent, onChanged, setErr }) {
   const [snack, setSnack] = useState("");
   const [idea, setIdea] = useState("");
   const [link, setLink] = useState("");
-  const [mine, setMine] = useState([]);
+  const [ideas, setIdeas] = useState([]);
   const [saving, setSaving] = useState(null);
   const [done, setDone] = useState(null);
   const label = { fontSize: 13, color: T.slate700, display: "grid", gap: 4 };
 
-  const loadMine = useCallback(async () => {
-    const { data, error } = await supabase.rpc("prize_cart_ideas_mine");
-    if (error) setErr(error.message); else setMine(Array.isArray(data) ? data : []);
+  const loadIdeas = useCallback(async () => {
+    const { data, error } = await supabase.rpc("prize_cart_ideas_list");
+    if (error) setErr(error.message); else setIdeas(Array.isArray(data) ? data : []);
   }, [setErr]);
-  useEffect(() => { loadMine(); }, [loadMine]);
+  useEffect(() => { loadIdeas(); }, [loadIdeas]);
 
   const askSnack = async (e) => {
     e.preventDefault();
@@ -651,13 +670,13 @@ function OfficeRequests({ rows, allDancers, canStock, onChanged, setErr }) {
     setSaving(null);
     if (error) { setErr(error.message); return; }
     setIdea(""); setLink("");
-    loadMine();
+    loadIdeas();
   };
 
-  const removeIdea = async (id) => {
-    const { error } = await supabase.rpc("prize_cart_idea_remove", { p_id: id });
+  const ideaAction = async (fn, id) => {
+    const { error } = await supabase.rpc(fn, { p_id: id });
     if (error) { setErr(error.message); return; }
-    loadMine();
+    loadIdeas();
   };
 
   return (
@@ -679,7 +698,7 @@ function OfficeRequests({ rows, allDancers, canStock, onChanged, setErr }) {
 
       <form onSubmit={sendIdea} style={{ ...card, display: "grid", gap: 10, alignContent: "start" }}>
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Prize cart idea</div>
-        <div style={{ fontSize: 12, color: T.slate500, marginTop: -6 }}>Goes to Alvi when the prize cart is restocked at the end of the quarter.</div>
+        <div style={{ fontSize: 12, color: T.slate500, marginTop: -6 }}>Goes to Alvi when the prize cart is restocked at the end of the quarter, and stays on the list until it's used.</div>
         <label style={label}>Your idea
           <input value={idea} onChange={e => setIdea(e.target.value)} placeholder="Wireless earbuds" maxLength={200}
             style={{ ...input, width: "100%", fontSize: 14 }} />
@@ -692,15 +711,17 @@ function OfficeRequests({ rows, allDancers, canStock, onChanged, setErr }) {
           style={{ ...btn("primary"), justifySelf: "start", opacity: idea.trim() && saving !== "idea" ? 1 : 0.5 }}>
           {saving === "idea" ? "Sending…" : "Send idea"}
         </button>
-        {mine.length > 0 && (
+        {ideas.length > 0 && (
           <div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: T.slate500, marginTop: 4 }}>Your ideas this quarter</div>
-            {mine.map(m => (
-              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderTop: `1px solid ${T.slate100}` }}>
-                <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: T.slate900, overflowWrap: "anywhere" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.slate500, marginTop: 4 }}>Ideas so far ({ideas.length})</div>
+            {ideas.map(m => (
+              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderTop: `1px solid ${T.slate100}`, flexWrap: "wrap" }}>
+                <div style={{ flex: "1 1 160px", minWidth: 0, fontSize: 13, color: T.slate900, overflowWrap: "anywhere" }}>
                   {m.link ? <a href={m.link} target="_blank" rel="noopener noreferrer" style={{ color: T.blue }}>{m.idea}</a> : m.idea}
+                  {m.submitted_by && <span style={{ color: T.slate500 }}> · {m.is_mine ? "you" : m.submitted_by}</span>}
                 </div>
-                <button type="button" style={btn("soft", true)} onClick={() => removeIdea(m.id)}>Remove</button>
+                {isParent && <button type="button" style={btn("soft", true)} onClick={() => ideaAction("prize_cart_idea_mark_used", m.id)}>Used</button>}
+                {(m.is_mine || isParent) && <button type="button" style={btn("soft", true)} onClick={() => ideaAction("prize_cart_idea_remove", m.id)}>Remove</button>}
               </div>
             ))}
           </div>
