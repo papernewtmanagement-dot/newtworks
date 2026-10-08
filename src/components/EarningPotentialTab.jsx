@@ -116,6 +116,26 @@ const rateSentence = (p) => {
     ? ` Your average has earned the $${Math.round(next)} step, which takes effect at the quarter close.`
     : "");
 };
+// Biggest gap to the next raise (Peter 2026-10-07): the line furthest under the
+// person's own best finished quarter, and what matching it again would do.
+const gapAmount = (g, v) => g?.measure === "apps"
+  ? `${Math.round(Number(v) || 0)} ${String(g.line_label || "").toLowerCase()} apps`
+  : `$${Math.round(Number(v) || 0).toLocaleString()} of ${String(g.line_label || "").toLowerCase()} premium`;
+const gapSentence = (p, add) => {
+  const g = p?.gap;
+  if (!g) return "";
+  const me = !!p.is_me;
+  const head = `${me ? "Your" : (p.first_name || "Their") + "'s"} biggest gap: ${g.line_label}. `;
+  const had = `${me ? "You wrote" : (p.first_name || "They") + " wrote"} ${gapAmount(g, g.last_value)} in ${g.last_quarter}, against ${gapAmount(g, g.best_value)} in ${g.best_quarter}. `;
+  const pace = `Back at that best quarter, the weekly average climbs from ${Math.round(Number(p.x) || 0)} to about ${Math.round(Number(g.x) || 0)} points, worth about ${fmtK(add)} more a year in total pay`;
+  const next = Number(p?.next_hourly);
+  const wk = Number(g.weeks_to_next);
+  const step = Number.isFinite(wk) && wk > 0 && Number.isFinite(next)
+    ? `, and it earns the $${Math.round(next)} rate in about ${wk} weeks.`
+    : ". On its own that isn't enough to reach the next raise.";
+  return head + had + pace + step;
+};
+
 // The window the average covers, in quarters when it is whole quarters.
 const windowText = (p) => {
   const w = Number(p?.window_weeks);
@@ -330,6 +350,13 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
   // own label gets out of the way wherever a marker stands.
   const markerXs = (Array.isArray(positions) ? positions : [])
     .map(p => Math.min(Math.max(Number(p?.x) || 0, 0), xMax));
+  const gapRows = (Array.isArray(positions) ? positions : [])
+    .filter(p => p?.gap && Number.isFinite(Number(p.gap.x)))
+    .map(p => {
+      const from = Math.min(Math.max(Number(p.x) || 0, 0), xMax);
+      const to = Math.min(Math.max(Number(p.gap.x) || 0, 0), xMax);
+      return { p, from, to, add: valueAt("total", to) - valueAt("total", from) };
+    });
   const clearOfMarkers = (xs) =>
     xs.filter(x => !markerXs.some(m => Math.abs(xFor(m) - xFor(x)) < minGapPx + 12));
   const labelXs = {
@@ -348,6 +375,7 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
   }
 
   return (
+    <>
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }} role="img" aria-label="Projected annual pay by production level: base pay, base plus commission, and total pay, with performance bands shaded">
       {/* Performance bands */}
       {markers.map(m => {
@@ -462,6 +490,19 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
           </g>
         );
       })}
+      {/* Gap plugged: hollow point on the total line at the pace the person would hold */}
+      {gapRows.map(({ p, from, to, add }) => {
+        const fromPay = Number.isFinite(Number(p?.y)) ? Number(p.y) : valueAt("total", from);
+        const px = xFor(to), py = yFor(valueAt("total", to));
+        const anchor = px > padL + chartW - 30 ? "end" : "middle";
+        return (
+          <g key={"gap-" + (p.team_member_id || p.first_name)}>
+            <line x1={xFor(from)} y1={yFor(fromPay)} x2={px} y2={py} stroke={T.purple} strokeWidth="1.5" strokeDasharray="4 3" opacity="0.7" />
+            <circle cx={px} cy={py} r={5.5} fill={T.white} stroke={T.purple} strokeWidth="2" />
+            <text x={px} y={py - 10} textAnchor={anchor} fontSize={isPhone ? 9.5 : 10.5} fontWeight={800} fill={T.purple}>{"+" + fmtK(add) + "/yr"}</text>
+          </g>
+        );
+      })}
       {/* Where each person actually sits: the weekly average their raise review uses */}
       {(Array.isArray(positions) ? positions : [])
         .map(p => ({ ...p, xv: Math.min(Math.max(Number(p?.x) || 0, 0), xMax) }))
@@ -508,6 +549,12 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
         ))}
       </g>
     </svg>
+    {gapRows.map(({ p, add }) => (
+      <div key={"gapnote-" + (p.team_member_id || p.first_name)} style={{ marginTop: 8, fontSize: 11.5, color: T.slate700, background: T.purpleLt, border: `1px dashed ${T.purple}`, borderRadius: 7, padding: "7px 10px" }}>
+        {gapSentence(p, add)}
+      </div>
+    ))}
+    </>
   );
 };
 
@@ -752,7 +799,7 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
       <div style={card}>
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected annual pay by {curve?.x_label ? curve.x_label.toLowerCase() : "production level"}</div>
-          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{rolePositions.length > 0 ? " The purple points are real: production is the same weekly average the raise review uses for each person's next step, pay is the same on-time annual figure the weekly CPR shows, and a manager's title amount shows under their name, paid on top of the ladder step." : ""}</div>
+          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{rolePositions.length > 0 ? " The purple points are real: production is the same weekly average the raise review uses for each person's next step, pay is the same on-time annual figure the weekly CPR shows, and a manager's title amount shows under their name, paid on top of the ladder step. A hollow point shows where closing their biggest gap would put them." : ""}</div>
         </div>
         {curve ? (
           <EarningsCurveChart curve={curve} ladder={role.raise_ladder} highlighted={hotTier?.tier_key} isPhone={_vp.isPhone} positions={rolePositions} />
