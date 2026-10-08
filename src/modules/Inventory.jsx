@@ -12,8 +12,9 @@ import { DayDoneStyles, Dancer, CritterIcon, useDancers } from "../components/Cr
 // Parents get the Admin tab: what to order this week (tapped items plus the
 // ones expected to run out before next week's order) and every item's preset.
 // Every number on this screen comes from the database, one function per job:
-//   family_inventory_board()        per item: tapped or not, how long one usual amount lasts
-//                                   now, days left, the day it runs out, how much to buy
+//   family_inventory_board(place)   per item: tapped or not, how long one usual amount lasts
+//                                   now, days left, the day it runs out, how much to buy.
+//                                   place = home (the house) or office (the agency office)
 //   family_inventory_mark_low()     Running low (stores which dancer)
 //   family_inventory_unmark_low()   Undo
 //   family_inventory_mark_ordered() parents: these were ordered, this much of each
@@ -23,10 +24,20 @@ import { DayDoneStyles, Dancer, CritterIcon, useDancers } from "../components/Cr
 // Changing an item's amount or schedule restarts its learning (database trigger).
 // Items keep the master list's store sections and order. "How often" may be blank:
 // the site then learns it from use and predicts nothing until it has measured a cycle.
+//
+// The same screen runs the office list (Peter 2026-10-08). The team's "Office" page
+// (place="office") shows the office checklist plus two requests:
+//   office_request_snack()   puts a snack on the office list if it's new, then taps it Running low
+//   prize_cart_idea_add()    a prize idea; it goes to Alvi with the quarter's prize cart close
+//   prize_cart_ideas_mine()  the person's own ideas that haven't gone to Alvi yet
+//   prize_cart_idea_remove() take one back before it goes
+// Alvi orders both lists from Inventory > Admin, which shows Home and Office apart.
 // =========================================================================
 
 const PARENT_ROLES = ["owner", "admin"];
 const TABS = ["checklist", "admin"];
+const PLACES = ["home", "office"];
+const PLACE_LABELS = { home: "Home", office: "Office" };
 const TAB_LABELS = { checklist: "Checklist", admin: "Admin" };
 // "Still have some": how much is left, as a share of what you usually buy.
 const LEFT_CHOICES = [["A little", 0.25], ["About half", 0.5], ["Plenty", 1]];
@@ -63,6 +74,13 @@ const lastsText = (days) => {
   const w = Math.round((d / 7) * 2) / 2;
   return `about ${w} weeks`;
 };
+// A random dancer from the dancers table, preferring one not already dancing on this list.
+const pickDancer = (rows, allDancers, alsoInUse = []) => {
+  const inUse = new Set([...(rows || []).filter(x => x.is_low && x.dancer).map(x => x.dancer), ...alsoInUse]);
+  const free = (allDancers || []).filter(d => !inUse.has(d.key));
+  const pool = free.length ? free : (allDancers || []);
+  return pool.length ? pool[Math.floor(Math.random() * pool.length)].key : null;
+};
 const todayCentral = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
 const utcDay = (s) => { const [y, m, d] = String(s).split("-").map(Number); return Date.UTC(y, m - 1, d); };
 const outText = (r, today) => {
@@ -75,11 +93,13 @@ const outText = (r, today) => {
   return `Out by ${new Date(utcDay(r.out_on)).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" })}`;
 };
 
-export default function Inventory({ userRole }) {
+export default function Inventory({ userRole, place: pagePlace = "home" }) {
   const isParent = PARENT_ROLES.includes(userRole);
+  const isOfficePage = pagePlace === "office";
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
   const [tab, setTab, tabHref] = useTabParam("tab", "checklist", TABS);
+  const [adminPlace, setAdminPlace, placeHref] = useTabParam("place", "home", PLACES);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
@@ -87,16 +107,19 @@ export default function Inventory({ userRole }) {
   const [editing, setEditing] = useState(null);
   const { all: allDancers } = useDancers();
 
-  const visibleTabs = isParent ? TABS : ["checklist"];
+  const visibleTabs = isParent && !isOfficePage ? TABS : ["checklist"];
   const activeTab = visibleTabs.includes(tab) ? tab : "checklist";
+  // Which list is on screen: the Office page always shows the office; Inventory shows the house,
+  // except on Admin, where Alvi switches between Home and Office.
+  const place = isOfficePage ? "office" : activeTab === "admin" ? adminPlace : "home";
 
   const load = useCallback(async () => {
-    const { data, error } = await supabase.rpc("family_inventory_board");
+    const { data, error } = await supabase.rpc("family_inventory_board", { p_location: place });
     if (error) setErr(error.message);
     else setRows(Array.isArray(data) ? data : []);
     setLoading(false);
-  }, []);
-  useEffect(() => { load(); }, [load]);
+  }, [place]);
+  useEffect(() => { setLoading(true); load(); }, [load]);  // runs again only when the list on screen changes
 
   // The dancer is picked here, from the dancers table (read through useDancers).
   // It prefers one that isn't already dancing on another item.
@@ -108,10 +131,7 @@ export default function Inventory({ userRole }) {
       setRows(xs => xs.map(x => (x.item_id === r.item_id ? { ...x, is_low: false, dancer: null } : x)));
       res = await supabase.rpc("family_inventory_unmark_low", { p_item_id: r.item_id });
     } else {
-      const inUse = new Set(rows.filter(x => x.is_low && x.dancer).map(x => x.dancer));
-      const free = allDancers.filter(d => !inUse.has(d.key));
-      const pool = free.length ? free : allDancers;
-      const dancer = pool.length ? pool[Math.floor(Math.random() * pool.length)].key : null;
+      const dancer = pickDancer(rows, allDancers);
       setRows(xs => xs.map(x => (x.item_id === r.item_id ? { ...x, is_low: true, dancer } : x)));
       res = await supabase.rpc("family_inventory_mark_low", { p_item_id: r.item_id, p_dancer: dancer });
     }
@@ -126,7 +146,12 @@ export default function Inventory({ userRole }) {
     <div style={{ padding: _pad, maxWidth: 820, margin: "0 auto", boxSizing: "border-box" }}>
       <DayDoneStyles />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
-        <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900 }}>Inventory</div>
+        <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900 }}>{isOfficePage ? "Office" : "Inventory"}</div>
+        {isOfficePage && isParent && (
+          <a href="/inventory?tab=admin&place=office" style={{ fontSize: 13, color: T.blue, fontWeight: 600, textDecoration: "none" }}>
+            Order office items →
+          </a>
+        )}
         {visibleTabs.length > 1 && (
           <div style={{ display: "flex", gap: 6, overflowX: "auto", whiteSpace: "nowrap" }}>
             {visibleTabs.map(t => (
@@ -146,13 +171,26 @@ export default function Inventory({ userRole }) {
       )}
 
       {activeTab === "checklist" && (
-        <Checklist rows={rows} busy={busy} onToggle={toggleLow} isParent={isParent} onAdd={() => setEditing({})} />
+        <Checklist rows={rows} busy={busy} onToggle={toggleLow} isParent={isParent} place={place} onAdd={() => setEditing({})} />
+      )}
+      {isOfficePage && (
+        <OfficeRequests rows={rows} allDancers={allDancers} onChanged={load} setErr={setErr} />
       )}
       {activeTab === "admin" && isParent && (
-        <AdminView rows={rows} today={todayCentral()} onChanged={load} setErr={setErr} onEdit={setEditing} />
+        <>
+          <div role="tablist" aria-label="Which list" style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+            {PLACES.map(pl => (
+              <TabLink key={pl} href={placeHref(pl)} onSelect={() => setAdminPlace(pl)}
+                style={{ ...btn(adminPlace === pl ? "primary" : "soft"), flex: "1 1 0", textAlign: "center", textDecoration: "none", fontSize: 14 }}>
+                {PLACE_LABELS[pl]}
+              </TabLink>
+            ))}
+          </div>
+          <AdminView rows={rows} place={place} today={todayCentral()} onChanged={load} setErr={setErr} onEdit={setEditing} />
+        </>
       )}
       {editing && (
-        <ItemEditor item={editing} sections={[...new Set(rows.map(r => r.section).filter(Boolean))]}
+        <ItemEditor item={editing} place={place} sections={[...new Set(rows.map(r => r.section).filter(Boolean))]}
           onClose={() => setEditing(null)} onSaved={load} />
       )}
     </div>
@@ -160,7 +198,7 @@ export default function Inventory({ userRole }) {
 }
 
 // ─── Checklist: everyone ──────────────────────────────────────────────────
-function Checklist({ rows, busy, onToggle, isParent, onAdd }) {
+function Checklist({ rows, busy, onToggle, isParent, place, onAdd }) {
   const [q, setQ] = useState("");
   const needle = q.trim().toLowerCase();
   const shown = needle ? rows.filter(r => String(r.name || "").toLowerCase().includes(needle)) : rows;
@@ -170,7 +208,9 @@ function Checklist({ rows, busy, onToggle, isParent, onAdd }) {
       <div style={{ ...card, textAlign: "center", padding: "28px 16px" }}>
         <div style={{ fontSize: 15, fontWeight: 600, color: T.slate900 }}>Nothing on the list yet</div>
         <div style={{ fontSize: 13, color: T.slate500, marginTop: 6 }}>
-          {isParent ? "Add the things you buy to keep the house stocked." : "A parent adds the things you buy."}
+          {place === "office"
+            ? (isParent ? "Add the supplies you keep stocked at the office." : "Office supplies show up here once they're added.")
+            : (isParent ? "Add the things you buy to keep the house stocked." : "A parent adds the things you buy.")}
         </div>
         {isParent && <button style={{ ...btn("primary"), marginTop: 14 }} onClick={onAdd}>Add item</button>}
       </div>
@@ -216,7 +256,7 @@ function Checklist({ rows, busy, onToggle, isParent, onAdd }) {
 }
 
 // ─── Admin: parents ───────────────────────────────────────────────────────
-function AdminView({ rows, today, onChanged, setErr, onEdit }) {
+function AdminView({ rows, place, today, onChanged, setErr, onEdit }) {
   // Tapped items start checked; predictions start unchecked, so nothing is marked ordered by accident.
   const [on, setOn] = useState({});
   const isOn = (r) => on[r.item_id] ?? r.is_low;
@@ -291,14 +331,18 @@ function AdminView({ rows, today, onChanged, setErr, onEdit }) {
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
-      <MealGroceries today={today} rows={rows} onChanged={onChanged} setErr={setErr} />
+      {place === "home" && <MealGroceries today={today} rows={rows} onChanged={onChanged} setErr={setErr} />}
       <div style={card}>
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Order this week</div>
         {!low.length && !likely.length ? (
           <div style={{ fontSize: 13, color: T.slate500, marginTop: 6 }}>Nothing to order right now.</div>
         ) : (
           <>
-            {low.length > 0 && <Group title="Running low" note="Someone tapped these.">{low.map(orderRow)}</Group>}
+            {low.length > 0 && (
+              <Group title="Running low" note={place === "office" ? "The team tapped or requested these." : "Someone tapped these."}>
+                {low.map(orderRow)}
+              </Group>
+            )}
             {likely.length > 0 && (
               <Group title="Likely out" note="Nobody tapped these, but at the usual pace they run out before next week's order. Check the ones you're buying.">
                 {likely.map(orderRow)}
@@ -357,7 +401,7 @@ function Group({ title, note, children }) {
 }
 
 // ─── Add or edit one item ─────────────────────────────────────────────────
-function ItemEditor({ item, sections, onClose, onSaved }) {
+function ItemEditor({ item, place, sections, onClose, onSaved }) {
   const isNew = !item?.item_id;
   const days0 = Number(item?.every_days);
   const hasDays0 = item?.every_days != null && Number.isFinite(days0);
@@ -387,7 +431,7 @@ function ItemEditor({ item, sections, onClose, onSaved }) {
     const row = { name: name.trim(), section: section.trim() || null, amount: a, unit: unit.trim() || null, every_days: everyDays };
     setSaving(true);
     const res = isNew
-      ? await supabase.from("family_inventory_items").insert({ agency_id: AGENCY_ID, ...row })
+      ? await supabase.from("family_inventory_items").insert({ agency_id: AGENCY_ID, location: place === "office" ? "office" : "home", ...row })
       : await supabase.from("family_inventory_items").update(row).eq("id", item.item_id);
     setSaving(false);
     if (res.error) { setMsg(res.error.code === "23505" ? "That item is already on the list." : res.error.message); return; }
@@ -408,14 +452,16 @@ function ItemEditor({ item, sections, onClose, onSaved }) {
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 55, display: "flex",
       alignItems: "flex-start", justifyContent: "center", overflowY: "auto", padding: 12, boxSizing: "border-box" }}>
       <form onSubmit={save} onClick={e => e.stopPropagation()} style={{ ...card, width: "100%", maxWidth: 420, margin: "auto", display: "grid", gap: 12 }}>
-        <div style={{ fontSize: 17, fontWeight: 700, color: T.slate900 }}>{isNew ? "Add item" : "Edit item"}</div>
+        <div style={{ fontSize: 17, fontWeight: 700, color: T.slate900 }}>
+          {isNew ? "Add item" : "Edit item"}{place === "office" ? " · Office" : ""}
+        </div>
         {added && <div style={{ fontSize: 13, color: T.green }}>Added {added}. Add the next one or tap Done.</div>}
         <label style={label}>Name
           <input ref={nameRef} autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Milk"
             style={{ ...input, width: "100%", fontSize: 14 }} />
         </label>
         <label style={label}>Section
-          <input value={section} onChange={e => setSection(e.target.value)} list="inventory-sections" placeholder="PRODUCE"
+          <input value={section} onChange={e => setSection(e.target.value)} list="inventory-sections" placeholder={place === "office" ? "SUPPLIES" : "PRODUCE"}
             style={{ ...input, width: "100%", fontSize: 14 }} />
           <datalist id="inventory-sections">{(sections || []).map(s => <option key={s} value={s} />)}</datalist>
         </label>
@@ -489,12 +535,10 @@ function MealGroceries({ today, rows, onChanged, setErr }) {
   const addToOrder = async () => {
     if (!picked.length || saving) return;
     setSaving(true);
-    const inUse = new Set(rows.filter(x => x.is_low && x.dancer).map(x => x.dancer));
+    const taken = [];
     for (const r of picked) {
-      const free = allDancers.filter(d => !inUse.has(d.key));
-      const pool = free.length ? free : allDancers;
-      const dancer = pool.length ? pool[Math.floor(Math.random() * pool.length)].key : null;
-      if (dancer) inUse.add(dancer);
+      const dancer = pickDancer(rows, allDancers, taken);
+      if (dancer) taken.push(dancer);
       const { error } = await supabase.rpc("family_inventory_mark_low", { p_item_id: r.item_id, p_dancer: dancer });
       if (error) { setErr(error.message); break; }
     }
@@ -554,6 +598,102 @@ function MealGroceries({ today, rows, onChanged, setErr }) {
           {showHave && <div style={{ marginTop: 6 }}>{have.map(r => line(r, false))}</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Office page: snack requests and prize cart ideas ─────────────────────
+// A snack request lands on the office list as Running low (new snacks are added under SNACKS),
+// so Alvi sees it with the rest of the office order. Prize ideas wait until the quarter's
+// prize cart close, which sends them to Alvi.
+function OfficeRequests({ rows, allDancers, onChanged, setErr }) {
+  const [snack, setSnack] = useState("");
+  const [idea, setIdea] = useState("");
+  const [link, setLink] = useState("");
+  const [mine, setMine] = useState([]);
+  const [saving, setSaving] = useState(null);
+  const [done, setDone] = useState(null);
+  const label = { fontSize: 13, color: T.slate700, display: "grid", gap: 4 };
+
+  const loadMine = useCallback(async () => {
+    const { data, error } = await supabase.rpc("prize_cart_ideas_mine");
+    if (error) setErr(error.message); else setMine(Array.isArray(data) ? data : []);
+  }, [setErr]);
+  useEffect(() => { loadMine(); }, [loadMine]);
+
+  const askSnack = async (e) => {
+    e.preventDefault();
+    if (!snack.trim() || saving) return;
+    setSaving("snack"); setDone(null);
+    const { error } = await supabase.rpc("office_request_snack", { p_name: snack.trim(), p_dancer: pickDancer(rows, allDancers) });
+    setSaving(null);
+    if (error) { setErr(error.message); return; }
+    setDone(`Asked for ${snack.trim()}.`);
+    setSnack("");
+    onChanged();
+  };
+
+  const sendIdea = async (e) => {
+    e.preventDefault();
+    if (!idea.trim() || saving) return;
+    setSaving("idea"); setDone(null);
+    const { error } = await supabase.rpc("prize_cart_idea_add", { p_idea: idea.trim(), p_link: link.trim() || null });
+    setSaving(null);
+    if (error) { setErr(error.message); return; }
+    setIdea(""); setLink("");
+    loadMine();
+  };
+
+  const removeIdea = async (id) => {
+    const { error } = await supabase.rpc("prize_cart_idea_remove", { p_id: id });
+    if (error) { setErr(error.message); return; }
+    loadMine();
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 12, marginTop: 12, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+      <form onSubmit={askSnack} style={{ ...card, display: "grid", gap: 10, alignContent: "start" }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Request a snack</div>
+        <label style={label}>What would you like stocked?
+          <input value={snack} onChange={e => setSnack(e.target.value)} placeholder="Trail mix" maxLength={80}
+            style={{ ...input, width: "100%", fontSize: 14 }} />
+        </label>
+        {done && <div style={{ fontSize: 13, color: T.green }}>{done}</div>}
+        <button type="submit" disabled={!snack.trim() || saving === "snack"}
+          style={{ ...btn("primary"), justifySelf: "start", opacity: snack.trim() && saving !== "snack" ? 1 : 0.5 }}>
+          {saving === "snack" ? "Sending…" : "Request"}
+        </button>
+      </form>
+
+      <form onSubmit={sendIdea} style={{ ...card, display: "grid", gap: 10, alignContent: "start" }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Prize cart idea</div>
+        <div style={{ fontSize: 12, color: T.slate500, marginTop: -6 }}>Goes to Alvi when the prize cart is restocked at the end of the quarter.</div>
+        <label style={label}>Your idea
+          <input value={idea} onChange={e => setIdea(e.target.value)} placeholder="Wireless earbuds" maxLength={200}
+            style={{ ...input, width: "100%", fontSize: 14 }} />
+        </label>
+        <label style={label}>Link (optional)
+          <input value={link} onChange={e => setLink(e.target.value)} placeholder="https://" inputMode="url"
+            style={{ ...input, width: "100%", fontSize: 14 }} />
+        </label>
+        <button type="submit" disabled={!idea.trim() || saving === "idea"}
+          style={{ ...btn("primary"), justifySelf: "start", opacity: idea.trim() && saving !== "idea" ? 1 : 0.5 }}>
+          {saving === "idea" ? "Sending…" : "Send idea"}
+        </button>
+        {mine.length > 0 && (
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.slate500, marginTop: 4 }}>Your ideas this quarter</div>
+            {mine.map(m => (
+              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderTop: `1px solid ${T.slate100}` }}>
+                <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: T.slate900, overflowWrap: "anywhere" }}>
+                  {m.link ? <a href={m.link} target="_blank" rel="noopener noreferrer" style={{ color: T.blue }}>{m.idea}</a> : m.idea}
+                </div>
+                <button type="button" style={btn("soft", true)} onClick={() => removeIdea(m.id)}>Remove</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </form>
     </div>
   );
 }

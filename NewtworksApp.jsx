@@ -110,6 +110,8 @@ const NAV_ITEMS = [
   { id: "cpr",         label: "CPR",         icon: "trendingUp",    roles: TEAM_VISIBLE_ROLES },
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
   { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
+  // Peter 2026-10-08: team page to tap office supplies running low, request snacks, send prize cart ideas.
+  { id: "office",      label: "Office",      icon: "package",       roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_admin_top" },
   { id: "alerts",      label: "Alerts",      icon: "bell",          roles: ADMIN_ROLES },
   { id: "tasks",       label: "Tasks",       icon: "check",         roles: ADMIN_ROLES },
@@ -712,7 +714,8 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     editor:      <ErrorBoundary name="Editor"><ContentEditor userRole={userRole} /></ErrorBoundary>,
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     family:      <ErrorBoundary name="Family"><Family userRole={userRole} /></ErrorBoundary>,
-    inventory:   <ErrorBoundary name="Inventory"><Inventory userRole={userRole} /></ErrorBoundary>,
+    inventory:   <ErrorBoundary key="inventory" name="Inventory"><Inventory key="inventory" userRole={userRole} /></ErrorBoundary>,
+    office:      <ErrorBoundary key="office" name="Office"><Inventory key="office" place="office" userRole={userRole} /></ErrorBoundary>,
     roleplaying: <ErrorBoundary name="Roleplaying"><Roleplaying userRole={userRole} /></ErrorBoundary>,
     dancer:      <ErrorBoundary name="Dancer"><Dancer /></ErrorBoundary>,
     meals:       <ErrorBoundary name="Meal Plan"><MealPlan userRole={userRole} /></ErrorBoundary>,
