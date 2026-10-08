@@ -357,7 +357,8 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
   // A person's marker carries its own dollar figure, so the total line's
   // own label gets out of the way wherever a marker stands.
   const markerXs = (Array.isArray(positions) ? positions : [])
-    .map(p => Math.min(Math.max(Number(p?.x) || 0, 0), xMax));
+    .flatMap(p => [p?.x, ...gapScenarios(p).map(g => g.x)])
+    .map(x => Math.min(Math.max(Number(x) || 0, 0), xMax));
   const gapRows = (Array.isArray(positions) ? positions : []).flatMap(p => {
     const from = Math.min(Math.max(Number(p?.x) || 0, 0), xMax);
     return gapScenarios(p).map((g, i) => {
@@ -506,8 +507,12 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
         return (
           <g key={"gap-" + (p.team_member_id || p.first_name) + "-" + i}>
             <line x1={xFor(from)} y1={yFor(fromPay)} x2={px} y2={py} stroke={T.purple} strokeWidth="1.5" strokeDasharray="4 3" opacity={i === 0 ? 0.7 : 0.4} />
-            <circle cx={px} cy={py} r={i === 0 ? 5.5 : 4} fill={T.white} stroke={T.purple} strokeWidth="2" opacity={i === 0 ? 1 : 0.6} />
-            <text x={px} y={py - (i === 0 ? 10 : 9)} textAnchor={anchor} fontSize={isPhone ? 9.5 : 10.5} fontWeight={800} fill={T.purple} opacity={i === 0 ? 1 : 0.7}>{(i === 0 ? g.line_label + " " : "") + "+" + fmtK(add) + "/yr"}</text>
+            <circle cx={px} cy={py} r={5} fill={T.white} stroke={T.purple} strokeWidth="2" strokeDasharray={i === 0 ? undefined : "2 1.5"} />
+            {/* Biggest gap labels above its point, best quarter below, so two close points never overprint */}
+            <rect x={anchor === "end" ? px - 92 : px - 46} y={i === 0 ? py - 24 : py + 9} width={92} height={15} rx={3} fill={T.white} opacity={0.92} />
+            <text x={anchor === "end" ? px - 4 : px} y={i === 0 ? py - 13 : py + 20} textAnchor={anchor} fontSize={isPhone ? 9.5 : 10.5} fontWeight={800} fill={T.purple}>
+              {(g.kind === "imbalance" ? g.line_label + " gap" : "Best qtr") + " +" + fmtK(add)}
+            </text>
           </g>
         );
       })}
