@@ -35,12 +35,17 @@ import { DayDoneStyles, Dancer, CritterIcon, useDancers } from "../components/Cr
 //   prize_cart_idea_mark_used()  admins: this one went on the prize cart, take it off the list
 //   prize_cart_idea_remove()     take back your own idea (admins: any)
 // Alvi orders both lists from Inventory > Admin, which shows Home and Office apart.
+// Admin > Prize cart is where Alvi reviews the quarter's shopped prize cart (Peter 2026-10-08):
+//   prize_cart_review()        the quarter, budget, every item, total and what's left (all math here)
+//   prize_cart_item_save()     add or edit one prize (name, link, price); new ones wait as proposed
+//   prize_cart_item_remove()   take one out, unless someone already drew or won it
+//   prize_cart_approve()       proposed prizes become drawable
 // =========================================================================
 
 const PARENT_ROLES = ["owner", "admin"];
 const TABS = ["checklist", "admin"];
-const PLACES = ["home", "office"];
-const PLACE_LABELS = { home: "Home", office: "Office" };
+const PLACES = ["home", "office", "prize"];
+const PLACE_LABELS = { home: "Home", office: "Office", prize: "Prize cart" };
 const TAB_LABELS = { checklist: "Checklist", admin: "Admin" };
 // "Still have some": how much is left, as a share of what you usually buy.
 const LEFT_CHOICES = [["A little", 0.25], ["About half", 0.5], ["Plenty", 1]];
@@ -118,6 +123,7 @@ export default function Inventory({ userRole, place: pagePlace = "home" }) {
   const place = isOfficePage ? "office" : activeTab === "admin" ? adminPlace : "home";
 
   const load = useCallback(async () => {
+    if (place === "prize") { setRows([]); setLoading(false); return; }  // PrizeCartReview loads its own
     if (isOfficePage) {
       // Only teammates working in the office see and stock the office list.
       const { data: ok, error: okErr } = await supabase.rpc("office_can_stock");
@@ -197,7 +203,9 @@ export default function Inventory({ userRole, place: pagePlace = "home" }) {
               </TabLink>
             ))}
           </div>
-          <AdminView rows={rows} place={place} today={todayCentral()} onChanged={load} setErr={setErr} onEdit={setEditing} />
+          {place === "prize"
+            ? <PrizeCartReview setErr={setErr} />
+            : <AdminView rows={rows} place={place} today={todayCentral()} onChanged={load} setErr={setErr} onEdit={setEditing} />}
         </>
       )}
       {editing && (
@@ -709,6 +717,143 @@ function OfficeRequests({ rows, allDancers, canStock, isParent, onChanged, setEr
           </div>
         )}
       </form>
+    </div>
+  );
+}
+
+// ─── Admin > Prize cart: Alvi reviews the shopped cart ────────────────────
+// Every number comes from prize_cart_review(). Prices she types are saved, then the totals reload.
+const money = (n) => (Number.isFinite(Number(n)) && n !== null && n !== "" ? `$${Number(n).toFixed(2)}` : "no price");
+function PrizeCartReview({ setErr }) {
+  const [cart, setCart] = useState(null);
+  const [ideas, setIdeas] = useState([]);
+  const [edits, setEdits] = useState({});
+  const [adding, setAdding] = useState({ name: "", url: "", price: "" });
+  const [busy, setBusy] = useState(null);
+
+  const load = useCallback(async () => {
+    const [c, i] = await Promise.all([supabase.rpc("prize_cart_review"), supabase.rpc("prize_cart_ideas_list")]);
+    if (c.error) setErr(c.error.message); else setCart(c.data || null);
+    if (!i.error) setIdeas(Array.isArray(i.data) ? i.data : []);
+  }, [setErr]);
+  useEffect(() => { load(); }, [load]);
+
+  const run = async (key, fn) => {
+    if (busy) return;
+    setBusy(key);
+    const { error } = await fn();
+    setBusy(null);
+    if (error) { setErr(error.message); return false; }
+    await load();
+    return true;
+  };
+  const priceArg = (v) => (String(v ?? "").trim() === "" ? null : Number(v));
+  const valOf = (it, f) => (edits[it.id] && f in edits[it.id] ? edits[it.id][f] : (f === "price" ? (it.price ?? "") : (it[f] ?? "")));
+  const changed = (it) => !!edits[it.id];
+  const setField = (it, f, v) => setEdits(e => ({ ...e, [it.id]: { ...(e[it.id] || {}), [f]: v } }));
+
+  const save = (it) => run(it.id, () => supabase.rpc("prize_cart_item_save", {
+    p_id: it.id, p_name: valOf(it, "name"), p_url: valOf(it, "url"), p_price: priceArg(valOf(it, "price")),
+  })).then(ok => { if (ok) setEdits(e => { const n = { ...e }; delete n[it.id]; return n; }); });
+  const remove = (it) => { if (window.confirm(`Take ${it.name} out of the cart?`)) run(it.id, () => supabase.rpc("prize_cart_item_remove", { p_id: it.id })); };
+  const add = (e) => {
+    e.preventDefault();
+    if (!adding.name.trim()) return;
+    run("add", () => supabase.rpc("prize_cart_item_save", { p_id: null, p_name: adding.name, p_url: adding.url, p_price: priceArg(adding.price) }))
+      .then(ok => { if (ok) setAdding({ name: "", url: "", price: "" }); });
+  };
+  const useIdea = (idea) => run(idea.id, async () => {
+    const r = await supabase.rpc("prize_cart_item_save", { p_id: null, p_name: idea.idea, p_url: idea.link, p_price: null });
+    if (r.error) return r;
+    return supabase.rpc("prize_cart_idea_mark_used", { p_id: idea.id });
+  });
+  const approve = () => run("approve", () => supabase.rpc("prize_cart_approve"));
+
+  if (!cart) return <div style={{ color: T.slate500, fontSize: 13 }}>Loading…</div>;
+  const items = Array.isArray(cart.items) ? cart.items : [];
+  const over = cart.remaining !== null && Number(cart.remaining) < 0;
+  const full = items.length >= (cart.slots || 13);
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ ...card, borderColor: over ? T.red : T.slate200 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>{cart.quarter_label} prize cart</div>
+        <div style={{ fontSize: 22, fontWeight: 700, color: over ? T.red : T.slate900, marginTop: 6 }}>
+          {money(cart.total)}{cart.budget !== null && <span style={{ fontSize: 14, fontWeight: 600, color: T.slate500 }}> of {money(cart.budget)}</span>}
+        </div>
+        {cart.budget !== null && (
+          <div style={{ fontSize: 13, fontWeight: 600, color: over ? T.red : T.green, marginTop: 2 }}>
+            {over ? `${money(-Number(cart.remaining))} over budget` : `${money(cart.remaining)} left`}
+          </div>
+        )}
+        {Number(cart.unpriced) > 0 && <div style={{ fontSize: 12, color: T.slate500, marginTop: 4 }}>{cart.unpriced} without a price aren't in the total yet.</div>}
+        {Number(cart.proposed) > 0 && (
+          <button style={{ ...btn("primary"), marginTop: 12, opacity: busy === "approve" ? 0.6 : 1 }} disabled={!!busy} onClick={approve}>
+            {busy === "approve" ? "Approving…" : `Approve cart (${cart.proposed} new)`}
+          </button>
+        )}
+      </div>
+
+      <div style={card}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: T.slate700 }}>{items.length} of {cart.slots || 13} prizes</div>
+        {items.map(it => (
+          <div key={it.id} style={{ padding: "10px 0", borderTop: `1px solid ${T.slate100}`, display: "grid", gap: 6 }}>
+            {it.won ? (
+              <div style={{ fontSize: 14, color: T.slate500 }}>{it.name} · {money(it.price)} · <b>Won</b></div>
+            ) : (
+              <>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                  <input value={valOf(it, "name")} onChange={e => setField(it, "name", e.target.value)} aria-label="Prize name"
+                    style={{ ...input, flex: "1 1 180px", minWidth: 0, fontSize: 14, fontWeight: 600 }} />
+                  <span style={{ fontSize: 14, color: T.slate700 }}>$</span>
+                  <input value={valOf(it, "price")} onChange={e => setField(it, "price", e.target.value)} inputMode="decimal" aria-label="Price" placeholder="0.00"
+                    style={{ ...input, width: 84, textAlign: "right", fontSize: 14 }} />
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                  <input value={valOf(it, "url")} onChange={e => setField(it, "url", e.target.value)} inputMode="url" aria-label="Link" placeholder="Link"
+                    style={{ ...input, flex: "1 1 180px", minWidth: 0, fontSize: 12 }} />
+                  {it.url && <a href={it.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.blue, fontWeight: 600 }}>Open</a>}
+                  {it.proposed ? <span style={{ fontSize: 11, color: T.slate700, background: T.amberLt, borderRadius: 999, padding: "2px 8px" }}>New</span>
+                    : !it.new ? <span style={{ fontSize: 11, color: T.slate500 }}>Carried over</span> : null}
+                  {changed(it) && <button style={btn("primary", true)} disabled={!!busy} onClick={() => save(it)}>Save</button>}
+                  {!it.drawn && <button style={btn("soft", true)} disabled={!!busy} onClick={() => remove(it)}>Remove</button>}
+                </div>
+              </>
+            )}
+          </div>
+        ))}
+        {!full && (
+          <form onSubmit={add} style={{ paddingTop: 10, borderTop: `1px solid ${T.slate100}`, display: "grid", gap: 6 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <input value={adding.name} onChange={e => setAdding(a => ({ ...a, name: e.target.value }))} placeholder="Add a prize"
+                style={{ ...input, flex: "1 1 180px", minWidth: 0, fontSize: 14 }} />
+              <span style={{ fontSize: 14, color: T.slate700 }}>$</span>
+              <input value={adding.price} onChange={e => setAdding(a => ({ ...a, price: e.target.value }))} inputMode="decimal" placeholder="0.00" aria-label="Price"
+                style={{ ...input, width: 84, textAlign: "right", fontSize: 14 }} />
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <input value={adding.url} onChange={e => setAdding(a => ({ ...a, url: e.target.value }))} placeholder="Link" inputMode="url" aria-label="Link"
+                style={{ ...input, flex: "1 1 180px", minWidth: 0, fontSize: 12 }} />
+              <button type="submit" style={btn("primary", true)} disabled={!adding.name.trim() || !!busy}>Add</button>
+            </div>
+          </form>
+        )}
+      </div>
+
+      {ideas.length > 0 && (
+        <div style={card}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.slate700 }}>Team ideas</div>
+          {ideas.map(m => (
+            <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderTop: `1px solid ${T.slate100}`, flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 160px", minWidth: 0, fontSize: 13, color: T.slate900, overflowWrap: "anywhere" }}>
+                {m.link ? <a href={m.link} target="_blank" rel="noopener noreferrer" style={{ color: T.blue }}>{m.idea}</a> : m.idea}
+                {m.submitted_by && <span style={{ color: T.slate500 }}> · {m.submitted_by}</span>}
+              </div>
+              {!full && <button style={btn("soft", true)} disabled={!!busy} onClick={() => useIdea(m)}>Add to cart</button>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -599,6 +599,7 @@ function useCPRData(weekDate) {
                 .from("prize_cart")
                 .select("id, display_order, prize_description, prize_url, prize_value, winner_team_member_id, won_on, quarter_ending_date")
                 .eq("agency_id", AGENCY_ID)
+                .eq("proposed", false)  // shopped prizes wait for Alvi's approval
                 .gte("quarter_ending_date", weekDate)
                 .order("quarter_ending_date", { ascending: true })
                 .order("display_order", { ascending: true })
