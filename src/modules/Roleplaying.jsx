@@ -1182,10 +1182,20 @@ const mapHump = (add, x, base, w, h) => {
   add(base, "hillLine", c + mapLine([[x + w * 0.2, base - h * 0.62], [x + w * 0.29, base - h * 0.24]]) + mapLine([[x + w * 0.07, base - h * 0.8], [x + w * 0.15, base - h * 0.4]]));
 };
 const mapTuft = (add, x, base, s, k = "tuft") => add(base, k, mapLine([[x, base], [x - s * 0.3, base - s * 0.7]]) + mapLine([[x, base], [x, base - s]]) + mapLine([[x, base], [x + s * 0.3, base - s * 0.7]]));
-const mapHouse = (add, x, base, s) => {
-  add(base, "wall", mapPoly([[x - s * 0.3, base], [x - s * 0.3, base - s * 0.42], [x + s * 0.3, base - s * 0.42], [x + s * 0.3, base]]));
-  add(base, "roof", mapPoly([[x - s * 0.42, base - s * 0.4], [x, base - s * 0.88], [x + s * 0.42, base - s * 0.4]]));
+// (step 14e) roof = the roof's ink (roof clay tile, roofThatch, roofSlate), tall = two storeys: the look of a mixed
+// street on the coarser grids, where a cell of a settlement's ground is a symbol, not its real buildings
+const mapHouse = (add, x, base, s, roof = "roof", tall = false) => {
+  const h = tall ? 0.66 : 0.42;
+  add(base, "wall", mapPoly([[x - s * 0.3, base], [x - s * 0.3, base - s * h], [x + s * 0.3, base - s * h], [x + s * 0.3, base]]));
+  add(base, roof, mapPoly([[x - s * 0.42, base - s * (h - 0.02)], [x, base - s * (h + 0.46)], [x + s * 0.42, base - s * (h - 0.02)]]));
   add(base, "door", mapLine([[x, base], [x, base - s * 0.22]]));
+};
+// which roof and height a symbol's house gets, by the kind of settlement (thatch in most villages, tile and stone slate
+// in towns and cities, more storeys the bigger the place)
+const mapHouseLook = (kind, rnd, k) => {
+  const r = rnd(40 + k), t = rnd(50 + k);
+  const [th, sl, tall] = kind === "village" ? [0.85, 0.95, 0] : kind === "town" ? [0.2, 0.4, 0.35] : [0.05, 0.3, 0.6];
+  return [r < th ? "roofThatch" : r < sl ? "roofSlate" : "roof", t < tall];
 };
 // A church: a tall narrow wall under a steep spire.
 const mapSpire = (add, x, base, s) => {
@@ -1213,7 +1223,7 @@ const MAP_ART = {
     { k: "jungle", fill: "#6E9A4E" }, { k: "jungleShade", fill: "#557E3B" }, { k: "crownLine", line: MAP_INK, w: 1 }, { k: "frond", line: "#4E7A35", w: 1.4 },
     { k: "pine", fill: "#6F8B5B", line: MAP_INK, w: 1 },
     { k: "thorn", fill: "#8D9245", line: MAP_INK, w: 0.9 },
-    { k: "wall", fill: "#F6EED8", line: MAP_INK, w: 1 }, { k: "roof", fill: "#B4633C", line: MAP_INK, w: 1 }, { k: "door", line: MAP_INK, w: 1 },
+    { k: "wall", fill: "#F6EED8", line: MAP_INK, w: 1 }, { k: "roof", fill: "#B4633C", line: MAP_INK, w: 1 }, { k: "roofThatch", fill: "#C9A65E", line: MAP_INK, w: 1 }, { k: "roofSlate", fill: "#7F8288", line: MAP_INK, w: 1 }, { k: "door", line: MAP_INK, w: 1 },
     { k: "tuft", line: "#7A8A4C", w: 0.9 }, { k: "tuftDry", line: "#9C9450", w: 0.9 }, { k: "tuftCold", line: "#8A9579", w: 0.9 },
     { k: "dip", line: "#8C8156", w: 1 }, { k: "stream", line: "#6C9BAE", w: 1.5 }, { k: "marsh", line: "#7FA0A0", w: 1.2 }, { k: "reed", line: "#5C6B37", w: 1 },
     { k: "dune", line: "#B0925A", w: 1.1 }, { k: "drift", fill: "#FBFCFC", line: "#A9BFCB", w: 0.9 }, { k: "ridge", line: "#8EA9B8", w: 1 },
@@ -1245,7 +1255,7 @@ const MAP_ART = {
     },
     village(add, x, y, s, rnd, few) {
       if (few) { [[0.3, 0.62, 0.34], [0.68, 0.56, 0.4], [0.5, 0.9, 0.36]].forEach(([u, v, w]) => mapHouse(add, x + u * s, y + v * s, s * w)); return; }
-      [[0.26, 0.46], [0.72, 0.4], [0.5, 0.88]].forEach(([u, v], k) => { if (k === 0 || rnd(k) < 0.55) mapHouse(add, x + (u + (rnd(5 + k) - 0.5) * 0.2) * s, y + (v + (rnd(10 + k) - 0.5) * 0.14) * s, s * (0.28 + rnd(15 + k) * 0.14)); });
+      [[0.26, 0.46], [0.72, 0.4], [0.5, 0.88]].forEach(([u, v], k) => { if (k === 0 || rnd(k) < 0.55) mapHouse(add, x + (u + (rnd(5 + k) - 0.5) * 0.2) * s, y + (v + (rnd(10 + k) - 0.5) * 0.14) * s, s * (0.28 + rnd(15 + k) * 0.14), ...mapHouseLook("village", rnd, k)); });
     },
     // a town (step 8): houses round a church; a cell of its ground, houses closer together and now and then a church
     town(add, x, y, s, rnd, few) {
@@ -1253,7 +1263,7 @@ const MAP_ART = {
       [[0.25, 0.42], [0.72, 0.38], [0.3, 0.86], [0.74, 0.84]].forEach(([u, v], k) => {
         if (k > 1 && rnd(k) > 0.65) return;
         const px = x + (u + (rnd(5 + k) - 0.5) * 0.12) * s, py = y + (v + (rnd(10 + k) - 0.5) * 0.1) * s;
-        if (k === 0 && rnd(20) < 0.18) mapSpire(add, px, py, s * 0.42); else mapHouse(add, px, py, s * (0.24 + rnd(15 + k) * 0.1));
+        if (k === 0 && rnd(20) < 0.18) mapSpire(add, px, py, s * 0.42); else mapHouse(add, px, py, s * (0.24 + rnd(15 + k) * 0.1), ...mapHouseLook("town", rnd, k));
       });
     },
     // a city (step 8): houses and a church behind a wall with towers and a gate; a cell of its ground, houses packed
@@ -1270,7 +1280,9 @@ const MAP_ART = {
       [[0.22, 0.36], [0.55, 0.32], [0.82, 0.4], [0.3, 0.72], [0.64, 0.7], [0.48, 0.98]].forEach(([u, v], k) => {
         if (k > 3 && rnd(k) > 0.6) return;
         const px = x + (u + (rnd(5 + k) - 0.5) * 0.1) * s, py = y + (v + (rnd(10 + k) - 0.5) * 0.08) * s;
-        if (k === 1 && rnd(20) < 0.12) mapTower(add, px, py, s * 0.5); else mapHouse(add, px, py, s * (0.22 + rnd(15 + k) * 0.08));
+        if (k === 1 && rnd(20) < 0.12) mapTower(add, px, py, s * 0.5);
+        else if (k === 4 && rnd(21) < 0.14) mapSpire(add, px, py, s * 0.42);
+        else mapHouse(add, px, py, s * (0.22 + rnd(15 + k) * 0.08), ...mapHouseLook("city", rnd, k));
       });
     },
     // a great city (step 12a): a long wall with a tower at each end and a gate between two more, packed roofs behind
@@ -1292,7 +1304,7 @@ const MAP_ART = {
         const px = x + (u + (rnd(5 + k) - 0.5) * 0.08) * s, py = y + (v + (rnd(10 + k) - 0.5) * 0.06) * s;
         if (k === 1 && rnd(20) < 0.16) mapSpire(add, px, py, s * 0.46);
         else if (k === 4 && rnd(21) < 0.12) mapTower(add, px, py, s * 0.5);
-        else mapHouse(add, px, py, s * (0.2 + rnd(15 + k) * 0.07));
+        else mapHouse(add, px, py, s * (0.2 + rnd(15 + k) * 0.07), ...mapHouseLook("great_city", rnd, k));
       });
     },
     // the landmarks (step 12b; rpg_map_landmark_kinds), each drawn whole as a mark: a lone peak and a lower shoulder
@@ -1687,6 +1699,9 @@ function mapFantasy(v, byId) {
   const names = [];
   // the landmarks the kids login sees from far in ground not found yet (step 12b), drawn over the dark
   const far = mapRows(unit * 0.12), farPads = [];
+  // the buildings of the grid, when it carries them (step 14e: the District grid, 12 squares of the battle grid a cell)
+  const built = Array.isArray(v.houses) && level === 6;
+  const roofs = built ? mapRoofs(v.houses, unit, 12) : [];
   const roads = new Map();
   const road = (id, n, full) => { if (!roads.has(id)) roads.set(id, { cells: new Set(), full }); roads.get(id).cells.add(n); };
   const aside = mapAside();
@@ -1697,6 +1712,8 @@ function mapFantasy(v, byId) {
     const p = g.k === "place" ? byId[g.id] : null;
     const what = shows(g);
     if (what === "road") road(g.id, j * C + i, true);
+    // (step 14e) a grid that carries its buildings (the District grid) draws them, not the symbols of a village, town or city
+    else if (built && MAP_SETTLED.has(what)) { /* the roofs below */ }
     else if (MAP_ART.fantasy[what]) MAP_ART.fantasy[what](strokes.add, i * unit, j * unit, unit, rnd, !!detail);
     // the smaller places in this cell: a road runs through it; any other is drawn once, in the cell its center is in
     const marks = (g.marks || []).map(id => byId[id]).filter(Boolean);
@@ -1809,7 +1826,7 @@ function mapFantasy(v, byId) {
   const fog = mapFog(C, R, unit, (i, j) => get(i, j).k === "unknown", 0.45, cols, rows, lvl, x0, y0);
   return {
     wide: cols * 100, high: rows * 100, unit, aged: true,
-    layers: layers.concat(rose, strokes.list(MAP_ART.ink), roadways, lanes, crossings, pads, marked.list(MAP_ART.ink), [{ d: lines.join(""), line: MAP_INK, w: 0.8, o: 0.16 }], fog, farPads, far.list(MAP_ART.ink)),
+    layers: layers.concat(rose, strokes.list(MAP_ART.ink), roadways, lanes, crossings, pads, roofs, marked.list(MAP_ART.ink), [{ d: lines.join(""), line: MAP_INK, w: 0.8, o: 0.16 }], fog, farPads, far.list(MAP_ART.ink)),
     names: lands.concat(names, ways), blocks,
   };
 }
@@ -2001,36 +2018,71 @@ function mapTop(cols, rows, x0, y0, what, washes, show, hard, slope, cliff) {
   });
   return layers;
 }
-// The houses of a village, town or city seen from above (rpg_map_view: houses; step 8c), each a roof over its walls:
-// x, y = its middle and len, wide = its length and width, all in thousandths of a square from the grid's top-left
-// corner; ridge = the way its ridge runs. Thatch (a village) is hipped, its straw combed down the slopes; clay tiles (a
-// town or city) are gabled, laid in courses along the ridge. The sun is in the north-west, as for the trees: the slopes
-// that face it are lit, the house casts its shadow south-east, longer the higher its eaves (eaves, in metres). unit =
-// drawing units a square.
+// The buildings of a village, town or city seen from above (rpg_map_view: houses; step 8c, step 14e), each part a roof
+// over its walls: x, y = its middle and len, wide = its length and width, all in thousandths of a square from the
+// grid's top-left corner; ridge = the way its ridge runs. Thatch (most village houses and barns) is hipped, its straw
+// combed down the slopes; clay tile and stone slate are gabled, laid in courses along the ridge; lead (most church
+// roofs and the cathedral) is gabled with its rolls running down the slopes; a tower has a spire (four slopes meeting at
+// a point) or a flat leaded top inside a parapet (pitch 0). Parts of one building share their id before the dot and are
+// drawn in the order given, so a tower sits over its nave. Each building weathers to one of three tones of its roof. The
+// sun is in the north-west, as for the trees: the slopes that face it are lit, each part casts its shadow south-east,
+// longer the higher its eaves (eaves, in metres). unit = drawing units a cell of the grid drawn, per = squares of the
+// battle grid in that cell (1 there, 12 on the District grid).
 const MAP_ROOFS = {
   thatch: { lit: "#D9B972", dark: "#8C6C36", grain: "#6E5329", ridge: "#5F4622", edge: "#3E2E18" },
   tile: { lit: "#C46C4B", dark: "#7C3826", grain: "#5E2A1B", ridge: "#4C2014", edge: "#36180F" },
+  slate: { lit: "#9A958A", dark: "#55534E", grain: "#3F3D39", ridge: "#34322E", edge: "#24231F" },
+  lead: { lit: "#B9C3C7", dark: "#6C777C", grain: "#4E585C", ridge: "#3E464A", edge: "#2B3134" },
+  tower: { lit: "#A9B3B6", dark: "#7B8588", grain: "#4E585C", ridge: "#3E464A", edge: "#262B2E" },
+  spire: { lit: "#8E8A84", dark: "#3F3C38", grain: "#2E2C29", ridge: "#262422", edge: "#1A1917" },
 };
-function mapRoofs(houses, unit) {
+// the symbols of a settlement's ground, which a grid that carries real buildings leaves out
+const MAP_SETTLED = new Set(["village", "town", "city", "great_city"]);
+const MAP_ROOF_TONES = [[0, 0], [0.1, -0.06], [-0.08, 0.08]];
+function mapRoofs(houses, unit, per = 1) {
+  // sq = drawing units a square of the battle grid (unit is a cell of the grid drawn: a square there, 12 squares on
+  // the District grid)
+  const sq = unit / per;
   const sink = {};
   const add = (k, d) => { sink[k] = (sink[k] || "") + d; };
   const sun = [-0.55, -0.83];
+  // the order the roofs are laid: the shadows, then each kind of roof, towers and spires last
+  const order = [];
+  const put = (k) => { if (!order.includes(k)) order.push(k); };
   (Array.isArray(houses) ? houses : []).forEach((h, n) => {
-    const style = MAP_ROOFS[h.roof] ? h.roof : "tile";
+    const flat = h.roof === "lead" && Number(h.pitch) === 0;
+    const style = flat ? "tower" : MAP_ROOFS[h.roof] ? h.roof : "tile";
     const r = Array.isArray(h.ridge) ? h.ridge : [1000, 0];
     const rl = Math.hypot(r[0], r[1]) || 1;
     const ux = r[0] / rl, uy = r[1] / rl, vx = -uy, vy = ux;
     const X = (Number(h.x) || 0) * unit / 1000, Y = (Number(h.y) || 0) * unit / 1000;
     const hl = (Number(h.len) || 0) * unit / 2000, hw = (Number(h.wide) || 0) * unit / 2000;
     if (!(hl > 0 && hw > 0)) return;
+    // the building's tone, the same for all its parts
+    const base = String(h.id || n).split(".")[0];
+    let hash = 0;
+    for (let c = 0; c < base.length; c++) hash = (hash * 31 + base.charCodeAt(c)) % 9973;
+    const tone = flat || style === "spire" ? 0 : hash % 3;
+    const key = `${style}:${tone}`;
+    put(key);
     const pt = (a, b) => [X + a * ux + b * vx, Y + a * uy + b * vy];
     const foot = [pt(-hl, -hw), pt(hl, -hw), pt(hl, hw), pt(-hl, hw)];
     // the shadow, cast south-east: a twentieth of a square for every metre to the eaves
-    const k = unit * 0.05 * (Number(h.eaves) || 2.5);
+    const k = sq * 0.05 * (Number(h.eaves) || 2.5);
     add("shadow", mapPoly(foot.map(([x, y]) => [x + k * 0.55, y + k * 0.83])));
-    // the slopes: each lit by how squarely it faces the sun
-    const hip = style === "thatch" ? Math.max(hl - hw, 0) : hl;
-    const faces = style === "thatch"
+    if (flat) {
+      // a flat leaded top inside its parapet: the lead, the parapet's inner line, the edge
+      add(`${key}:2`, mapPoly(foot));
+      const p = Math.min(hl, hw) * 0.18;
+      add(`${key}:grain`, mapPoly([pt(-hl + p, -hw + p), pt(hl - p, -hw + p), pt(hl - p, hw - p), pt(-hl + p, hw - p)]));
+      add(`${key}:edge`, mapPoly(foot));
+      return;
+    }
+    // the slopes: each lit by how squarely it faces the sun. A hipped roof (thatch) and a spire slope down on all
+    // four sides; a spire's four slopes meet at its point
+    const hipped = style === "thatch" || style === "spire";
+    const hip = style === "spire" ? 0 : style === "thatch" ? Math.max(hl - hw, 0) : hl;
+    const faces = hipped
       ? [[[pt(-hip, 0), pt(hip, 0), pt(hl, hw), pt(-hl, hw)], [vx, vy]], [[pt(-hip, 0), pt(hip, 0), pt(hl, -hw), pt(-hl, -hw)], [-vx, -vy]],
          [[pt(hip, 0), pt(hl, hw), pt(hl, -hw)], [ux, uy]], [[pt(-hip, 0), pt(-hl, hw), pt(-hl, -hw)], [-ux, -uy]]]
       : [[[pt(-hl, 0), pt(hl, 0), pt(hl, hw), pt(-hl, hw)], [vx, vy]], [[pt(-hl, 0), pt(hl, 0), pt(hl, -hw), pt(-hl, -hw)], [-vx, -vy]]];
@@ -2039,37 +2091,45 @@ function mapRoofs(houses, unit) {
     faces.forEach(([poly, [nx, ny]], f) => {
       let d = nx * sun[0] + ny * sun[1];
       if (f < 2 && Math.abs(d) < 0.5) d = (Math.abs(d) > 1e-6 ? Math.sign(d) : nx <= 0 ? 1 : -1) * 0.5;
-      add(`${style}:${Math.round((d + 1) * 2)}`, mapPoly(poly));
+      add(`${key}:${Math.round((d + 1) * 2)}`, mapPoly(poly));
     });
-    // the grain: straw down each long slope, or courses of tiles along it with their joints
+    // the grain: straw down each long slope, courses of tiles or slates along it with their joints, or the rolls of
+    // the lead sheets down it
     const rnd = (q) => mapRand(12, Math.round(X), Math.round(Y), q + n);
     if (style === "thatch") {
-      const step = unit * 0.14;
+      const step = Math.max(sq * 0.14, unit * 0.012);
       for (const side of [1, -1]) for (let a = -hip + step / 2; a < hip; a += step) {
         const j = (rnd(Math.round(a)) - 0.5) * step * 0.6;
-        add(`${style}:grain`, mapLine([pt(a + j, side * hw * 0.12), pt(a + j, side * hw * 0.94)]));
+        add(`${key}:grain`, mapLine([pt(a + j, side * hw * 0.12), pt(a + j, side * hw * 0.94)]));
       }
-    } else {
-      const step = unit * 0.22, joint = unit * 0.3;
+    } else if (style === "lead") {
+      const step = Math.max(sq * 0.55, unit * 0.03);
+      for (const side of [1, -1]) for (let a = -hl + step; a < hl - step / 3; a += step) add(`${key}:grain`, mapLine([pt(a, 0), pt(a, side * hw)]));
+    } else if (style === "tile" || style === "slate") {
+      const step = Math.max(sq * (style === "slate" ? 0.26 : 0.22), unit * 0.02), joint = Math.max(sq * (style === "slate" ? 0.36 : 0.3), unit * 0.028);
       for (const side of [1, -1]) for (let b = step; b < hw; b += step) {
-        add(`${style}:grain`, mapLine([pt(-hl, side * b), pt(hl, side * b)]));
+        add(`${key}:grain`, mapLine([pt(-hl, side * b), pt(hl, side * b)]));
         const shift = (Math.round(b / step) % 2) * joint / 2;
-        for (let a = -hl + joint / 2 + shift; a < hl; a += joint) add(`${style}:grain`, mapLine([pt(a, side * b), pt(a, side * Math.max(b - step, 0))]));
+        for (let a = -hl + joint / 2 + shift; a < hl; a += joint) add(`${key}:grain`, mapLine([pt(a, side * b), pt(a, side * Math.max(b - step, 0))]));
       }
     }
-    // the ridge and, on a hipped roof, the hips down to the corners; the eaves round the edge
-    add(`${style}:ridge`, mapLine([pt(-hip, 0), pt(hip, 0)]));
-    if (style === "thatch") [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(([a, b]) => add(`${style}:ridge`, mapLine([pt(a * hip, 0), pt(a * hl, b * hw)])));
-    add(`${style}:edge`, mapPoly(foot));
+    // the ridge and, on a hipped roof or a spire, the hips down to the corners; the eaves round the edge
+    if (hip > 0) add(`${key}:ridge`, mapLine([pt(-hip, 0), pt(hip, 0)]));
+    if (hipped) [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(([a, b]) => add(`${key}:ridge`, mapLine([pt(a * hip, 0), pt(a * hl, b * hw)])));
+    add(`${key}:edge`, mapPoly(foot));
   });
   const out = [];
   if (sink.shadow) out.push({ d: sink.shadow, fill: "#000000", o: 0.22 });
-  Object.keys(MAP_ROOFS).forEach(s => {
-    const c = MAP_ROOFS[s];
-    for (let t = 0; t <= 4; t++) if (sink[`${s}:${t}`]) out.push({ d: sink[`${s}:${t}`], fill: mapMix(c.dark, c.lit, t / 4) });
-    if (sink[`${s}:grain`]) out.push({ d: sink[`${s}:grain`], line: c.grain, w: 0.7, o: 0.45 });
-    if (sink[`${s}:ridge`]) out.push({ d: sink[`${s}:ridge`], line: c.ridge, w: 1.8, o: 0.9 });
-    if (sink[`${s}:edge`]) out.push({ d: sink[`${s}:edge`], line: c.edge, w: 1.1, o: 0.85 });
+  const rank = (k) => ["thatch", "tile", "slate", "lead", "tower", "spire"].indexOf(k.split(":")[0]);
+  order.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).forEach(key => {
+    const [s, t] = key.split(":");
+    const c = MAP_ROOFS[s], [dl, dd] = MAP_ROOF_TONES[Number(t) || 0];
+    const lit = dl >= 0 ? mapMix(c.lit, "#FFFFFF", dl) : mapMix(c.lit, "#000000", -dl);
+    const dark = dd >= 0 ? mapMix(c.dark, "#FFFFFF", dd) : mapMix(c.dark, "#000000", -dd);
+    for (let f = 0; f <= 4; f++) if (sink[`${key}:${f}`]) out.push({ d: sink[`${key}:${f}`], fill: mapMix(dark, lit, f / 4) });
+    if (sink[`${key}:grain`]) out.push({ d: sink[`${key}:grain`], line: c.grain, w: 0.7, o: s === "tower" ? 0.8 : 0.45 });
+    if (sink[`${key}:ridge`]) out.push({ d: sink[`${key}:ridge`], line: c.ridge, w: 1.8, o: 0.9 });
+    if (sink[`${key}:edge`]) out.push({ d: sink[`${key}:edge`], line: c.edge, w: 1.1, o: 0.85 });
   });
   return out;
 }
@@ -2984,7 +3044,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell }) {
         )}
         {Array.isArray(v.houses) && v.houses.length > 0 && (
           <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <MapSwatch what="house" size={20} />Houses: their walls and roofs are climbed (see Climbing); a walk goes round them.
+            <MapSwatch what="house" size={20} />Buildings (houses, barns, churches): their walls and roofs are climbed (see Climbing); a walk goes round them.
           </span>
         )}
         {cells.some(c => c.feature === "mouth") && (
