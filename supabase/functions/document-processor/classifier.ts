@@ -262,6 +262,19 @@ const docRules: Array<{ docType: DocType; test: (i: DocClassifyInput) => boolean
     test: (i) => /\.(pdf|docx)$/i.test(i.fileName) &&
                  /resume|curriculum[\s_-]?vitae|\bcv\b/i.test(filenameBase(i.fileName)) },
 
+  // 2026-10-08: Marie's recruiting batch emails ("Recruiting download check —
+  // <date>", "Resumes", "Applicants - ...") carry resumes whose file names do
+  // not always say "resume". Lisa Plattenberger's was named
+  // "Plattenberger_Insurance-Sales-Representative.pdf", matched nothing above,
+  // was skipped on 2026-10-06 and her record sat with no resume text. The
+  // subject marks the whole email as a resume batch, so any PDF/DOCX in it is a
+  // resume. CTS reports are routed by the rule above this one first; cover
+  // letters are excluded so they cannot overwrite a candidate's resume text.
+  { docType: "resume_manual_batch",
+    test: (i) => /\.(pdf|docx)$/i.test(i.fileName) &&
+                 /recruit|resume|applicant/i.test(i.subject) &&
+                 !/cover[\s_-]*letter/i.test(filenameBase(i.fileName)) },
+
   // ----- FROST PFA STATEMENT (2026-07-09) — must come BEFORE the generic
   //       bank statement rules. Sender = Frost Bank; subject/filename mentions
   //       "PFA", "premium fund", or the PFA account number 020715816. -----
