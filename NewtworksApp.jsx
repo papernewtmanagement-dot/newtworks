@@ -113,7 +113,7 @@ const NAV_ITEMS = [
   { id: "handbook",    label: "Handbook",    icon: "bookOpen",      roles: TEAM_VISIBLE_ROLES },
   { id: "processes",   label: "Processes",   icon: "clipboardList", roles: TEAM_VISIBLE_ROLES },
   // Peter 2026-10-08: team page to tap office supplies running low, request snacks, send prize cart ideas.
-  { id: "office",      label: "Office",      icon: "package",       roles: TEAM_VISIBLE_ROLES },
+  { id: "requests",    label: "Requests",    icon: "package",       roles: TEAM_VISIBLE_ROLES },
   { type: "divider",   id: "_div_admin_top" },
   { id: "alerts",      label: "Alerts",      icon: "bell",          roles: ADMIN_ROLES },
   { id: "tasks",       label: "Tasks",       icon: "check",         roles: ADMIN_ROLES },
@@ -721,7 +721,7 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     settings:    <ErrorBoundary name="Settings"><Settings /></ErrorBoundary>,
     family:      <ErrorBoundary name="Family"><Family userRole={userRole} /></ErrorBoundary>,
     inventory:   <ErrorBoundary key="inventory" name="Inventory"><Inventory key="inventory" userRole={userRole} /></ErrorBoundary>,
-    office:      <ErrorBoundary key="office" name="Office"><Inventory key="office" place="office" userRole={userRole} /></ErrorBoundary>,
+    requests:    <ErrorBoundary key="requests" name="Requests"><Inventory key="requests" place="office" userRole={userRole} /></ErrorBoundary>,
     roleplaying: <ErrorBoundary name="Roleplaying"><Roleplaying userRole={userRole} /></ErrorBoundary>,
     dancer:      <ErrorBoundary name="Dancer"><Dancer /></ErrorBoundary>,
     meals:       <ErrorBoundary name="Meal Plan"><MealPlan userRole={userRole} /></ErrorBoundary>,
@@ -783,6 +783,8 @@ const LEGACY_MODULE_ALIASES = {
   // 2026-09-21: reference calling moved off the sidebar and onto the
   // references card inside Development > Onboarding.
   references: "dashboard",
+  // 2026-10-08: the Office page was renamed Requests the same day it shipped.
+  office: "requests",
 };
 // An old slug that became a TAB also seeds ?tab= once, so /pfa still lands on
 // Deposits rather than dumping the person on the default Log tab. Runs before

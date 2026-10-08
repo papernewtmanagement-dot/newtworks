@@ -25,8 +25,10 @@ import { DayDoneStyles, Dancer, CritterIcon, useDancers } from "../components/Cr
 // Items keep the master list's store sections and order. "How often" may be blank:
 // the site then learns it from use and predicts nothing until it has measured a cycle.
 //
-// The same screen runs the office list (Peter 2026-10-08). The team's "Office" page
-// (place="office") shows the office checklist plus two requests:
+// The same screen runs the office list (Peter 2026-10-08). The team's "Requests" page
+// (place="office") shows the office checklist plus two requests. The office list and snack
+// requests are only for teammates working in the office (office_can_stock()); everyone
+// can send prize cart ideas:
 //   office_request_snack()   puts a snack on the office list if it's new, then taps it Running low
 //   prize_cart_idea_add()    a prize idea; it goes to Alvi with the quarter's prize cart close
 //   prize_cart_ideas_mine()  the person's own ideas that haven't gone to Alvi yet
@@ -105,6 +107,7 @@ export default function Inventory({ userRole, place: pagePlace = "home" }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);
   const [editing, setEditing] = useState(null);
+  const [canStock, setCanStock] = useState(!isOfficePage);
   const { all: allDancers } = useDancers();
 
   const visibleTabs = isParent && !isOfficePage ? TABS : ["checklist"];
@@ -114,11 +117,18 @@ export default function Inventory({ userRole, place: pagePlace = "home" }) {
   const place = isOfficePage ? "office" : activeTab === "admin" ? adminPlace : "home";
 
   const load = useCallback(async () => {
+    if (isOfficePage) {
+      // Only teammates working in the office see and stock the office list.
+      const { data: ok, error: okErr } = await supabase.rpc("office_can_stock");
+      if (okErr) { setErr(okErr.message); setLoading(false); return; }
+      setCanStock(ok === true);
+      if (ok !== true) { setRows([]); setLoading(false); return; }
+    }
     const { data, error } = await supabase.rpc("family_inventory_board", { p_location: place });
     if (error) setErr(error.message);
     else setRows(Array.isArray(data) ? data : []);
     setLoading(false);
-  }, [place]);
+  }, [place, isOfficePage]);
   useEffect(() => { setLoading(true); load(); }, [load]);  // runs again only when the list on screen changes
 
   // The dancer is picked here, from the dancers table (read through useDancers).
@@ -146,7 +156,7 @@ export default function Inventory({ userRole, place: pagePlace = "home" }) {
     <div style={{ padding: _pad, maxWidth: 820, margin: "0 auto", boxSizing: "border-box" }}>
       <DayDoneStyles />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
-        <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900 }}>{isOfficePage ? "Office" : "Inventory"}</div>
+        <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900 }}>{isOfficePage ? "Requests" : "Inventory"}</div>
         {isOfficePage && isParent && (
           <a href="/inventory?tab=admin&place=office" style={{ fontSize: 13, color: T.blue, fontWeight: 600, textDecoration: "none" }}>
             Order office items →
@@ -170,11 +180,11 @@ export default function Inventory({ userRole, place: pagePlace = "home" }) {
         </div>
       )}
 
-      {activeTab === "checklist" && (
+      {activeTab === "checklist" && canStock && (
         <Checklist rows={rows} busy={busy} onToggle={toggleLow} isParent={isParent} place={place} onAdd={() => setEditing({})} />
       )}
       {isOfficePage && (
-        <OfficeRequests rows={rows} allDancers={allDancers} onChanged={load} setErr={setErr} />
+        <OfficeRequests rows={rows} allDancers={allDancers} canStock={canStock} onChanged={load} setErr={setErr} />
       )}
       {activeTab === "admin" && isParent && (
         <>
@@ -602,11 +612,11 @@ function MealGroceries({ today, rows, onChanged, setErr }) {
   );
 }
 
-// ─── Office page: snack requests and prize cart ideas ─────────────────────
-// A snack request lands on the office list as Running low (new snacks are added under SNACKS),
+// ─── Requests page: snack requests and prize cart ideas ───────────────────
+// A snack request lands on the office list as Running low (new snacks go under Kitchen Supplies),
 // so Alvi sees it with the rest of the office order. Prize ideas wait until the quarter's
 // prize cart close, which sends them to Alvi.
-function OfficeRequests({ rows, allDancers, onChanged, setErr }) {
+function OfficeRequests({ rows, allDancers, canStock, onChanged, setErr }) {
   const [snack, setSnack] = useState("");
   const [idea, setIdea] = useState("");
   const [link, setLink] = useState("");
@@ -652,6 +662,7 @@ function OfficeRequests({ rows, allDancers, onChanged, setErr }) {
 
   return (
     <div style={{ display: "grid", gap: 12, marginTop: 12, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+      {canStock && (
       <form onSubmit={askSnack} style={{ ...card, display: "grid", gap: 10, alignContent: "start" }}>
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Request a snack</div>
         <label style={label}>What would you like stocked?
@@ -664,6 +675,7 @@ function OfficeRequests({ rows, allDancers, onChanged, setErr }) {
           {saving === "snack" ? "Sending…" : "Request"}
         </button>
       </form>
+      )}
 
       <form onSubmit={sendIdea} style={{ ...card, display: "grid", gap: 10, alignContent: "start" }}>
         <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>Prize cart idea</div>
