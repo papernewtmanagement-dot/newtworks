@@ -1677,8 +1677,9 @@ function mapFantasy(v, byId) {
   });
   }
   // kept to the land as drawn (step 14d3, Peter 2026-10-07: rivers ran over the sea where the coast is drawn rounder
-  // than its cells): a river never shows over the sea or ground not found yet
-  Object.keys(runs).sort().reverse().forEach(k => layers.push({ d: runs[k], line: MAP_RIVER, w: MAP_RIVER_W[k] || 1, clip: land }));
+  // than its cells): a river never shows over the sea or ground not found yet, nor anywhere on a map with no land drawn
+  // (step 14f1: a great river runs on into the sea cell it flows into)
+  if (land) Object.keys(runs).sort().reverse().forEach(k => layers.push({ d: runs[k], line: MAP_RIVER, w: MAP_RIVER_W[k] || 1, clip: land }));
   layers.push({ d: land, line: MAP_INK, w: 1.25 });
   const strokes = mapRows(unit * (detail ? 1 : 0.12));
   const marked = mapRows(unit * 0.12);
