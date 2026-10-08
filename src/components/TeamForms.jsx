@@ -233,7 +233,11 @@ function CombinedForm({ data, setData, secure, setSecure, needs = {}, onBehalf =
                 onChange={e => setData({ ...data, ranking: { ...(data.ranking || {}), [r]: e.target.value } })}
                 style={inputBase}>
                 <option value="">—</option>
-                {[1, 2, 3, 4].map(n => <option key={n} value={n}>{n}</option>)}
+                {/* Each number once: a number another item already has is greyed out. */}
+                {[1, 2, 3, 4].map(n => {
+                  const taken = Object.entries(data.ranking || {}).some(([k, v]) => k !== r && String(v) === String(n));
+                  return <option key={n} value={n} disabled={taken}>{n}{taken ? " (used)" : ""}</option>;
+                })}
               </select>
             </Field>
           ))}
@@ -1044,6 +1048,8 @@ function readyToSubmit(formType, data, secure, needs = {}, onBehalf = false) {
     return !!data.why_statement &&
       !!String(data.need_to_make || "").trim() &&
       !!String(data.want_to_make || "").trim() &&
+      // Motivators ranked 1 to 4, each number used once.
+      RANKABLE.map(({ key }) => String((data.ranking || {})[key] || "")).sort().join() === "1,2,3,4" &&
       (onBehalf || needs.bank === false || (secure.banks || []).some(b =>
         String(b.bank_name || "").trim() &&
         String(b.routing_number || "").replace(/[^0-9]/g, "").length === 9 &&

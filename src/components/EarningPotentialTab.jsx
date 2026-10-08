@@ -253,8 +253,9 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
   // (Peter 2026-10-08). It only comes back for the person and an admin.
   const goalPos = Array.isArray(positions) && positions.length === 1 ? positions[0] : null;
   const goal = Number(goalPos?.want_to_make) > 0 ? Number(goalPos.want_to_make) : null;
+  const need = Number(goalPos?.need_to_make) > 0 ? Number(goalPos.need_to_make) : null;
 
-  const allY = [...drawn.flatMap(p => [p.total, p.base, p.base_comm]), ...(goal ? [goal] : [])];
+  const allY = [...drawn.flatMap(p => [p.total, p.base, p.base_comm]), ...(goal ? [goal] : []), ...(need ? [need] : [])];
   const { max: maxY, step: tickStep } = axisFor(Math.max(0, ...allY));
   const yTicks = [];
   for (let v = 0; v <= maxY; v += tickStep) yTicks.push(v);
@@ -289,20 +290,25 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
     return t0 + f * (t1 - t0);
   };
 
-  // The weekly pace where the total line first reaches the goal, or null if it
-  // never does inside this chart.
-  const goalX = (() => {
-    if (!goal || drawn.length === 0) return null;
-    if (drawn[0].total >= goal) return drawn[0].x;
+  // The weekly pace where the total line first reaches a dollar figure, or null
+  // if it never does inside this chart.
+  const paceFor = (amount) => {
+    if (!amount || drawn.length === 0) return null;
+    if (drawn[0].total >= amount) return drawn[0].x;
     for (let i = 0; i < drawn.length - 1; i++) {
       const a = drawn[i], b = drawn[i + 1];
-      if (a.total < goal && b.total >= goal) {
-        const f = b.total === a.total ? 0 : (goal - a.total) / (b.total - a.total);
+      if (a.total < amount && b.total >= amount) {
+        const f = b.total === a.total ? 0 : (amount - a.total) / (b.total - a.total);
         return a.x + f * (b.x - a.x);
       }
     }
     return null;
-  })();
+  };
+  // The want line (gold) and the need line (the floor, darker), each with its pace.
+  const goalLines = [
+    goal ? { key: "want", label: "Want", amount: goal, color: T.gold, dash: "6 4" } : null,
+    need ? { key: "need", label: "Need", amount: need, color: T.slate600, dash: "3 3" } : null,
+  ].filter(Boolean).map(g => ({ ...g, x: paceFor(g.amount) }));
 
   // Total pay at each band's production level, for the threshold markers.
   const markers = useMemo(() => bands.map((b, i) => {
@@ -377,9 +383,10 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
   // A person's marker carries its own dollar figure, so the total line's
   // own label gets out of the way wherever a marker stands.
   const markerXs = (Array.isArray(positions) ? positions : [])
+    .filter(p => p?.x != null)
     .flatMap(p => [p?.x, ...gapScenarios(p).map(g => g.x)])
     .map(x => Math.min(Math.max(Number(x) || 0, 0), xMax));
-  const gapRows = (Array.isArray(positions) ? positions : []).flatMap(p => {
+  const gapRows = (Array.isArray(positions) ? positions : []).filter(p => p?.x != null).flatMap(p => {
     const from = Math.min(Math.max(Number(p?.x) || 0, 0), xMax);
     return gapScenarios(p).map((g, i) => {
       const to = Math.min(Math.max(Number(g.x) || 0, 0), xMax);
@@ -536,28 +543,29 @@ const EarningsCurveChart = ({ curve, ladder, highlighted, isPhone, positions }) 
           </g>
         );
       })}
-      {/* Their goal: what they said they want to make, and the pace that pays it */}
-      {goal && (
-        <g>
-          <line x1={padL} y1={yFor(goal)} x2={padL + chartW} y2={yFor(goal)}
-            stroke={T.gold} strokeWidth="2" strokeDasharray="6 4" />
-          <text x={padL + 6} y={yFor(goal) - 6} textAnchor="start" fontSize={isPhone ? 10 : 11.5}
-            fontWeight={800} fill={T.gold}>
-            {"Goal " + fmtK(goal) + (goalX != null
-              ? (isPremium ? " \u00b7 " + fmtK(goalX) + " a year" : " \u00b7 " + Math.round(goalX) + " pts a week")
+      {/* What they said they want and need to make, and the pace that pays each */}
+      {goalLines.map(g => (
+        <g key={"goal-" + g.key}>
+          <line x1={padL} y1={yFor(g.amount)} x2={padL + chartW} y2={yFor(g.amount)}
+            stroke={g.color} strokeWidth="2" strokeDasharray={g.dash} />
+          <text x={padL + 6} y={yFor(g.amount) - 6} textAnchor="start" fontSize={isPhone ? 10 : 11.5}
+            fontWeight={800} fill={g.color}>
+            {g.label + " " + fmtK(g.amount) + (g.x != null
+              ? (isPremium ? " \u00b7 " + fmtK(g.x) + " a year" : " \u00b7 " + Math.round(g.x) + " pts a week")
               : " \u00b7 past the right edge")}
           </text>
-          {goalX != null && (
+          {g.x != null && (
             <>
-              <line x1={xFor(goalX)} y1={yFor(goal)} x2={xFor(goalX)} y2={padT + chartH}
-                stroke={T.gold} strokeWidth="1.25" strokeDasharray="2 3" opacity="0.8" />
-              <circle cx={xFor(goalX)} cy={yFor(goal)} r={5} fill={T.gold} stroke={T.white} strokeWidth="1.5" />
+              <line x1={xFor(g.x)} y1={yFor(g.amount)} x2={xFor(g.x)} y2={padT + chartH}
+                stroke={g.color} strokeWidth="1.25" strokeDasharray="2 3" opacity="0.8" />
+              <circle cx={xFor(g.x)} cy={yFor(g.amount)} r={5} fill={g.color} stroke={T.white} strokeWidth="1.5" />
             </>
           )}
         </g>
-      )}
+      ))}
       {/* Where each person actually sits: the weekly average their raise review uses */}
       {(Array.isArray(positions) ? positions : [])
+        .filter(p => p?.x != null && Number.isFinite(Number(p.x)))
         .map(p => ({ ...p, xv: Math.min(Math.max(Number(p?.x) || 0, 0), xMax) }))
         .sort((a, b) => a.xv - b.xv)
         .map((p, i, arr) => {
@@ -798,15 +806,18 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
   const [view, setView, viewHref] = useTabParam("eview", "", []);
   const rolePositions = useMemo(
     () => (Array.isArray(positions) ? positions : [])
-      .filter(p => p?.role_key === role?.role_key && Number.isFinite(Number(p?.x))),
+      .filter(p => p?.role_key === role?.role_key),
     [positions, role]
   );
+  // People with no points yet still have a view (their need and want lines),
+  // but only people with points get a dot on the team view.
+  const plotted = rolePositions.filter(p => p?.x != null && Number.isFinite(Number(p.x)));
   const peopleInRole = rolePositions.filter(p => p?.team_member_id);
   const viewKey = view || (isAdmin ? "team" : "mine");
   const focus = viewKey === "team" ? null
     : viewKey === "mine" ? rolePositions.find(p => p?.is_me) || null
     : rolePositions.find(p => p?.team_member_id === viewKey) || null;
-  const chartPositions = focus ? [focus] : rolePositions.map(p => ({ ...p, gap: null }));
+  const chartPositions = focus ? [focus] : plotted.map(p => ({ ...p, gap: null }));
   const viewChoices = isAdmin
     ? [{ key: "team", label: "Team" }, ...peopleInRole.map(p => ({ key: p.team_member_id, label: p.first_name }))]
     : (rolePositions.some(p => p?.is_me) ? [{ key: "mine", label: "Mine" }, { key: "team", label: "Team" }] : []);
@@ -865,7 +876,7 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
       <div style={card}>
         <div style={{ marginBottom: 6 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{role.role_label} — projected annual pay by {curve?.x_label ? curve.x_label.toLowerCase() : "production level"}</div>
-          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{rolePositions.length > 0 ? " Purple points are real people: the weekly average their next raise uses, and their on-time pay this year. A hollow point shows where closing their biggest gap would put them." : ""}</div>
+          <div style={{ fontSize: 11, color: T.slate500 }}>Three lines: dashed is base pay, the middle line adds commission, the top line adds the team bonus. Shaded bands mark the performance ranges, each headed with the performer it describes. The raise ladder runs along the bottom, each rate sitting at the weekly pace that earns it — reviewed only at quarter close, one tier per close, in order. Miss a close and nothing is lost: qualify at the next one and take it then. A raise never steps back down.{plotted.length > 0 ? " Purple points are real people: the weekly average their next raise uses, and their on-time pay this year. A hollow point shows where closing their biggest gap would put them." : ""}</div>
         </div>
         {viewChoices.length > 1 && (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "6px 0 8px" }}>
@@ -887,9 +898,14 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
         ) : (
           <div style={{ fontSize: 12, color: T.slate500, padding: "14px 0" }}>No curve data returned for this role.</div>
         )}
-        {myPos && myPos.role_key === role.role_key && focus === myPos && (
+        {myPos && myPos.role_key === role.role_key && focus === myPos && myPos.x == null && Number(myPos.want_to_make) > 0 && (
           <div style={{ marginTop: 8, fontSize: 11.5, color: T.slate700, background: T.purpleLt, border: `1px solid ${T.purple}`, borderRadius: 7, padding: "7px 10px" }}>
-            You are averaging {Math.round(Number(myPos.x) || 0)} sales points a week over {windowText(myPos)}, the same average your next raise is measured on{Number.isFinite(Number(myPos.y)) ? ", and you are on time for " + fmtMoney(Number(myPos.y)) + " this year" : ""}. Your point on the chart is those two figures together.{rateSentence(myPos)}{Number(myPos.want_to_make) > 0 ? " The gold line is your goal: the " + fmtMoney(Number(myPos.want_to_make)) + " a year you said you want to make." : ""}
+            Your point shows up once you have sales points. The gold line is the {fmtMoney(Number(myPos.want_to_make))} a year you said you want to make{Number(myPos.need_to_make) > 0 ? ", and the dark line is the " + fmtMoney(Number(myPos.need_to_make)) + " you need" : ""}.
+          </div>
+        )}
+        {myPos && myPos.role_key === role.role_key && focus === myPos && myPos.x != null && (
+          <div style={{ marginTop: 8, fontSize: 11.5, color: T.slate700, background: T.purpleLt, border: `1px solid ${T.purple}`, borderRadius: 7, padding: "7px 10px" }}>
+            You are averaging {Math.round(Number(myPos.x) || 0)} sales points a week over {windowText(myPos)}, the same average your next raise is measured on{Number.isFinite(Number(myPos.y)) ? ", and you are on time for " + fmtMoney(Number(myPos.y)) + " this year" : ""}. Your point on the chart is those two figures together.{rateSentence(myPos)}{Number(myPos.want_to_make) > 0 ? " The gold line is the " + fmtMoney(Number(myPos.want_to_make)) + " a year you said you want to make" + (Number(myPos.need_to_make) > 0 ? ", and the dark line is the " + fmtMoney(Number(myPos.need_to_make)) + " you need." : ".") : ""}
           </div>
         )}
         <div style={{ marginTop: 4, fontSize: 10.5, color: T.slate400 }}>
@@ -901,6 +917,31 @@ export default function EarningPotentialTab({ isAdmin = false } = {}) {
           </div>
         )}
       </div>
+
+      {/* One person's why and travel spots, from their Onboarding form. Only the
+          person and an admin get these back. */}
+      {focus && (focus.why_statement || (Array.isArray(focus.travel_spots) && focus.travel_spots.length > 0)) && (
+        <div style={{ ...card, display: "grid", gap: 12 }}>
+          {focus.why_statement && (
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>
+                {focus.is_me ? "Your why" : focus.first_name + "'s why"}
+              </div>
+              <div style={{ fontSize: 13, color: T.slate700, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{focus.why_statement}</div>
+            </div>
+          )}
+          {Array.isArray(focus.travel_spots) && focus.travel_spots.length > 0 && (
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, marginBottom: 4 }}>
+                {focus.is_me ? "Where you want to go" : "Where " + focus.first_name + " wants to go"}
+              </div>
+              <div style={{ fontSize: 13, color: T.slate700, lineHeight: 1.6 }}>
+                {focus.travel_spots.map((t, i) => <div key={i}>{(i + 1) + ". " + t}</div>)}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Sales and Retention: first-year path to $100k. Both curves read the same pay-scale rows
           (base + commission + team bonus), so the rungs are the same; Retention counts total points.
