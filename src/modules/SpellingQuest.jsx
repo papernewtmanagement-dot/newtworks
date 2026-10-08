@@ -4,9 +4,11 @@ import { useViewport } from "../lib/hooks.js";
 import { useFamilyPlayers, recordFamilyGame, PlayerPicker } from "../lib/familyGames.jsx";
 import { useDancers, CritterIcon } from "../components/Critters.jsx";
 import QuestMonster from "../components/QuestMonster.jsx";
+import QuestScene from "../components/QuestScene.jsx";
 import {
-  WORLDS, MONSTERS as QUEST_MONSTERS, LEVELS_PER_WORLD, LEVEL_TOTAL, worldOf, stepOf, levelName, monstersForLevel, heroHpForLevel,
-  endlessMonster, endlessWorld, ENDLESS_HERO_HP, POTIONS, POTION_KEYS, POTION_MAX,
+  WORLDS, MONSTERS as QUEST_MONSTERS, LEVELS_PER_WORLD, MONSTERS_PER_LEVEL, LEVEL_TOTAL, worldOf, stepOf, levelInfo, levelName,
+  monstersForLevel, heroHpForLevel, endlessMonster, endlessWorld, ENDLESS_HERO_HP, starsFor,
+  POTIONS, POTION_KEYS, POTION_MAX, TREASURES, EQUIP_MAX, treasuresOwned,
 } from "../lib/questWorlds.js";
 
 // =========================================================================
@@ -15,11 +17,15 @@ import {
 //
 // Monsters (like Bookworm Adventures): a 4x4 grid of letters, used in any
 // order. Each word hits the monster for its exact score; the monster hits back.
-// Ten worlds of ten levels (src/lib/questWorlds.js has the story, the worlds
-// and the monsters); each level is 2–4 monsters and each world ends in a boss.
-// Long words leave gem tiles: green heals you, gold hits 50% harder, diamond
-// hits twice as hard and heals. Beaten monsters drop potions (heal, power,
-// freeze) that are kept between games. Some monsters turn a letter to stone.
+// 20 worlds of 20 levels (src/lib/questWorlds.js has the story, the worlds, the
+// monsters and the treasures); every level is five monsters, and level 20 of a
+// world ends in its boss. Each world has a theme and each level a sub-theme,
+// drawn behind the fight (src/components/QuestScene.jsx).
+// Long words leave gem tiles: emerald heals, amethyst cures, sapphire freezes the
+// monster, ruby hits 50% harder, diamond hits twice as hard and heals. Monsters
+// may stone or set fire to a letter, poison you or weaken you. Beaten monsters
+// drop potions (heal, power, freeze, cure) kept between games. Beating a boss
+// wins a treasure; equip up to three. Levels earn 1–3 stars for health left.
 // Heroes are the family's dancing characters; a kid starts on their own animal.
 //
 // Fire (like Bookworm): a 7x7 square grid; letters must touch (sideways, up,
@@ -33,7 +39,8 @@ import {
 //
 // Saved per kid on family_kids.game_bests: bookworm (Fire), bookworm_battle
 // (Monsters) — best score, unlocked.<difficulty> (highest level open, only goes
-// up) and items (potions). Guest progress lasts until the page closes.
+// up), items (potions), stars["<difficulty>:<level>"] (only goes up) and equip
+// (treasures worn). Guest progress lasts until the page closes.
 // Word lists: public/games/words.txt (accepted), common.txt (hints only).
 // =========================================================================
 
@@ -52,11 +59,61 @@ const VOWELS = new Set(["A", "E", "I", "O", "U"]);
 const LEN_MULT = { 3: 1, 4: 1.25, 5: 1.5, 6: 2, 7: 2.5, 8: 3, 9: 3.5 };
 const GEM_FOR_LEN = len => (len >= 7 ? "diamond" : len === 6 ? "gold" : len === 5 ? "green" : null);
 const FIRE_GEM_BONUS = { green: 0.5, gold: 1, diamond: 2 };
+// Monsters mode gems (like Bookworm Adventures): which one a long word leaves.
+function monsterGem(len, fourToo) {
+  if (len >= 7) return "diamond";
+  if (len === 6) return Math.random() < 0.55 ? "ruby" : "sapphire";
+  if (len === 5) return Math.random() < 0.65 ? "emerald" : "amethyst";
+  if (len === 4 && fourToo) return "emerald";
+  return null;
+}
 const GEM_LOOK = {
-  green:   { bg: "linear-gradient(160deg,#B9F2C8,#4CBF72)", border: "#2E8B57", ink: "#0F3D22" },
-  gold:    { bg: "linear-gradient(160deg,#FFE9A6,#E2B13C)", border: "#A8801F", ink: "#4A3500" },
-  diamond: { bg: "linear-gradient(160deg,#E3F6FF,#8CCFF2)", border: "#3F8DB8", ink: "#0E3550" },
+  green:    { bg: "linear-gradient(160deg,#B9F2C8,#4CBF72)", border: "#2E8B57", ink: "#0F3D22" },
+  gold:     { bg: "linear-gradient(160deg,#FFE9A6,#E2B13C)", border: "#A8801F", ink: "#4A3500" },
+  diamond:  { bg: "linear-gradient(160deg,#FFFFFF,#BCE6F7)", border: "#3F8DB8", ink: "#0E3550" },
+  emerald:  { bg: "linear-gradient(160deg,#B9F2C8,#4CBF72)", border: "#2E8B57", ink: "#0F3D22" },
+  ruby:     { bg: "linear-gradient(160deg,#FFC2C2,#D7261E)", border: "#8E1B14", ink: "#FFFFFF" },
+  sapphire: { bg: "linear-gradient(160deg,#C9DEFF,#2F6FD6)", border: "#1B3E8E", ink: "#FFFFFF" },
+  amethyst: { bg: "linear-gradient(160deg,#EBD5FF,#8E5CB8)", border: "#5C3480", ink: "#FFFFFF" },
 };
+const GEM_KEY = "Gems: emerald heals · amethyst cures · sapphire freezes · ruby +50% · diamond ×2 and heals";
+
+// Treasure effects worn in a fight.
+const eqCount = (eq, effect) => (eq || []).filter(t => t.effect === effect).length;
+function treasureBoost(eq, tiles, letters) {
+  let k = 1;
+  for (const t of eq || []) {
+    if (t.effect === "letters" && tiles.some(x => t.letters.includes(x.ch[0]))) k *= 1.25;
+    if (t.effect === "long" && letters >= 6) k *= 1.3;
+  }
+  return k;
+}
+
+// ── Sounds: tiny made-up beeps, no files. Off when muted.
+const SOUND = { muted: false, ctx: null };
+try { SOUND.muted = window.localStorage.getItem("sq_muted") === "1"; } catch { SOUND.muted = false; }
+const TUNES = {
+  hit: [["square", 520, 260, 0.12]], hurt: [["sawtooth", 200, 110, 0.18]], heal: [["sine", 520, 880, 0.22]],
+  gem: [["triangle", 880, 1320, 0.12]], potion: [["sine", 660, 990, 0.18]], tap: [["triangle", 700, 700, 0.03]],
+  win: [["triangle", 523, 523, 0.12], ["triangle", 659, 659, 0.12], ["triangle", 784, 784, 0.12], ["triangle", 1047, 1047, 0.25]],
+  lose: [["sine", 392, 330, 0.2], ["sine", 294, 196, 0.35]], status: [["square", 300, 240, 0.14]],
+};
+function sound(name) {
+  if (SOUND.muted || typeof window === "undefined") return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const ctx = SOUND.ctx || (SOUND.ctx = new AC());
+    let t = ctx.currentTime;
+    for (const [type, f1, f2, len] of TUNES[name] || []) {
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.type = type; o.frequency.setValueAtTime(f1, t); o.frequency.linearRampToValueAtTime(f2, t + len);
+      g.gain.setValueAtTime(0.08, t); g.gain.exponentialRampToValueAtTime(0.001, t + len);
+      o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + len + 0.02);
+      t += len;
+    }
+  } catch { /* no sound on this device */ }
+}
 
 // ── Difficulty ──────────────────────────────────────────────────────────
 //   hardLetters  weight of K J X Qu Z V (0 = never); vowels: share kept between
@@ -175,7 +232,7 @@ function randomLetter(board, diff) {
     return ch;
   }
 }
-const newTile = (board, diff, kind = "normal") => ({ id: NEXT_ID++, ch: randomLetter(board, diff), kind, stone: 0, fresh: true });
+const newTile = (board, diff, kind = "normal") => ({ id: NEXT_ID++, ch: randomLetter(board, diff), kind, stone: 0, burn: 0, fresh: true });
 function newBoard(diff, cols, rows, startFires = 0) {
   const b = [];
   for (let c = 0; c < cols; c++) { b.push([]); for (let r = 0; r < rows; r++) b[c].push(newTile(b, diff)); }
@@ -206,7 +263,7 @@ const basePoints = tiles => {
 };
 
 // Guest progress and potions, kept until the page closes.
-const GUEST = { unlocked: {}, items: { heal: 1, power: 1, freeze: 0 } };
+const GUEST = { unlocked: {}, items: { heal: 1, power: 1, freeze: 0, cure: 0 }, stars: {}, equip: [] };
 
 export default function SpellingQuest() {
   const _vp = useViewport();
@@ -240,6 +297,8 @@ export default function SpellingQuest() {
   const [message, setMessage] = useState(null);
   const [result, setResult] = useState(null);
   const [guestTick, setGuestTick] = useState(0);
+  const [equip, setEquip] = useState([]);     // treasure numbers worn (up to 3)
+  const [muted, setMuted] = useState(SOUND.muted);
   const msgTimer = useRef(0);
   const timers = useRef([]);
   const boxRef = useRef(null);
@@ -270,11 +329,32 @@ export default function SpellingQuest() {
     return Object.fromEntries(POTION_KEYS.map(k => [k, Math.max(0, Math.min(POTION_MAX, Number(src[k]) || 0))]));
   }, [player, guestTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const starsMap = player ? (player.bests?.stars || {}) : GUEST.stars;
+  const starsOf = n => Number(starsMap[`${diffKey}:${n}`]) || 0;
+  // Treasures: won by beating a world's boss on any difficulty.
+  const owned = useMemo(() => {
+    const src = player ? Object.values(player.bests?.unlocked || {}) : Object.entries(GUEST.unlocked).filter(([k]) => k.startsWith("monsters:")).map(([, v]) => v);
+    return treasuresOwned(Math.max(1, ...src.map(Number).filter(Number.isFinite)));
+  }, [player, guestTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const worn = equip.filter(i => owned[i]?.owned).slice(0, EQUIP_MAX);
+  const toggleEquip = i => {
+    if (!owned[i]?.owned) return;
+    const next = worn.includes(i) ? worn.filter(x => x !== i) : worn.length < EQUIP_MAX ? [...worn, i] : worn;
+    setEquip(next);
+    if (!player) GUEST.equip = next;
+  };
+  const toggleMute = () => {
+    const m = !muted;
+    SOUND.muted = m; setMuted(m);
+    try { window.localStorage.setItem("sq_muted", m ? "1" : "0"); } catch { /* fine */ }
+  };
+
   const choosePlayer = id => {
     setPlayerId(id);
     const kid = players.find(p => p.id === id);
     if (kid?.animal) setHeroKey(kid.animal);
     setDiffKey(diffForAge(kid ? kid.age : null));
+    setEquip(kid ? (Array.isArray(kid.bests?.equip) ? kid.bests.equip : []) : GUEST.equip);
   };
 
   const endlessLevel = useMemo(() => { let lv = 1; while (score >= endlessLevelAt(lv + 1)) lv += 1; return lv; }, [score]);
@@ -289,7 +369,8 @@ export default function SpellingQuest() {
   const base = valid ? basePoints(selTiles) : 0;
   const gems = selTiles.reduce((a, t) => ({ ...a, [t.kind]: (a[t.kind] || 0) + 1 }), {});
   const firePoints = Math.round(base * (1 + Math.min(3, selTiles.reduce((a, t) => a + (FIRE_GEM_BONUS[t.kind] || 0), 0))));
-  const hitPoints = Math.round(base * (1 + 0.5 * (gems.gold || 0) + (gems.diamond || 0)) * (fight?.power ? 2 : 1));
+  const hitPoints = Math.round(base * (1 + 0.5 * (gems.ruby || 0) + (gems.diamond || 0)) * (fight?.power ? 2 : 1) * (fight?.weak > 0 ? 0.5 : 1)
+    * treasureBoost(fight?.eq, selTiles, word.length));
   const preview = mode === "monsters" ? hitPoints : firePoints;
 
   const say = (text, tone = "info") => {
@@ -311,13 +392,15 @@ export default function SpellingQuest() {
     NEXT_ID = 1;
     if (mode === "monsters") {
       setBoard(newBoard(diff, 4, 4));
+      const eq = worn.map(i => TREASURES[i]);
+      const status = { freeze: 0, poison: 0, weak: 0, power: eqCount(eq, "rally") > 0, turns: 0, eq };
       if (endless) {
         const m = endlessMonster(1, diff);
-        setFight({ foes: null, idx: 0, stage: 1, monster: m, mhp: m.hp, hp: ENDLESS_HERO_HP, hpMax: ENDLESS_HERO_HP, beaten: 0, freeze: 0, power: false, turns: 0 });
+        setFight({ foes: null, idx: 0, stage: 1, monster: m, mhp: m.hp, hp: ENDLESS_HERO_HP, hpMax: ENDLESS_HERO_HP, beaten: 0, ...status });
       } else {
         const foes = monstersForLevel(level, diff);
         const hpMax = heroHpForLevel(level);
-        setFight({ foes, idx: 0, stage: 1, monster: foes[0], mhp: foes[0].hp, hp: hpMax, hpMax, beaten: 0, freeze: 0, power: false, turns: 0 });
+        setFight({ foes, idx: 0, stage: 1, monster: foes[0], mhp: foes[0].hp, hp: hpMax, hpMax, beaten: 0, ...status });
       }
       setBag({ ...savedItems });
     } else {
@@ -331,18 +414,22 @@ export default function SpellingQuest() {
     setScreen("play");
   };
 
-  const finishRun = async ({ won, finalScore, finalWords, fightInfo, items }) => {
+  const finishRun = async ({ won, finalScore, finalWords, fightInfo, items, stars }) => {
     stopTimers();
+    sound(won ? "win" : "lose");
     const best = [...finalWords].sort((a, b) => b.points - a.points)[0] || null;
     const level = run?.level || null;
     const nextOpen = won && level ? Math.min(levelCount, level + 1) : null;
-    const summary = { won, endless: !!run?.endless, level, score: finalScore, count: finalWords.length, best, fight: fightInfo || null, saved: null, isBest: false };
+    const starKey = stars && level ? `${diffKey}:${level}` : null;
+    const treasure = mode === "monsters" && won && level && stepOf(level) === LEVELS_PER_WORLD && !owned[worldOf(level)]?.owned ? TREASURES[worldOf(level)] : null;
+    const summary = { won, endless: !!run?.endless, level, score: finalScore, count: finalWords.length, best, fight: fightInfo || null, stars: stars || 0, treasure, saved: null, isBest: false };
     setResult(summary);
     setScreen("over");
     setBusy(false);
     if (!player) {
       if (nextOpen) { const k = `${mode}:${diffKey}`; GUEST.unlocked[k] = Math.max(GUEST.unlocked[k] || 1, nextOpen); }
       if (items) GUEST.items = { ...items };
+      if (starKey) GUEST.stars[starKey] = Math.max(GUEST.stars[starKey] || 0, stars);
       setGuestTick(t => t + 1);
       return;
     }
@@ -351,7 +438,8 @@ export default function SpellingQuest() {
       best_word: best?.word || null, best_word_points: best?.points || 0,
       ...(fightInfo ? { beaten: fightInfo.beaten, hero: hero?.key || null } : {}),
       ...(nextOpen ? { unlock_key: diffKey, unlock: nextOpen } : {}),
-      ...(items ? { items } : {}),
+      ...(items ? { items, equip: worn } : {}),
+      ...(starKey ? { stars_key: starKey, stars } : {}),
     };
     const r = await recordFamilyGame(player.id, gameKey, finalScore, detail);
     setResult({ ...summary, saved: r.saved, isBest: r.isBest });
@@ -361,6 +449,7 @@ export default function SpellingQuest() {
   const tap = (tile) => {
     if (!board || busy || tile.stone) return;
     setHint(null);
+    sound("tap");
     const idx = sel.indexOf(tile.id);
     if (anyOrder) {
       setSel(idx >= 0 ? sel.filter(id => id !== tile.id) : [...sel, tile.id]); // tap again to take it back out
@@ -374,70 +463,104 @@ export default function SpellingQuest() {
 
   // ── Monsters: your word, then the monster's turn, played out as a short fight.
   const monsterTurn = (f, b, newWords, newScore, items, delay) => {
-    if (f.freeze > 0) {
-      later(() => { setFight({ ...f, freeze: f.freeze - 1 }); say(`${f.monster.name} is frozen solid!`, "good"); setBusy(false); }, delay);
-      return;
-    }
+    const m = f.monster;
+    const eq = f.eq || [];
+    const sturdy = eqCount(eq, "sturdy") > 0;
+    const antidote = eqCount(eq, "antidote") > 0;
+    const frozen = f.freeze > 0;
     const turns = f.turns + 1;
-    const hit = ri(f.monster.hit[0], f.monster.hit[1]);
-    const hp = Math.max(0, f.hp - hit);
-    const mends = f.monster.power === "heal" && turns % 3 === 0 ? Math.round(f.monster.hp * 0.08) : 0;
-    const mhp = Math.min(f.monster.hp, f.mhp + mends);
-    // Stones wear off a turn at a time; a stone monster may turn one more letter to stone.
-    const b2 = b.map(col => col.map(t => ({ ...t, fresh: false, stone: Math.max(0, (t.stone || 0) - 1) })));
-    let stoned = false;
-    if (f.monster.power === "stone" && Math.random() < 0.35) {
-      const open = b2.flat().filter(t => !t.stone && t.kind === "normal");
-      if (open.length) { pick(open).stone = 3; stoned = true; }
+    // Stones wear off a turn at a time. A burning letter burns down; one that runs out burns you and turns to ash (a new letter).
+    let burnHurt = 0;
+    const b2 = b.map(col => col.map(t => {
+      const n = { ...t, fresh: false, stone: Math.max(0, (t.stone || 0) - 1) };
+      if (t.burn > 0) {
+        n.burn = t.burn - 1;
+        if (n.burn === 0) { burnHurt += Math.max(2, Math.round(f.hpMax * 0.06)); n.ch = randomLetter(b, diff); n.fresh = true; }
+      }
+      return n;
+    }));
+    const poisonHurt = f.poison > 0 ? Math.max(1, Math.round(f.hpMax * 0.04)) : 0;
+    let poison = Math.max(0, f.poison - 1);
+    let weak = f.weak;
+    let hit = 0; let mends = 0;
+    const notes = [];
+    if (!frozen) {
+      hit = Math.max(1, ri(m.hit[0], m.hit[1]) - eqCount(eq, "shield"));
+      if (m.power === "heal" && turns % 3 === 0) mends = Math.round(m.hp * 0.08);
+      if (Math.random() < 0.35) {
+        const open = b2.flat().filter(t => !t.stone && !t.burn && t.kind === "normal");
+        if (m.power === "stone" && !sturdy && open.length) { pick(open).stone = 3; notes.push("a letter turned to stone"); }
+        else if (m.power === "burn" && !sturdy && open.length) { pick(open).burn = 3; notes.push("a letter is on fire · use it within 3 turns"); }
+        else if (m.power === "poison" && !antidote && !f.poison) { poison = 3; notes.push("you're poisoned"); }
+        else if (m.power === "weaken" && !antidote && !f.weak) { weak = 2; notes.push("you're weakened · next 2 words hit half as hard"); }
+      }
     }
-    later(() => play(null, "lunge"), delay);
+    if (poisonHurt) notes.push(`poison -${poisonHurt}`);
+    if (burnHurt) notes.push(`a burning letter burned you -${burnHurt}`);
+    if (mends) notes.push(`it mends ${mends}`);
+    const total = hit + poisonHurt + burnHurt;
+    const hp = Math.max(0, f.hp - total);
+    const mhp = Math.min(m.hp, f.mhp + mends);
+    const next = { ...f, hp, mhp, turns, poison, weak, freeze: frozen ? f.freeze - 1 : f.freeze };
+    if (!frozen) later(() => play(null, "lunge"), delay);
     later(() => {
-      play("hurt", null);
-      floatUp("hero", `-${hit}`, "#D7261E");
+      if (total) { play("hurt", null); floatUp("hero", `-${total}`, "#D7261E"); sound(notes.length && !mends ? "status" : "hurt"); }
       if (mends) floatUp("mon", `+${mends}`, "#2E8B57");
-      setFight({ ...f, hp, mhp, turns });
+      setFight(next);
       setBoard(b2);
       if (hp <= 0) {
-        later(() => finishRun({ won: false, finalScore: newScore, finalWords: newWords, fightInfo: { beaten: f.beaten, monster: f.monster.name }, items }), 900);
+        later(() => finishRun({ won: false, finalScore: newScore, finalWords: newWords, fightInfo: { beaten: f.beaten, monster: m.name }, items }), 900);
         return;
       }
-      say(`${f.monster.name} hits you for ${hit}${stoned ? " · a letter turned to stone" : ""}${mends ? ` · it mends ${mends}` : ""}`, "warn");
+      say(`${frozen ? `${m.name} is frozen solid!` : `${m.name} hits you for ${hit}`}${notes.length ? ` · ${notes.join(" · ")}` : ""}`, frozen && !total ? "good" : "warn");
       setBusy(false);
-    }, delay + 260);
+    }, frozen ? delay : delay + 260);
   };
 
   const submitMonsters = () => {
     const f = fight;
     const dmg = hitPoints;
-    const heal = Math.round(f.hpMax * 0.1 * ((gems.green || 0) + (gems.diamond || 0)));
+    const eq = f.eq || [];
+    const regen = eq.reduce((a, t) => a + (t.effect === "regen" ? t.amount : 0), 0);
+    const heal = Math.round(f.hpMax * 0.1 * ((gems.emerald || 0) + (gems.diamond || 0))) + regen;
+    const cured = (gems.amethyst || 0) > 0;
+    const freezeAdd = gems.sapphire || 0;
     const used = new Set(sel);
-    const gemKind = GEM_FOR_LEN(word.length);
+    const gemKind = monsterGem(word.length, eqCount(eq, "gems") > 0);
     const b = cloneBoard(board);
     const spawn = refill(b, used, diff);
     if (gemKind && spawn.length) pick(spawn).kind = gemKind;
+    if (cured) for (const col of b) for (const t of col) { t.stone = 0; t.burn = 0; }
     const newWords = [{ word, points: dmg }, ...words];
     const mhp = f.mhp - dmg;
     const hp = Math.min(f.hpMax, f.hp + heal);
+    const after = { ...f, mhp, hp, power: false, weak: cured ? 0 : Math.max(0, f.weak - 1), poison: cured ? 0 : f.poison, freeze: f.freeze + freezeAdd };
     let newScore = score + dmg;
     setBusy(true); setSel([]); setHint(null); setBoard(b); setWords(newWords); setTurn(turn + 1);
     setFx(x => ({ key: x.key + 1, hero: "lunge", mon: null, fly: word.toUpperCase() }));
     later(() => {
-      play(null, "hurt");
+      play(heal ? "heal" : null, "hurt");
+      sound("hit");
+      if (gemKind) later(() => sound("gem"), 160);
       floatUp("mon", `-${dmg}`, "#D7261E");
       if (heal) floatUp("hero", `+${heal}`, "#2E8B57");
-      setFight({ ...f, mhp: Math.max(0, mhp), hp, power: false });
+      setFight({ ...after, mhp: Math.max(0, mhp) });
+      const bits = [];
+      if (cured) bits.push("amethyst cured you");
+      if (freezeAdd) bits.push(`sapphire froze ${f.monster.name}`);
+      if (bits.length) say(bits.join(" · "), "good");
     }, 380);
 
     if (mhp > 0) {
       setScore(newScore);
-      monsterTurn({ ...f, mhp, hp, power: false }, b, newWords, newScore, bag, 1100);
+      monsterTurn(after, b, newWords, newScore, bag, 1100);
       return;
     }
     // Monster beaten: it may drop a potion (a boss always drops two).
     const beaten = f.beaten + 1;
     newScore += 50 * f.stage;
     const drops = [];
-    const dropCount = f.monster.boss ? 2 : Math.random() < 0.35 ? 1 : 0;
+    const dropCount = f.monster.boss ? 2 : Math.random() < Math.min(0.85, 0.35 + 0.25 * eqCount(eq, "finder")) ? 1 : 0;
     const items = { ...bag };
     for (let i = 0; i < dropCount; i++) { const k = pick(POTION_KEYS); if (items[k] < POTION_MAX) { items[k] += 1; drops.push(POTIONS[k].short); } }
     setScore(newScore);
@@ -445,14 +568,15 @@ export default function SpellingQuest() {
     const last = f.foes && f.idx + 1 >= f.foes.length;
     if (last) {
       setBag(items);
-      later(() => finishRun({ won: true, finalScore: newScore, finalWords: newWords, fightInfo: { beaten, monster: f.monster.name }, items }), 1700);
+      const stars = f.foes ? starsFor(hp, f.hpMax) : 0;
+      later(() => finishRun({ won: true, finalScore: newScore, finalWords: newWords, fightInfo: { beaten, monster: f.monster.name }, items, stars }), 1700);
       return;
     }
     const next = f.foes ? f.foes[f.idx + 1] : endlessMonster(f.stage + 1, diff);
-    const healBetween = Math.round(f.hpMax * (f.foes ? 0.1 : 0.15));
+    const healBetween = Math.round(f.hpMax * (f.foes ? 0.1 : 0.15) * 2 ** eqCount(eq, "mend"));
     later(() => {
       setBag(items);
-      setFight({ ...f, idx: f.idx + 1, stage: f.stage + 1, monster: next, mhp: next.hp, hp: Math.min(f.hpMax, hp + healBetween), beaten, power: false, turns: 0 });
+      setFight({ ...after, idx: f.idx + 1, stage: f.stage + 1, monster: next, mhp: next.hp, hp: Math.min(f.hpMax, hp + healBetween), beaten, freeze: 0, turns: 0 });
       play(null, "enter");
       floatUp("hero", `+${healBetween}`, "#2E8B57");
       say(`You beat ${f.monster.name}!${drops.length ? ` Found: ${drops.join(", ")} potion${drops.length > 1 ? "s" : ""}.` : ""} Here comes ${next.name}${next.boss ? " (boss)" : ""}!`, "good");
@@ -464,7 +588,13 @@ export default function SpellingQuest() {
     if (!fight || busy || !bag || bag[k] <= 0) return;
     const items = { ...bag, [k]: bag[k] - 1 };
     setBag(items);
-    if (k === "heal") {
+    sound("potion");
+    if (k === "cure") {
+      setFight({ ...fight, poison: 0, weak: 0 });
+      setBoard(cloneBoard(board).map(col => col.map(t => ({ ...t, stone: 0, burn: 0 }))));
+      play("heal", null);
+      say("Cure potion! Poison, weakness, stone and fire are gone.", "good");
+    } else if (k === "heal") {
       const amt = Math.round(fight.hpMax * 0.4);
       setFight({ ...fight, hp: Math.min(fight.hpMax, fight.hp + amt) });
       play("heal", null); floatUp("hero", `+${amt}`, "#2E8B57");
@@ -558,7 +688,7 @@ export default function SpellingQuest() {
     <div style={{ marginBottom: 12 }}>
       <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900 }}>Spelling Quest</div>
       <div style={{ fontSize: 13, color: T.slate500 }}>
-         {mode === "monsters" ? "Win back the ten pages of the Great Word Book." : "Spell words with touching letters. Keep the fire off the bottom row."}
+         {mode === "monsters" ? "Win back the pages and lost chapters of the Great Word Book." : "Spell words with touching letters. Keep the fire off the bottom row."}
       </div>
     </div>
   );
@@ -575,7 +705,7 @@ export default function SpellingQuest() {
         </div>
         <div>
           {label("Mode")}
-          <Chips value={mode} onChange={m => { setMode(m); setWorldView(null); }} options={[["monsters", "Monsters", "A quest through 10 worlds"], ["fire", "Fire", "Keep fire off the bottom"]]} />
+          <Chips value={mode} onChange={m => { setMode(m); setWorldView(null); }} options={[["monsters", "Monsters", `A quest through ${WORLDS.length} worlds`], ["fire", "Fire", "Keep fire off the bottom"]]} />
         </div>
         <div>
           {label("Difficulty")}
@@ -626,29 +756,37 @@ export default function SpellingQuest() {
       return wrap(<>{title}{head}<FireMap diff={diff} unlocked={unlocked} onPlay={n => startRun(false, n)} />{endlessBtn}</>);
     }
     if (worldView == null) {
+      const part = (n, text) => <div style={{ fontSize: 13, color: T.slate700, lineHeight: 1.5, margin: n ? "14px 0 8px" : "0 0 8px" }}><b>Part {n + 1}.</b> {text}</div>;
       return wrap(<>{title}{head}
-        <div style={{ fontSize: 13, color: T.slate600, marginBottom: 10, lineHeight: 1.5 }}>
-          The Great Word Book kept every word in the land bright, until Grumblegloom, a dragon who hates noise, tore out its ten pages and woke the monsters. Win the pages back!
-        </div>
+        <TreasurePanel owned={owned} worn={worn} onToggle={toggleEquip} />
         <div style={{ display: "grid", gap: 8 }}>
           {WORLDS.map((w, i) => {
             const first = i * LEVELS_PER_WORLD + 1;
             const open = first <= unlocked;
             const done = Math.max(0, Math.min(LEVELS_PER_WORLD, unlocked - first));
+            let stars = 0;
+            for (let n = first; n < first + LEVELS_PER_WORLD; n++) stars += starsOf(n);
             return (
-              <button key={w.name} type="button" disabled={!open} onClick={() => setWorldView(i)} style={{
-                display: "flex", alignItems: "center", gap: 12, padding: 10, borderRadius: 14, textAlign: "left", fontFamily: "inherit",
-                border: `1px solid ${T.slate200}`, cursor: open ? "pointer" : "default", opacity: open ? 1 : 0.55,
-                background: `linear-gradient(120deg, ${w.sky[0]}, ${w.sky[1]})`,
-              }}>
-                <div style={{ flexShrink: 0, width: 56, height: 56, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {open ? <QuestMonster m={MONSTER_OF(w.boss)} size={56} flip={false} /> : <span style={{ fontSize: 28 }}>🔒</span>}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: T.slate900 }}>World {i + 1}: {w.name}</div>
-                  <div style={{ fontSize: 12, color: T.slate800 }}>{done >= LEVELS_PER_WORLD ? `✓ ${w.page[0].toUpperCase()}${w.page.slice(1)} won back` : open ? `${done} of ${LEVELS_PER_WORLD} levels done` : "Locked"}</div>
-                </div>
-              </button>
+              <div key={w.name}>
+                {i === 0 ? part(0, "The Ten Pages. The Great Word Book kept every word in the land bright, until Grumblegloom, a dragon who hates noise, tore out its ten pages and woke the monsters. Win the pages back!") : null}
+                {i === 10 ? part(1, "The Lost Chapters. Grumblegloom escaped to the Far Lands with the book's ten Lost Chapters. Follow him all the way to the Silent Spire.") : null}
+                <button type="button" disabled={!open} onClick={() => setWorldView(i)} style={{
+                  position: "relative", overflow: "hidden", width: "100%", display: "flex", alignItems: "center", gap: 12, padding: 10, borderRadius: 14, textAlign: "left", fontFamily: "inherit",
+                  border: `1px solid ${T.slate200}`, cursor: open ? "pointer" : "default", opacity: open ? 1 : 0.55, background: w.sky[1], minHeight: 76,
+                }}>
+                  <QuestScene world={w} level={null} step={5} wide />
+                  <div style={{ position: "relative", flexShrink: 0, width: 56, height: 56, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {open ? <QuestMonster m={MONSTER_OF(w.boss)} size={56} flip={false} /> : <span style={{ fontSize: 28 }}>🔒</span>}
+                  </div>
+                  <div style={{ position: "relative", flex: 1, minWidth: 0, background: "rgba(255,255,255,0.82)", borderRadius: 10, padding: "6px 10px" }}>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: T.slate900 }}>World {i + 1}: {w.name}</div>
+                    <div style={{ fontSize: 12, color: T.slate800 }}>
+                      {done >= LEVELS_PER_WORLD ? `✓ ${w.page[0].toUpperCase()}${w.page.slice(1)} won back` : open ? `${done} of ${LEVELS_PER_WORLD} levels done` : "Locked"}
+                      {open ? <span style={{ color: "#A8801F", fontWeight: 700 }}> · ★ {stars}/{LEVELS_PER_WORLD * 3}</span> : null}
+                    </div>
+                  </div>
+                </button>
+              </div>
             );
           })}
         </div>
@@ -658,7 +796,7 @@ export default function SpellingQuest() {
     const w = WORLDS[worldView];
     return wrap(<>{title}{head}
       <button type="button" onClick={() => setWorldView(null)} style={{ ...btn(T.slate400), padding: "6px 12px", fontSize: 13, marginBottom: 10 }}>← All worlds</button>
-      <WorldMap world={w} index={worldView} unlocked={unlocked} onPlay={n => startRun(false, n)} />
+      <WorldMap world={w} index={worldView} unlocked={unlocked} starsOf={starsOf} onPlay={n => startRun(false, n)} />
     </>);
   }
 
@@ -673,6 +811,13 @@ export default function SpellingQuest() {
       <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 14, padding: 20, textAlign: "center", display: "grid", gap: 10 }}>
         <div style={{ fontSize: 18, fontWeight: 700, color: result.won ? T.green : T.slate700 }}>{headline}</div>
         {isBossWin ? <div style={{ fontSize: 14, color: T.slate700, lineHeight: 1.5, background: T.goldLt, borderRadius: 10, padding: 10 }}>{WORLDS[worldOf(result.level)].outro}</div> : null}
+        {result.stars ? <Stars n={result.stars} size={34} /> : null}
+        {result.treasure ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center", background: T.tealLt, borderRadius: 10, padding: 10, textAlign: "left" }}>
+            <TreasureIcon color={result.treasure.color} size={40} />
+            <div style={{ fontSize: 14, color: T.slate800 }}><b>Treasure found: {result.treasure.name}!</b><br />{result.treasure.text}. Wear it from the map.</div>
+          </div>
+        ) : null}
         <div style={{ fontSize: 40, fontWeight: 800, color: T.slate900 }}>{result.score.toLocaleString()}</div>
         {result.isBest ? <div style={{ fontSize: 16, fontWeight: 700, color: T.gold }}>New best score!</div> : null}
         <div style={{ fontSize: 15, color: T.slate700 }}>
@@ -700,15 +845,20 @@ export default function SpellingQuest() {
     ? (run.endless ? `monster ${fight?.stage}` : `monster ${(fight?.idx || 0) + 1} of ${fight?.foes?.length}`)
     : (run.endless ? `level ${endlessLevel}` : `goal ${fireCfg.goal.toLocaleString()}`);
   const world = mode === "monsters" ? WORLDS[run.endless ? endlessWorld(fight?.stage || 1) : worldOf(run.level)] : null;
+  const scene = mode === "monsters" ? { level: run.endless ? null : levelInfo(run.level), step: run.endless ? ((fight?.stage || 1) - 1) % LEVELS_PER_WORLD + 1 : stepOf(run.level) } : null;
 
   return wrap(<>
     <QuestStyles />
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
       <div style={{ fontSize: 15, fontWeight: 700, color: T.slate800 }}>{where}</div>
-      <div style={{ fontSize: 13, color: T.slate600 }}>{score.toLocaleString()} pts · {progress}</div>
+      <div style={{ fontSize: 13, color: T.slate600, display: "flex", alignItems: "center", gap: 8 }}>
+        {score.toLocaleString()} pts · {progress}
+        <button type="button" onClick={toggleMute} aria-label={muted ? "Sound on" : "Sound off"} title={muted ? "Sound on" : "Sound off"}
+          style={{ border: `1px solid ${T.slate300}`, background: T.white, borderRadius: 8, padding: "2px 6px", cursor: "pointer", fontSize: 14 }}>{muted ? "🔇" : "🔊"}</button>
+      </div>
     </div>
     {mode === "fire" && !run.endless ? <Bar value={score} max={fireCfg.goal} color={T.amber} label="Goal" /> : null}
-    {fight ? <Arena fight={fight} hero={hero} world={world} fx={fx} floats={floats} wide={!_vp.isPhone} /> : null}
+    {fight ? <Arena fight={fight} hero={hero} world={world} scene={scene} fx={fx} floats={floats} wide={!_vp.isPhone} /> : null}
     {fight && bag ? (
       <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", marginTop: 8 }}>
         {POTION_KEYS.map(k => (
@@ -719,8 +869,6 @@ export default function SpellingQuest() {
             <Potion color={POTIONS[k].color} /> {POTIONS[k].short} ×{bag[k]}
           </button>
         ))}
-        {fight.power ? <span style={{ alignSelf: "center", fontSize: 12, fontWeight: 700, color: "#A8801F" }}>Power ready!</span> : null}
-        {fight.freeze ? <span style={{ alignSelf: "center", fontSize: 12, fontWeight: 700, color: "#3F8DB8" }}>Frozen {fight.freeze}</span> : null}
       </div>
     ) : null}
 
@@ -747,6 +895,7 @@ export default function SpellingQuest() {
       </div>
     </div>
 
+    {mode === "monsters" ? <div style={{ marginTop: 8, fontSize: 11, color: T.slate500, textAlign: "center" }}>{GEM_KEY}</div> : null}
     {message ? (
       <div style={{
         marginTop: 10, padding: "8px 12px", borderRadius: 10, fontSize: 14, fontWeight: 600, textAlign: "center",
@@ -792,25 +941,43 @@ function QuestStyles() {
 }
 
 // The fight: your hero on the left, the monster on the right, in the world's colors.
-function Arena({ fight, hero, world, fx, floats, wide }) {
+const POWER_TEXT = { stone: "Turns letters to stone", burn: "Sets letters on fire", poison: "Poisons", weaken: "Weakens", heal: "Mends itself" };
+function Chip({ color, children }) {
+  return <span style={{ fontSize: 11, fontWeight: 800, color: T.white, background: color, borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap" }}>{children}</span>;
+}
+function Arena({ fight, hero, world, scene, fx, floats, wide }) {
   const m = fight.monster;
   const size = wide ? 130 : 104;
   const anim = a => a === "lunge" ? "sqLungeR 0.55s ease-out" : a === "hurt" ? "sqHurt 0.45s" : a === "heal" ? "sqHeal 0.7s" : "none";
   const monAnim = fx.mon === "lunge" ? "sqLungeL 0.55s ease-out" : fx.mon === "hurt" ? "sqHurt 0.45s"
     : fx.mon === "ko" ? "sqKo 0.6s forwards" : fx.mon === "enter" ? "sqEnter 0.5s ease-out" : "none";
-  const sky = world ? world.sky : ["#EEE", "#CCC"];
   return (
     <div style={{
       position: "relative", marginTop: 8, borderRadius: 16, overflow: "hidden", height: wide ? 250 : 214,
-      background: `linear-gradient(180deg, ${sky[0]} 0%, ${sky[1]} 72%, ${world ? world.ground : "#999"} 72%)`, border: `1px solid ${T.slate200}`,
+      background: world ? world.sky[1] : "#CCC", border: `1px solid ${T.slate200}`,
     }}>
-      {/* health bars */}
-      <div style={{ position: "absolute", top: 8, left: 10, right: 10, display: "flex", gap: 12, zIndex: 2 }}>
-        <div style={{ flex: 1 }}><Bar value={fight.hp} max={fight.hpMax} color={T.green} label={hero ? hero.label : "You"} small /></div>
-        <div style={{ flex: 1 }}><Bar value={fight.mhp} max={m.hp} color={T.red} label={m.boss ? `${m.name} ★` : m.name} small /></div>
+      <QuestScene world={world} level={scene?.level} step={scene?.step || 1} />
+      {/* health bars and what's going on */}
+      <div style={{ position: "absolute", top: 6, left: 8, right: 8, display: "flex", gap: 10, zIndex: 2 }}>
+        <div style={{ flex: 1, background: "rgba(255,255,255,0.82)", borderRadius: 10, padding: "4px 8px" }}>
+          <Bar value={fight.hp} max={fight.hpMax} color={T.green} label={hero ? hero.label : "You"} small />
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3, minHeight: 16 }}>
+            {fight.power ? <Chip color="#A8801F">Power ×2</Chip> : null}
+            {fight.poison ? <Chip color="#6E8B3E">Poison {fight.poison}</Chip> : null}
+            {fight.weak ? <Chip color="#7A6A8C">Weak {fight.weak}</Chip> : null}
+            {(fight.eq || []).map(t => <span key={t.name} title={`${t.name}: ${t.text}`}><TreasureIcon color={t.color} size={16} /></span>)}
+          </div>
+        </div>
+        <div style={{ flex: 1, background: "rgba(255,255,255,0.82)", borderRadius: 10, padding: "4px 8px" }}>
+          <Bar value={fight.mhp} max={m.hp} color={T.red} label={m.boss ? `${m.name} ★` : m.name} small />
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3, minHeight: 16 }}>
+            {fight.freeze ? <Chip color="#3F8DB8">Frozen {fight.freeze}</Chip> : null}
+            {m.power ? <span style={{ fontSize: 11, color: T.slate600 }}>{POWER_TEXT[m.power]}</span> : null}
+          </div>
+        </div>
       </div>
       {/* hero */}
-      <div style={{ position: "absolute", left: "8%", bottom: "16%" }}>
+      <div style={{ position: "absolute", left: "6%", bottom: "12%" }}>
         <div key={`h${fx.key}`} style={{ animation: anim(fx.hero) }}>
           <div style={{ animation: "sqIdle 1.6s ease-in-out infinite" }}>
             {hero ? <CritterIcon which={hero.key} size={size} /> : null}
@@ -818,7 +985,7 @@ function Arena({ fight, hero, world, fx, floats, wide }) {
         </div>
       </div>
       {/* monster */}
-      <div style={{ position: "absolute", right: "8%", bottom: "14%" }}>
+      <div style={{ position: "absolute", right: "6%", bottom: "10%" }}>
         <div key={`m${fx.key}-${m.key}`} style={{ animation: monAnim }}>
           <div style={{ animation: "sqIdle 1.9s ease-in-out infinite" }}>
             <QuestMonster m={m} size={m.boss ? size * 1.25 : size} />
@@ -872,41 +1039,100 @@ function Chips({ value, onChange, options }) {
   );
 }
 
-// One world of the Monsters map: its story, then a winding trail of eight levels.
-function WorldMap({ world, index, unlocked, onPlay }) {
+// One world of the Monsters map: its picture and story, then its 20 levels.
+function WorldMap({ world, index, unlocked, starsOf, onPlay }) {
+  const treasure = TREASURES[index];
   return (
-    <div style={{ borderRadius: 16, padding: 12, background: `linear-gradient(180deg, ${world.sky[0]}, ${world.sky[1]})`, border: `1px solid ${T.slate200}` }}>
-      <div style={{ fontSize: 18, fontWeight: 800, color: T.slate900 }}>World {index + 1}: {world.name}</div>
-      <div style={{ fontSize: 13, color: T.slate800, lineHeight: 1.5, margin: "6px 0 12px", background: "rgba(255,255,255,0.7)", borderRadius: 10, padding: 10 }}>{world.intro}</div>
-      <div style={{ display: "grid", gap: 6 }}>
-        {world.levels.map((name, i) => {
-          const n = index * LEVELS_PER_WORLD + i + 1;
-          const open = n <= unlocked;
-          const done = n < unlocked;
-          const boss = i === LEVELS_PER_WORLD - 1;
-          const foes = monstersForLevel(n, DIFFICULTY.medium);
-          return (
-            <div key={name} style={{ display: "flex", justifyContent: i % 2 ? "flex-end" : "flex-start" }}>
-              <button type="button" disabled={!open} onClick={() => onPlay(n)} style={{
-                width: "78%", display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 14, fontFamily: "inherit", textAlign: "left",
+    <div style={{ borderRadius: 16, overflow: "hidden", border: `1px solid ${T.slate200}`, background: `linear-gradient(180deg, ${world.sky[0]}, ${world.sky[1]})` }}>
+      <div style={{ position: "relative", height: 150 }}>
+        <QuestScene world={world} level={null} step={5} wide />
+        <div style={{ position: "absolute", left: 10, bottom: 8, background: "rgba(255,255,255,0.85)", borderRadius: 10, padding: "4px 10px", fontSize: 18, fontWeight: 800, color: T.slate900 }}>
+          World {index + 1}: {world.name}
+        </div>
+      </div>
+      <div style={{ padding: 12 }}>
+        <div style={{ fontSize: 13, color: T.slate800, lineHeight: 1.5, marginBottom: 10, background: "rgba(255,255,255,0.8)", borderRadius: 10, padding: 10 }}>
+          {world.intro}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12, color: T.slate600 }}>
+            <TreasureIcon color={treasure.color} size={18} /> Boss treasure: <b>{treasure.name}</b> · {treasure.text}
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 6 }}>
+          {world.levels.map((lv, i) => {
+            const n = index * LEVELS_PER_WORLD + i + 1;
+            const open = n <= unlocked;
+            const done = n < unlocked;
+            const boss = i === LEVELS_PER_WORLD - 1;
+            return (
+              <button key={lv.name} type="button" disabled={!open} onClick={() => onPlay(n)} title={lv.name} style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 12, fontFamily: "inherit", textAlign: "left",
                 background: !open ? "rgba(255,255,255,0.45)" : done ? "rgba(209,250,229,0.95)" : T.white,
                 border: `2px solid ${!open ? T.slate300 : boss ? T.red : done ? T.green : T.teal}`,
-                boxShadow: open && !done ? `0 0 0 4px ${T.tealLt}` : "none", cursor: open ? "pointer" : "default",
+                boxShadow: open && !done ? `0 0 0 3px ${T.tealLt}` : "none", cursor: open ? "pointer" : "default",
               }}>
                 <div style={{
-                  flexShrink: 0, width: 34, height: 34, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-                  background: !open ? T.slate300 : done ? T.green : boss ? T.red : T.teal, color: T.white, fontWeight: 800, fontSize: 15,
-                }}>{!open ? "🔒" : done ? "✓" : i + 1}</div>
+                  flexShrink: 0, width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                  background: !open ? T.slate300 : done ? T.green : boss ? T.red : T.teal, color: T.white, fontWeight: 800, fontSize: 13,
+                }}>{!open ? "🔒" : i + 1}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>{name}{boss ? " · Boss" : ""}</div>
-                  <div style={{ fontSize: 11, color: T.slate600 }}>{foes.length} monsters</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lv.name}</div>
+                  <div style={{ fontSize: 11, color: T.slate600 }}>{done ? <Stars n={starsOf(n)} size={12} /> : boss ? "Boss!" : `${MONSTERS_PER_LEVEL} monsters`}</div>
                 </div>
-                {open ? <div style={{ display: "flex" }}>{foes.slice(-2).map((f, k) => <QuestMonster key={k} m={f} size={30} />)}</div> : null}
+                {boss && open ? <QuestMonster m={MONSTER_OF(world.boss)} size={28} flip={false} /> : null}
               </button>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function Stars({ n, size = 14 }) {
+  return (
+    <span aria-label={`${n} of 3 stars`} style={{ fontSize: size, letterSpacing: 1, lineHeight: 1 }}>
+      {[0, 1, 2].map(i => <span key={i} style={{ color: i < n ? "#E2B13C" : "#C9CCB8" }}>★</span>)}
+    </span>
+  );
+}
+
+function TreasureIcon({ color, size = 24 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true" style={{ display: "inline-block", verticalAlign: "middle", flexShrink: 0 }}>
+      <path d="M12 2 L20 7 L20 15 L12 22 L4 15 L4 7 Z" fill={color} stroke="#2D2F26" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M12 2 L12 22 M4 7 L20 15 M20 7 L4 15" stroke="#fff" strokeWidth="0.8" opacity="0.5" />
+      <circle cx="9" cy="8" r="1.6" fill="#fff" opacity="0.85" />
+    </svg>
+  );
+}
+
+// Treasures won from bosses: wear up to three.
+function TreasurePanel({ owned, worn, onToggle }) {
+  const have = owned.filter(t => t.owned).length;
+  return (
+    <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 14, padding: 10, marginBottom: 12 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: T.slate700, marginBottom: 6 }}>
+        Treasures · {have} of {owned.length} found · wearing {worn.length} of {EQUIP_MAX}
+      </div>
+      {have ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 6 }}>
+          {owned.filter(t => t.owned).map(t => {
+            const on = worn.includes(t.i);
+            return (
+              <button key={t.i} type="button" onClick={() => onToggle(t.i)} title={t.text} style={{
+                display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", borderRadius: 10, fontFamily: "inherit", textAlign: "left", cursor: "pointer",
+                border: `2px solid ${on ? T.teal : T.slate200}`, background: on ? T.tealLt : T.white,
+              }}>
+                <TreasureIcon color={t.color} size={22} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900 }}>{t.name}{on ? " ✓" : ""}</div>
+                  <div style={{ fontSize: 10, color: T.slate600 }}>{t.text}</div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : <div style={{ fontSize: 12, color: T.slate500 }}>Beat a world's boss to find its treasure.</div>}
     </div>
   );
 }
@@ -938,7 +1164,8 @@ function Tile({ tile, size, left, top, order, hinted, danger, onTap }) {
   const gem = GEM_LOOK[tile.kind];
   const fire = tile.kind === "fire";
   const stone = tile.stone > 0;
-  const bg = stone ? "linear-gradient(170deg,#B5B2A8,#7A7C6E)" : chosen ? T.blue : fire ? "linear-gradient(170deg,#FFD27A 0%,#FF7A2F 45%,#D7261E 100%)" : gem ? gem.bg : "linear-gradient(170deg,#FFF9EC,#EADFC4)";
+  const burning = tile.burn > 0;
+  const bg = burning ? "linear-gradient(170deg,#FFE3B0 0%,#FFB067 60%,#FF7A2F 100%)" : stone ? "linear-gradient(170deg,#B5B2A8,#7A7C6E)" : chosen ? T.blue : fire ? "linear-gradient(170deg,#FFD27A 0%,#FF7A2F 45%,#D7261E 100%)" : gem ? gem.bg : "linear-gradient(170deg,#FFF9EC,#EADFC4)";
   const ink = stone ? "#4D503F" : chosen ? T.white : fire ? "#fff" : gem ? gem.ink : T.slate900;
   const border = stone ? "#5C5E50" : chosen ? T.chromeBgDeep : fire ? "#9E1B14" : gem ? gem.border : "#C9BB98";
   return (
@@ -946,18 +1173,18 @@ function Tile({ tile, size, left, top, order, hinted, danger, onTap }) {
       type="button"
       onClick={onTap}
       disabled={stone}
-      aria-label={`${tile.ch}${fire ? " fire" : gem ? ` ${tile.kind}` : ""}${stone ? " stone" : ""}`}
+      aria-label={`${tile.ch}${fire ? " fire" : gem ? ` ${tile.kind}` : ""}${stone ? " stone" : ""}${burning ? " burning" : ""}`}
       style={{
         position: "absolute", left: left + 3, top: top + 3, width: size - 6, height: size - 6, padding: 0, cursor: stone ? "default" : "pointer",
         borderRadius: Math.round(size * 0.16), border: `2px solid ${border}`, background: bg, color: ink,
-        boxShadow: danger ? "0 0 0 3px rgba(239,68,68,0.55)" : "0 3px 0 rgba(0,0,0,0.15)",
+        boxShadow: danger || burning ? "0 0 0 3px rgba(239,68,68,0.6)" : "0 3px 0 rgba(0,0,0,0.15)",
         transition: "top 0.25s ease-out, background 0.15s", fontFamily: "Georgia, 'Times New Roman', serif",
-        animation: hinted ? "sqHint 0.6s ease-in-out infinite alternate" : tile.fresh ? "sqDrop 0.3s ease-out" : fire ? "sqFlicker 0.9s ease-in-out infinite alternate" : "none",
+        animation: hinted ? "sqHint 0.6s ease-in-out infinite alternate" : tile.fresh ? "sqDrop 0.3s ease-out" : fire || burning ? "sqFlicker 0.9s ease-in-out infinite alternate" : "none",
       }}
     >
       <span style={{ fontSize: Math.round(size * (tile.ch.length > 1 ? 0.4 : 0.5)), fontWeight: 700, lineHeight: 1 }}>{tile.ch === "QU" ? "Qu" : tile.ch}</span>
       <span style={{ position: "absolute", right: 5, bottom: 3, fontSize: Math.max(9, Math.round(size * 0.17)), opacity: 0.7 }}>
-        {stone ? tile.stone : Math.round((VALUE[tile.ch] || 1) * 10)}
+        {stone ? tile.stone : burning ? `🔥${tile.burn}` : Math.round((VALUE[tile.ch] || 1) * 10)}
       </span>
       {chosen ? <span style={{ position: "absolute", left: 5, top: 3, fontSize: Math.max(9, Math.round(size * 0.19)), fontWeight: 700, opacity: 0.85 }}>{order + 1}</span> : null}
     </button>

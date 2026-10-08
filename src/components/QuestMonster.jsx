@@ -76,6 +76,7 @@ export default function QuestMonster({ m, size = 100, flip = true }) {
       <ellipse cx="60" cy={m.look === "bug" ? 82 : cy + 16} rx="18" ry="12" fill={light} opacity="0.55" />
 
       {/* on top of the body */}
+      {bits.has("stripes") ? <g stroke={dark} strokeWidth="5" strokeLinecap="round" opacity="0.55" fill="none"><path d={`M30 ${cy - 4} Q36 ${cy + 4} 32 ${cy + 14}`} /><path d={`M90 ${cy - 4} Q84 ${cy + 4} 88 ${cy + 14}`} /><path d={`M42 ${cy + 26} Q60 ${cy + 32} 78 ${cy + 26}`} /></g> : null}
       {bits.has("spots") ? <g fill={dark} opacity="0.6"><circle cx="34" cy={cy} r="5" /><circle cx="88" cy={cy - 6} r="6" /><circle cx="80" cy={cy + 18} r="4" /></g> : null}
       {bits.has("spikes") ? <g fill={dark} stroke={INK} strokeWidth="2"><path d="M44 26 L50 10 L56 24 Z" /><path d="M58 22 L64 6 L70 22 Z" /><path d="M72 26 L80 12 L82 28 Z" /></g> : null}
       {bits.has("crystals") ? <g fill="#B9E3F2" stroke={INK} strokeWidth="2"><path d="M30 40 L36 18 L44 38 Z" /><path d="M76 36 L86 14 L90 40 Z" /></g> : null}
@@ -86,6 +87,8 @@ export default function QuestMonster({ m, size = 100, flip = true }) {
       {bits.has("helmet") ? <g><path d="M30 46 Q60 4 90 46 Z" fill="#8A8478" stroke={INK} strokeWidth="3" /><rect x="34" y="46" width="52" height="6" fill="#6E7163" stroke={INK} strokeWidth="2" /></g> : null}
       {bits.has("flame") ? <path d="M60 4 Q74 18 66 28 Q72 20 60 26 Q50 22 54 14 Q48 22 54 30 Q44 22 60 4 Z" fill="#FF9F2F" stroke="#D7261E" strokeWidth="2" /> : null}
       {bits.has("crown") ? <path d="M38 30 L42 12 L52 24 L60 8 L68 24 L78 12 L82 30 Z" fill="#E2B13C" stroke={INK} strokeWidth="2.5" /> : null}
+      {bits.has("leaf") ? <g stroke={INK} strokeWidth="2"><path d="M60 26 Q40 2 22 14 Q38 30 60 26 Z" fill="#6E9B4E" /><path d="M60 26 Q80 2 98 14 Q82 30 60 26 Z" fill="#8DBA5E" /><path d="M60 26 L60 14" fill="none" /></g> : null}
+      {bits.has("star") ? <path d="M60 2 L66 16 L81 16 L69 25 L74 40 L60 31 L46 40 L51 25 L39 16 L54 16 Z" fill="#FFE680" stroke={INK} strokeWidth="2.5" strokeLinejoin="round" /> : null}
       {bits.has("beard") ? <path d="M40 74 Q60 112 80 74 Q60 84 40 74 Z" fill="#F2F0EA" stroke={INK} strokeWidth="2" /> : null}
 
       {/* face */}
