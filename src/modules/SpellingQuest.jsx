@@ -27,8 +27,11 @@ import {
 // drop potions (heal, power, freeze, cure) kept between games. Beating a boss
 // wins a treasure; equip up to three. Levels earn 1–3 stars for health left.
 // Heroes are the family's dancing characters; a kid starts on their own animal.
+// After each world's boss comes a one-minute bonus round (like Bookworm
+// Adventures' arcade games) that wins up to three potions: Word Rush (as many
+// words as you can) or Unscramble (put mixed-up words back together).
 //
-// Fire (like Bookworm): a 7x7 square grid; letters must touch (sideways, up,
+// Fire (like Bookworm): a 5x5 square grid; letters must touch (sideways, up,
 // down or corner to corner). Short words can drop fire tiles that burn down a
 // row after each word; a map level is won by reaching its score first.
 //
@@ -45,6 +48,7 @@ import {
 // =========================================================================
 
 const FIRE_LEVELS = 12;
+const FIRE_SIZE = 5; // Fire grid is 5x5 (was 7x7: too many letters to be a real challenge)
 
 // How often each letter shows up (roughly English) and what it is worth (x10).
 const LETTERS = [
@@ -133,13 +137,15 @@ const diffForAge = age => (age == null ? "medium" : age <= 7 ? "starter" : age <
 // ── Fire levels ─────────────────────────────────────────────────────────
 function fireLevel(n, diff) {
   return {
-    goal: Math.round(((300 + 150 * (n - 1)) * diff.goal) / 10) * 10,
-    fire3: Math.min(0.75, (0.2 + 0.04 * n) * diff.fire),
-    fire4: Math.min(0.45, 0.03 * n * diff.fire),
-    startFires: Math.floor((n - 1) / 3),
+    // Tuned for the 5x5 grid: fewer letters means fewer long words, and fire
+    // only has five rows to fall, so goals and fire chances are 80% of the 7x7 ones.
+    goal: Math.round(((240 + 120 * (n - 1)) * diff.goal) / 10) * 10,
+    fire3: Math.min(0.6, (0.16 + 0.032 * n) * diff.fire),
+    fire4: Math.min(0.36, 0.024 * n * diff.fire),
+    startFires: Math.min(2, Math.floor((n - 1) / 4)),
   };
 }
-const endlessLevelAt = lv => 300 * (lv * (lv - 1)) / 2;
+const endlessLevelAt = lv => 240 * (lv * (lv - 1)) / 2;
 
 const ri = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
 const pick = arr => arr[Math.floor(Math.random() * arr.length)];
@@ -298,6 +304,7 @@ export default function SpellingQuest() {
   const [result, setResult] = useState(null);
   const [guestTick, setGuestTick] = useState(0);
   const [equip, setEquip] = useState([]);     // treasure numbers worn (up to 3)
+  const [bonusKind, setBonusKind] = useState(null); // "rush" | "unscramble" while a bonus round is on
   const [muted, setMuted] = useState(SOUND.muted);
   const msgTimer = useRef(0);
   const timers = useRef([]);
@@ -404,7 +411,7 @@ export default function SpellingQuest() {
       }
       setBag({ ...savedItems });
     } else {
-      setBoard(newBoard(diff, 7, 7, endless ? 0 : fireLevel(level, diff).startFires));
+      setBoard(newBoard(diff, FIRE_SIZE, FIRE_SIZE, endless ? 0 : fireLevel(level, diff).startFires));
       setFight(null); setBag(null);
     }
     setSel([]); setScore(0); setWords([]); setTurn(0); setResult(null); setMessage(null); setHint(null);
@@ -444,6 +451,24 @@ export default function SpellingQuest() {
     const r = await recordFamilyGame(player.id, gameKey, finalScore, detail);
     setResult({ ...summary, saved: r.saved, isBest: r.isBest });
     reload();
+  };
+
+  // Bonus round won: add the potions (up to the cap) and save them.
+  const finishBonus = async n => {
+    const items = { ...(bag || savedItems) };
+    const won = [];
+    for (let i = 0; i < n; i++) {
+      const open = POTION_KEYS.filter(k => items[k] < POTION_MAX);
+      if (!open.length) break;
+      const k = pick(open); items[k] += 1; won.push(POTIONS[k].short);
+    }
+    setBag(items);
+    setBonusKind(null);
+    setResult(r => ({ ...r, bonusDone: true, bonusWon: won }));
+    setScreen("over");
+    if (won.length) sound("potion");
+    if (!player) { GUEST.items = { ...items }; setGuestTick(t => t + 1); return; }
+    if (won.length) { await recordFamilyGame(player.id, gameKey, 0, { bonus: true, items }); reload(); }
   };
 
   const tap = (tile) => {
@@ -819,6 +844,7 @@ export default function SpellingQuest() {
           </div>
         ) : null}
         <div style={{ fontSize: 40, fontWeight: 800, color: T.slate900 }}>{result.score.toLocaleString()}</div>
+        {result.bonusDone ? <div style={{ fontSize: 14, fontWeight: 700, color: T.green }}>Bonus round: {result.bonusWon?.length ? `won ${result.bonusWon.join(", ")} potion${result.bonusWon.length > 1 ? "s" : ""}` : "no potions this time"}</div> : null}
         {result.isBest ? <div style={{ fontSize: 16, fontWeight: 700, color: T.gold }}>New best score!</div> : null}
         <div style={{ fontSize: 15, color: T.slate700 }}>
           {result.count} words{result.fight ? ` · beat ${result.fight.beaten} monster${result.fight.beaten === 1 ? "" : "s"}` : ""}
@@ -826,6 +852,9 @@ export default function SpellingQuest() {
         {result.best ? <div style={{ fontSize: 15, color: T.slate700 }}>Best word: <b>{result.best.word.toUpperCase()}</b> ({result.best.points.toLocaleString()})</div> : null}
         {player && result.saved === false ? <div style={{ fontSize: 13, color: T.red }}>Couldn't save this game.</div> : null}
         <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap", marginTop: 6 }}>
+          {isBossWin && !result.bonusDone ? (
+            <button type="button" onClick={() => { setBonusKind(worldOf(result.level) % 2 ? "unscramble" : "rush"); setScreen("bonus"); }} style={btn(T.purple)}>Bonus round · win potions</button>
+          ) : null}
           {canNext ? <button type="button" onClick={() => startRun(false, result.level + 1)} style={btn(T.teal)}>Next level</button> : null}
           <button type="button" onClick={() => startRun(result.endless, result.level)} style={btn(canNext ? T.slate600 : T.teal)}>Play again</button>
           <button type="button" onClick={() => { if (mode === "monsters" && result.level) setWorldView(worldOf(Math.min(levelCount, canNext ? result.level + 1 : result.level))); setScreen("map"); }} style={btn(T.slate600)}>Map</button>
@@ -834,12 +863,16 @@ export default function SpellingQuest() {
     </>);
   }
 
+  if (screen === "bonus" && bonusKind) {
+    return wrap(<><QuestStyles /><BonusRound kind={bonusKind} diff={diff} diffKey={diffKey} dict={dict} width={boxW} onDone={finishBonus} /></>);
+  }
+
   if (!board || !run) return null;
   const cols = board.length;
   const rows = board[0].length;
   const S = anyOrder
     ? Math.max(56, Math.min(84, Math.floor(boxW / 4.2)))
-    : Math.max(40, Math.min(60, Math.floor(boxW / (cols + 0.2))));
+    : Math.max(44, Math.min(76, Math.floor(boxW / (cols + 0.2))));
   const where = run.endless ? "Endless" : mode === "monsters" ? `${worldOf(run.level) + 1}-${stepOf(run.level)} ${levelName(run.level)}` : `Level ${run.level}`;
   const progress = mode === "monsters"
     ? (run.endless ? `monster ${fight?.stage}` : `monster ${(fight?.idx || 0) + 1} of ${fight?.foes?.length}`)
@@ -916,6 +949,112 @@ export default function SpellingQuest() {
 }
 
 const MONSTER_OF = key => ({ key, ...(QUEST_MONSTERS[key] || {}) });
+
+// ── Bonus round: one minute between worlds, wins up to three potions.
+//   rush        4x4 letters, any order: every 3 different words = 1 potion
+//   unscramble  put a mixed-up common word back together: every 2 = 1 potion
+const BONUS_SECONDS = 60;
+const BONUS_PER = { rush: 3, unscramble: 2 };
+const UNSCRAMBLE_LEN = { starter: [3, 4], easy: [4, 5], medium: [5, 6], hard: [6, 7] };
+function BonusRound({ kind, diff, diffKey, dict, width, onDone }) {
+  const [pool, setPool] = useState(null);
+  const [board, setBoard] = useState(() => (kind === "rush" ? newBoard(diff, 4, 4) : null));
+  const [target, setTarget] = useState(null); // unscramble: the word to rebuild
+  const [sel, setSel] = useState([]);
+  const [got, setGot] = useState([]);
+  const [left, setLeft] = useState(BONUS_SECONDS);
+  const [done, setDone] = useState(false);
+  const [note, setNote] = useState(null);
+  const potions = Math.min(3, Math.floor(got.length / BONUS_PER[kind]));
+
+  useEffect(() => {
+    if (kind !== "unscramble") return;
+    const [lo, hi] = UNSCRAMBLE_LEN[diffKey] || UNSCRAMBLE_LEN.medium;
+    loadList("common").catch(() => dict).then(words => setPool([...words].filter(w => !w.includes("q") && w.length >= lo && w.length <= hi)));
+  }, [kind, diffKey, dict]);
+  const nextWord = () => {
+    const w = pick(pool);
+    let mixed = w.split("");
+    for (let k = 0; k < 8 && mixed.join("") === w; k++) mixed = [...mixed].sort(() => Math.random() - 0.5);
+    setBoard([mixed.map(ch => ({ id: NEXT_ID++, ch: ch.toUpperCase(), kind: "normal", stone: 0, burn: 0, fresh: true }))]);
+    setTarget(w); setSel([]);
+  };
+  useEffect(() => { if (pool && pool.length && !target) nextWord(); }, [pool]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const ready = kind === "rush" || !!target;
+  useEffect(() => {
+    if (!ready || done) return undefined;
+    const t = setInterval(() => setLeft(s => { if (s <= 1) { clearInterval(t); setDone(true); return 0; } return s - 1; }), 1000);
+    return () => clearInterval(t);
+  }, [ready, done]);
+
+  const tiles = board ? board.flat() : [];
+  const chosen = sel.map(id => tiles.find(t => t.id === id)).filter(Boolean);
+  const word = chosen.map(t => t.ch).join("").toLowerCase();
+  const flash = text => { setNote(text); setTimeout(() => setNote(n => (n === text ? null : n)), 1400); };
+
+  const tap = t => {
+    if (done) return;
+    sound("tap");
+    const next = sel.includes(t.id) ? sel.filter(id => id !== t.id) : [...sel, t.id];
+    setSel(next);
+    if (kind === "unscramble" && next.length === tiles.length) {
+      const w = next.map(id => tiles.find(x => x.id === id).ch).join("").toLowerCase();
+      if (w === target || dict.has(w)) { sound("gem"); setGot(g => [...g, w]); flash(`${w.toUpperCase()}!`); nextWord(); }
+      else { sound("status"); flash("Not a word · try again"); setSel([]); }
+    }
+  };
+  const submitRush = () => {
+    if (done || word.length < diff.minLen || !dict.has(word)) { flash("Not a word"); return; }
+    if (got.includes(word)) { flash("Already found"); setSel([]); return; }
+    sound("gem");
+    const b = cloneBoard(board);
+    refill(b, new Set(sel), diff);
+    setBoard(b); setGot(g => [...g, word]); setSel([]);
+  };
+
+  const S = kind === "rush" ? Math.max(56, Math.min(84, Math.floor(width / 4.2))) : Math.max(44, Math.min(70, Math.floor(width / ((tiles.length || 5) + 0.4))));
+  const cols = kind === "rush" ? 4 : tiles.length;
+  const rows = kind === "rush" ? 4 : 1;
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 14, padding: 12, textAlign: "center" }}>
+        <div style={{ fontSize: 20, fontWeight: 800, color: T.slate900 }}>Bonus round: {kind === "rush" ? "Word Rush" : "Unscramble"}</div>
+        <div style={{ fontSize: 13, color: T.slate600 }}>
+          {kind === "rush" ? `Spell as many different words as you can. Every ${BONUS_PER.rush} words wins a potion.` : `Tap the letters in order to fix the word. Every ${BONUS_PER.unscramble} words wins a potion.`} Up to 3.
+        </div>
+        <div style={{ display: "flex", justifyContent: "center", gap: 16, marginTop: 8, fontSize: 15, fontWeight: 700 }}>
+          <span style={{ color: left <= 10 ? T.red : T.slate800 }}>⏱ {left}s</span>
+          <span style={{ color: T.slate800 }}>{got.length} word{got.length === 1 ? "" : "s"}</span>
+          <span style={{ color: "#8E5CB8" }}>{potions} potion{potions === 1 ? "" : "s"}</span>
+        </div>
+      </div>
+      {done ? (
+        <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 14, padding: 16, textAlign: "center", display: "grid", gap: 8 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: T.slate900 }}>Time!</div>
+          <div style={{ fontSize: 14, color: T.slate700 }}>{got.length ? got.map(w => w.toUpperCase()).join(" · ") : "No words this time."}</div>
+          <button type="button" onClick={() => onDone(potions)} style={{ ...btn(T.teal), justifySelf: "center" }}>{potions ? `Collect ${potions} potion${potions > 1 ? "s" : ""}` : "Back"}</button>
+        </div>
+      ) : !ready ? <div style={{ textAlign: "center", color: T.slate400 }}>Loading…</div> : (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 12, minHeight: 52, background: T.white, border: `2px solid ${T.slate200}` }}>
+            <div style={{ flex: 1, fontSize: 24, fontWeight: 800, letterSpacing: 2, color: T.slate900 }}>{word.toUpperCase() || <span style={{ fontSize: 14, fontWeight: 500, letterSpacing: 0, color: T.slate400 }}>Tap letters</span>}</div>
+            <button type="button" onClick={() => setSel([])} disabled={!sel.length} style={{ ...btn(T.slate400), padding: "8px 12px", opacity: sel.length ? 1 : 0.5 }}>Clear</button>
+            {kind === "rush" ? <button type="button" onClick={submitRush} disabled={!word} style={{ ...btn(T.teal), opacity: word ? 1 : 0.4 }}>Go</button>
+              : <button type="button" onClick={() => { flash(`It was ${target.toUpperCase()}`); nextWord(); }} style={btn(T.amber)}>Skip</button>}
+          </div>
+          <div style={{ position: "relative", width: S * cols, height: S * rows, margin: "0 auto", userSelect: "none", touchAction: "manipulation" }}>
+            {board.map((col, c) => col.map((t, r) => (
+              <Tile key={t.id} tile={t} size={S} left={(kind === "rush" ? c : r) * S} top={(kind === "rush" ? r : 0) * S}
+                order={sel.indexOf(t.id)} hinted={false} danger={false} onTap={() => tap(t)} />
+            )))}
+          </div>
+          {note ? <div style={{ textAlign: "center", fontSize: 14, fontWeight: 700, color: T.slate700 }}>{note}</div> : null}
+        </>
+      )}
+    </div>
+  );
+}
 
 function btn(bg) {
   return { padding: "10px 18px", borderRadius: 10, border: "none", background: bg, color: T.white, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
