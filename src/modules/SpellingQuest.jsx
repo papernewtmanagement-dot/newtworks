@@ -8,7 +8,7 @@ import QuestScene from "../components/QuestScene.jsx";
 import {
   WORLDS, MONSTERS as QUEST_MONSTERS, LEVELS_PER_WORLD, MONSTERS_PER_LEVEL, LEVEL_TOTAL, worldOf, stepOf, levelInfo, levelName,
   monstersForLevel, heroHpForLevel, endlessMonster, endlessWorld, ENDLESS_HERO_HP, starsFor,
-  POTIONS, POTION_KEYS, POTION_MAX, TREASURES, EQUIP_MAX, treasuresOwned,
+  POTIONS, POTION_KEYS, POTION_MAX, TREASURES, EQUIP_MAX, treasuresOwned, treasureLevel, STORY_PARTS,
 } from "../lib/questWorlds.js";
 
 // =========================================================================
@@ -26,6 +26,9 @@ import {
 // may stone or set fire to a letter, poison you or weaken you. Beaten monsters
 // drop potions (heal, power, freeze, cure) kept between games. Beating a boss
 // wins a treasure; equip up to three. Levels earn 1–3 stars for health left.
+// Treasures power up the more they're worn (level 2 at 10 wins, 3 at 25).
+// Each world opens and closes with a story page that can be read aloud, with
+// each word lit up as it's spoken (the browser's own voice, no files).
 // Heroes are the family's dancing characters; a kid starts on their own animal.
 // After each world's boss comes a one-minute bonus round (like Bookworm
 // Adventures' arcade games) that wins up to three potions: Word Rush (as many
@@ -42,8 +45,8 @@ import {
 //
 // Saved per kid on family_kids.game_bests: bookworm (Fire), bookworm_battle
 // (Monsters) — best score, unlocked.<difficulty> (highest level open, only goes
-// up), items (potions), stars["<difficulty>:<level>"] (only goes up) and equip
-// (treasures worn). Guest progress lasts until the page closes.
+// up), items (potions), stars["<difficulty>:<level>"] (only goes up), equip
+// (treasures worn) and treasure_xp["<treasure>"] (levels won wearing it). Guest progress lasts until the page closes.
 // Word lists: public/games/words.txt (accepted), common.txt (hints only).
 // =========================================================================
 
@@ -83,15 +86,39 @@ const GEM_LOOK = {
 const GEM_KEY = "Gems: emerald heals · amethyst cures · sapphire freezes · ruby +50% · diamond ×2 and heals";
 
 // Treasure effects worn in a fight.
+// Treasure effects worn in a fight; each worn treasure carries its powered-up value (questWorlds.treasurePower).
 const eqCount = (eq, effect) => (eq || []).filter(t => t.effect === effect).length;
+const eqSum = (eq, effect) => (eq || []).reduce((a, t) => a + (t.effect === effect ? t.value : 0), 0);
 function treasureBoost(eq, tiles, letters) {
   let k = 1;
   for (const t of eq || []) {
-    if (t.effect === "letters" && tiles.some(x => t.letters.includes(x.ch[0]))) k *= 1.25;
-    if (t.effect === "long" && letters >= 6) k *= 1.3;
+    if (t.effect === "letters" && tiles.some(x => t.letters.includes(x.ch[0]))) k *= 1 + t.value / 100;
+    if (t.effect === "long" && letters >= 6) k *= 1 + t.value / 100;
+    if (t.extra) k *= 1 + t.extra / 100;
   }
   return k;
 }
+
+// ── Read aloud: the browser's own voice. onWord gets the index of the word being spoken.
+function speak(text, onWord, onEnd) {
+  try {
+    const synth = window.speechSynthesis;
+    if (!synth || typeof SpeechSynthesisUtterance === "undefined") return false;
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 0.9; u.pitch = 1.05;
+    const voice = synth.getVoices().find(v => /^en[-_]US/i.test(v.lang)) || synth.getVoices().find(v => /^en/i.test(v.lang));
+    if (voice) u.voice = voice;
+    const starts = [];
+    text.replace(/\S+/g, (w, at) => { starts.push(at); return w; });
+    u.onboundary = e => { if (e.name === "word" || e.name === undefined) { let i = 0; while (i + 1 < starts.length && starts[i + 1] <= e.charIndex) i += 1; onWord(i); } };
+    u.onend = () => onEnd();
+    u.onerror = () => onEnd();
+    synth.speak(u);
+    return true;
+  } catch { return false; }
+}
+function stopSpeaking() { try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch { /* fine */ } }
 
 // ── Sounds: tiny made-up beeps, no files. Off when muted.
 const SOUND = { muted: false, ctx: null };
@@ -269,7 +296,7 @@ const basePoints = tiles => {
 };
 
 // Guest progress and potions, kept until the page closes.
-const GUEST = { unlocked: {}, items: { heal: 1, power: 1, freeze: 0, cure: 0 }, stars: {}, equip: [] };
+const GUEST = { unlocked: {}, items: { heal: 1, power: 1, freeze: 0, cure: 0 }, stars: {}, equip: [], treasure_xp: {} };
 
 export default function SpellingQuest() {
   const _vp = useViewport();
@@ -305,6 +332,7 @@ export default function SpellingQuest() {
   const [guestTick, setGuestTick] = useState(0);
   const [equip, setEquip] = useState([]);     // treasure numbers worn (up to 3)
   const [bonusKind, setBonusKind] = useState(null); // "rush" | "unscramble" while a bonus round is on
+  const [story, setStory] = useState(null); // { world, kind: "intro" | "outro", level } while a story page is up
   const [muted, setMuted] = useState(SOUND.muted);
   const msgTimer = useRef(0);
   const timers = useRef([]);
@@ -341,7 +369,8 @@ export default function SpellingQuest() {
   // Treasures: won by beating a world's boss on any difficulty.
   const owned = useMemo(() => {
     const src = player ? Object.values(player.bests?.unlocked || {}) : Object.entries(GUEST.unlocked).filter(([k]) => k.startsWith("monsters:")).map(([, v]) => v);
-    return treasuresOwned(Math.max(1, ...src.map(Number).filter(Number.isFinite)));
+    const xp = player ? (player.bests?.treasure_xp || {}) : GUEST.treasure_xp;
+    return treasuresOwned(Math.max(1, ...src.map(Number).filter(Number.isFinite)), xp);
   }, [player, guestTick]); // eslint-disable-line react-hooks/exhaustive-deps
   const worn = equip.filter(i => owned[i]?.owned).slice(0, EQUIP_MAX);
   const toggleEquip = i => {
@@ -399,7 +428,7 @@ export default function SpellingQuest() {
     NEXT_ID = 1;
     if (mode === "monsters") {
       setBoard(newBoard(diff, 4, 4));
-      const eq = worn.map(i => TREASURES[i]);
+      const eq = worn.map(i => owned[i]);
       const status = { freeze: 0, poison: 0, weak: 0, power: eqCount(eq, "rally") > 0, turns: 0, eq };
       if (endless) {
         const m = endlessMonster(1, diff);
@@ -429,11 +458,17 @@ export default function SpellingQuest() {
     const nextOpen = won && level ? Math.min(levelCount, level + 1) : null;
     const starKey = stars && level ? `${diffKey}:${level}` : null;
     const treasure = mode === "monsters" && won && level && stepOf(level) === LEVELS_PER_WORLD && !owned[worldOf(level)]?.owned ? TREASURES[worldOf(level)] : null;
-    const summary = { won, endless: !!run?.endless, level, score: finalScore, count: finalWords.length, best, fight: fightInfo || null, stars: stars || 0, treasure, saved: null, isBest: false };
+    // Every treasure worn on a won map level gets a win toward its next power level.
+    const xpAdd = mode === "monsters" && won && level ? worn : [];
+    const poweredUp = xpAdd.map(i => owned[i]).filter(t => treasureLevel(t.xp + 1) > t.lv).map(t => ({ name: t.name, color: t.color, lv: t.lv + 1 }));
+    const summary = { won, endless: !!run?.endless, level, score: finalScore, count: finalWords.length, best, fight: fightInfo || null, stars: stars || 0, treasure, poweredUp, saved: null, isBest: false };
     setResult(summary);
-    setScreen("over");
+    stopSpeaking();
+    if (mode === "monsters" && won && level && stepOf(level) === LEVELS_PER_WORLD) { setStory({ world: worldOf(level), kind: "outro" }); setScreen("story"); }
+    else setScreen("over");
     setBusy(false);
     if (!player) {
+      for (const i of xpAdd) GUEST.treasure_xp[i] = (GUEST.treasure_xp[i] || 0) + 1;
       if (nextOpen) { const k = `${mode}:${diffKey}`; GUEST.unlocked[k] = Math.max(GUEST.unlocked[k] || 1, nextOpen); }
       if (items) GUEST.items = { ...items };
       if (starKey) GUEST.stars[starKey] = Math.max(GUEST.stars[starKey] || 0, stars);
@@ -447,10 +482,17 @@ export default function SpellingQuest() {
       ...(nextOpen ? { unlock_key: diffKey, unlock: nextOpen } : {}),
       ...(items ? { items, equip: worn } : {}),
       ...(starKey ? { stars_key: starKey, stars } : {}),
+      ...(xpAdd.length ? { treasure_xp_add: xpAdd } : {}),
     };
     const r = await recordFamilyGame(player.id, gameKey, finalScore, detail);
     setResult({ ...summary, saved: r.saved, isBest: r.isBest });
     reload();
+  };
+
+  // Map level picked: a world's first level opens with its story page the first time.
+  const playLevel = n => {
+    if (mode === "monsters" && stepOf(n) === 1 && n >= unlocked) { setStory({ world: worldOf(n), kind: "intro", level: n }); setScreen("story"); return; }
+    startRun(false, n);
   };
 
   // Bonus round won: add the potions (up to the cap) and save them.
@@ -510,7 +552,7 @@ export default function SpellingQuest() {
     let hit = 0; let mends = 0;
     const notes = [];
     if (!frozen) {
-      hit = Math.max(1, ri(m.hit[0], m.hit[1]) - eqCount(eq, "shield"));
+      hit = Math.max(1, ri(m.hit[0], m.hit[1]) - eqSum(eq, "shield"));
       if (m.power === "heal" && turns % 3 === 0) mends = Math.round(m.hp * 0.08);
       if (Math.random() < 0.35) {
         const open = b2.flat().filter(t => !t.stone && !t.burn && t.kind === "normal");
@@ -546,7 +588,7 @@ export default function SpellingQuest() {
     const f = fight;
     const dmg = hitPoints;
     const eq = f.eq || [];
-    const regen = eq.reduce((a, t) => a + (t.effect === "regen" ? t.amount : 0), 0);
+    const regen = eqSum(eq, "regen");
     const heal = Math.round(f.hpMax * 0.1 * ((gems.emerald || 0) + (gems.diamond || 0))) + regen;
     const cured = (gems.amethyst || 0) > 0;
     const freezeAdd = gems.sapphire || 0;
@@ -585,7 +627,7 @@ export default function SpellingQuest() {
     const beaten = f.beaten + 1;
     newScore += 50 * f.stage;
     const drops = [];
-    const dropCount = f.monster.boss ? 2 : Math.random() < Math.min(0.85, 0.35 + 0.25 * eqCount(eq, "finder")) ? 1 : 0;
+    const dropCount = f.monster.boss ? 2 : Math.random() < Math.min(0.85, 0.35 + eqSum(eq, "finder") / 100) ? 1 : 0;
     const items = { ...bag };
     for (let i = 0; i < dropCount; i++) { const k = pick(POTION_KEYS); if (items[k] < POTION_MAX) { items[k] += 1; drops.push(POTIONS[k].short); } }
     setScore(newScore);
@@ -598,7 +640,7 @@ export default function SpellingQuest() {
       return;
     }
     const next = f.foes ? f.foes[f.idx + 1] : endlessMonster(f.stage + 1, diff);
-    const healBetween = Math.round(f.hpMax * (f.foes ? 0.1 : 0.15) * 2 ** eqCount(eq, "mend"));
+    const healBetween = Math.round(f.hpMax * (f.foes ? 0.1 : 0.15) * eq.reduce((a, t) => a * (t.effect === "mend" ? t.value : 1), 1));
     later(() => {
       setBag(items);
       setFight({ ...after, idx: f.idx + 1, stage: f.stage + 1, monster: next, mhp: next.hp, hp: Math.min(f.hpMax, hp + healBetween), beaten, freeze: 0, turns: 0 });
@@ -793,8 +835,8 @@ export default function SpellingQuest() {
             for (let n = first; n < first + LEVELS_PER_WORLD; n++) stars += starsOf(n);
             return (
               <div key={w.name}>
-                {i === 0 ? part(0, "The Ten Pages. The Great Word Book kept every word in the land bright, until Grumblegloom, a dragon who hates noise, tore out its ten pages and woke the monsters. Win the pages back!") : null}
-                {i === 10 ? part(1, "The Lost Chapters. Grumblegloom escaped to the Far Lands with the book's ten Lost Chapters. Follow him all the way to the Silent Spire.") : null}
+                {i === 0 ? part(0, STORY_PARTS[0]) : null}
+                {i === 10 ? part(1, STORY_PARTS[1]) : null}
                 <button type="button" disabled={!open} onClick={() => setWorldView(i)} style={{
                   position: "relative", overflow: "hidden", width: "100%", display: "flex", alignItems: "center", gap: 12, padding: 10, borderRadius: 14, textAlign: "left", fontFamily: "inherit",
                   border: `1px solid ${T.slate200}`, cursor: open ? "pointer" : "default", opacity: open ? 1 : 0.55, background: w.sky[1], minHeight: 76,
@@ -821,7 +863,8 @@ export default function SpellingQuest() {
     const w = WORLDS[worldView];
     return wrap(<>{title}{head}
       <button type="button" onClick={() => setWorldView(null)} style={{ ...btn(T.slate400), padding: "6px 12px", fontSize: 13, marginBottom: 10 }}>← All worlds</button>
-      <WorldMap world={w} index={worldView} unlocked={unlocked} starsOf={starsOf} onPlay={n => startRun(false, n)} />
+      <WorldMap world={w} index={worldView} unlocked={unlocked} starsOf={starsOf} onPlay={playLevel}
+        onStory={() => { setStory({ world: worldView, kind: "intro", level: null }); setScreen("story"); }} />
     </>);
   }
 
@@ -835,7 +878,6 @@ export default function SpellingQuest() {
       {title}
       <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 14, padding: 20, textAlign: "center", display: "grid", gap: 10 }}>
         <div style={{ fontSize: 18, fontWeight: 700, color: result.won ? T.green : T.slate700 }}>{headline}</div>
-        {isBossWin ? <div style={{ fontSize: 14, color: T.slate700, lineHeight: 1.5, background: T.goldLt, borderRadius: 10, padding: 10 }}>{WORLDS[worldOf(result.level)].outro}</div> : null}
         {result.stars ? <Stars n={result.stars} size={34} /> : null}
         {result.treasure ? (
           <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center", background: T.tealLt, borderRadius: 10, padding: 10, textAlign: "left" }}>
@@ -843,6 +885,11 @@ export default function SpellingQuest() {
             <div style={{ fontSize: 14, color: T.slate800 }}><b>Treasure found: {result.treasure.name}!</b><br />{result.treasure.text}. Wear it from the map.</div>
           </div>
         ) : null}
+        {(result.poweredUp || []).map(t => (
+          <div key={t.name} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center", fontSize: 14, fontWeight: 700, color: "#8E5CB8" }}>
+            <TreasureIcon color={t.color} size={22} /> {t.name} powered up to level {t.lv}!
+          </div>
+        ))}
         <div style={{ fontSize: 40, fontWeight: 800, color: T.slate900 }}>{result.score.toLocaleString()}</div>
         {result.bonusDone ? <div style={{ fontSize: 14, fontWeight: 700, color: T.green }}>Bonus round: {result.bonusWon?.length ? `won ${result.bonusWon.join(", ")} potion${result.bonusWon.length > 1 ? "s" : ""}` : "no potions this time"}</div> : null}
         {result.isBest ? <div style={{ fontSize: 16, fontWeight: 700, color: T.gold }}>New best score!</div> : null}
@@ -855,12 +902,27 @@ export default function SpellingQuest() {
           {isBossWin && !result.bonusDone ? (
             <button type="button" onClick={() => { setBonusKind(worldOf(result.level) % 2 ? "unscramble" : "rush"); setScreen("bonus"); }} style={btn(T.purple)}>Bonus round · win potions</button>
           ) : null}
-          {canNext ? <button type="button" onClick={() => startRun(false, result.level + 1)} style={btn(T.teal)}>Next level</button> : null}
+          {canNext ? <button type="button" onClick={() => playLevel(result.level + 1)} style={btn(T.teal)}>Next level</button> : null}
           <button type="button" onClick={() => startRun(result.endless, result.level)} style={btn(canNext ? T.slate600 : T.teal)}>Play again</button>
           <button type="button" onClick={() => { if (mode === "monsters" && result.level) setWorldView(worldOf(Math.min(levelCount, canNext ? result.level + 1 : result.level))); setScreen("map"); }} style={btn(T.slate600)}>Map</button>
         </div>
       </div>
     </>);
+  }
+
+  if (screen === "story" && story) {
+    const w = WORLDS[story.world];
+    const prologue = story.kind === "intro" && (story.world === 0 || story.world === 10) ? `${STORY_PARTS[story.world === 0 ? 0 : 1]} ` : "";
+    const text = story.kind === "intro" ? `${prologue}${w.intro}` : w.outro;
+    const done = () => {
+      stopSpeaking();
+      if (story.kind === "intro" && story.level) startRun(false, story.level);
+      else if (story.kind === "intro") setScreen("map");
+      else setScreen("over");
+      setStory(null);
+    };
+    return wrap(<><QuestStyles /><StoryPage key={`${story.world}${story.kind}`} world={w} index={story.world} kind={story.kind} text={text}
+      button={story.kind === "intro" ? (story.level ? "Start the adventure" : "Back to the map") : "Continue"} onDone={done} /></>);
   }
 
   if (screen === "bonus" && bonusKind) {
@@ -1179,7 +1241,7 @@ function Chips({ value, onChange, options }) {
 }
 
 // One world of the Monsters map: its picture and story, then its 20 levels.
-function WorldMap({ world, index, unlocked, starsOf, onPlay }) {
+function WorldMap({ world, index, unlocked, starsOf, onPlay, onStory }) {
   const treasure = TREASURES[index];
   return (
     <div style={{ borderRadius: 16, overflow: "hidden", border: `1px solid ${T.slate200}`, background: `linear-gradient(180deg, ${world.sky[0]}, ${world.sky[1]})` }}>
@@ -1192,6 +1254,9 @@ function WorldMap({ world, index, unlocked, starsOf, onPlay }) {
       <div style={{ padding: 12 }}>
         <div style={{ fontSize: 13, color: T.slate800, lineHeight: 1.5, marginBottom: 10, background: "rgba(255,255,255,0.8)", borderRadius: 10, padding: 10 }}>
           {world.intro}
+          <div style={{ marginTop: 6 }}>
+            <button type="button" onClick={onStory} style={{ ...btn(T.blue), padding: "6px 12px", fontSize: 13 }}>📖 Read the story to me</button>
+          </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12, color: T.slate600 }}>
             <TreasureIcon color={treasure.color} size={18} /> Boss treasure: <b>{treasure.name}</b> · {treasure.text}
           </div>
@@ -1221,6 +1286,46 @@ function WorldMap({ world, index, unlocked, starsOf, onPlay }) {
               </button>
             );
           })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// A story page: the world's picture, its boss, and the text, read aloud with each word lit up as it's spoken.
+function StoryPage({ world, index, kind, text, button, onDone }) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const [at, setAt] = useState(-1);
+  const [reading, setReading] = useState(false);
+  const canSpeak = typeof window !== "undefined" && !!window.speechSynthesis;
+  const read = () => {
+    if (reading) { stopSpeaking(); setReading(false); setAt(-1); return; }
+    if (speak(text, setAt, () => { setReading(false); setAt(-1); })) setReading(true);
+  };
+  useEffect(() => {
+    if (!SOUND.muted && canSpeak) { const t = setTimeout(read, 300); return () => { clearTimeout(t); stopSpeaking(); }; }
+    return () => stopSpeaking();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div style={{ borderRadius: 16, overflow: "hidden", border: `1px solid ${T.slate200}`, background: T.white }}>
+      <div style={{ position: "relative", height: 170, background: world.sky[1] }}>
+        <QuestScene world={world} level={null} step={kind === "outro" ? 17 : 5} wide />
+        <div style={{ position: "absolute", right: 16, bottom: 10, animation: kind === "outro" ? "none" : "sqIdle 1.9s ease-in-out infinite", opacity: kind === "outro" ? 0.75 : 1, transform: kind === "outro" ? "rotate(-8deg)" : "none" }}>
+          <QuestMonster m={MONSTER_OF(world.boss)} size={96} />
+        </div>
+        <div style={{ position: "absolute", left: 12, top: 10, background: "rgba(255,255,255,0.88)", borderRadius: 10, padding: "4px 10px", fontSize: 13, fontWeight: 800, color: T.slate800 }}>
+          World {index + 1}: {world.name} · {kind === "outro" ? "The End of the Chapter" : "The Story"}
+        </div>
+      </div>
+      <div style={{ padding: 16, display: "grid", gap: 14 }}>
+        <div style={{ fontSize: 20, lineHeight: 1.6, color: T.slate900, fontFamily: "Georgia, 'Times New Roman', serif" }}>
+          {words.map((w, i) => (
+            <span key={i} style={{ background: i === at ? "#FFE680" : "transparent", borderRadius: 4, transition: "background 0.1s" }}>{w}{i < words.length - 1 ? " " : ""}</span>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+          {canSpeak ? <button type="button" onClick={read} style={btn(T.blue)}>{reading ? "⏹ Stop reading" : "🔊 Read to me"}</button> : null}
+          <button type="button" onClick={onDone} style={btn(T.teal)}>{button}</button>
         </div>
       </div>
     </div>
@@ -1266,6 +1371,7 @@ function TreasurePanel({ owned, worn, onToggle }) {
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: T.slate900 }}>{t.name}{on ? " ✓" : ""}</div>
                   <div style={{ fontSize: 10, color: T.slate600 }}>{t.text}</div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#8E5CB8" }}>Level {t.lv}{t.next ? ` · ${t.xp}/${t.next} wins to level ${t.lv + 1}` : " · fully powered"}</div>
                 </div>
               </button>
             );

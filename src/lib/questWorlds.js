@@ -351,5 +351,37 @@ export const TREASURES = [
   { name: "Word Hero's Crown", color: "#E2B13C", effect: "long", text: "+30% damage for words of 6+ letters" },
 ];
 export const EQUIP_MAX = 3;
+
+// Treasures power up the more they're worn: every level won while wearing one
+// counts as a win for it. Level 2 at 10 wins, level 3 at 25.
+export const TREASURE_LEVEL_AT = [0, 10, 25];
+export const treasureLevel = xp => (xp >= TREASURE_LEVEL_AT[2] ? 3 : xp >= TREASURE_LEVEL_AT[1] ? 2 : 1);
+// What each effect is worth at levels 1, 2 and 3. The on/off treasures (sturdy,
+// antidote, gems, rally) add a little damage instead as they level up.
+const POWER = { letters: [25, 35, 50], long: [30, 40, 60], regen: [1, 1.5, 2], finder: [25, 35, 50], shield: [1, 2, 3], mend: [2, 2.5, 3], extra: [0, 10, 20] };
+export function treasurePower(t, lv) {
+  const k = Math.max(1, Math.min(3, lv)) - 1;
+  const extra = POWER.extra[k];
+  switch (t.effect) {
+    case "letters": return { value: POWER.letters[k], text: t.text.replace("+25%", `+${POWER.letters[k]}%`) };
+    case "long": return { value: POWER.long[k], text: t.text.replace("+30%", `+${POWER.long[k]}%`) };
+    case "regen": { const n = Math.round(t.amount * POWER.regen[k]); return { value: n, text: `Get back ${n} health after each word` }; }
+    case "finder": return { value: POWER.finder[k], text: `Monsters drop potions more often (+${POWER.finder[k]}% chance)` };
+    case "shield": return { value: POWER.shield[k], text: `Every monster hit does ${POWER.shield[k]} less` };
+    case "mend": return { value: POWER.mend[k], text: `Get back ${POWER.mend[k]} times as much health between monsters` };
+    default: return { value: 1, extra, text: `${t.text}${extra ? ` · +${extra}% damage` : ""}` };
+  }
+}
 // Treasure i is owned once world i's boss (level 20, 40, 60…) has been beaten.
-export const treasuresOwned = unlocked => TREASURES.map((t, i) => ({ ...t, i, owned: unlocked > (i + 1) * LEVELS_PER_WORLD }));
+// xp: { "<i>": levels won while wearing it }.
+export const treasuresOwned = (unlocked, xp = {}) => TREASURES.map((t, i) => {
+  const wins = Math.max(0, Number(xp[i]) || 0);
+  const lv = treasureLevel(wins);
+  return { ...t, ...treasurePower(t, lv), i, owned: unlocked > (i + 1) * LEVELS_PER_WORLD, xp: wins, lv, next: lv < 3 ? TREASURE_LEVEL_AT[lv] : null };
+});
+
+// The two halves of the story, told before worlds 1 and 11.
+export const STORY_PARTS = [
+  "The Ten Pages. The Great Word Book kept every word in the land bright, until Grumblegloom, a dragon who hates noise, tore out its ten pages and woke the monsters. Win the pages back!",
+  "The Lost Chapters. Grumblegloom escaped to the Far Lands with the book's ten Lost Chapters. Follow him all the way to the Silent Spire.",
+];
