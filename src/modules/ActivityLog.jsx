@@ -5249,7 +5249,7 @@ function MyPointsLine({ what, sub, value }) {
   );
 }
 
-function MyPointsWeek({ backHref, onBack }) {
+function MyPointsWeek({ teamMemberId, name }) {
   const todayEnd = weekEndOf(todayCentral());
   const [weekEnd, setWeekEnd, weekHref] = useTabParam("mweek", todayEnd);
   const safeWeek = /^\d{4}-\d{2}-\d{2}$/.test(weekEnd || "") ? weekEndOf(weekEnd) : todayEnd;
@@ -5262,7 +5262,7 @@ function MyPointsWeek({ backHref, onBack }) {
     (async () => {
       setLoading(true); setErr("");
       try {
-        const r = await supabase.rpc("rp_my_points_week", { p_week_end: safeWeek });
+        const r = await supabase.rpc("rp_my_points_week", { p_week_end: safeWeek, p_team_member_id: teamMemberId || null });
         if (!alive) return;
         if (r.error) throw r.error;
         if (r.data && r.data.ok === false) throw new Error(r.data.error || "Could not load your week.");
@@ -5274,7 +5274,7 @@ function MyPointsWeek({ backHref, onBack }) {
       }
     })();
     return () => { alive = false; };
-  }, [safeWeek]);
+  }, [safeWeek, teamMemberId]);
 
   const d = data || {};
   const show = d.show || {};
@@ -5300,12 +5300,11 @@ function MyPointsWeek({ backHref, onBack }) {
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
           <div>
             <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>
-              My points · {fmtDate(weekStart)} – {fmtDate(safeWeek)} {loading ? <span style={{ color: T.slate400, fontWeight: 400, fontSize: 13 }}>· loading…</span> : null}
+              {name ? `${name}'s points` : "My points"} · {fmtDate(weekStart)} – {fmtDate(safeWeek)} {loading ? <span style={{ color: T.slate400, fontWeight: 400, fontSize: 13 }}>· loading…</span> : null}
             </div>
             <div style={{ fontSize: 12, color: T.slate500 }}>Sunday through Saturday. Before this week means earlier weeks of the same quarter.</div>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <TabLink href={backHref} onSelect={onBack} style={btnGhost}>← Back to History</TabLink>
             <TabLink href={weekHref(addDays(safeWeek, -7))} onSelect={() => setWeekEnd(addDays(safeWeek, -7))} style={btnGhost}>← Prior week</TabLink>
             <TabLink href={weekHref(todayEnd)} onSelect={() => setWeekEnd(todayEnd)} style={btnGhost}>This week</TabLink>
             <TabLink href={weekHref(addDays(safeWeek, 7))} onSelect={() => setWeekEnd(addDays(safeWeek, 7))} style={btnGhost} disabled={safeWeek >= todayEnd}>Next week →</TabLink>
@@ -5315,7 +5314,7 @@ function MyPointsWeek({ backHref, onBack }) {
 
       {err && <Notice kind="error">{err}</Notice>}
       {data && d.on_board === false && (
-        <div style={{ ...cardStyle, fontSize: 14, color: T.slate700 }}>You are not on the points board, so there is nothing to show here.</div>
+        <div style={{ ...cardStyle, fontSize: 14, color: T.slate700 }}>{name ? `${name} is` : "You are"} not on the points board, so there is nothing to show here.</div>
       )}
 
       {data && d.on_board !== false && (
@@ -5384,21 +5383,15 @@ function MyPointsWeek({ backHref, onBack }) {
   );
 }
 
+
 function HistoryTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, onLogged, refreshKey }) {
   const [editing, setEditing] = useState(null);
   const [flash, setFlash] = useState("");
   const [listKey, setListKey] = useState(0);
   const closeEdit = (msg) => { setEditing(null); setFlash(msg || ""); setListKey(k => k + 1); };
   const openEdit = (target) => { setFlash(""); setEditing(target); };
-  // "My points this week" (Peter 2026-10-09). A link, so right-click opens it in a new tab,
-  // and the URL carries it so a refresh stays put.
-  const [mine, setMine, mineHref] = useTabParam("mine", "", ["", "1"]);
-  if (mine === "1") return <MyPointsWeek backHref={mineHref("")} onBack={() => setMine("")} />;
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <TabLink href={mineHref("1")} onSelect={() => setMine("1")} style={{ ...btnPrimary(false), padding: "8px 14px", fontSize: 13 }}>My points this week</TabLink>
-      </div>
       <RecentEntries isAdmin={isAdmin} roster={roster} refreshKey={refreshKey + listKey} onEdit={openEdit} flash={flash} />
       {editing && (
         <Modal title="Editing a record already on file" onClose={() => closeEdit("")}>
@@ -5437,6 +5430,7 @@ const ENTRY_KIND_FILTERS = [
   { key: "activity", label: "Activities" },
   { key: "appointment", label: "Appointments" },
   { key: "scorecard", label: "Conversation scores" },
+  { key: "points", label: "Points this week" },
 ];
 
 // Peter 2026-09-22: History opens on the last 13 weeks, filled into the date
@@ -5470,6 +5464,8 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
 
   useEffect(() => {
     let alive = true;
+    // Points this week is its own page inside History; it loads itself.
+    if (recKind === "points") { setErr(""); return undefined; }
     (async () => {
       setErr("");
       const r = await supabase.rpc("rp_recent_entries", {
@@ -5518,16 +5514,20 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>History</div>
-          <div style={{ fontSize: 13, color: T.slate500 }}>Anything dated or entered between these dates. A name search looks all the way back.</div>
+          <div style={{ fontSize: 13, color: T.slate500 }}>{recKind === "points" ? "One person's week, split into marketing, quotes, sales and retention." : "Anything dated or entered between these dates. A name search looks all the way back."}</div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           <select value={recKind} onChange={e => setRecKind(e.target.value)} style={selectStyle}>
             {ENTRY_KIND_FILTERS.map(k => <option key={k.key} value={k.key}>{k.label}</option>)}
           </select>
-          <input type="date" value={from} max={to || todayCentral()} title="From"
-            onChange={e => setFrom(e.target.value)} style={selectStyle} />
-          <input type="date" value={to} min={from || undefined} max={todayCentral()} title="To"
-            onChange={e => setTo(e.target.value)} style={selectStyle} />
+          {recKind !== "points" && (
+            <input type="date" value={from} max={to || todayCentral()} title="From"
+              onChange={e => setFrom(e.target.value)} style={selectStyle} />
+          )}
+          {recKind !== "points" && (
+            <input type="date" value={to} min={from || undefined} max={todayCentral()} title="To"
+              onChange={e => setTo(e.target.value)} style={selectStyle} />
+          )}
           {(from !== defFrom || to !== defTo || recKind) && (
             <button type="button" style={miniBtn} onClick={() => { setFrom(defFrom); setTo(defTo); setRecKind(""); }}>Clear</button>
           )}
@@ -5537,13 +5537,17 @@ function RecentEntries({ isAdmin, roster, refreshKey, onEdit, flash }) {
               {(roster || []).map(t => <option key={t.id} value={t.id}>{t.first_name}</option>)}
             </select>
           )}
-          <input style={{ ...selectStyle, width: 190 }} value={q} placeholder="Search a customer"
-            onChange={e => setQ(e.target.value)} {...noPwManager("r1")} />
+          {recKind !== "points" && (
+            <input style={{ ...selectStyle, width: 190 }} value={q} placeholder="Search a customer"
+              onChange={e => setQ(e.target.value)} {...noPwManager("r1")} />
+          )}
         </div>
       </div>
       {flash && <Notice kind="ok">{flash}</Notice>}
       {err && <Notice kind="error">{err}</Notice>}
-      {rows === null ? (
+      {recKind === "points" ? (
+        <MyPointsWeek teamMemberId={who || null} name={who ? ((roster || []).find(t => t.id === who) || {}).first_name : ""} />
+      ) : rows === null ? (
         <div style={{ color: T.slate500, fontSize: 13 }}>Loading…</div>
       ) : rows.length === 0 ? (
         <div style={{ color: T.slate600, fontSize: 14 }}>{term ? `Nothing on file for “${term}”.` : "Nothing matches those filters."}</div>
