@@ -2788,6 +2788,10 @@ function MapsTab({ isParent, onError, onFight }) {
   const rootRef = useRef(null);
   // the grids already opened while this tab is up, so going back up the map is at once
   const seen = useRef(new Map());
+  // (speed step 1) a map whose read ran past the time a read may take: how many times it has been asked for since it
+  // was sent to be worked out in the background (rpg_map_view_prepare), and whether one is being drawn now
+  const prep = useRef(new Map());
+  const [drawing, setDrawing] = useState(false);
   const wide = useElementWidth(rootRef) >= MAP_WIDE;
   // after a move on the journey every grid is read again (the pieces have moved); tick forces the read
   const [tick, setTick] = useState(0);
@@ -2843,7 +2847,18 @@ function MapsTab({ isParent, onError, onFight }) {
         : slid ? await supabase.rpc("rpg_map_battle_view", { p_x0: Number(slid[1]), p_y0: Number(slid[2]) })
         : await supabase.rpc("rpg_map_view", m ? { p_level: Number(m[1]), p_x: Number(m[2]), p_y: Number(m[3]) } : {});
       if (!alive) return;
-      if (error) { onError(error.message); if (at) setAt(null); return; }
+      if (error) {
+        // (speed step 1) a read that timed out: the map is worked out in the background and asked for again every few
+        // seconds, while the map on screen stays where it is
+        if (error.code === "57014" || /statement timeout/i.test(error.message || "")) {
+          const tries = (prep.current.get(key) || 0) + 1;
+          prep.current.set(key, tries);
+          if (tries === 1) supabase.rpc("rpg_map_view_prepare", { p_view: key }).then(() => {}, () => {});
+          if (tries <= 20) { setDrawing(true); retry = setTimeout(() => { if (alive) setTick(t => t + 1); }, 6000); return; }
+        }
+        setDrawing(false); onError(error.message); if (at) setAt(null); return;
+      }
+      setDrawing(false);
       // (step 14e) a District grid whose buildings are still being worked out in the background comes back with
       // houses_pending: show it now (with the town symbols) and ask again in a few seconds, without keeping it
       if (data && data.houses_pending) retry = setTimeout(() => { if (alive) setTick(t => t + 1); }, 6000);
@@ -2893,6 +2908,7 @@ function MapsTab({ isParent, onError, onFight }) {
     borderBottom: `1px solid ${T.slate200}`, background: T.slate50, flex: "0 0 auto" };
   return (
     <div ref={bigRef} style={big ? { position: "fixed", inset: 0, zIndex: 9999, background: T.white, display: "flex", flexDirection: "column" } : undefined}>
+    {drawing && <div style={{ fontSize: 13, color: T.slate600, padding: big ? "6px 10px" : "0 0 8px" }}>Drawing this map for the first time. It opens on its own in a moment.</div>}
     {big ? (
       <div style={fsBar}>
         <button type="button" onClick={() => setPanel(o => !o)} aria-expanded={panel} style={btn(panel ? "primary" : "soft")}>{panel ? "Hide journey and key" : "Journey and key"}</button>
