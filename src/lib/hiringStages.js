@@ -34,8 +34,8 @@ export const STAGES = {
 };
 
 // The active pipeline, in order. "declined" and "former" are deliberately
-// excluded: declining has its own section on the detail page (it also writes
-// decline_reason + final_decision), and "former" is set when a hire later
+// excluded: declining is the red Decline button at the end of the detail-page
+// stepper, which opens a popup for the reason and a private comment, and "former" is set when a hire later
 // leaves the team.
 export const PIPELINE_STAGES = [
   "applied",

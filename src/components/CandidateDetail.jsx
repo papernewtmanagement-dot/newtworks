@@ -1828,10 +1828,11 @@ function renderInterviewLayer({ detail, T, updateAnswer, saveAnswers, savingAnsw
 // The strip scrolls sideways rather than wrapping (frontend rule 20) so all
 // eight stages stay in one line on a 412px phone, and it auto-centers the
 // current stage on open so the candidate's position is visible without a swipe.
-const StageStepper = ({ status, saving, onPick }) => {
+const StageStepper = ({ status, saving, onPick, onDecline }) => {
   const stripRef = useRef(null);
   const currentIdx = PIPELINE_STAGES.indexOf(status);
   const offPipeline = currentIdx === -1;   // declined or former
+  const isDeclined  = status === "declined";
 
   useEffect(() => {
     const strip = stripRef.current;
@@ -1883,6 +1884,27 @@ const StageStepper = ({ status, saving, onPick }) => {
             </Fragment>
           );
         })}
+        {/* Decline sits apart from the stages, red and outlined, so it can't be
+            mistaken for the next step. It opens a popup that requires a reason
+            and a private comment (Peter, 2026-10-09). */}
+        <span style={{ width: 1, alignSelf: "stretch", background: T.slate200, margin: "0 6px", flexShrink: 0 }} />
+        <button
+          data-current={isDeclined ? "1" : undefined}
+          onClick={() => { if (!isDeclined && !saving) onDecline(); }}
+          disabled={!!saving || isDeclined}
+          title={isDeclined ? "Currently declined" : "Decline this candidate"}
+          style={{
+            flexShrink: 0, whiteSpace: "nowrap", boxSizing: "border-box",
+            padding: "6px 12px", fontSize: 11, fontWeight: 700, borderRadius: 20,
+            border: `1.5px solid ${T.red}`,
+            background: isDeclined ? T.red : T.white,
+            color: isDeclined ? T.white : T.red,
+            cursor: isDeclined ? "default" : saving ? "wait" : "pointer",
+            opacity: saving ? 0.55 : 1,
+          }}
+        >
+          ✕ {isDeclined ? "Declined" : "Decline"}
+        </button>
       </div>
       <div style={{ fontSize: 10, color: T.slate500, marginTop: 2 }}>
         {offPipeline
@@ -1905,6 +1927,10 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
   // Which stage button is mid-write (null = idle). Drives the stepper's
   // saving state so a double-tap can't fire two writes.
   const [stageSaving, setStageSaving] = useState(null);
+  // Decline popup: reason and private comment are both required.
+  const [declineOpen, setDeclineOpen] = useState(false);
+  const [declineReason, setDeclineReason] = useState("");
+  const [declineComment, setDeclineComment] = useState("");
   // Moving to the Offer stage opens the offer letter form first — see changeStage.
   const [offerModalOpen, setOfferModalOpen] = useState(false);
   // Moving to the Meet & Greet stage opens the time picker first — see changeStage.
@@ -2271,7 +2297,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     const updates = {};
     fields.forEach(f => { updates[f] = detail[f] ?? null; });
     // Timestamp bookkeeping
-    if (sectionKey === "decision" && detail.final_decision) updates.decision_at = new Date().toISOString();
 
     const { error } = await supabase
       .from("hiring_candidates")
@@ -2292,7 +2317,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     if (data) setDetail(data);
   };
 
-  const saveDecision = () => saveFields(["final_decision", "decision_notes"], "decision");
 
   // Copy the public /assess/<id>/<token> URL to clipboard. mint_v1_assessment_link
   // returns the path; we prepend window.location.origin. HMAC token is baked in
@@ -2358,25 +2382,30 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
     }
   };
 
+  const openDecline = () => {
+    setDeclineReason("");
+    setDeclineComment("");
+    setDeclineOpen(true);
+  };
+
+  // The comment is stored in decision_notes. It is for us only; no decline
+  // letter reads it.
   const saveDecline = async () => {
     if (!detail?.id) return;
-    if (!detail.decline_reason) {
-      alert("Please select a decline reason before declining.");
-      return;
-    }
-    if (!window.confirm(`Decline ${detail.first_name || ""} ${detail.last_name || ""}? They will be moved to the Declined view.`)) return;
+    const comment = declineComment.trim();
+    if (!declineReason || !comment) return;
     setSavingSection("decline");
-    const updates = {
-      status: "declined",
-      status_updated_at: new Date().toISOString(),
-      decline_reason: detail.decline_reason,
-      final_decision: "no_hire",
-      decision_at: new Date().toISOString(),
-    };
-    if (detail.decision_notes) updates.decision_notes = detail.decision_notes;
+    const now = new Date().toISOString();
     const { error } = await supabase
       .from("hiring_candidates")
-      .update(updates)
+      .update({
+        status: "declined",
+        status_updated_at: now,
+        decline_reason: declineReason,
+        final_decision: "no_hire",
+        decision_at: now,
+        decision_notes: comment,
+      })
       .eq("id", detail.id);
     if (error) {
       setSavingSection(null);
@@ -2389,6 +2418,7 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
       .eq("id", detail.id)
       .maybeSingle();
     setSavingSection(null);
+    setDeclineOpen(false);
     if (data) setDetail(data);
     if (typeof onUpdate === "function") onUpdate(detail.id, "declined", { alreadyPersisted: true });
   };
@@ -2533,6 +2563,11 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
             Assessed {detail?.assessment_date || "—"}
           </div>
         )}
+        {isOffPipeline && detail?.decline_reason && detail?.decision_notes && (
+          <div style={{ fontSize: 12, color: T.slate700, marginTop: 6, padding: "6px 10px", background: T.redLt, borderRadius: 7, whiteSpace: "pre-wrap" }}>
+            {detail.decision_notes}
+          </div>
+        )}
       </div>
 
       {(() => {
@@ -2543,7 +2578,81 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
       })()}
 
       {/* Pipeline stage stepper — tap a stage to move this candidate. */}
-      <StageStepper status={detail?.status} saving={stageSaving} onPick={changeStage} />
+      <StageStepper status={detail?.status} saving={stageSaving || (savingSection === "decline" ? "decline" : null)} onPick={changeStage} onDecline={openDecline} />
+
+      {declineOpen && (
+        <div
+          onClick={() => { if (savingSection !== "decline") setDeclineOpen(false); }}
+          style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15, 23, 42, 0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+        >
+          <div
+            role="dialog" aria-modal="true" aria-label="Decline candidate"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: 460, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: T.white, borderRadius: 12, padding: 20, boxSizing: "border-box", borderTop: `4px solid ${T.red}` }}
+          >
+            <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900, marginBottom: 14 }}>
+              Decline {[detail?.first_name, detail?.last_name].filter(Boolean).join(" ") || "candidate"}
+            </div>
+
+            <label style={{ fontSize: 11, fontWeight: 600, color: T.slate700, display: "block", marginBottom: 4 }}>Reason</label>
+            <select
+              value={declineReason}
+              onChange={(e) => setDeclineReason(e.target.value)}
+              style={{ width: "100%", padding: 8, fontSize: 13, borderRadius: 7, border: `1px solid ${T.slate200}`, boxSizing: "border-box", marginBottom: 6 }}
+            >
+              <option value="">Select a reason...</option>
+              <option value="active_applicant">Didn't meet standard</option>
+              <option value="no_show">No-show for interview</option>
+              <option value="candidate_withdrew">Candidate withdrew</option>
+              <option value="offer_rescinded">Offer withdrawn</option>
+              <option value="calibration_only">Calibration record — not a real applicant</option>
+              <option value="former_team">Former team member — record kept for analysis</option>
+            </select>
+            <div style={{ fontSize: 11, color: T.slate500, marginBottom: 14, lineHeight: 1.5 }}>
+              {declineReason === "calibration_only" || declineReason === "former_team"
+                ? "No email goes to the candidate."
+                : declineReason === "active_applicant"
+                  ? "The candidate gets the matching letter in the Monday morning batch."
+                  : declineReason
+                    ? "The candidate gets the matching letter right away."
+                    : "The candidate gets a short letter that matches the reason. It never names the reason."}
+            </div>
+
+            <label style={{ fontSize: 11, fontWeight: 600, color: T.slate700, display: "block", marginBottom: 4 }}>Comment</label>
+            <textarea
+              value={declineComment}
+              onChange={(e) => setDeclineComment(e.target.value)}
+              rows={4}
+              placeholder="Why we passed. For us only."
+              style={{ width: "100%", padding: 8, fontSize: 13, borderRadius: 7, border: `1px solid ${T.slate200}`, boxSizing: "border-box", fontFamily: "inherit" }}
+            />
+            <div style={{ fontSize: 11, color: T.slate500, marginTop: 4, marginBottom: 16 }}>
+              Never sent to the candidate.
+            </div>
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <button
+                onClick={() => setDeclineOpen(false)}
+                disabled={savingSection === "decline"}
+                style={{ padding: "8px 16px", fontSize: 12, fontWeight: 600, color: T.slate700, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 7, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveDecline}
+                disabled={savingSection === "decline" || !declineReason || !declineComment.trim()}
+                style={{
+                  padding: "8px 16px", fontSize: 12, fontWeight: 600, color: T.white, border: "none", borderRadius: 7,
+                  background: (declineReason && declineComment.trim()) ? T.red : T.slate300,
+                  cursor: (savingSection === "decline" || !declineReason || !declineComment.trim()) ? "not-allowed" : "pointer",
+                }}
+              >
+                {savingSection === "decline" ? "Declining..." : "Decline"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {meetGreetOpen && (
         <MeetGreetModal
@@ -3036,96 +3145,6 @@ export default function CandidateDetail({ candidate, onBack, onUpdate, userRole 
         </Section>
       )}
 
-      {/* Final Decision */}
-      <Section title="Final Decision" tone={T.amberLt}>
-        <div style={{ marginBottom: 8 }}>
-          <label style={{ fontSize: 10, color: T.slate600, display: "block", marginBottom: 2 }}>Decision</label>
-          <select
-            value={detail?.final_decision || ""}
-            onChange={(e) => updateField("final_decision", e.target.value || null)}
-            style={{ padding: 6, fontSize: 13, borderRadius: 5, border: `1px solid ${T.slate200}`, minWidth: 180 }}
-          >
-            <option value="">Pending</option>
-            <option value="hire">Hire</option>
-            <option value="no_hire">No Hire</option>
-            <option value="pending">Pending Review</option>
-          </select>
-        </div>
-        <label style={{ fontSize: 10, color: T.slate600, display: "block", marginBottom: 2 }}>Reasoning (document before offer letter — see Team & People Decisions principle)</label>
-        <textarea
-          value={detail?.decision_notes || ""}
-          onChange={(e) => updateField("decision_notes", e.target.value)}
-          rows={4}
-          style={{ width: "100%", padding: 8, fontSize: 12, borderRadius: 7, border: `1px solid ${T.slate200}` }}
-        />
-        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10 }}>
-          <button onClick={saveDecision} disabled={savingSection === "decision"} style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, color: T.white, background: T.blue, border: "none", borderRadius: 7, cursor: savingSection === "decision" ? "wait" : "pointer" }}>
-            {savingSection === "decision" ? "Saving..." : "Save Decision"}
-          </button>
-          {detail?.decision_at && (
-            <span style={{ fontSize: 10, color: T.slate500 }}>Decided {new Date(detail.decision_at).toLocaleString()}</span>
-          )}
-        </div>
-      </Section>
-
-      {/* Decline Candidate — moves out of active pipeline into Declined view */}
-      {detail?.status !== "declined" && (
-        <Section title="Decline Candidate" tone={T.redLt}>
-          <div style={{ fontSize: 11, color: T.slate600, marginBottom: 8 }}>
-            Moves this candidate out of the active pipeline into the Declined view. Sets Final Decision to No Hire.
-          </div>
-          <div style={{ marginBottom: 8 }}>
-            <label style={{ fontSize: 10, color: T.slate600, display: "block", marginBottom: 2 }}>Decline reason</label>
-            <select
-              value={detail?.decline_reason || ""}
-              onChange={(e) => updateField("decline_reason", e.target.value || null)}
-              style={{ padding: 6, fontSize: 13, borderRadius: 5, border: `1px solid ${T.slate200}`, minWidth: 220 }}
-            >
-              <option value="">Select a reason...</option>
-              <option value="active_applicant">Didn't meet standard</option>
-              <option value="no_show">No-show for interview</option>
-              <option value="candidate_withdrew">Candidate withdrew</option>
-              <option value="offer_rescinded">Offer withdrawn</option>
-              <option value="calibration_only">Calibration record — not a real applicant</option>
-              <option value="former_team">Former team member — record kept for analysis</option>
-            </select>
-          </div>
-          <ul style={{ fontSize: 11, color: T.slate600, margin: "0 0 8px 0", paddingLeft: 16, lineHeight: 1.5 }}>
-            <li><strong>Didn't meet standard.</strong> You looked and decided no, before any offer went out. This is the normal one.</li>
-            <li><strong>No-show for interview.</strong> They had an interview or meet and greet booked and did not show up or reschedule.</li>
-            <li><strong>Candidate withdrew.</strong> They pulled out — you did not pass on them. Set for you automatically when someone emails in to say they are no longer interested.</li>
-            <li><strong>Offer withdrawn.</strong> An offer went out and you took it back. The only difference from Didn't meet standard is that an offer was already made.</li>
-            <li><strong>Calibration record — not a real applicant.</strong> A resume or profile loaded in to test the scoring. Nobody applied, so there is nobody to write to.</li>
-            <li><strong>Former team member — record kept for analysis.</strong> Someone who used to work here, scored after they left so their profile sits alongside the others.</li>
-          </ul>
-          <div style={{ fontSize: 11, color: T.slate600, marginBottom: 8, padding: 8, background: T.white, borderRadius: 6, border: `1px solid ${T.slate200}` }}>
-            <strong>An email goes out automatically.</strong> The candidate gets a short,
-            warm note from you, and the wording matches the reason. Didn't meet standard, No-show, Offer
-            withdrawn, and Candidate withdrew each have their own letter. When the system declines someone
-            by itself on a resume or assessment score, they get the Didn't meet standard letter. Nothing goes
-            to <strong>Calibration record</strong> or <strong>Former team member</strong>. No-show, Offer
-            withdrawn, and Candidate withdrew send the moment you hit Decline. Didn't meet standard and the
-            automatic declines go out in the Monday morning batch.
-            It never names a score or a reason, and never goes out twice.
-          </div>
-          <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <button
-              onClick={saveDecline}
-              disabled={savingSection === "decline" || !detail?.decline_reason}
-              style={{
-                padding: "7px 14px", fontSize: 12, fontWeight: 600,
-                color: T.white,
-                background: detail?.decline_reason ? T.red : T.slate300,
-                border: "none", borderRadius: 7,
-                cursor: (savingSection === "decline" || !detail?.decline_reason) ? "not-allowed" : "pointer",
-              }}
-            >
-              {savingSection === "decline" ? "Declining..." : "Decline Candidate"}
-            </button>
-            <span style={{ fontSize: 10, color: T.slate500 }}>Reasoning uses the notes field above.</span>
-          </div>
-        </Section>
-      )}
     </div>
   );
 }
