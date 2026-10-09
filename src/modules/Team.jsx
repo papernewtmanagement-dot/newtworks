@@ -1386,6 +1386,7 @@ const StaffDirectory = ({ staff }) => {
     role_level:       "",
     category:         "agency",
     employment_type:  "w2",
+    work_location:    "in_office",
     start_date:       new Date().toISOString().slice(0,10),
     license_pc:       false,
     license_lh:       false,
@@ -1469,6 +1470,7 @@ const StaffDirectory = ({ staff }) => {
       role_level:      "",
       category:        "agency",
       employment_type: "w2",
+      work_location:   "in_office",
       start_date:      new Date().toISOString().slice(0,10),
       license_pc:      false,
       license_lh:      false,
@@ -1535,6 +1537,7 @@ const StaffDirectory = ({ staff }) => {
         role_level:      (addForm.role_level || "").trim() || null,
         category:        (addForm.category || "agency").trim() || "agency",
         employment_type: (addForm.employment_type || "").trim() || null,
+        work_location:   addForm.work_location || "in_office",
         start_date:      addForm.start_date || null,
         hire_date:       addForm.start_date || null,
         // A future start date means they have not started: added switched off,
@@ -1882,6 +1885,13 @@ const StaffDirectory = ({ staff }) => {
                 <option value="w2">W-2 Employee</option>
                 <option value="family">Family Employee (W-2)</option>
                 <option value="1099">1099 Contractor</option>
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Work location</label>
+              <select style={inputStyle} value={addForm.work_location || "in_office"} onChange={e => setAddForm(f => ({ ...f, work_location: e.target.value }))}>
+                <option value="in_office">In office</option>
+                <option value="remote">Remote</option>
               </select>
             </div>
             <div>
