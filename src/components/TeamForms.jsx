@@ -1085,6 +1085,26 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
   // No Submit on a read-only form (the login packet) or on one with its own
   // Save button (the packet info).
   const noSubmit = !!(form.readOnly || form.savesItself);
+  // An owner or manager can reopen a submitted form so it can be fixed and
+  // submitted again (the I-9 stays locked).
+  const reopen = async () => {
+    if (!submission?.id) return;
+    setBusy(true); setErr(null);
+    try {
+      const { data: r, error: e } = await supabase.rpc("reopen_team_form", { p_submission_id: submission.id });
+      if (e) throw e;
+      if (r && r.ok === false) throw new Error(r.error || "Could not reopen that.");
+      await supabase.from("team_form_edits").insert({
+        submission_id: submission.id, agency_id: AGENCY_ID,
+        field_path: form.id, new_value: "reopened", edited_by: meId,
+      });
+      onDone();
+    } catch (e) {
+      setErr(e?.message || "Could not reopen that.");
+    } finally {
+      setBusy(false);
+    }
+  };
   const doc = docFor(form.id, docs);
   // A manager or Peter filling in someone else's form.
   const onBehalf = !!isAdmin && !!meId && meId !== teamId;
@@ -1225,6 +1245,14 @@ function FormShell({ form, teamId, meId, isAdmin, submission, docs, onDone, onBa
         }}>
           This was submitted on {new Date(submission.locked_at).toLocaleDateString()} and is locked.
           {submission.retention_until && ` Kept until ${new Date(submission.retention_until).toLocaleDateString()}.`}
+          {isAdmin && form.id !== "i9" && (
+            <button type="button" disabled={busy} onClick={reopen}
+              style={{ marginLeft: 10, padding: "4px 10px", fontSize: 12, borderRadius: 6,
+                       border: `1px solid ${T.slate300}`, background: "#fff", color: T.slate700,
+                       cursor: busy ? "default" : "pointer" }}>
+              Reopen
+            </button>
+          )}
         </div>
       )}
 
