@@ -4,7 +4,7 @@ import { useViewport } from "../lib/hooks.js";
 import { useFamilyPlayers, recordFamilyGame, PlayerPicker } from "../lib/familyGames.jsx";
 import { OPS, MAX_LEVEL, ri, shuffle, fmt, tidy, makeProblem, makeMissing, choicesFor, ask, reveal, startLevelFor, defaultOpFor, caveStart, caveDrop, caveGaps } from "../lib/mathProblems.js";
 import { PARTS, PART_LINES, CAVE_BLOCKERS, MISSION_WORLDS, missionStars } from "../lib/mathStory.js";
-import { tone, noise, notes, playSound, gameBtn as btn, ReadAloud, stopSpeaking } from "../lib/gameKit.jsx";
+import { tone, noise, notes, playSound, gameBtn as btn, ReadAloud, stopSpeaking, useFullscreen } from "../lib/gameKit.jsx";
 
 // =========================================================================
 // MathBlast.jsx — Family game, after Math Blaster ("In Search of Spot").
@@ -61,6 +61,7 @@ const GUEST = { unlocked: 1, stars: {} };
 export default function MathBlast() {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
+  const fs = useFullscreen();
   const { players, loading, error, reload } = useFamilyPlayers("mathblast");
 
   const [playerId, setPlayerId] = useState(null);
@@ -441,7 +442,7 @@ export default function MathBlast() {
   }, [screen, fire, togglePause]);
 
   // ── Screens ───────────────────────────────────────────────────────────
-  const page = children => <div style={{ padding: _pad, maxWidth: 640, margin: "0 auto" }}>{children}</div>;
+  const page = children => <div ref={fs.ref} style={fs.frame}><div style={{ padding: _pad, maxWidth: 640, margin: "0 auto" }}>{children}</div></div>;
   const card = { background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 14, padding: 16 };
   const header = (
     <div style={{ marginBottom: 12 }}>
@@ -576,7 +577,7 @@ export default function MathBlast() {
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
       <div style={{ fontSize: 15, fontWeight: 700, color: T.slate800 }}>{p ? p.score.toLocaleString() : 0} pts</div>
       <div style={{ fontSize: 13, color: T.slate600 }}>{m ? `World ${m.world + 1} · ${PARTS[m.part].name}` : "Free play"} · level {p?.level}</div>
-      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>{right}</div>
+      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>{right}{fs.button}</div>
     </div>
   );
   const shieldsRow = n => Array.from({ length: START_SHIELDS }, (_, i) => <Shield key={i} on={i < n} />);

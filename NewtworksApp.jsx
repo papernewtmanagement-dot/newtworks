@@ -33,6 +33,7 @@ import MealPlan from "./src/modules/MealPlan.jsx";
 import Gridstrike from "./src/modules/Gridstrike.jsx";
 import SpellingQuest from "./src/modules/SpellingQuest.jsx";
 import MathBlast from "./src/modules/MathBlast.jsx";
+import Games, { GAMES } from "./src/modules/Games.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import AgencyIdentityRibbon from "./src/components/AgencyIdentityRibbon.jsx";
 import DevelopmentReminder from "./src/components/DevelopmentReminder.jsx";
@@ -133,13 +134,13 @@ const NAV_ITEMS = [
   { id: "family",      label: "Family",      icon: "home",          roles: FAMILY_ROLES },
   { id: "inventory",   label: "Inventory",   icon: "package",       roles: FAMILY_ROLES },
   { id: "meals",       label: "Meal Plan",   icon: "utensils",      roles: FAMILY_ROLES },
-  { id: "roleplaying", label: "Roleplaying", icon: "dice",          roles: FAMILY_ROLES },
-  { id: "dancer",      label: "Dancer",      icon: "music",         roles: FAMILY_ROLES },
+  // Peter 2026-10-09: every game sits under this one link; its page lists them (src/modules/Games.jsx).
+  { id: "games",       label: "Games",       icon: "gamepad",       roles: FAMILY_ROLES },
   { id: "course",      label: "Course",      icon: "graduation",    roles: FAMILY_ROLES },
-  { id: "gridstrike",  label: "Gridstrike",  icon: "target",        roles: FAMILY_ROLES },
-  { id: "spellingquest", label: "Spelling Quest", icon: "letters", roles: FAMILY_ROLES },
-  { id: "mathblast",   label: "Math Blast",  icon: "rocket",        roles: FAMILY_ROLES },
 ];
+// The games are reached from the Games page, not the sidebar. They keep their own addresses and the same access as the links above.
+const GAME_IDS = GAMES.map(g => g.id);
+const GAME_NAV_ITEMS = GAMES.map(g => ({ id: g.id, label: g.label, roles: FAMILY_ROLES }));
 // Peter 2026-10-04: every link below the last divider is owner, admin and the
 // family login only. Enforced here for every link down there, today's and any
 // added later: a link's roles can only narrow that list, never widen it, and a
@@ -191,6 +192,7 @@ const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 1.75 }) =
     package:    <svg style={s} viewBox="0 0 24 24" {...p}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
     utensils:   <svg style={s} viewBox="0 0 24 24" {...p}><path d="M7 3v8"/><path d="M5 3v4a2 2 0 0 0 4 0V3"/><path d="M7 11v10"/><path d="M17 3c-2 0-3 2-3 5v4h3v9"/></svg>,
     dice:       <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.2" fill={color}/><circle cx="16" cy="8" r="1.2" fill={color}/><circle cx="12" cy="12" r="1.2" fill={color}/><circle cx="8" cy="16" r="1.2" fill={color}/><circle cx="16" cy="16" r="1.2" fill={color}/></svg>,
+    gamepad:    <svg style={s} viewBox="0 0 24 24" {...p}><rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 10.5v4M5 12.5h4"/><circle cx="15.5" cy="11.5" r="1" fill={color}/><circle cx="18" cy="14" r="1" fill={color}/></svg>,
     letters:    <svg style={s} viewBox="0 0 24 24" {...p}><rect x="2" y="6" width="9" height="9" rx="2"/><rect x="13" y="9" width="9" height="9" rx="2"/><path d="M4.5 13l2-5 2 5M5.2 11.5h2.6"/><path d="M16 11.5h2.2a1.3 1.3 0 0 1 0 2.6H16v-2.6zM16 14.1h2.5a1.4 1.4 0 0 1 0 2.8H16z"/></svg>,
     rocket:     <svg style={s} viewBox="0 0 24 24" {...p}><path d="M12 2c3 2.5 4.5 6 4.5 10l-2 4h-5l-2-4C7.5 8 9 4.5 12 2z"/><circle cx="12" cy="9.5" r="1.8"/><path d="M7.5 12 4 15.5l3.5 1M16.5 12l3.5 3.5-3.5 1"/><path d="M10.5 19.5 12 22l1.5-2.5"/></svg>,
     music:      <svg style={s} viewBox="0 0 24 24" {...p}><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
@@ -729,19 +731,30 @@ const ModuleRouter = ({ active, onNavigate, userRole, userId }) => {
     gridstrike:  <ErrorBoundary name="Gridstrike"><Gridstrike userRole={userRole} /></ErrorBoundary>,
     spellingquest: <ErrorBoundary name="Spelling Quest"><SpellingQuest /></ErrorBoundary>,
     mathblast:   <ErrorBoundary name="Math Blast"><MathBlast /></ErrorBoundary>,
+    games:       <ErrorBoundary name="Games"><Games onNavigate={onNavigate} /></ErrorBoundary>,
   };
   // Access guard — enforce nav role at the module level so direct URL
   // navigation (e.g. /financials) cannot bypass the sidebar filter. Mirrors
   // the same role check used by filteredNav in NewtworksApp(). Per-user module
   // overrides were dropped (migration 032 / 2026-06-22) — role-only now.
-  const navItem = NAV_ITEMS.find(n => n.id === active);
+  const navItem = NAV_ITEMS.find(n => n.id === active) || GAME_NAV_ITEMS.find(n => n.id === active);
   if (navItem) {
     const roleOk = !navItem.roles || navItem.roles.includes(userRole);
     if (!roleOk) {
       return <AccessDenied />;
     }
   }
-  return modules[active] || <ComingSoon module={active} />;
+  const page = modules[active] || <ComingSoon module={active} />;
+  if (!GAME_IDS.includes(active)) return page;
+  return (
+    <>
+      <div style={{ padding: "8px 16px 0" }}>
+        <button type="button" onClick={() => onNavigate("games")}
+          style={{ border: "none", background: "transparent", color: TOKENS.slate500, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", padding: 0 }}>← Games</button>
+      </div>
+      {page}
+    </>
+  );
 };
 
 const AccessDenied = () => (
@@ -764,7 +777,7 @@ const AccessDenied = () => (
 //   /<navItemId>       → { module: <navItemId>, cprWeekDate: null }
 //   /cpr/YYYY-MM-DD    → { module: "cpr",       cprWeekDate: "YYYY-MM-DD" }
 //   anything else      → { module: "dashboard", cprWeekDate: null }
-const KNOWN_MODULE_IDS = NAV_ITEMS.filter(n => n.type !== "divider").map(n => n.id);
+const KNOWN_MODULE_IDS = [...NAV_ITEMS.filter(n => n.type !== "divider").map(n => n.id), ...GAME_IDS];
 // Old module slugs that still resolve. /activity became /production on
 // 2026-09-02; bookmarks and old links land on the new module and the URL
 // effect rewrites the address bar to the canonical slug.
@@ -1154,7 +1167,7 @@ export default function NewtworksApp() {
   // Family login lands on its first module; anything else it asks for is out of reach.
   const _isFamilyLogin = agency.user.role === "family";
   const _navIds = visibleNav.filter(n => n.type !== "divider").map(n => n.id);
-  const effectiveModule = (_isFamilyLogin && !_navIds.includes(activeModule)) ? (_navIds[0] || activeModule) : activeModule;
+  const effectiveModule = (_isFamilyLogin && !_navIds.includes(activeModule) && !GAME_IDS.includes(activeModule)) ? (_navIds[0] || activeModule) : activeModule;
 
   return (
     <AppContext.Provider value={{ agency, activeModule, setActiveModule }}>
@@ -1279,7 +1292,7 @@ export default function NewtworksApp() {
                 if (item.type === "divider") {
                   return <div key={item.id} style={css.navDivider} aria-hidden="true" />;
                 }
-                const active = effectiveModule === item.id;
+                const active = effectiveModule === item.id || (item.id === "games" && GAME_IDS.includes(effectiveModule));
                 // On phone the nav is always rendered expanded inside the drawer,
                 // so force collapsed=false for nav-item styling there.
                 const itemCollapsed = viewport.isPhone ? false : navCollapsed;
