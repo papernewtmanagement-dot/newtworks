@@ -10,6 +10,7 @@ import {
   monstersForLevel, heroHpForLevel, endlessMonster, endlessWorld, ENDLESS_HERO_HP, starsFor,
   POTIONS, POTION_KEYS, POTION_MAX, TREASURES, EQUIP_MAX, treasuresOwned, treasureLevel, STORY_PARTS,
 } from "../lib/questWorlds.js";
+import { levelStory } from "../lib/questStories.js";
 
 // =========================================================================
 // SpellingQuest.jsx — the Family spelling game (in the style of Bookworm and
@@ -100,13 +101,13 @@ function treasureBoost(eq, tiles, letters) {
 }
 
 // ── Read aloud: the browser's own voice. onWord gets the index of the word being spoken.
-function speak(text, onWord, onEnd) {
+function speak(text, onWord, onEnd, opts = {}) {
   try {
     const synth = window.speechSynthesis;
     if (!synth || typeof SpeechSynthesisUtterance === "undefined") return false;
     synth.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.rate = 0.9; u.pitch = 1.05;
+    u.rate = opts.rate || 0.9; u.pitch = opts.pitch || 1.05;
     const voice = synth.getVoices().find(v => /^en[-_]US/i.test(v.lang)) || synth.getVoices().find(v => /^en/i.test(v.lang));
     if (voice) u.voice = voice;
     const starts = [];
@@ -123,27 +124,69 @@ function stopSpeaking() { try { if (window.speechSynthesis) window.speechSynthes
 // ── Sounds: tiny made-up beeps, no files. Off when muted.
 const SOUND = { muted: false, ctx: null };
 try { SOUND.muted = window.localStorage.getItem("sq_muted") === "1"; } catch { SOUND.muted = false; }
-const TUNES = {
-  hit: [["square", 520, 260, 0.12]], hurt: [["sawtooth", 200, 110, 0.18]], heal: [["sine", 520, 880, 0.22]],
-  gem: [["triangle", 880, 1320, 0.12]], potion: [["sine", 660, 990, 0.18]], tap: [["triangle", 700, 700, 0.03]],
-  win: [["triangle", 523, 523, 0.12], ["triangle", 659, 659, 0.12], ["triangle", 784, 784, 0.12], ["triangle", 1047, 1047, 0.25]],
-  lose: [["sine", 392, 330, 0.2], ["sine", 294, 196, 0.35]], status: [["square", 300, 240, 0.14]],
+// Each sound is built from tones and noise bursts with WebAudio (no files).
+function audioCtx() {
+  if (SOUND.muted || typeof window === "undefined") return null;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  const ctx = SOUND.ctx || (SOUND.ctx = new AC());
+  if (ctx.state === "suspended") ctx.resume();
+  return ctx;
+}
+function tone(ctx, type, f1, f2, at, len, vol = 0.08) {
+  const o = ctx.createOscillator(); const g = ctx.createGain();
+  o.type = type; o.frequency.setValueAtTime(f1, at); o.frequency.exponentialRampToValueAtTime(Math.max(20, f2), at + len);
+  g.gain.setValueAtTime(vol, at); g.gain.exponentialRampToValueAtTime(0.001, at + len);
+  o.connect(g); g.connect(ctx.destination); o.start(at); o.stop(at + len + 0.02);
+}
+function noise(ctx, at, len, f1, f2, vol = 0.15) {
+  const n = Math.floor(ctx.sampleRate * len);
+  const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  const src = ctx.createBufferSource(); src.buffer = buf;
+  const f = ctx.createBiquadFilter(); f.type = "bandpass"; f.Q.value = 1.2;
+  f.frequency.setValueAtTime(f1, at); f.frequency.exponentialRampToValueAtTime(f2, at + len);
+  const g = ctx.createGain(); g.gain.setValueAtTime(vol, at); g.gain.exponentialRampToValueAtTime(0.001, at + len);
+  src.connect(f); f.connect(g); g.connect(ctx.destination); src.start(at); src.stop(at + len);
+}
+const notes = (ctx, t, list, type = "triangle", len = 0.1, vol = 0.07) => list.forEach((f, i) => tone(ctx, type, f, f, t + i * len, len * 1.4, vol));
+const SFX = {
+  // tapping letters: each letter a step higher, like Bookworm's rising chime
+  tap: (ctx, t, n = 1) => tone(ctx, "triangle", 330 * 2 ** ((Math.min(n, 14) - 1) * 2 / 12), 330 * 2 ** ((Math.min(n, 14) - 1) * 2 / 12), t, 0.08, 0.07),
+  valid: (ctx, t, n = 3) => { const f = 660 * 2 ** ((Math.min(n, 12) - 3) * 2 / 12); notes(ctx, t, [f, f * 1.5], "sine", 0.05, 0.05); },
+  whoosh: (ctx, t) => noise(ctx, t, 0.32, 500, 3500, 0.12),
+  hit: (ctx, t, tier = 0) => {
+    noise(ctx, t, 0.18, 1800, 250, 0.3);
+    tone(ctx, "sine", 170, 45, t, 0.3, 0.3);
+    if (tier >= 6) { tone(ctx, "square", 110, 40, t + 0.03, 0.25, 0.08); noise(ctx, t + 0.05, 0.3, 900, 120, 0.2); }
+    if (tier >= 8) { tone(ctx, "sawtooth", 80, 30, t + 0.08, 0.45, 0.1); noise(ctx, t + 0.1, 0.5, 3000, 200, 0.18); }
+  },
+  growl: (ctx, t) => { tone(ctx, "sawtooth", 120, 70, t, 0.45, 0.07); tone(ctx, "sawtooth", 127, 74, t, 0.45, 0.05); noise(ctx, t, 0.35, 300, 150, 0.08); },
+  hurt: (ctx, t) => { noise(ctx, t, 0.15, 900, 200, 0.22); tone(ctx, "sawtooth", 220, 110, t, 0.2, 0.08); },
+  status: (ctx, t) => { tone(ctx, "square", 300, 240, t, 0.14, 0.06); tone(ctx, "square", 250, 180, t + 0.12, 0.18, 0.06); },
+  ko: (ctx, t) => { tone(ctx, "square", 700, 70, t, 0.55, 0.07); noise(ctx, t + 0.45, 0.2, 2000, 400, 0.15); },
+  heal: (ctx, t) => notes(ctx, t, [660, 880, 1100, 1320], "sine", 0.07, 0.06),
+  gem: (ctx, t) => notes(ctx, t, [1320, 1760, 2093], "triangle", 0.06, 0.05),
+  freeze: (ctx, t) => { tone(ctx, "sine", 1500, 2600, t, 0.4, 0.05); tone(ctx, "sine", 2000, 3200, t + 0.1, 0.35, 0.04); },
+  potion: (ctx, t) => { tone(ctx, "sine", 400, 900, t, 0.18, 0.07); notes(ctx, t + 0.15, [880, 1175], "sine", 0.08, 0.05); },
+  // praise fanfare: more notes for bigger words
+  fanfare: (ctx, t, tier = 5) => notes(ctx, t, [523, 659, 784, 1047, 1319, 1568, 2093].slice(0, Math.max(2, tier - 2)), "square", 0.08, 0.045),
+  win: (ctx, t) => notes(ctx, t, [523, 659, 784, 1047, 784, 1047], "triangle", 0.12, 0.08),
+  lose: (ctx, t) => { tone(ctx, "sine", 392, 330, t, 0.2, 0.08); tone(ctx, "sine", 294, 196, t + 0.2, 0.4, 0.08); },
 };
-function sound(name) {
-  if (SOUND.muted || typeof window === "undefined") return;
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    const ctx = SOUND.ctx || (SOUND.ctx = new AC());
-    let t = ctx.currentTime;
-    for (const [type, f1, f2, len] of TUNES[name] || []) {
-      const o = ctx.createOscillator(); const g = ctx.createGain();
-      o.type = type; o.frequency.setValueAtTime(f1, t); o.frequency.linearRampToValueAtTime(f2, t + len);
-      g.gain.setValueAtTime(0.08, t); g.gain.exponentialRampToValueAtTime(0.001, t + len);
-      o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + len + 0.02);
-      t += len;
-    }
-  } catch { /* no sound on this device */ }
+function sound(name, arg) {
+  try { const ctx = audioCtx(); if (ctx && SFX[name]) SFX[name](ctx, ctx.currentTime, arg); } catch { /* no sound on this device */ }
+}
+
+// Praise for a word, like Bookworm's announcer: longer words (and gem words) get bigger praise.
+const PRAISE = ["", "", "", "", "Good!", "Great!", "Awesome!", "Fantastic!", "Amazing!", "Incredible!", "Spectacular!"];
+const praiseTier = (letters, gemmed) => Math.min(PRAISE.length - 1, letters + (gemmed ? 1 : 0));
+const PRAISE_COLOR = ["", "", "", "", "#2E8B57", "#3F8DB8", "#8E5CB8", "#D2553E", "#D7261E", "#E2B13C", "#E2B13C"];
+// Big praise is said out loud too (5+ letters), quick and cheerful.
+function announce(text) {
+  if (SOUND.muted || !text) return;
+  speak(text.replace("!", ""), () => {}, () => {}, { rate: 1.05, pitch: 1.3 });
 }
 
 // ── Difficulty ──────────────────────────────────────────────────────────
@@ -408,6 +451,9 @@ export default function SpellingQuest() {
   const hitPoints = Math.round(base * (1 + 0.5 * (gems.ruby || 0) + (gems.diamond || 0)) * (fight?.power ? 2 : 1) * (fight?.weak > 0 ? 0.5 : 1)
     * treasureBoost(fight?.eq, selTiles, word.length));
   const preview = mode === "monsters" ? hitPoints : firePoints;
+  const gemmed = selTiles.some(t => t.kind !== "normal" && t.kind !== "fire");
+  const tier = valid ? praiseTier(selTiles.reduce((a, t) => a + t.ch.length, 0), gemmed) : 0;
+  useEffect(() => { if (valid) sound("valid", word.length); }, [valid, word]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const say = (text, tone = "info") => {
     clearTimeout(msgTimer.current);
@@ -421,7 +467,7 @@ export default function SpellingQuest() {
     setFloats(f => [...f, { id, side, text, color }]);
     later(() => setFloats(f => f.filter(x => x.id !== id)), 1000);
   };
-  const play = (heroMove, monMove) => setFx(f => ({ key: f.key + 1, hero: heroMove, mon: monMove, fly: null }));
+  const play = (heroMove, monMove) => setFx(f => ({ key: f.key + 1, hero: heroMove, mon: monMove, fly: null, praise: null }));
 
   const startRun = (endless, level = null) => {
     stopTimers();
@@ -491,7 +537,8 @@ export default function SpellingQuest() {
 
   // Map level picked: a world's first level opens with its story page the first time.
   const playLevel = n => {
-    if (mode === "monsters" && stepOf(n) === 1 && n >= unlocked) { setStory({ world: worldOf(n), kind: "intro", level: n }); setScreen("story"); return; }
+    // Every new level opens with its story beat (a world's first level adds the world's intro).
+    if (mode === "monsters" && n >= unlocked) { setStory({ world: worldOf(n), kind: "level", level: n }); setScreen("story"); return; }
     startRun(false, n);
   };
 
@@ -516,8 +563,8 @@ export default function SpellingQuest() {
   const tap = (tile) => {
     if (!board || busy || tile.stone) return;
     setHint(null);
-    sound("tap");
     const idx = sel.indexOf(tile.id);
+    sound("tap", idx >= 0 ? Math.max(1, idx) : sel.length + 1);
     if (anyOrder) {
       setSel(idx >= 0 ? sel.filter(id => id !== tile.id) : [...sel, tile.id]); // tap again to take it back out
       return;
@@ -569,7 +616,7 @@ export default function SpellingQuest() {
     const hp = Math.max(0, f.hp - total);
     const mhp = Math.min(m.hp, f.mhp + mends);
     const next = { ...f, hp, mhp, turns, poison, weak, freeze: frozen ? f.freeze - 1 : f.freeze };
-    if (!frozen) later(() => play(null, "lunge"), delay);
+    if (!frozen) later(() => { play(null, "lunge"); sound("growl"); }, delay);
     later(() => {
       if (total) { play("hurt", null); floatUp("hero", `-${total}`, "#D7261E"); sound(notes.length && !mends ? "status" : "hurt"); }
       if (mends) floatUp("mon", `+${mends}`, "#2E8B57");
@@ -604,10 +651,15 @@ export default function SpellingQuest() {
     const after = { ...f, mhp, hp, power: false, weak: cured ? 0 : Math.max(0, f.weak - 1), poison: cured ? 0 : f.poison, freeze: f.freeze + freezeAdd };
     let newScore = score + dmg;
     setBusy(true); setSel([]); setHint(null); setBoard(b); setWords(newWords); setTurn(turn + 1);
-    setFx(x => ({ key: x.key + 1, hero: "lunge", mon: null, fly: word.toUpperCase() }));
+    const praise = PRAISE[tier];
+    setFx(x => ({ key: x.key + 1, hero: "lunge", mon: null, fly: word.toUpperCase(), praise, tier }));
+    sound("whoosh");
+    if (tier >= 5) { later(() => announce(praise), 120); later(() => sound("fanfare", tier), 520); }
     later(() => {
       play(heal ? "heal" : null, "hurt");
-      sound("hit");
+      sound("hit", tier);
+      if (heal) later(() => sound("heal"), 200);
+      if (freezeAdd) later(() => sound("freeze"), 250);
       if (gemKind) later(() => sound("gem"), 160);
       floatUp("mon", `-${dmg}`, "#D7261E");
       if (heal) floatUp("hero", `+${heal}`, "#2E8B57");
@@ -631,7 +683,7 @@ export default function SpellingQuest() {
     const items = { ...bag };
     for (let i = 0; i < dropCount; i++) { const k = pick(POTION_KEYS); if (items[k] < POTION_MAX) { items[k] += 1; drops.push(POTIONS[k].short); } }
     setScore(newScore);
-    later(() => play(null, "ko"), 900);
+    later(() => { play(null, "ko"); sound("ko"); }, 900);
     const last = f.foes && f.idx + 1 >= f.foes.length;
     if (last) {
       setBag(items);
@@ -672,6 +724,7 @@ export default function SpellingQuest() {
     } else {
       setFight({ ...fight, freeze: fight.freeze + 2 });
       say(`Freeze potion! ${fight.monster.name} can't attack for 2 turns.`, "good");
+      sound("freeze");
     }
   };
 
@@ -708,7 +761,8 @@ export default function SpellingQuest() {
     setBoard(b); setSel([]); setWords(newWords); setTurn(nextTurn); setHint(null); setScore(newScore);
     if (lost) { finishRun({ won: false, finalScore: newScore, finalWords: newWords }); return; }
     if (!run.endless && newScore >= fireCfg.goal) { finishRun({ won: true, finalScore: newScore, finalWords: newWords }); return; }
-    const bits = [`${word.toUpperCase()} +${points}`];
+    if (tier >= 5) { announce(PRAISE[tier]); sound("fanfare", tier); } else sound("gem");
+    const bits = [`${PRAISE[tier] ? `${PRAISE[tier]} ` : ""}${word.toUpperCase()} +${points}`];
     if (putOut) bits.push("fire out!");
     if (gemKind) bits.push(`${gemKind} tile earned`);
     if (addFire) bits.push("a fire dropped in");
@@ -912,17 +966,22 @@ export default function SpellingQuest() {
 
   if (screen === "story" && story) {
     const w = WORLDS[story.world];
-    const prologue = story.kind === "intro" && (story.world === 0 || story.world === 10) ? `${STORY_PARTS[story.world === 0 ? 0 : 1]} ` : "";
-    const text = story.kind === "intro" ? `${prologue}${w.intro}` : w.outro;
+    const firstLevel = story.kind === "level" && stepOf(story.level) === 1;
+    const prologue = (story.kind === "intro" || firstLevel) && (story.world === 0 || story.world === 10) ? `${STORY_PARTS[story.world === 0 ? 0 : 1]} ` : "";
+    const text = story.kind === "outro" ? w.outro
+      : story.kind === "level" ? `${firstLevel ? `${prologue}${w.intro} ` : ""}${levelStory(story.level)}`
+      : `${prologue}${w.intro}`;
+    const label = story.kind === "outro" ? "The End of the Chapter" : story.kind === "level" ? `Level ${stepOf(story.level)}: ${levelName(story.level)}` : "The Story";
     const done = () => {
       stopSpeaking();
-      if (story.kind === "intro" && story.level) startRun(false, story.level);
+      if (story.kind === "level") startRun(false, story.level);
       else if (story.kind === "intro") setScreen("map");
       else setScreen("over");
       setStory(null);
     };
-    return wrap(<><QuestStyles /><StoryPage key={`${story.world}${story.kind}`} world={w} index={story.world} kind={story.kind} text={text}
-      button={story.kind === "intro" ? (story.level ? "Start the adventure" : "Back to the map") : "Continue"} onDone={done} /></>);
+    return wrap(<><QuestStyles /><StoryPage key={`${story.world}${story.kind}${story.level || ""}`} world={w} index={story.world} kind={story.kind} text={text} label={label}
+      level={story.kind === "level" ? levelInfo(story.level) : null} step={story.kind === "level" ? stepOf(story.level) : null}
+      button={story.kind === "level" ? (stepOf(story.level) === LEVELS_PER_WORLD ? "Face the boss!" : "Fight!") : story.kind === "intro" ? "Back to the map" : "Continue"} onDone={done} /></>);
   }
 
   if (screen === "bonus" && bonusKind) {
@@ -953,6 +1012,13 @@ export default function SpellingQuest() {
       </div>
     </div>
     {mode === "fire" && !run.endless ? <Bar value={score} max={fireCfg.goal} color={T.amber} label="Goal" /> : null}
+    {mode === "monsters" && !run.endless ? (
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, color: T.slate600, lineHeight: 1.45, fontStyle: "italic", marginBottom: 4 }}>
+        <button type="button" title="Read it to me" aria-label="Read the story to me" onClick={() => speak(levelStory(run.level), () => {}, () => {})}
+          style={{ border: `1px solid ${T.slate300}`, background: T.white, borderRadius: 8, padding: "1px 6px", cursor: "pointer", fontSize: 13, fontStyle: "normal", flexShrink: 0 }}>📖</button>
+        <span>{levelStory(run.level)}</span>
+      </div>
+    ) : null}
     {fight ? <Arena fight={fight} hero={hero} world={world} scene={scene} fx={fx} floats={floats} wide={!_vp.isPhone} /> : null}
     {fight && bag ? (
       <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", marginTop: 8 }}>
@@ -976,6 +1042,7 @@ export default function SpellingQuest() {
           {anyOrder ? "Tap letters in any order" : "Tap touching letters"}{diff.minLen > 3 ? ` · ${diff.minLen}+ letters` : ""}
         </span>}
       </div>
+      {valid && PRAISE[tier] ? <div key={tier} style={{ fontSize: 15, fontWeight: 900, color: PRAISE_COLOR[tier], animation: "sqPop 0.3s ease-out" }}>{PRAISE[tier]}</div> : null}
       {valid ? <div style={{ fontSize: 14, fontWeight: 700, color: T.green }}>{mode === "monsters" ? `${preview} damage` : `+${preview}`}</div> : null}
       <button type="button" onClick={() => setSel([])} disabled={!sel.length} style={{ ...btn(T.slate400), padding: "8px 12px", opacity: sel.length ? 1 : 0.5 }}>Clear</button>
       <button type="button" onClick={submit} disabled={!valid || busy} style={{ ...btn(T.teal), opacity: valid && !busy ? 1 : 0.4 }}>{mode === "monsters" ? "Attack" : "Go"}</button>
@@ -1135,6 +1202,8 @@ function QuestStyles() {
       @keyframes sqHeal { 0%,100% { filter: none } 50% { filter: drop-shadow(0 0 10px #4CBF72) brightness(1.15) } }
       @keyframes sqKo { to { transform: translateY(20px) scale(0.3) rotate(25deg); opacity: 0 } }
       @keyframes sqEnter { from { transform: translateX(90px); opacity: 0 } to { transform: none; opacity: 1 } }
+      @keyframes sqPraise { 0% { transform: scale(0.3) rotate(-8deg); opacity: 0 } 20% { transform: scale(1.25) rotate(3deg); opacity: 1 } 35% { transform: scale(1) rotate(0) } 80% { opacity: 1 } 100% { transform: translateY(-20px); opacity: 0 } }
+      @keyframes sqPop { from { transform: scale(0.4) } 60% { transform: scale(1.3) } to { transform: scale(1) } }
       @keyframes sqFloat { from { transform: translateY(0); opacity: 1 } to { transform: translateY(-46px); opacity: 0 } }
       @keyframes sqFly { 0% { left: 26%; opacity: 0; transform: translateY(0) scale(0.7) } 15% { opacity: 1 } 100% { left: 62%; opacity: 0.9; transform: translateY(-10px) scale(1.15) } }
     `}</style>
@@ -1199,6 +1268,14 @@ function Arena({ fight, hero, world, scene, fx, floats, wide }) {
           position: "absolute", top: "44%", left: "26%", zIndex: 3, padding: "4px 10px", borderRadius: 10, fontWeight: 900, fontSize: wide ? 22 : 18,
           background: "#FFF3CD", color: "#5B4300", border: "2px solid #E2B13C", animation: "sqFly 0.42s ease-in forwards", whiteSpace: "nowrap",
         }}>{fx.fly}</div>
+      ) : null}
+      {/* praise, like Bookworm's announcer */}
+      {fx.praise ? (
+        <div key={`p${fx.key}`} style={{
+          position: "absolute", left: 0, right: 0, top: "26%", zIndex: 5, textAlign: "center", pointerEvents: "none",
+          fontSize: (wide ? 34 : 26) + Math.max(0, (fx.tier || 0) - 4) * 3, fontWeight: 900, color: PRAISE_COLOR[fx.tier] || "#E2B13C",
+          textShadow: "0 3px 0 #fff, 0 0 10px #fff", animation: "sqPraise 1.1s ease-out forwards", fontFamily: "Georgia, serif",
+        }}>{fx.praise}</div>
       ) : null}
       {/* damage and heal numbers */}
       {floats.map(f => (
@@ -1293,7 +1370,7 @@ function WorldMap({ world, index, unlocked, starsOf, onPlay, onStory }) {
 }
 
 // A story page: the world's picture, its boss, and the text, read aloud with each word lit up as it's spoken.
-function StoryPage({ world, index, kind, text, button, onDone }) {
+function StoryPage({ world, index, kind, text, label, level, step, button, onDone }) {
   const words = text.split(/\s+/).filter(Boolean);
   const [at, setAt] = useState(-1);
   const [reading, setReading] = useState(false);
@@ -1309,12 +1386,12 @@ function StoryPage({ world, index, kind, text, button, onDone }) {
   return (
     <div style={{ borderRadius: 16, overflow: "hidden", border: `1px solid ${T.slate200}`, background: T.white }}>
       <div style={{ position: "relative", height: 170, background: world.sky[1] }}>
-        <QuestScene world={world} level={null} step={kind === "outro" ? 17 : 5} wide />
+        <QuestScene world={world} level={level} step={step || (kind === "outro" ? 17 : 5)} wide />
         <div style={{ position: "absolute", right: 16, bottom: 10, animation: kind === "outro" ? "none" : "sqIdle 1.9s ease-in-out infinite", opacity: kind === "outro" ? 0.75 : 1, transform: kind === "outro" ? "rotate(-8deg)" : "none" }}>
           <QuestMonster m={MONSTER_OF(world.boss)} size={96} />
         </div>
         <div style={{ position: "absolute", left: 12, top: 10, background: "rgba(255,255,255,0.88)", borderRadius: 10, padding: "4px 10px", fontSize: 13, fontWeight: 800, color: T.slate800 }}>
-          World {index + 1}: {world.name} · {kind === "outro" ? "The End of the Chapter" : "The Story"}
+          World {index + 1}: {world.name} · {label}
         </div>
       </div>
       <div style={{ padding: 16, display: "grid", gap: 14 }}>
