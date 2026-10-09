@@ -1015,6 +1015,8 @@ const MAP_FEATURE = {
   hearth: { fill: "#D8C49A", line: "#9C8660", w: 0.8, mark: { fill: "#C8642E", line: "#6E3218", r: 22 } },
   altar: { fill: "#D8C49A", line: "#9C8660", w: 0.8, mark: { fill: "#E4DDCB", line: "#4F4A40", r: 0, box: 26 } },
   mouth: { fill: "#2B211A", line: "#1A130E", w: 1, round: 0.3 },
+  // (storeys step) a house's stair, up through every floor: its treads across the way it climbs
+  stair: { fill: "#B99A6A", line: "#6E5232", w: 1 },
 };
 // Bridges and fords (step 11; rpg_map_view: crossings), as the key names them: 1 a bridge, 2 a ford where a road
 // crosses, 3 a planned ford off the roads.
@@ -2188,7 +2190,7 @@ function mapRoofs(houses, unit, per = 1) {
   return out;
 }
 // The battle grid: every square seen from above, with a light wash of each place's color and the lines of the grid.
-function mapBattle(v, byId) {
+function mapBattle(v, byId, floor = 0) {
   const cols = Number(v.cols) || 12, rows = Number(v.rows) || 12;
   const cells = Array.isArray(v.cells) ? v.cells : [];
   // where the battle grid starts in the world (step 14a2: it may be slid half a grid)
@@ -2226,7 +2228,16 @@ function mapBattle(v, byId) {
   // the buildings (step 3: their floor plans, walls, doors and floors, square by square) and the landmarks (step 12b2)
   layers.push(...mapBuilt(cols, rows, cells));
   const fog = mapFog(cols, rows, 100, (i, j) => get(i, j).what === "unknown", 0.3, cols, rows, 7, o0[0], o0[1]);
-  return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat([{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }], fog), names: [], blocks: [] };
+  const gridLines = [{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }];
+  // (storeys step) an upper floor: the ground below, blurred the more the higher the floor and washed paler, and on it
+  // the floor plans of the houses that reach this floor (rpg_map_view: floors), drawn like their ground floors
+  if (floor > 0) {
+    const plan = (Array.isArray(v.floors) ? v.floors : []).filter(f => Array.isArray(f) && f[0] === floor)
+      .map(([, x, y, part]) => (MAP_WALLS[part] ? { x, y, climb: [part] } : { x, y, feature: part }));
+    return { wide: cols * 100, high: rows * 100, unit: 100, back: layers.concat(fog), blur: 5 * floor, wash: Math.min(0.12 + 0.1 * floor, 0.5),
+      layers: mapBuilt(cols, rows, plan).concat(gridLines), names: [], blocks: [] };
+  }
+  return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat(gridLines, fog), names: [], blocks: [] };
 }
 // What lies on the battle grid's squares (step 14f-battle; rpg_map_lie, the cells' lie), drawn from above over the
 // ground: a boulder (no way through; full cover) a rough rock filling most of its square with its shadow and the light
@@ -2276,13 +2287,19 @@ function mapBuilt(cols, rows, cells) {
     const d = mapOutline(cols, rows, (i, j) => i >= 0 && j >= 0 && i < cols && j < rows && ft.get(j * cols + i) === kind, 100, look.round || 0.05);
     if (d) out.push({ d, fill: look.fill, line: look.line, w: look.w });
   });
-  let boards = "", flags = "", leaves = "";
+  let boards = "", flags = "", leaves = "", treads = "";
   cells.forEach(c => {
     const look = MAP_FEATURE[c.feature];
     if (!look || c.feature === "mouth") return;
     const x = (c.x - 1) * 100, y = (c.y - 1) * 100;
     // stone flags: two by two a square; a door: its leaf standing a little open in the doorway
     if (c.feature === "flags") { flags += `M${x + 50} ${y}V${y + 100}M${x} ${y + 50}H${x + 100}`; return; }
+    // (storeys step) a stair: treads across the way it climbs, the run along the next stair square
+    if (c.feature === "stair") {
+      const run = cells.some(q => q.feature === "stair" && q.y === c.y && Math.abs(q.x - c.x) === 1);
+      for (let k = 14; k < 100; k += 14) treads += run ? `M${x + k} ${y + 8}V${y + 92}` : `M${x + 8} ${y + k}H${x + 92}`;
+      return;
+    }
     if (c.feature === "door") {
       // the leaf lies along the wall the door is in (the wall runs on through the squares beside it), hinged at one
       // end and standing a little open, with the sill across the doorway
@@ -2298,6 +2315,7 @@ function mapBuilt(cols, rows, cells) {
   if (boards) out.push({ d: boards, line: MAP_FEATURE.floor.line, w: 0.6, o: 0.5 });
   if (flags) out.push({ d: flags, line: MAP_FEATURE.flags.line, w: 0.8, o: 0.6 });
   if (leaves) out.push({ d: leaves, fill: "#8A6238", line: "#4A3018", w: 1.2 });
+  if (treads) out.push({ d: treads, line: MAP_FEATURE.stair.line, w: 1.6 });
   // the walls of the buildings (step 3), over their floors and doors: each kind as one outline of its squares, timber
   // walls plain, stone walls with their courses
   const wl = new Map();
@@ -2628,6 +2646,14 @@ function MapArt({ art, px }) {
   return (
     <svg viewBox={`0 0 ${art.wide} ${art.high}`} preserveAspectRatio="none" aria-hidden="true"
       style={{ position: "absolute", left: 16, top: 16, width: "calc(100% - 16px)", height: "calc(100% - 16px)", borderRadius: 4, pointerEvents: "none", display: "block" }}>
+      {/* (storeys step) an upper floor: the ground seen from up there, blurred and washed, under the floor plans */}
+      {art.back && (
+        <>
+          <defs><filter id="rpg-floor-blur" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation={art.blur || 0} /></filter></defs>
+          <g filter="url(#rpg-floor-blur)"><MapStrokes layers={art.back} px={px} unit={art.unit} /></g>
+          <rect x="0" y="0" width={art.wide} height={art.high} fill="#F4F1EA" opacity={art.wash || 0} />
+        </>
+      )}
       <MapStrokes layers={art.layers} px={px} unit={art.unit} />
       {art.aged && (
         <>
@@ -3043,7 +3069,12 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl }) {
   const towns = Array.isArray(v.towns) ? v.towns : [];
   const byId = useMemo(() => { const all = {}; (Array.isArray(v.places) ? v.places : []).concat(Array.isArray(v.towns) ? v.towns : [], Array.isArray(v.landmarks) ? v.landmarks : []).forEach(p => { all[p.id] = p; }); return all; }, [v]);
   // the land is not drawn while the Underground switch shows the world under the ground in its place (step 14a)
-  const art = useMemo(() => (under && hasUnder ? null : (top ? mapBattle : mapFantasy)(v, byId)), [v, byId, top, under, hasUnder]);
+  // (storeys step) the floor shown on a battle grid with houses of two storeys or more: 0 the ground floor
+  const upper = top && Array.isArray(v.floors) ? v.floors.reduce((m, f) => Math.max(m, Array.isArray(f) ? Number(f[0]) || 0 : 0), 0) : 0;
+  const [floor, setFloor] = useState(0);
+  useEffect(() => { setFloor(0); }, [v.view]);
+  const shownFloor = Math.min(floor, upper);
+  const art = useMemo(() => (under && hasUnder ? null : top ? mapBattle(v, byId, shownFloor) : mapFantasy(v, byId)), [v, byId, top, under, hasUnder, shownFloor]);
   // how many screen pixels one unit of the drawing takes (a cell is 100 units)
   const px = width > 16 ? (width - 16) / (cols * 100) : 1;
   const ground = (k) => { const g = grounds[k]; return g && typeof g === "object" ? [g.name, g.penalty].filter(Boolean).join(" · ") : String(g || k); };
@@ -3117,12 +3148,22 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl }) {
               <span style={{ color: T.slate400 }}>›</span>
             </span>
           )))}
+        {/* (storeys step) up and down the floors of the houses on this battle grid */}
+        {upper > 0 && !under && (
+          <span style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: "auto" }}>
+            <button type="button" onClick={() => setFloor(f => Math.max(Math.min(f, upper) - 1, 0))} disabled={shownFloor === 0} title="Down a floor" aria-label="Down a floor"
+              style={{ ...btn("soft", true), minWidth: 30, opacity: shownFloor === 0 ? 0.35 : 1 }}>▾</button>
+            <span style={{ fontSize: 12, fontWeight: 700, color: T.slate700, minWidth: 74, textAlign: "center" }}>{shownFloor === 0 ? "Ground floor" : `${["2nd", "3rd", "4th", "5th"][shownFloor - 1] || shownFloor + 1 + "th"} floor`}</span>
+            <button type="button" onClick={() => setFloor(f => Math.min(Math.min(f, upper) + 1, upper))} disabled={shownFloor === upper} title="Up a floor" aria-label="Up a floor"
+              style={{ ...btn("soft", true), minWidth: 30, opacity: shownFloor === upper ? 0.35 : 1 }}>▴</button>
+          </span>
+        )}
         {hasUnder && (
           <button type="button" onClick={() => setUnder(u => !u)} aria-pressed={under} title="Show the caves, mines and the Deeps under this grid"
-            style={{ ...btn(under ? "primary" : "soft", true), marginLeft: "auto" }}>Underground</button>
+            style={{ ...btn(under ? "primary" : "soft", true), marginLeft: upper > 0 && !under ? 0 : "auto" }}>Underground</button>
         )}
         {moves && (
-          <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: hasUnder ? 0 : "auto" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: hasUnder || (upper > 0 && !under) ? 0 : "auto" }}>
             {slides && <span style={{ fontSize: 12, fontWeight: 600, color: T.slate600, marginRight: 2 }}>Slide half a grid</span>}
             {MAP_MOVES.map(([k, t]) => (
               <TabLink key={k} href={atHref(moves[k] || null)} onSelect={() => setAt(moves[k])} disabled={!moves[k]} title={slides ? `Slide half a grid ${k}` : `The next grid ${k}`} ariaLabel={slides ? `Slide half a grid ${k}` : `The next grid ${k}`}
@@ -3136,7 +3177,8 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl }) {
           {art && <MapArt art={art} px={px} />}
           {under && hasUnder && (top ? <MapUnderGrid v={v} px={px} /> : <MapUnder v={v} px={px} />)}
           {grid}
-          {tokens}
+          {/* (storeys step) on an upper floor the pieces below are not shown, and the squares are not tapped */}
+          {shownFloor === 0 ? tokens : <div style={{ position: "absolute", left: 16, top: 16, right: 0, bottom: 0 }} />}
         </div>
       </div>
       {/* the key under the map; in full screen it sits in the side panel instead (keyEl), out of the map's way */}
@@ -3205,6 +3247,11 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl }) {
         {top && cells.some(c => c.paved) && (
           <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <span style={{ width: 14, height: 14, borderRadius: 3, background: MAP_ART.top.street.tones[0], display: "inline-block" }} />Paved streets and the market place.
+          </span>
+        )}
+        {top && cells.some(c => c.feature === "stair") && (
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 14, height: 14, borderRadius: 3, background: MAP_FEATURE.stair.fill, display: "inline-block" }} />Stairs up to the next floor. Use ▴ ▾ above the map to see each floor.
           </span>
         )}
         {cells.some(c => c.feature === "mouth") && (
