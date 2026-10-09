@@ -58,6 +58,11 @@ import { processCallLogMode } from "./parsers/sf_daily_call_log.ts";
 import { processCareerplugMode } from "./parsers/careerplug_applicant.ts";
 import { processResumeManualBatch } from "./parsers/resume_manual_batch.ts";
 import { parseCtsProfile, matchCtsCandidate } from "./parsers/cts_profile.ts";
+import {
+  ctsLogin, ctsListUnarchivedCompleted, ctsFindSalesReport, ctsFetchReportHtml,
+  ctsDownloadReportPdf, ctsArchiveProfile, parseCtsReportHtml,
+} from "./parsers/cts_site.ts";
+import { stageFileWithComposio } from "../_shared/composio_stage.ts";
 import { processWrapupMode } from "./parsers/wrapup_ingest.ts";
 import { processReferencesMode } from "./parsers/reference_ingest.ts";
 import { processPaypalPrintSalesMode } from "./parsers/paypal_print_sales.ts";
@@ -151,6 +156,17 @@ interface AttachmentInput {
   // when the name printed on the report does not match the record exactly
   // (e.g. "Tracey LaCroix" vs "Tracey M. Lacroix"). Skips the name match.
   ctsCandidateId?: string | null;
+
+  // CTS site pull only (2026-10-09): the scores were already read off the
+  // vendor's report page, so the PDF is filed but not read again. Source and
+  // recorder are what record_cts_result() stores against the result.
+  ctsPayload?: Record<string, unknown> | null;
+  ctsSource?: string | null;
+  ctsRecordedBy?: string | null;
+
+  // Bytes this code staged with Composio itself, so the Drive copy can be
+  // made for a file that never came through Gmail.
+  stagedS3Key?: string | null;
 }
 
 // Statuses that mean a documents row is finished, deliberately parked, or owned
@@ -414,7 +430,7 @@ async function downloadAttachmentBytes(
 ): Promise<{ ok: true; bytesB64: string; s3Key: string | null } | { ok: false; error: string }> {
   // Inner zip files have no storage key of their own — they were never
   // downloaded separately, so there is nothing for Drive to pick up.
-  if (att.bytesB64) return { ok: true, bytesB64: att.bytesB64, s3Key: null };
+  if (att.bytesB64) return { ok: true, bytesB64: att.bytesB64, s3Key: att.stagedS3Key ?? null };
   if (!att.attachmentId) return { ok: false, error: "no attachmentId on outer attachment" };
 
   // Composio's GMAIL_GET_ATTACHMENT returns an s3url to fetch the raw bytes.
@@ -1376,6 +1392,7 @@ const ARCHIVE_LABEL_FOR_DOCTYPE: Record<string, string | null> = {
   team_production:          null,
   careerplug_applicant:     "Label_20", // "Team/Hiring/Applicants" (attachment pipeline)
   resume_manual_batch:      "Label_20", // "Team/Hiring/Applicants" (hand-forwarded batches)
+  cts_profile:              "Label_6305563542446837566", // "Team/Hiring/CTS" (added 2026-10-09 with the CTS site pull)
 };
 
 /** account_code -> Gmail label id, cached per run. Populated from
@@ -2170,37 +2187,48 @@ async function processOneAttachment(
         // preserveFormat is on: the default path reinjects newlines using a
         // pattern shaped for State Farm's own PDFs, and this is a different
         // vendor's layout.
-        const ex = await extractText(ctx, att, bytesB64, true);
-        if (!ex.ok) {
-          await markDocument(documentId, "error", 0, [], ex.error);
-          await ctsNeedsHandAlert(ctx.agencyId, att.fileName, null, ex.error, drive?.driveUrl ?? null);
-          results.push({
-            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-            docType, status: "error", jeCount: 0, suspenseCount: 0,
-            error: ex.error, sourceLabel: uploadSource,
-          });
-          break;
-        }
+        // CTS site pull: the scores were read off the vendor's report page
+        // already (parsers/cts_site.ts, no AI). The PDF is only filed.
+        let parsed: { ok: true; candidateName: string | null; payload: Record<string, unknown> } | { ok: false; candidateName: string | null; error: string };
+        if (att.ctsPayload) {
+          parsed = {
+            ok: true,
+            candidateName: (att.ctsPayload.candidate_name_on_report as string | null) ?? null,
+            payload: { ...att.ctsPayload, source_file_name: att.fileName },
+          };
+        } else {
+          const ex = await extractText(ctx, att, bytesB64, true);
+          if (!ex.ok) {
+            await markDocument(documentId, "error", 0, [], ex.error);
+            await ctsNeedsHandAlert(ctx.agencyId, att.fileName, null, ex.error, drive?.driveUrl ?? null);
+            results.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "error", jeCount: 0, suspenseCount: 0,
+              error: ex.error, sourceLabel: uploadSource,
+            });
+            break;
+          }
 
-        const parsed = await parseCtsProfile({
-          agencyId: ctx.agencyId,
-          composioApiKey: ctx.composioApiKey,
-          composioUserId: ctx.composioUserId,
-          documentId,
-          reportText: ex.text,
-          fileName: att.fileName,
-        });
-
-        if (!parsed.ok) {
-          await markDocument(documentId, "error", 0, [], parsed.error);
-          await ctsNeedsHandAlert(
-            ctx.agencyId, att.fileName, parsed.candidateName, parsed.error, drive?.driveUrl ?? null);
-          results.push({
-            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-            docType, status: "error", jeCount: 0, suspenseCount: 0,
-            error: parsed.error, sourceLabel: uploadSource,
+          parsed = await parseCtsProfile({
+            agencyId: ctx.agencyId,
+            composioApiKey: ctx.composioApiKey,
+            composioUserId: ctx.composioUserId,
+            documentId,
+            reportText: ex.text,
+            fileName: att.fileName,
           });
-          break;
+
+          if (!parsed.ok) {
+            await markDocument(documentId, "error", 0, [], parsed.error);
+            await ctsNeedsHandAlert(
+              ctx.agencyId, att.fileName, parsed.candidateName, parsed.error, drive?.driveUrl ?? null);
+            results.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "error", jeCount: 0, suspenseCount: 0,
+              error: parsed.error, sourceLabel: uploadSource,
+            });
+            break;
+          }
         }
 
         const name = parsed.candidateName;
@@ -2236,8 +2264,8 @@ async function processOneAttachment(
         const { data: rec, error: recErr } = await sb.rpc("record_cts_result", {
           p_candidate_id: match.candidateId,
           p_payload: parsed.payload,
-          p_source: "drive_pdf",
-          p_recorded_by: "document-processor",
+          p_source: att.ctsSource ?? "drive_pdf",
+          p_recorded_by: att.ctsRecordedBy ?? "document-processor",
         });
         const recOk = !recErr && (rec as any)?.ok === true;
         if (!recOk) {
@@ -2777,11 +2805,7 @@ async function processCtsDriveMode(
         outcomes.push({ driveFileId: fileId, fileName, status: "error", error: timedOut ? "download timed out" : `download failed${r ? ` HTTP ${r.status}` : ""}` });
         continue;
       }
-      const buf = new Uint8Array(await r.arrayBuffer());
-      let bin = "";
-      const CHUNK = 0x8000;
-      for (let i = 0; i < buf.length; i += CHUNK) bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
-      bytesB64 = btoa(bin);
+      bytesB64 = bytesToB64(new Uint8Array(await r.arrayBuffer()));
     } catch (e) {
       outcomes.push({ driveFileId: fileId, fileName, status: "error", error: `download threw: ${e instanceof Error ? e.message : String(e)}` });
       continue;
@@ -2803,6 +2827,214 @@ async function processCtsDriveMode(
     }
   }
   return { considered: ids.length, outcomes };
+}
+
+
+/** Raw bytes to base64, in chunks so a large file cannot overflow the call stack. */
+function bytesToB64(buf: Uint8Array): string {
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < buf.length; i += CHUNK) bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+  return btoa(bin);
+}
+
+// ---- mode: cts_site --------------------------------------------------------
+// Peter, 2026-10-09: CTS results come in automatically, no AI, no hands.
+// Logs in to the CTS admin site, reads every finished Candidate profile that
+// is not archived there, and saves each result through the same tail every
+// CTS result takes (processOneAttachment -> record_cts_result, the only
+// writer; the interview invite fires off that write). The PDF from the
+// report's download button is filed in Drive (Team > Hiring > CTS Profiles).
+// Once Newtworks holds the result the profile is archived in CTS, so the next
+// run does not look at it again.
+//
+// Started two ways: a CTS "Profile Complete" notice in the inbox (see
+// ctsNoticeTrigger, on the hourly intake run) and a once-a-day backup sweep
+// (recipe "CTS Site Pull - daily backup", mode cts_site).
+//
+// Nothing is written unless settings.cts_site_pull_live is 'true'. Otherwise,
+// or with body.dry_run = true, it reads the site and reports what it would do:
+// no Newtworks write, no Drive file, no alert, nothing archived in CTS.
+//
+// Employees on the CTS list are left alone. A candidate it cannot match to
+// exactly one record gets a hand-entry task and stays unarchived in CTS.
+interface CtsSiteOutcome {
+  name: string;
+  email: string | null;
+  status: string;
+  candidateId?: string;
+  report?: string;
+  archivedInCts?: boolean;
+  scores?: Record<string, unknown>;
+  error?: string;
+}
+
+async function processCtsSiteMode(
+  ctx: RunCtx, body: any,
+): Promise<{ live: boolean; considered: number; outcomes: CtsSiteOutcome[]; error?: string }> {
+  const live = body?.dry_run !== true &&
+    (await getSetting(ctx.agencyId, "cts_site_pull_live")) === "true";
+  const user = await getSetting(ctx.agencyId, "cts_admin_username");
+  const pass = await getSetting(ctx.agencyId, "cts_admin_password");
+  if (!user || !pass) return { live, considered: 0, outcomes: [], error: "CTS login is not saved in settings" };
+
+  let session;
+  let profiles;
+  try {
+    session = await ctsLogin(user, pass);
+    profiles = await ctsListUnarchivedCompleted(session);
+  } catch (e) {
+    return { live, considered: 0, outcomes: [], error: e instanceof Error ? e.message : String(e) };
+  }
+
+  const maxProfiles = Math.min(Math.max(Number(body?.max_profiles ?? 15) || 15, 1), 25);
+  const outcomes: CtsSiteOutcome[] = [];
+  const handAlert = async (p: { name: string; codeNumber: string | null }, why: string) => {
+    if (!live) return;
+    await ctsNeedsHandAlert(ctx.agencyId, `CTS site ${p.codeNumber ?? p.name}`, p.name,
+      `${why}. Found on the CTS site; it stays unarchived there until this is sorted.`, null);
+  };
+
+  for (const p of profiles) {
+    if (outcomes.filter((o) => o.status !== "skipped_employee").length >= maxProfiles) break;
+    const base = { name: p.name, email: p.email };
+    if (p.category !== "Candidate") {
+      outcomes.push({ ...base, status: "skipped_employee" });
+      continue;
+    }
+    try {
+      const match = await matchCtsCandidate(ctx.agencyId, p.name, p.email);
+      if (!match.candidateId) {
+        const why = match.matchCount === 0
+          ? `"${p.name}" (${p.email ?? "no email"}) matches no candidate record`
+          : `"${p.name}" matches ${match.matchCount} candidate records instead of one`;
+        await handAlert(p, why);
+        outcomes.push({ ...base, status: "no_match", error: why });
+        continue;
+      }
+
+      const { data: cand } = await sb.from("hiring_candidates")
+        .select("cts_completed_at").eq("id", match.candidateId).maybeSingle();
+      if (cand?.cts_completed_at) {
+        // Already on file (an earlier pull, a PDF, or the hand form). Nothing
+        // to record; just clear it off the CTS list.
+        const archived = live ? await ctsArchiveProfile(session, p.codeId) : false;
+        outcomes.push({ ...base, status: "already_on_file", candidateId: match.candidateId, archivedInCts: archived });
+        continue;
+      }
+
+      const report = await ctsFindSalesReport(session, p.codeId);
+      if (!report) {
+        const why = `no "SF Sales (Likert)" or "SF Selling Team Member" report on ${p.name}'s CTS profile`;
+        await handAlert(p, why);
+        outcomes.push({ ...base, status: "no_report", candidateId: match.candidateId, error: why });
+        continue;
+      }
+      const html = await ctsFetchReportHtml(session, report);
+      const parsed = parseCtsReportHtml(html, report.reportName);
+      if (!parsed.ok) {
+        await handAlert(p, parsed.error);
+        outcomes.push({ ...base, status: "read_failed", candidateId: match.candidateId, report: report.reportName, error: parsed.error });
+        continue;
+      }
+
+      if (!live) {
+        outcomes.push({ ...base, status: "would_record", candidateId: match.candidateId, report: report.reportName, scores: parsed.payload });
+        continue;
+      }
+
+      const pdf = await ctsDownloadReportPdf(session, report);
+      const stamp = (p.completed ?? new Date().toISOString().slice(0, 10)).replace(/-/g, "");
+      const fileName = `CTS Profile - ${p.name} - ${stamp}.pdf`;
+      const staged = await stageFileWithComposio({
+        apiKey: ctx.composioApiKey, fileName, mimeType: "application/pdf", bytes: pdf,
+        toolSlug: "GOOGLEDRIVE_UPLOAD_FILE", toolkitSlug: "googledrive",
+      });
+      if (!staged.ok) console.error(`[cts_site] ${fileName}: could not stage for Drive (${staged.error}); the result is still saved`);
+
+      const att: AttachmentInput = {
+        messageId: "", threadId: "", fromEmail: "cts_site", subject: "CTS",
+        receivedAt: new Date().toISOString(), fileName, mimeType: "application/pdf",
+        attachmentId: null, bytesB64: bytesToB64(pdf), parentArchive: "CTS site",
+        ctsCandidateId: match.candidateId,
+        ctsPayload: parsed.payload,
+        ctsSource: "cts_site",
+        ctsRecordedBy: "CTS site pull",
+        stagedS3Key: staged.ok ? staged.s3key : null,
+      };
+      const results = await processOneAttachment(ctx, att, 1, "cts_site");
+      const done = results.find((r) => r.status === "processed");
+      if (!done) {
+        // The shared tail already raised the hand-entry task with its reason.
+        outcomes.push({ ...base, status: "error", candidateId: match.candidateId, report: report.reportName, error: results.map((r) => r.error).filter(Boolean).join("; ") || "not recorded" });
+        continue;
+      }
+      const archived = await ctsArchiveProfile(session, p.codeId);
+      outcomes.push({ ...base, status: "recorded", candidateId: match.candidateId, report: report.reportName, archivedInCts: archived });
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      outcomes.push({ ...base, status: "error", error: why });
+    }
+  }
+  return { live, considered: profiles.length, outcomes };
+}
+
+/**
+ * The CTS "Profile Complete" notice is the trigger for the site pull. It
+ * reaches the inbox forwarded from Peter's State Farm mailbox ("FW: [EXTERNAL]
+ * CTS Profile Complete for <Name>"). Runs on the routine hourly intake only,
+ * and only when the pull is live: one site sweep per run however many
+ * notices are waiting, then each notice is archived to Team/Hiring/CTS.
+ *
+ * A notice stays in the inbox only when the sweep could not reach the site,
+ * or when that person's profile was not on the site yet and the notice is
+ * under a day old (the next hourly run tries again; the daily sweep is the
+ * backstop after that). Anything the sweep could not match or read has its
+ * own hand-entry task, so its notice is archived too.
+ */
+async function ctsNoticeTrigger(ctx: RunCtx): Promise<{ notices: number; swept: boolean; archived: number; error?: string }> {
+  if ((await getSetting(ctx.agencyId, "cts_site_pull_live")) !== "true") {
+    return { notices: 0, swept: false, archived: 0 };
+  }
+  const res = await callComposio({
+    apiKey: ctx.composioApiKey, userId: ctx.composioUserId,
+    connectedAccountId: ctx.gmailAccountId,
+    toolSlug: "GMAIL_FETCH_EMAILS",
+    toolArguments: {
+      query: 'in:inbox subject:"CTS Profile Complete for" newer_than:14d',
+      max_results: 20, include_payload: false, verbose: false,
+    },
+  });
+  if (!res.ok) return { notices: 0, swept: false, archived: 0, error: `inbox search failed: ${res.error}` };
+  const msgs: any[] = res.data?.data?.messages ?? res.data?.messages ?? [];
+  if (msgs.length === 0) return { notices: 0, swept: false, archived: 0 };
+
+  const sweep = await processCtsSiteMode(ctx, {});
+  if (sweep.error) {
+    console.error(`[cts_notice] site sweep failed, notices left in the inbox: ${sweep.error}`);
+    return { notices: msgs.length, swept: false, archived: 0, error: sweep.error };
+  }
+
+  const norm = (x: string) => x.toLowerCase().replace(/[^a-z]+/g, " ").trim();
+  let archived = 0;
+  const seenThreads = new Set<string>();
+  for (const m of msgs) {
+    const threadId: string = m.threadId ?? m.thread_id ?? "";
+    if (!threadId || seenThreads.has(threadId)) continue;
+    seenThreads.add(threadId);
+    const subject: string = m.subject ?? m.preview?.subject ?? "";
+    const who = norm(subject.replace(/^[\s\S]*CTS Profile Complete for\s+/i, ""));
+    const hit = sweep.outcomes.find((o) => norm(o.name) === who);
+    const sentAt = Date.parse(m.messageTimestamp ?? "") || Date.now();
+    const young = Date.now() - sentAt < 24 * 3600 * 1000;
+    // Not on the unarchived list: either already handled and archived in CTS
+    // (done), or not showing on the site yet (wait while young).
+    if (!hit && young) continue;
+    if (hit && hit.status === "error") continue; // transient; next run retries
+    await maybeArchiveThread(ctx, threadId, "cts_profile", null);
+    archived += 1;
+  }
+  return { notices: msgs.length, swept: true, archived };
 }
 
 // ---- Main handler ----------------------------------------------------------
@@ -2906,6 +3138,14 @@ async function run(req: Request): Promise<Response> {
     const startedAt = new Date().toISOString();
     const result = await processCtsDriveMode(cdCtx, body);
     return jsonResponse({ ok: true, mode: "cts_drive", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
+  if (mode === "cts_site") {
+    // CTS results read straight off the vendor's site. Daily backup sweep;
+    // the inbox notice starts the same sweep from the routine run below.
+    const csCtx: RunCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId, ...driveFolders };
+    const startedAt = new Date().toISOString();
+    const result = await processCtsSiteMode(csCtx, body);
+    return jsonResponse({ ok: !result.error, mode: "cts_site", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
   if (mode === "composio_probe") {
     // Read-only capability check. See the note on the function above.
@@ -3024,6 +3264,18 @@ async function run(req: Request): Promise<Response> {
     console.error(`[archive-sweep] failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // CTS "Profile Complete" notices start the CTS site pull — routine runs
+  // only. Never fatal to intake.
+  let ctsNotices: Awaited<ReturnType<typeof ctsNoticeTrigger>> | { error: string } = { notices: 0, swept: false, archived: 0 };
+  if (typeof body?.gmail_query !== "string") {
+    try {
+      ctsNotices = await ctsNoticeTrigger(ctx);
+    } catch (e) {
+      ctsNotices = { error: e instanceof Error ? e.message : String(e) };
+      console.error(`[cts_notice] failed: ${(ctsNotices as any).error}`);
+    }
+  }
+
   // Missing-resume request — routine runs only; a gmail_query override is a
   // targeted re-read and should not also send mail.
   let missingResumesRequested = 0;
@@ -3041,6 +3293,7 @@ async function run(req: Request): Promise<Response> {
     attachments_seen: attachments.length,
     archive_sweep_threads: sweepArchived,
     missing_resumes_requested: missingResumesRequested,
+    cts_notices: ctsNotices,
     items_total: allResults.length, // includes inner files from zips
     processed: allResults.filter((p) => p.status === "processed").length,
     skipped: allResults.filter((p) => p.status === "skipped").length,

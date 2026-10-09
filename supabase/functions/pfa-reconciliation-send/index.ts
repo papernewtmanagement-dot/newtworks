@@ -20,8 +20,8 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont } from "npm:pdf-lib@1.17.1";
-import SparkMD5 from "npm:spark-md5@3.0.2";
 import { sb, jsonResponse } from "../_shared/supabase.ts";
+import { stageFileWithComposio } from "../_shared/composio_stage.ts";
 import { requireSharedSecret } from "../_shared/auth.ts";
 import { getComposioGmailCreds, sendGmail } from "../_shared/gmail.ts";
 import { ensureWatcherTask, closeWatcherTask } from "../_shared/watchers.ts";
@@ -45,76 +45,7 @@ const SF_RECIPIENT = "peter.story.yrru@statefarm.com";
 //   1. POST /api/v3/files/upload/request -> { key, new_presigned_url, type }
 //   2. PUT the raw bytes to new_presigned_url with a matching Content-Type
 //   3. Pass { name, mimetype, s3key: key } as `attachment`
-async function stageFileWithComposio(opts: {
-  apiKey: string;
-  fileName: string;
-  mimeType: string;
-  bytes: Uint8Array;
-  toolSlug: string;
-  toolkitSlug: string;
-}): Promise<{ ok: boolean; s3key: string | null; error: string | null }> {
-  let md5: string;
-  try {
-    const ab = opts.bytes.buffer.slice(
-      opts.bytes.byteOffset,
-      opts.bytes.byteOffset + opts.bytes.byteLength,
-    );
-    md5 = SparkMD5.ArrayBuffer.hash(ab);
-  } catch (e) {
-    return { ok: false, s3key: null, error: `md5 failed: ${e instanceof Error ? e.message : String(e)}` };
-  }
-
-  let presignRes: Response;
-  try {
-    presignRes = await fetch("https://backend.composio.dev/api/v3/files/upload/request", {
-      method: "POST",
-      headers: { "x-api-key": opts.apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        filename: opts.fileName,
-        mimetype: opts.mimeType,
-        md5,
-        tool_slug: opts.toolSlug,
-        toolkit_slug: opts.toolkitSlug,
-      }),
-    });
-  } catch (e) {
-    return { ok: false, s3key: null, error: `presign threw: ${e instanceof Error ? e.message : String(e)}` };
-  }
-  const presignText = await presignRes.text();
-  if (!presignRes.ok) {
-    return { ok: false, s3key: null, error: `presign HTTP ${presignRes.status}: ${presignText.slice(0, 300)}` };
-  }
-  let presign: any;
-  try { presign = JSON.parse(presignText); }
-  catch { return { ok: false, s3key: null, error: `presign not JSON: ${presignText.slice(0, 200)}` }; }
-
-  const uploadUrl: string | undefined = presign?.new_presigned_url ?? presign?.newPresignedUrl;
-  const s3key: string | undefined = presign?.key;
-  if (!uploadUrl || !s3key) {
-    return { ok: false, s3key: null, error: `presign missing key/url: ${presignText.slice(0, 300)}` };
-  }
-
-  // type === "old" means Composio already holds this exact file (md5 match), so
-  // the PUT is unnecessary. Re-uploading would be harmless, just wasteful.
-  if (presign?.type !== "old") {
-    let putRes: Response;
-    try {
-      putRes = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": opts.mimeType },
-        body: opts.bytes,
-      });
-    } catch (e) {
-      return { ok: false, s3key: null, error: `upload PUT threw: ${e instanceof Error ? e.message : String(e)}` };
-    }
-    if (!putRes.ok) {
-      const t = await putRes.text().catch(() => "");
-      return { ok: false, s3key: null, error: `upload PUT HTTP ${putRes.status}: ${t.slice(0, 300)}` };
-    }
-  }
-
-  return { ok: true, s3key, error: null };
-}
+// stageFileWithComposio lives in ../_shared/composio_stage.ts (moved 2026-10-09).
 
 // Silent failure is what let this break for a month: the SQL function returned
 // success, the runner logged success, and nothing anywhere said the compliance

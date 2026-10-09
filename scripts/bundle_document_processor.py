@@ -58,6 +58,9 @@ ORDER = [
     # file llm-queue-drainer's drainBankStatementItem already uses — the two
     # hand-maintained statement-writer twins are now one function.
     "../_shared/statement_writer.ts",
+    # 2026-10-09: staging raw bytes for Composio file arguments (CTS site pull
+    # files its PDF to Drive). Shared with pfa-reconciliation-send.
+    "../_shared/composio_stage.ts",
     "lib/composio.ts",
     "lib/docx.ts",
     "lib/llm.ts",
@@ -83,6 +86,7 @@ ORDER = [
     "parsers/paypal_print_sales.ts",
     "parsers/amazon_order_email.ts",
     "parsers/cts_profile.ts",
+    "parsers/cts_site.ts",
     "index.ts",
 ]
 

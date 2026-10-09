@@ -6,6 +6,7 @@
 // =========================================================================
 
 import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
+import SparkMD5 from "npm:spark-md5@3.0.2";
 import { BlobReader, ZipReader, Uint8ArrayWriter } from "jsr:@zip-js/zip-js@2";
 import { getDocumentProxy, extractText as unpdfExtractText } from "npm:unpdf@1.3.2";
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -743,6 +744,96 @@ export async function writeParsedStatement(
   }
 
   return { ok: true, inserted: rows.length };
+}
+
+// ==================== ../_shared/composio_stage.ts ====================
+// =========================================================================
+// _shared/composio_stage.ts
+// =========================================================================
+// Put raw file bytes where Composio tools can reach them. Composio file
+// arguments (GMAIL_SEND_EMAIL attachments, GOOGLEDRIVE_UPLOAD_FILE) take a
+// { name, mimetype, s3key } pointer, never raw bytes, so a file this code
+// built or downloaded itself has to be staged first.
+//
+// Flow, reachable with only the agency's composio_api_key:
+//   1. POST /api/v3/files/upload/request -> { key, new_presigned_url, type }
+//   2. PUT the raw bytes to new_presigned_url with a matching Content-Type
+//   3. Pass key as the s3key
+//
+// Moved here 2026-10-09 from pfa-reconciliation-send so the CTS site pull
+// (document-processor) uses the same function instead of a second copy.
+// =========================================================================
+
+
+export async function stageFileWithComposio(opts: {
+  apiKey: string;
+  fileName: string;
+  mimeType: string;
+  bytes: Uint8Array;
+  toolSlug: string;
+  toolkitSlug: string;
+}): Promise<{ ok: boolean; s3key: string | null; error: string | null }> {
+  let md5: string;
+  try {
+    const ab = opts.bytes.buffer.slice(
+      opts.bytes.byteOffset,
+      opts.bytes.byteOffset + opts.bytes.byteLength,
+    );
+    md5 = SparkMD5.ArrayBuffer.hash(ab);
+  } catch (e) {
+    return { ok: false, s3key: null, error: `md5 failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+
+  let presignRes: Response;
+  try {
+    presignRes = await fetch("https://backend.composio.dev/api/v3/files/upload/request", {
+      method: "POST",
+      headers: { "x-api-key": opts.apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: opts.fileName,
+        mimetype: opts.mimeType,
+        md5,
+        tool_slug: opts.toolSlug,
+        toolkit_slug: opts.toolkitSlug,
+      }),
+    });
+  } catch (e) {
+    return { ok: false, s3key: null, error: `presign threw: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  const presignText = await presignRes.text();
+  if (!presignRes.ok) {
+    return { ok: false, s3key: null, error: `presign HTTP ${presignRes.status}: ${presignText.slice(0, 300)}` };
+  }
+  let presign: any;
+  try { presign = JSON.parse(presignText); }
+  catch { return { ok: false, s3key: null, error: `presign not JSON: ${presignText.slice(0, 200)}` }; }
+
+  const uploadUrl: string | undefined = presign?.new_presigned_url ?? presign?.newPresignedUrl;
+  const s3key: string | undefined = presign?.key;
+  if (!uploadUrl || !s3key) {
+    return { ok: false, s3key: null, error: `presign missing key/url: ${presignText.slice(0, 300)}` };
+  }
+
+  // type === "old" means Composio already holds this exact file (md5 match), so
+  // the PUT is unnecessary. Re-uploading would be harmless, just wasteful.
+  if (presign?.type !== "old") {
+    let putRes: Response;
+    try {
+      putRes = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": opts.mimeType },
+        body: opts.bytes,
+      });
+    } catch (e) {
+      return { ok: false, s3key: null, error: `upload PUT threw: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    if (!putRes.ok) {
+      const t = await putRes.text().catch(() => "");
+      return { ok: false, s3key: null, error: `upload PUT HTTP ${putRes.status}: ${t.slice(0, 300)}` };
+    }
+  }
+
+  return { ok: true, s3key, error: null };
 }
 
 // ==================== lib/composio.ts ====================
@@ -11689,8 +11780,28 @@ export interface CtsMatchResult {
  * actually sent the CTS wins over someone who was not.
  */
 export async function matchCtsCandidate(
-  agencyId: string, candidateName: string,
+  agencyId: string, candidateName: string, email?: string | null,
 ): Promise<CtsMatchResult> {
+  // Email first when the source carries one (the CTS site pull does). It is
+  // the address the candidate gave both systems, so it survives a nickname
+  // ("Nate" on the record, "Nathaniel" on CTS) that an exact-name match
+  // cannot. Still exactly-one-or-nothing; no fuzzy matching.
+  if (email && email.includes("@")) {
+    const { data: byEmail } = await sb
+      .from("hiring_candidates")
+      .select("id, cts_invite_sent_at, cts_completed_at")
+      .eq("agency_id", agencyId)
+      // ilike for case only: escape its wildcards so an "_" in an address is literal.
+      .ilike("email", email.trim().replace(/[\\%_]/g, (ch) => "\\" + ch));
+    const hits = byEmail ?? [];
+    if (hits.length === 1) return { candidateId: hits[0].id, matchCount: 1 };
+    if (hits.length > 1) {
+      const invited = hits.filter((c: any) => c.cts_invite_sent_at && !c.cts_completed_at);
+      if (invited.length === 1) return { candidateId: invited[0].id, matchCount: 1 };
+      return { candidateId: null, matchCount: hits.length };
+    }
+  }
+
   const { data } = await sb
     .from("hiring_candidates")
     .select("id, cts_invite_sent_at, cts_completed_at, status")
@@ -11705,6 +11816,387 @@ export async function matchCtsCandidate(
   if (invited.length === 1) return { candidateId: invited[0].id, matchCount: 1 };
 
   return { candidateId: null, matchCount: all.length };
+}
+
+// ==================== parsers/cts_site.ts ====================
+// =========================================================================
+// parsers/cts_site.ts
+// =========================================================================
+// Reads finished CTS Sales Profiles straight off the vendor's admin site
+// (app.ctssalesprofile.com). No AI anywhere: the report page is plain HTML
+// tables, so every score is read from its own labelled cell.
+//
+// Peter, 2026-10-09: this replaces Alvi downloading the PDFs by hand. The site
+// is checked when the CTS "Profile Complete" notice reaches the inbox, plus a
+// once-a-day backup sweep. Each finished, unarchived Candidate profile is
+// opened at View Reports > SF Sales (Likert) (older profiles: the report named
+// "SF Selling Team Member"), read, its PDF downloaded, and once Newtworks holds
+// the result the profile is archived in CTS so the next sweep skips it.
+//
+// This file only talks to the site. Matching, filing the PDF and saving the
+// scores happen in index.ts through the same path every CTS result takes:
+// processOneAttachment -> record_cts_result(), the only writer.
+//
+// Site mechanics (worked out 2026-10-09; see operational_rule "CTS automatic
+// pull - design, login, site mechanics"):
+//   - Login: GET /admin for cookies, then POST /ajax ajax_nav=login with
+//     user_type_ids=1,2,3,6 (Administrator). tz must be a short offset like
+//     "-5"; a zone name overflows their column and their server returns 500.
+//   - Pages: POST /access { nav, sub_nav, auth_id }.
+//   - Completed list hides archived profiles unless filter_archived=1.
+//   - Report menu per profile: POST /ajax ajax_nav=report_link_dropdown.
+//   - PDF: the report URL with pdf=1 (the page's download button).
+//   - Archive: POST /ajax ajax_nav=toggle_archived. It is a TOGGLE, so it is
+//     only ever sent for a profile this run just read off the unarchived list.
+//   - The server drops the connection on rapid repeat calls: pace, retry once.
+// =========================================================================
+
+const CTS_BASE = "https://app.ctssalesprofile.com";
+const CTS_PAUSE_MS = 1200;
+const CTS_TIMEOUT_MS = 30000;
+
+export const CTS_SITE_PRIMARY_TRAITS: Record<string, string> = {
+  "deadline motivation": "deadline_motivation",
+  "recognition drive": "recognition_drive",
+  "assertiveness": "assertiveness",
+  "independent spirit": "independent_spirit",
+  "analytical": "analytical",
+  "compassion": "compassion",
+  "self promotion": "self_promotion",
+  "belief in others": "belief_in_others",
+  "optimism": "optimism",
+};
+
+// Same keys the PDF path stores (parsers/cts_profile.ts CTS_SALES_COMPETENCIES).
+export const CTS_SITE_COMPETENCIES: Record<string, string> = {
+  "maintains high activity": "maintains_high_activity",
+  "handles rejection": "handles_rejection",
+  "prospects in community": "prospects_in_community",
+  "dials cold calls": "dials_cold_calls",
+  "listens discovers needs": "listens_discovers_needs",
+  "presents solutions": "presents_solutions",
+  "handles objections gets decisions referrals reviews": "gets_decisions_handles_objections_referrals",
+  "gets decisions handles objections referrals": "gets_decisions_handles_objections_referrals",
+  "receives coaching": "receives_coaching",
+  "positively influences team": "positively_influences_team",
+  "posivitely influences team": "positively_influences_team",
+};
+
+export interface CtsSiteSession {
+  cookies: Map<string, string>;
+  authId: string;
+}
+
+export interface CtsSiteProfile {
+  codeId: string;       // the site's internal id for this profile
+  userId: string | null;
+  name: string;
+  email: string | null;
+  completed: string | null; // YYYY-MM-DD
+  codeNumber: string | null; // the 12-digit code in the notice email
+  category: string;     // "Candidate" or "Employee"
+}
+
+export interface CtsSiteReport {
+  reportName: string;   // e.g. "SF Sales (Likert)"
+  url: string;
+}
+
+function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
+
+function absorbCookies(jar: Map<string, string>, res: Response) {
+  const list: string[] = typeof (res.headers as any).getSetCookie === "function"
+    ? (res.headers as any).getSetCookie()
+    : (res.headers.get("set-cookie") ? [res.headers.get("set-cookie") as string] : []);
+  for (const c of list) {
+    const pair = c.split(";")[0];
+    const i = pair.indexOf("=");
+    if (i > 0) jar.set(pair.slice(0, i).trim(), pair.slice(i + 1).trim());
+  }
+}
+
+function cookieHeader(jar: Map<string, string>): string {
+  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+}
+
+/** One paced request with a single retry on a dropped connection. */
+async function ctsFetch(
+  jar: Map<string, string>, url: string,
+  init: { method?: string; form?: Record<string, string>; ajax?: boolean } = {},
+): Promise<Response> {
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await sleep(attempt === 0 ? CTS_PAUSE_MS : CTS_PAUSE_MS * 3);
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), CTS_TIMEOUT_MS);
+    try {
+      const headers: Record<string, string> = {
+        "User-Agent": "Mozilla/5.0 (Newtworks CTS pull)",
+        Cookie: cookieHeader(jar),
+        Referer: `${CTS_BASE}/admin`,
+      };
+      if (init.ajax) headers["X-Requested-With"] = "XMLHttpRequest";
+      let body: string | undefined;
+      if (init.form) {
+        headers["Content-Type"] = "application/x-www-form-urlencoded";
+        body = new URLSearchParams(init.form).toString();
+      }
+      const res = await fetch(url, { method: init.method ?? (body ? "POST" : "GET"), headers, body, signal: ctl.signal, redirect: "follow" });
+      absorbCookies(jar, res);
+      return res;
+    } catch (e) {
+      lastErr = e;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  throw new Error(`CTS site did not answer ${url.replace(/auth_id=[^;&]+/, "auth_id=…")}: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
+}
+
+export async function ctsLogin(email: string, password: string): Promise<CtsSiteSession> {
+  const jar = new Map<string, string>();
+  const first = await ctsFetch(jar, `${CTS_BASE}/admin`);
+  await first.text();
+  const res = await ctsFetch(jar, `${CTS_BASE}/ajax`, {
+    ajax: true,
+    form: {
+      user_type_ids: "1,2,3,6",
+      email, password,
+      ajax_nav: "login",
+      device_id: "", os: "Linux", browser: "Chrome", screen_res: "1920x1080", tz: "-5",
+    },
+  });
+  const text = await res.text();
+  let j: any = null;
+  try { j = JSON.parse(text); } catch { /* handled below */ }
+  if (!res.ok || !j || String(j.success) !== "1") {
+    throw new Error(`CTS login failed (HTTP ${res.status})`);
+  }
+  const content = String(j.content ?? "");
+  const m = content.match(/name=["']auth_id["'][^>]*value=["']([^"']+)/) ??
+            content.match(/value=["']([^"']+)["'][^>]*name=["']auth_id/);
+  if (!m) throw new Error("CTS login answered without a session id");
+  return { cookies: jar, authId: m[1] };
+}
+
+function cellText(html: string): string {
+  return html.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ").trim();
+}
+
+function usDateToIso(s: string): string | null {
+  const m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  return m ? `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}` : null;
+}
+
+/** Every finished profile not yet archived in CTS. */
+export async function ctsListUnarchivedCompleted(s: CtsSiteSession): Promise<CtsSiteProfile[]> {
+  const res = await ctsFetch(s.cookies, `${CTS_BASE}/access`, {
+    form: { nav: "profiles", sub_nav: "completed", auth_id: s.authId },
+  });
+  const html = await res.text();
+  if (!/Completed Profiles/i.test(html)) throw new Error("CTS completed-profiles page did not load");
+  // The archived filter must be on Hide, or archived people would come back.
+  const filt = html.match(/<select[^>]*name="filter_archived"[\s\S]*?<\/select>/);
+  if (filt && !/<option value="0" selected>/.test(filt[0])) {
+    throw new Error("CTS completed list is showing archived profiles; refusing to read it");
+  }
+  const tbody = html.match(/<table id="main_table"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/);
+  if (!tbody) throw new Error("CTS completed list has no table");
+
+  // Per-row user id comes from the click handlers further down the page.
+  const userIdByCode = new Map<string, string>();
+  for (const m of html.matchAll(/\.UD_(\d+)', function\(e\) \{ submit_user_details_form\('(\d+)', '\1'/g)) {
+    userIdByCode.set(m[1], m[2]);
+  }
+
+  const out: CtsSiteProfile[] = [];
+  for (const row of tbody[1].matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
+    const cells = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => c[1]);
+    if (cells.length < 8) continue;
+    const code = cells[0].match(/class="UD_(\d+)"/);
+    if (!code) continue;
+    // Archived column: the checkbox carries "checked" when archived.
+    const archived = /class="TA_\d+"\s+checked/.test(cells[7]);
+    if (archived) continue;
+    out.push({
+      codeId: code[1],
+      userId: userIdByCode.get(code[1]) ?? null,
+      name: cellText(cells[0]),
+      email: cellText(cells[1]) || null,
+      completed: usDateToIso(cellText(cells[2])),
+      codeNumber: cellText(cells[3]) || null,
+      category: cellText(cells[4]),
+    });
+  }
+  return out;
+}
+
+/**
+ * The report to read for one profile: SF Sales (Likert), or for older
+ * profiles the report named "SF Selling Team Member". Null when neither is on
+ * the profile's menu.
+ */
+export async function ctsFindSalesReport(s: CtsSiteSession, codeId: string): Promise<CtsSiteReport | null> {
+  const res = await ctsFetch(s.cookies, `${CTS_BASE}/ajax`, {
+    ajax: true, form: { ajax_nav: "report_link_dropdown", auth_id: s.authId, code_id: codeId },
+  });
+  const j = await res.json().catch(() => null);
+  const html = String(j?.content ?? "");
+  const links = [...html.matchAll(/href="?([^"\s>]+)"?>([^<]+)<\/a>/g)]
+    .map((m) => ({ url: m[1], name: m[2].trim() }))
+    .filter((l) => l.url.startsWith("http"));
+  const pick = links.find((l) => /^SF Sales \(Likert\)$/i.test(l.name)) ??
+               links.find((l) => /SF Selling Team Member/i.test(l.name));
+  return pick ? { reportName: pick.name, url: pick.url } : null;
+}
+
+export async function ctsFetchReportHtml(s: CtsSiteSession, report: CtsSiteReport): Promise<string> {
+  const res = await ctsFetch(s.cookies, report.url);
+  const html = await res.text();
+  if (!res.ok || !/Profile Report/i.test(html)) throw new Error(`report page did not load (HTTP ${res.status})`);
+  return html;
+}
+
+/** The report's own download button: same report, pdf=1. */
+export async function ctsDownloadReportPdf(s: CtsSiteSession, report: CtsSiteReport): Promise<Uint8Array> {
+  const url = report.url.replace(/;?$/, ";") + "pdf=1;";
+  const res = await ctsFetch(s.cookies, url);
+  const buf = new Uint8Array(await res.arrayBuffer());
+  const isPdf = buf.length > 4 && buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46; // %PDF
+  if (!res.ok || !isPdf) throw new Error(`PDF download did not return a PDF (HTTP ${res.status}, ${buf.length} bytes)`);
+  return buf;
+}
+
+/** Archive one profile in CTS. Only call for a profile read off the unarchived list this run. */
+export async function ctsArchiveProfile(s: CtsSiteSession, codeId: string): Promise<boolean> {
+  const res = await ctsFetch(s.cookies, `${CTS_BASE}/ajax`, {
+    ajax: true, form: { ajax_nav: "toggle_archived", auth_id: s.authId, code_id: codeId },
+  });
+  const j = await res.json().catch(() => null);
+  return res.ok && (j === null || String(j?.success ?? "1") === "1");
+}
+
+function labelKey(label: string): string {
+  return label.replace(/\?/g, " ").toLowerCase().replace(/[^a-z]+/g, " ").trim();
+}
+
+function slug(label: string): string {
+  return labelKey(label).replace(/\s+/g, "_");
+}
+
+function intOrNull(s: string | undefined): number | null {
+  if (s == null) return null;
+  const m = s.match(/-?\d+/);
+  return m ? Number(m[0]) : null;
+}
+
+const CTS_SITE_MONTHS: Record<string, string> = {
+  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+};
+
+export type CtsSiteParse =
+  | { ok: true; candidateName: string | null; reportDate: string | null; payload: Record<string, unknown> }
+  | { ok: false; candidateName: string | null; error: string };
+
+/**
+ * Read one report page into the payload record_cts_result() takes. Same keys
+ * the PDF path writes. Every number comes from its own labelled table cell,
+ * so there is nothing to guess; a missing piece is a refusal, never a blank.
+ */
+export function parseCtsReportHtml(html: string, reportName: string): CtsSiteParse {
+  const page = html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, "");
+  const text = cellText(page);
+
+  const head = text.match(/Sales Profile Report for\s+(.+?)\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?,?\s+(\d{1,2}),?\s+(\d{4})/i);
+  const candidateName = head ? head[1].trim() : null;
+  const reportDate = head ? `${head[4]}-${CTS_SITE_MONTHS[head[2].toLowerCase().slice(0, 3)]}-${head[3].padStart(2, "0")}` : null;
+
+  const ego = page.match(/Ego Drive Score\s*<span class="egodrivescore">\s*(\d+)/i);
+  const emp = page.match(/Empathy Score\s*<span class="egodrivescore">\s*(\d+)/i);
+  const validity = (name: string) => {
+    const m = page.match(new RegExp(`<h3>\\s*${name}\\s*</h3>\\s*<h2[^>]*>\\s*(Low|Moderate|High)\\s*</h2>`, "i"));
+    return m ? m[1].toLowerCase() : null;
+  };
+
+  // Each block is a <table class="chart"> whose first header names it.
+  const tables = new Map<string, string[][]>();
+  for (const t of page.matchAll(/<table class="chart">([\s\S]*?)<\/table>/g)) {
+    const th = t[1].match(/<th>([\s\S]*?)<\/th>/);
+    const title = th ? cellText(th[1]) : "";
+    const rows: string[][] = [];
+    for (const r of t[1].matchAll(/<tr class="table-data">([\s\S]*?)<\/tr>/g)) {
+      const cells = [...r[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)]
+        .map((c) => c[1]).filter((c) => !/bar-wrapper/.test(c)).map(cellText);
+      if (cells.length && cells[0]) rows.push(cells);
+    }
+    tables.set(title.toLowerCase(), rows);
+  }
+
+  const traitRows = tables.get("primary traits") ?? [];
+  const primary: Record<string, number | null> = {};
+  for (const k of Object.values(CTS_SITE_PRIMARY_TRAITS)) primary[k] = null;
+  for (const r of traitRows) {
+    const key = CTS_SITE_PRIMARY_TRAITS[labelKey(r[0])];
+    if (key) primary[key] = intOrNull(r[1]);
+  }
+  const traitsFound = Object.values(primary).filter((v) => v !== null).length;
+  if (traitsFound < 9) {
+    return { ok: false, candidateName, error: `${reportName}: read ${traitsFound} of 9 primary traits off the page` };
+  }
+
+  const compRows = tables.get("sales competencies") ?? [];
+  const comps: Record<string, number | null> = {};
+  const isLikert = /likert/i.test(reportName);
+  if (isLikert) for (const k of new Set(Object.values(CTS_SITE_COMPETENCIES))) comps[k] = null;
+  for (const r of compRows) {
+    const key = CTS_SITE_COMPETENCIES[labelKey(r[0])] ?? slug(r[0]);
+    comps[key] = intOrNull(r[1]);
+  }
+  const compsFound = Object.values(comps).filter((v) => v !== null).length;
+  if (isLikert && compsFound < 9) {
+    return { ok: false, candidateName, error: `${reportName}: read ${compsFound} of 9 sales competencies off the page` };
+  }
+
+  const lssRow = (rows: string[][], name: string) => {
+    const r = rows.find((x) => labelKey(x[0]) === name);
+    if (!r) return null;
+    const cand = intOrNull(r[3]);
+    return cand === null ? null : { ideal_min: intOrNull(r[1]), ideal_max: intOrNull(r[2]), candidate: cand };
+  };
+  const acc = tables.get("lss accuracy") ?? [];
+  const spd = tables.get("lss speed") ?? [];
+  const lssAccuracy: Record<string, unknown> = {};
+  const lssSpeed: Record<string, unknown> = {};
+  for (const [label, key] of [["math", "math"], ["verbal", "verbal"], ["problem solving", "problem_solving"]]) {
+    const a = lssRow(acc, label); if (a) lssAccuracy[key] = a;
+    const sp = lssRow(spd, label); if (sp) lssSpeed[key] = sp;
+  }
+  const totalRow = acc.find((x) => /^total/i.test(x[0]));
+  if (totalRow) {
+    const nums = totalRow.slice(1).map(intOrNull).filter((n) => n !== null) as number[];
+    const max = totalRow[0].match(/out of\s+(\d+)/i);
+    if (nums.length >= 2) {
+      lssAccuracy.total = { ideal_min: nums[0], max_possible: max ? Number(max[1]) : null, candidate: nums[nums.length - 1] };
+    }
+  }
+
+  const payload: Record<string, unknown> = {
+    ego_drive: ego ? Number(ego[1]) : null,
+    empathy: emp ? Number(emp[1]) : null,
+    reliability: validity("Reliability"),
+    response_distortion: validity("Response Distortion"),
+    primary_traits: primary,
+    sales_competencies: comps,
+    lss_accuracy: lssAccuracy,
+    lss_speed: lssSpeed,
+    report_date: reportDate,
+    report_name: reportName,
+    candidate_name_on_report: candidateName,
+    parsed_at: new Date().toISOString(),
+  };
+  return { ok: true, candidateName, reportDate, payload };
 }
 
 // ==================== index.ts ====================
@@ -11831,6 +12323,17 @@ interface AttachmentInput {
   // when the name printed on the report does not match the record exactly
   // (e.g. "Tracey LaCroix" vs "Tracey M. Lacroix"). Skips the name match.
   ctsCandidateId?: string | null;
+
+  // CTS site pull only (2026-10-09): the scores were already read off the
+  // vendor's report page, so the PDF is filed but not read again. Source and
+  // recorder are what record_cts_result() stores against the result.
+  ctsPayload?: Record<string, unknown> | null;
+  ctsSource?: string | null;
+  ctsRecordedBy?: string | null;
+
+  // Bytes this code staged with Composio itself, so the Drive copy can be
+  // made for a file that never came through Gmail.
+  stagedS3Key?: string | null;
 }
 
 // Statuses that mean a documents row is finished, deliberately parked, or owned
@@ -12094,7 +12597,7 @@ async function downloadAttachmentBytes(
 ): Promise<{ ok: true; bytesB64: string; s3Key: string | null } | { ok: false; error: string }> {
   // Inner zip files have no storage key of their own — they were never
   // downloaded separately, so there is nothing for Drive to pick up.
-  if (att.bytesB64) return { ok: true, bytesB64: att.bytesB64, s3Key: null };
+  if (att.bytesB64) return { ok: true, bytesB64: att.bytesB64, s3Key: att.stagedS3Key ?? null };
   if (!att.attachmentId) return { ok: false, error: "no attachmentId on outer attachment" };
 
   // Composio's GMAIL_GET_ATTACHMENT returns an s3url to fetch the raw bytes.
@@ -13056,6 +13559,7 @@ const ARCHIVE_LABEL_FOR_DOCTYPE: Record<string, string | null> = {
   team_production:          null,
   careerplug_applicant:     "Label_20", // "Team/Hiring/Applicants" (attachment pipeline)
   resume_manual_batch:      "Label_20", // "Team/Hiring/Applicants" (hand-forwarded batches)
+  cts_profile:              "Label_6305563542446837566", // "Team/Hiring/CTS" (added 2026-10-09 with the CTS site pull)
 };
 
 /** account_code -> Gmail label id, cached per run. Populated from
@@ -13850,37 +14354,48 @@ async function processOneAttachment(
         // preserveFormat is on: the default path reinjects newlines using a
         // pattern shaped for State Farm's own PDFs, and this is a different
         // vendor's layout.
-        const ex = await extractText(ctx, att, bytesB64, true);
-        if (!ex.ok) {
-          await markDocument(documentId, "error", 0, [], ex.error);
-          await ctsNeedsHandAlert(ctx.agencyId, att.fileName, null, ex.error, drive?.driveUrl ?? null);
-          results.push({
-            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-            docType, status: "error", jeCount: 0, suspenseCount: 0,
-            error: ex.error, sourceLabel: uploadSource,
-          });
-          break;
-        }
+        // CTS site pull: the scores were read off the vendor's report page
+        // already (parsers/cts_site.ts, no AI). The PDF is only filed.
+        let parsed: { ok: true; candidateName: string | null; payload: Record<string, unknown> } | { ok: false; candidateName: string | null; error: string };
+        if (att.ctsPayload) {
+          parsed = {
+            ok: true,
+            candidateName: (att.ctsPayload.candidate_name_on_report as string | null) ?? null,
+            payload: { ...att.ctsPayload, source_file_name: att.fileName },
+          };
+        } else {
+          const ex = await extractText(ctx, att, bytesB64, true);
+          if (!ex.ok) {
+            await markDocument(documentId, "error", 0, [], ex.error);
+            await ctsNeedsHandAlert(ctx.agencyId, att.fileName, null, ex.error, drive?.driveUrl ?? null);
+            results.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "error", jeCount: 0, suspenseCount: 0,
+              error: ex.error, sourceLabel: uploadSource,
+            });
+            break;
+          }
 
-        const parsed = await parseCtsProfile({
-          agencyId: ctx.agencyId,
-          composioApiKey: ctx.composioApiKey,
-          composioUserId: ctx.composioUserId,
-          documentId,
-          reportText: ex.text,
-          fileName: att.fileName,
-        });
-
-        if (!parsed.ok) {
-          await markDocument(documentId, "error", 0, [], parsed.error);
-          await ctsNeedsHandAlert(
-            ctx.agencyId, att.fileName, parsed.candidateName, parsed.error, drive?.driveUrl ?? null);
-          results.push({
-            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-            docType, status: "error", jeCount: 0, suspenseCount: 0,
-            error: parsed.error, sourceLabel: uploadSource,
+          parsed = await parseCtsProfile({
+            agencyId: ctx.agencyId,
+            composioApiKey: ctx.composioApiKey,
+            composioUserId: ctx.composioUserId,
+            documentId,
+            reportText: ex.text,
+            fileName: att.fileName,
           });
-          break;
+
+          if (!parsed.ok) {
+            await markDocument(documentId, "error", 0, [], parsed.error);
+            await ctsNeedsHandAlert(
+              ctx.agencyId, att.fileName, parsed.candidateName, parsed.error, drive?.driveUrl ?? null);
+            results.push({
+              documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+              docType, status: "error", jeCount: 0, suspenseCount: 0,
+              error: parsed.error, sourceLabel: uploadSource,
+            });
+            break;
+          }
         }
 
         const name = parsed.candidateName;
@@ -13916,8 +14431,8 @@ async function processOneAttachment(
         const { data: rec, error: recErr } = await sb.rpc("record_cts_result", {
           p_candidate_id: match.candidateId,
           p_payload: parsed.payload,
-          p_source: "drive_pdf",
-          p_recorded_by: "document-processor",
+          p_source: att.ctsSource ?? "drive_pdf",
+          p_recorded_by: att.ctsRecordedBy ?? "document-processor",
         });
         const recOk = !recErr && (rec as any)?.ok === true;
         if (!recOk) {
@@ -14457,11 +14972,7 @@ async function processCtsDriveMode(
         outcomes.push({ driveFileId: fileId, fileName, status: "error", error: timedOut ? "download timed out" : `download failed${r ? ` HTTP ${r.status}` : ""}` });
         continue;
       }
-      const buf = new Uint8Array(await r.arrayBuffer());
-      let bin = "";
-      const CHUNK = 0x8000;
-      for (let i = 0; i < buf.length; i += CHUNK) bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
-      bytesB64 = btoa(bin);
+      bytesB64 = bytesToB64(new Uint8Array(await r.arrayBuffer()));
     } catch (e) {
       outcomes.push({ driveFileId: fileId, fileName, status: "error", error: `download threw: ${e instanceof Error ? e.message : String(e)}` });
       continue;
@@ -14483,6 +14994,214 @@ async function processCtsDriveMode(
     }
   }
   return { considered: ids.length, outcomes };
+}
+
+
+/** Raw bytes to base64, in chunks so a large file cannot overflow the call stack. */
+function bytesToB64(buf: Uint8Array): string {
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < buf.length; i += CHUNK) bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+  return btoa(bin);
+}
+
+// ---- mode: cts_site --------------------------------------------------------
+// Peter, 2026-10-09: CTS results come in automatically, no AI, no hands.
+// Logs in to the CTS admin site, reads every finished Candidate profile that
+// is not archived there, and saves each result through the same tail every
+// CTS result takes (processOneAttachment -> record_cts_result, the only
+// writer; the interview invite fires off that write). The PDF from the
+// report's download button is filed in Drive (Team > Hiring > CTS Profiles).
+// Once Newtworks holds the result the profile is archived in CTS, so the next
+// run does not look at it again.
+//
+// Started two ways: a CTS "Profile Complete" notice in the inbox (see
+// ctsNoticeTrigger, on the hourly intake run) and a once-a-day backup sweep
+// (recipe "CTS Site Pull - daily backup", mode cts_site).
+//
+// Nothing is written unless settings.cts_site_pull_live is 'true'. Otherwise,
+// or with body.dry_run = true, it reads the site and reports what it would do:
+// no Newtworks write, no Drive file, no alert, nothing archived in CTS.
+//
+// Employees on the CTS list are left alone. A candidate it cannot match to
+// exactly one record gets a hand-entry task and stays unarchived in CTS.
+interface CtsSiteOutcome {
+  name: string;
+  email: string | null;
+  status: string;
+  candidateId?: string;
+  report?: string;
+  archivedInCts?: boolean;
+  scores?: Record<string, unknown>;
+  error?: string;
+}
+
+async function processCtsSiteMode(
+  ctx: RunCtx, body: any,
+): Promise<{ live: boolean; considered: number; outcomes: CtsSiteOutcome[]; error?: string }> {
+  const live = body?.dry_run !== true &&
+    (await getSetting(ctx.agencyId, "cts_site_pull_live")) === "true";
+  const user = await getSetting(ctx.agencyId, "cts_admin_username");
+  const pass = await getSetting(ctx.agencyId, "cts_admin_password");
+  if (!user || !pass) return { live, considered: 0, outcomes: [], error: "CTS login is not saved in settings" };
+
+  let session;
+  let profiles;
+  try {
+    session = await ctsLogin(user, pass);
+    profiles = await ctsListUnarchivedCompleted(session);
+  } catch (e) {
+    return { live, considered: 0, outcomes: [], error: e instanceof Error ? e.message : String(e) };
+  }
+
+  const maxProfiles = Math.min(Math.max(Number(body?.max_profiles ?? 15) || 15, 1), 25);
+  const outcomes: CtsSiteOutcome[] = [];
+  const handAlert = async (p: { name: string; codeNumber: string | null }, why: string) => {
+    if (!live) return;
+    await ctsNeedsHandAlert(ctx.agencyId, `CTS site ${p.codeNumber ?? p.name}`, p.name,
+      `${why}. Found on the CTS site; it stays unarchived there until this is sorted.`, null);
+  };
+
+  for (const p of profiles) {
+    if (outcomes.filter((o) => o.status !== "skipped_employee").length >= maxProfiles) break;
+    const base = { name: p.name, email: p.email };
+    if (p.category !== "Candidate") {
+      outcomes.push({ ...base, status: "skipped_employee" });
+      continue;
+    }
+    try {
+      const match = await matchCtsCandidate(ctx.agencyId, p.name, p.email);
+      if (!match.candidateId) {
+        const why = match.matchCount === 0
+          ? `"${p.name}" (${p.email ?? "no email"}) matches no candidate record`
+          : `"${p.name}" matches ${match.matchCount} candidate records instead of one`;
+        await handAlert(p, why);
+        outcomes.push({ ...base, status: "no_match", error: why });
+        continue;
+      }
+
+      const { data: cand } = await sb.from("hiring_candidates")
+        .select("cts_completed_at").eq("id", match.candidateId).maybeSingle();
+      if (cand?.cts_completed_at) {
+        // Already on file (an earlier pull, a PDF, or the hand form). Nothing
+        // to record; just clear it off the CTS list.
+        const archived = live ? await ctsArchiveProfile(session, p.codeId) : false;
+        outcomes.push({ ...base, status: "already_on_file", candidateId: match.candidateId, archivedInCts: archived });
+        continue;
+      }
+
+      const report = await ctsFindSalesReport(session, p.codeId);
+      if (!report) {
+        const why = `no "SF Sales (Likert)" or "SF Selling Team Member" report on ${p.name}'s CTS profile`;
+        await handAlert(p, why);
+        outcomes.push({ ...base, status: "no_report", candidateId: match.candidateId, error: why });
+        continue;
+      }
+      const html = await ctsFetchReportHtml(session, report);
+      const parsed = parseCtsReportHtml(html, report.reportName);
+      if (!parsed.ok) {
+        await handAlert(p, parsed.error);
+        outcomes.push({ ...base, status: "read_failed", candidateId: match.candidateId, report: report.reportName, error: parsed.error });
+        continue;
+      }
+
+      if (!live) {
+        outcomes.push({ ...base, status: "would_record", candidateId: match.candidateId, report: report.reportName, scores: parsed.payload });
+        continue;
+      }
+
+      const pdf = await ctsDownloadReportPdf(session, report);
+      const stamp = (p.completed ?? new Date().toISOString().slice(0, 10)).replace(/-/g, "");
+      const fileName = `CTS Profile - ${p.name} - ${stamp}.pdf`;
+      const staged = await stageFileWithComposio({
+        apiKey: ctx.composioApiKey, fileName, mimeType: "application/pdf", bytes: pdf,
+        toolSlug: "GOOGLEDRIVE_UPLOAD_FILE", toolkitSlug: "googledrive",
+      });
+      if (!staged.ok) console.error(`[cts_site] ${fileName}: could not stage for Drive (${staged.error}); the result is still saved`);
+
+      const att: AttachmentInput = {
+        messageId: "", threadId: "", fromEmail: "cts_site", subject: "CTS",
+        receivedAt: new Date().toISOString(), fileName, mimeType: "application/pdf",
+        attachmentId: null, bytesB64: bytesToB64(pdf), parentArchive: "CTS site",
+        ctsCandidateId: match.candidateId,
+        ctsPayload: parsed.payload,
+        ctsSource: "cts_site",
+        ctsRecordedBy: "CTS site pull",
+        stagedS3Key: staged.ok ? staged.s3key : null,
+      };
+      const results = await processOneAttachment(ctx, att, 1, "cts_site");
+      const done = results.find((r) => r.status === "processed");
+      if (!done) {
+        // The shared tail already raised the hand-entry task with its reason.
+        outcomes.push({ ...base, status: "error", candidateId: match.candidateId, report: report.reportName, error: results.map((r) => r.error).filter(Boolean).join("; ") || "not recorded" });
+        continue;
+      }
+      const archived = await ctsArchiveProfile(session, p.codeId);
+      outcomes.push({ ...base, status: "recorded", candidateId: match.candidateId, report: report.reportName, archivedInCts: archived });
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      outcomes.push({ ...base, status: "error", error: why });
+    }
+  }
+  return { live, considered: profiles.length, outcomes };
+}
+
+/**
+ * The CTS "Profile Complete" notice is the trigger for the site pull. It
+ * reaches the inbox forwarded from Peter's State Farm mailbox ("FW: [EXTERNAL]
+ * CTS Profile Complete for <Name>"). Runs on the routine hourly intake only,
+ * and only when the pull is live: one site sweep per run however many
+ * notices are waiting, then each notice is archived to Team/Hiring/CTS.
+ *
+ * A notice stays in the inbox only when the sweep could not reach the site,
+ * or when that person's profile was not on the site yet and the notice is
+ * under a day old (the next hourly run tries again; the daily sweep is the
+ * backstop after that). Anything the sweep could not match or read has its
+ * own hand-entry task, so its notice is archived too.
+ */
+async function ctsNoticeTrigger(ctx: RunCtx): Promise<{ notices: number; swept: boolean; archived: number; error?: string }> {
+  if ((await getSetting(ctx.agencyId, "cts_site_pull_live")) !== "true") {
+    return { notices: 0, swept: false, archived: 0 };
+  }
+  const res = await callComposio({
+    apiKey: ctx.composioApiKey, userId: ctx.composioUserId,
+    connectedAccountId: ctx.gmailAccountId,
+    toolSlug: "GMAIL_FETCH_EMAILS",
+    toolArguments: {
+      query: 'in:inbox subject:"CTS Profile Complete for" newer_than:14d',
+      max_results: 20, include_payload: false, verbose: false,
+    },
+  });
+  if (!res.ok) return { notices: 0, swept: false, archived: 0, error: `inbox search failed: ${res.error}` };
+  const msgs: any[] = res.data?.data?.messages ?? res.data?.messages ?? [];
+  if (msgs.length === 0) return { notices: 0, swept: false, archived: 0 };
+
+  const sweep = await processCtsSiteMode(ctx, {});
+  if (sweep.error) {
+    console.error(`[cts_notice] site sweep failed, notices left in the inbox: ${sweep.error}`);
+    return { notices: msgs.length, swept: false, archived: 0, error: sweep.error };
+  }
+
+  const norm = (x: string) => x.toLowerCase().replace(/[^a-z]+/g, " ").trim();
+  let archived = 0;
+  const seenThreads = new Set<string>();
+  for (const m of msgs) {
+    const threadId: string = m.threadId ?? m.thread_id ?? "";
+    if (!threadId || seenThreads.has(threadId)) continue;
+    seenThreads.add(threadId);
+    const subject: string = m.subject ?? m.preview?.subject ?? "";
+    const who = norm(subject.replace(/^[\s\S]*CTS Profile Complete for\s+/i, ""));
+    const hit = sweep.outcomes.find((o) => norm(o.name) === who);
+    const sentAt = Date.parse(m.messageTimestamp ?? "") || Date.now();
+    const young = Date.now() - sentAt < 24 * 3600 * 1000;
+    // Not on the unarchived list: either already handled and archived in CTS
+    // (done), or not showing on the site yet (wait while young).
+    if (!hit && young) continue;
+    if (hit && hit.status === "error") continue; // transient; next run retries
+    await maybeArchiveThread(ctx, threadId, "cts_profile", null);
+    archived += 1;
+  }
+  return { notices: msgs.length, swept: true, archived };
 }
 
 // ---- Main handler ----------------------------------------------------------
@@ -14586,6 +15305,14 @@ async function run(req: Request): Promise<Response> {
     const startedAt = new Date().toISOString();
     const result = await processCtsDriveMode(cdCtx, body);
     return jsonResponse({ ok: true, mode: "cts_drive", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
+  }
+  if (mode === "cts_site") {
+    // CTS results read straight off the vendor's site. Daily backup sweep;
+    // the inbox notice starts the same sweep from the routine run below.
+    const csCtx: RunCtx = { agencyId, composioApiKey, composioUserId, gmailAccountId, driveAccountId, ...driveFolders };
+    const startedAt = new Date().toISOString();
+    const result = await processCtsSiteMode(csCtx, body);
+    return jsonResponse({ ok: !result.error, mode: "cts_site", started_at: startedAt, finished_at: new Date().toISOString(), ...result });
   }
   if (mode === "composio_probe") {
     // Read-only capability check. See the note on the function above.
@@ -14704,6 +15431,18 @@ async function run(req: Request): Promise<Response> {
     console.error(`[archive-sweep] failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // CTS "Profile Complete" notices start the CTS site pull — routine runs
+  // only. Never fatal to intake.
+  let ctsNotices: Awaited<ReturnType<typeof ctsNoticeTrigger>> | { error: string } = { notices: 0, swept: false, archived: 0 };
+  if (typeof body?.gmail_query !== "string") {
+    try {
+      ctsNotices = await ctsNoticeTrigger(ctx);
+    } catch (e) {
+      ctsNotices = { error: e instanceof Error ? e.message : String(e) };
+      console.error(`[cts_notice] failed: ${(ctsNotices as any).error}`);
+    }
+  }
+
   // Missing-resume request — routine runs only; a gmail_query override is a
   // targeted re-read and should not also send mail.
   let missingResumesRequested = 0;
@@ -14721,6 +15460,7 @@ async function run(req: Request): Promise<Response> {
     attachments_seen: attachments.length,
     archive_sweep_threads: sweepArchived,
     missing_resumes_requested: missingResumesRequested,
+    cts_notices: ctsNotices,
     items_total: allResults.length, // includes inner files from zips
     processed: allResults.filter((p) => p.status === "processed").length,
     skipped: allResults.filter((p) => p.status === "skipped").length,

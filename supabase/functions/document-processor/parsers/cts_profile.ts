@@ -498,8 +498,28 @@ export interface CtsMatchResult {
  * actually sent the CTS wins over someone who was not.
  */
 export async function matchCtsCandidate(
-  agencyId: string, candidateName: string,
+  agencyId: string, candidateName: string, email?: string | null,
 ): Promise<CtsMatchResult> {
+  // Email first when the source carries one (the CTS site pull does). It is
+  // the address the candidate gave both systems, so it survives a nickname
+  // ("Nate" on the record, "Nathaniel" on CTS) that an exact-name match
+  // cannot. Still exactly-one-or-nothing; no fuzzy matching.
+  if (email && email.includes("@")) {
+    const { data: byEmail } = await sb
+      .from("hiring_candidates")
+      .select("id, cts_invite_sent_at, cts_completed_at")
+      .eq("agency_id", agencyId)
+      // ilike for case only: escape its wildcards so an "_" in an address is literal.
+      .ilike("email", email.trim().replace(/[\\%_]/g, (ch) => "\\" + ch));
+    const hits = byEmail ?? [];
+    if (hits.length === 1) return { candidateId: hits[0].id, matchCount: 1 };
+    if (hits.length > 1) {
+      const invited = hits.filter((c: any) => c.cts_invite_sent_at && !c.cts_completed_at);
+      if (invited.length === 1) return { candidateId: invited[0].id, matchCount: 1 };
+      return { candidateId: null, matchCount: hits.length };
+    }
+  }
+
   const { data } = await sb
     .from("hiring_candidates")
     .select("id, cts_invite_sent_at, cts_completed_at, status")
