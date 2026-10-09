@@ -2906,7 +2906,7 @@ function MapJourney({ j, busy, note, mode, setMode, act, atHref, setAt, onFight,
             </>
           ) : cur.placed ? (
             <>
-              <div style={{ fontSize: 12, color: T.slate600 }}>{cur.floor < 0 ? "Down in a house's cellar: the way out is up the stair. " : cur.floor ? `Upstairs in a house, on the ${["2nd", "3rd", "4th", "5th"][cur.floor - 1] || `${cur.floor + 1}th`} floor: the way out is down the stair. ` : ""}{cur.day_left} of walking left today.</div>
+              <div style={{ fontSize: 12, color: T.slate600 }}>{cur.floor < 0 ? "Down in a house's cellar: the way out is up the stair. " : cur.floor ? `Upstairs, on the ${["2nd", "3rd", "4th", "5th"][cur.floor - 1] || `${cur.floor + 1}th`} floor: the way out is down the stair. ` : ""}{cur.day_left} of walking left today.</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 {/* (storeys step) the stair the piece stands on: no time on a journey */}
                 {cur.stair && cur.stair.up && <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => act("rpg_act_stair", { p_participant_id: cur.id, p_dir: 1 })}>Up the stair</button>}
@@ -3263,7 +3263,7 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl }) {
         )}
         {top && cells.some(c => c.feature === "stair") && (
           <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <span style={{ width: 14, height: 14, borderRadius: 3, background: MAP_FEATURE.stair.fill, display: "inline-block" }} />Stairs up to the next floor, or down to a cellar. Use ▴ ▾ above the map to see each floor.
+            <span style={{ width: 14, height: 14, borderRadius: 3, background: MAP_FEATURE.stair.fill, display: "inline-block" }} />Stairs up to the next floor (in houses, church towers, towers and keeps), or down to a cellar. Use ▴ ▾ above the map to see each floor.
           </span>
         )}
         {cells.some(c => c.feature === "mouth") && (
@@ -4147,7 +4147,7 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <div style={label}>Board</div>
         {under && <div style={{ fontSize: 12, color: T.slate700, fontWeight: 600 }}>{under}. Dark squares are solid rock.</div>}
-        {up > 0 && <div style={{ fontSize: 12, color: T.slate700, fontWeight: 600 }}>{floorName(up)} of a house. Brown squares are walls; pale ones are open air.</div>}
+        {up > 0 && <div style={{ fontSize: 12, color: T.slate700, fontWeight: 600 }}>{floorName(up)}. Brown and grey squares are walls; pale ones are open air.</div>}
         {up < 0 && <div style={{ fontSize: 12, color: T.slate700, fontWeight: 600 }}>Cellar of a house. Brown squares are walls; dark ones are earth. The stair is the only way out.</div>}
         {actor && !pending && stair && stair.up && <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => run("rpg_act_stair", { p_participant_id: actor.id, p_dir: 1 }, actor.id)}>Up the stair · {stair.up_ticks} ticks</button>}
         {actor && !pending && stair && stair.down && <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => run("rpg_act_stair", { p_participant_id: actor.id, p_dir: -1 }, actor.id)}>Down the stair · {stair.down_ticks} ticks</button>}
