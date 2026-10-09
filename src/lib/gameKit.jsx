@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { T } from "./theme.js";
 
 // =========================================================================
@@ -68,6 +68,47 @@ export function speak(text, onWord, onEnd, opts = {}) {
   } catch { return false; }
 }
 export function stopSpeaking() { try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch { /* fine */ } }
+
+// ── Full screen: the browser's own full screen where it has one (computer, Android, iPad);
+// iPhone Safari has none, so there the game just fills the whole window. Put `ref` and `frame` on the
+// game's outer box and `button` where the game keeps its small buttons.
+export function useFullscreen() {
+  const ref = useRef(null);
+  const [real, setReal] = useState(false);
+  const [fake, setFake] = useState(false);
+  useEffect(() => {
+    const sync = () => setReal(!!(document.fullscreenElement || document.webkitFullscreenElement));
+    document.addEventListener("fullscreenchange", sync);
+    document.addEventListener("webkitfullscreenchange", sync);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      document.removeEventListener("webkitfullscreenchange", sync);
+      try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); } catch { /* fine */ }
+    };
+  }, []);
+  const full = real || fake;
+  const toggle = () => {
+    if (real) { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch { /* fine */ } return; }
+    if (fake) { setFake(false); return; }
+    const el = ref.current;
+    const ask = el && (el.requestFullscreen || el.webkitRequestFullscreen);
+    if (!ask) { setFake(true); return; }
+    try {
+      const done = ask.call(el);
+      if (done && done.catch) done.catch(() => setFake(true));
+    } catch { setFake(true); }
+  };
+  const frame = full ? { position: fake ? "fixed" : "relative", inset: 0, zIndex: 9999, overflowY: "auto", background: T.slate50, WebkitOverflowScrolling: "touch" } : {};
+  const button = (
+    <button type="button" onClick={toggle} aria-label={full ? "Leave full screen" : "Full screen"} title={full ? "Leave full screen" : "Full screen"}
+      style={{ border: `1px solid ${T.slate300}`, background: T.white, borderRadius: 8, padding: "3px 6px", cursor: "pointer", display: "inline-flex", alignItems: "center" }}>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke={T.slate800} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {full ? <path d="M6 1v5H1M10 1v5h5M6 15v-5H1M10 15v-5h5" /> : <path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5" />}
+      </svg>
+    </button>
+  );
+  return { ref, frame, button, full };
+}
 
 // ── The games' button look.
 export function gameBtn(bg) {

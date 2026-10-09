@@ -11,7 +11,7 @@ import {
   POTIONS, POTION_KEYS, POTION_MAX, TREASURES, EQUIP_MAX, treasuresOwned, treasureLevel, STORY_PARTS,
 } from "../lib/questWorlds.js";
 import { levelStory } from "../lib/questStories.js";
-import { SOUND, setMuted, tone, noise, notes, playSound, speak, stopSpeaking, gameBtn as btn, ReadAloud } from "../lib/gameKit.jsx";
+import { SOUND, setMuted, tone, noise, notes, playSound, speak, stopSpeaking, gameBtn as btn, ReadAloud, useFullscreen } from "../lib/gameKit.jsx";
 
 // =========================================================================
 // SpellingQuest.jsx — the Family spelling game (in the style of Bookworm and
@@ -403,6 +403,7 @@ export default function SpellingQuest() {
   const [bonusKind, setBonusKind] = useState(null); // "rush" | "unscramble" while a bonus round is on
   const [story, setStory] = useState(null); // { world, kind: "intro" | "outro", level } while a story page is up
   const [muted, setMutedState] = useState(SOUND.muted);
+  const fs = useFullscreen();
   const [bonus, setBonus] = useState(null);     // Fire: { word, n } the bonus word to find and how many found this game
   const [runBooks, setRunBooks] = useState({}); // Fire: book words found this game, { bookKey: [words] }
   const runBooksRef = useRef({});
@@ -909,7 +910,7 @@ export default function SpellingQuest() {
   const quit = () => { stopTimers(); setBusy(false); setScreen("map"); };
 
   // ── Screens ───────────────────────────────────────────────────────────
-  const wrap = children => <div style={{ padding: _pad, maxWidth: 640, margin: "0 auto" }}>{children}</div>;
+  const wrap = children => <div ref={fs.ref} style={fs.frame}><div style={{ padding: _pad, maxWidth: 640, margin: "0 auto" }}>{children}</div></div>;
   const title = (
     <div style={{ marginBottom: 12 }}>
       <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900 }}>Spelling Quest</div>
@@ -1114,6 +1115,7 @@ export default function SpellingQuest() {
         {score.toLocaleString()} pts · {progress}
         <button type="button" onClick={toggleMute} aria-label={muted ? "Sound on" : "Sound off"} title={muted ? "Sound on" : "Sound off"}
           style={{ border: `1px solid ${T.slate300}`, background: T.white, borderRadius: 8, padding: "2px 6px", cursor: "pointer", fontSize: 14 }}>{muted ? "🔇" : "🔊"}</button>
+        {fs.button}
       </div>
     </div>
     {mode === "fire" && !run.endless ? <Bar value={score} max={fireCfg.goal} color={T.amber} label="Goal" /> : null}
