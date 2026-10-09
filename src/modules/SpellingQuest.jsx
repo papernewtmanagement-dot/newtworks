@@ -23,8 +23,10 @@ import { SOUND, setMuted, tone, noise, notes, playSound, speak, stopSpeaking, ga
 // monsters and the treasures); every level is five monsters, and level 20 of a
 // world ends in its boss. Each world has a theme and each level a sub-theme,
 // drawn behind the fight (src/components/QuestScene.jsx).
-// Long words leave gem tiles: emerald heals, amethyst cures, sapphire freezes the
-// monster, ruby hits 50% harder, diamond hits twice as hard and heals. Monsters
+// Long words leave gem tiles, as in Bookworm Adventures: every gem adds damage (amethyst
+// +15% up to diamond +100%) and has its own effect: amethyst poisons the monster, emerald
+// heals you, sapphire freezes it, garnet weakens it, ruby sets it on fire, crystal cleans you
+// and the board and shields you, diamond heals you fully and gives one of each potion. Monsters
 // may stone or set fire to a letter, poison you or weaken you. Beaten monsters
 // drop potions (heal, power, freeze, cure) kept between games. Beating a boss
 // wins a treasure; equip up to three. Levels earn 1–3 stars for health left.
@@ -115,12 +117,19 @@ function newBookFinds(word, found) {
 }
 // Monsters mode gems (like Bookworm Adventures): which one a long word leaves.
 function monsterGem(len, fourToo) {
-  if (len >= 7) return "diamond";
-  if (len === 6) return Math.random() < 0.55 ? "ruby" : "sapphire";
-  if (len === 5) return Math.random() < 0.65 ? "emerald" : "amethyst";
+  if (len >= 9) return "diamond";
+  if (len === 8) return "crystal";
+  if (len === 7) return "ruby";
+  if (len === 6) return Math.random() < 0.5 ? "garnet" : "sapphire";
+  if (len === 5) return Math.random() < 0.55 ? "emerald" : "amethyst";
   if (len === 4 && fourToo) return "emerald";
   return null;
 }
+// Extra damage each gem in the word adds (Bookworm Adventures' values).
+const GEM_BONUS = { amethyst: 15, emerald: 20, sapphire: 25, garnet: 30, ruby: 35, crystal: 50, diamond: 100 };
+// Gem effects on the monster: poison and fire hurt it each time you attack.
+const MON_POISON = { turns: 2, share: 0.05 };
+const MON_BURN = { turns: 3, share: 0.07 };
 // Cut-gem colors: hi = top/table glint, mid = left facet, base = body, lo = right facet, deep = bottom facet.
 const GEM_LOOK = {
   green:    { hi: "#D9FBE3", mid: "#6FDB93", base: "#34B464", lo: "#1E8A49", deep: "#11602F", border: "#0D4A24" },
@@ -130,8 +139,10 @@ const GEM_LOOK = {
   ruby:     { hi: "#FFD6D6", mid: "#FF6B6B", base: "#E0201A", lo: "#A8130E", deep: "#6E0905", border: "#560603" },
   sapphire: { hi: "#DCE9FF", mid: "#6FA0FF", base: "#2A62D9", lo: "#1A44A6", deep: "#0E2A6E", border: "#0A1F55" },
   amethyst: { hi: "#F1E2FF", mid: "#C08AF0", base: "#9255C9", lo: "#6A3699", deep: "#45206A", border: "#341650" },
+  garnet:   { hi: "#FFE3C9", mid: "#FFA05C", base: "#E8651E", lo: "#B04712", deep: "#742C08", border: "#5A2105" },
+  crystal:  { hi: "#FFF0F8", mid: "#FFC2E2", base: "#F48FC6", lo: "#D267A3", deep: "#A84680", border: "#8A3468" },
 };
-const GEM_KEY = "Gems: emerald heals · amethyst cures · sapphire freezes · ruby +50% · diamond ×2 and heals";
+const GEM_KEY = "Gems add damage. Amethyst poisons · emerald heals · sapphire freezes · garnet weakens · ruby burns · crystal cleans and shields · diamond heals fully + potions";
 
 // Treasure effects worn in a fight.
 // Treasure effects worn in a fight; each worn treasure carries its powered-up value (questWorlds.treasurePower).
@@ -454,7 +465,8 @@ export default function SpellingQuest() {
   const bookHits = mode === "fire" && valid ? newBookFinds(word, foundBooks) : [];
   const firePoints = Math.round(base * (1 + Math.min(3, selTiles.reduce((a, t) => a + (FIRE_GEM_BONUS[t.kind] || 0), 0)))
     * (bonusHit ? 3 + bonus.n : 1) * (bookHits.length ? 2 : 1));
-  const hitPoints = Math.round(base * (1 + 0.5 * (gems.ruby || 0) + (gems.diamond || 0)) * (fight?.power ? 2 : 1) * (fight?.weak > 0 ? 0.5 : 1)
+  const gemBonus = Object.entries(gems).reduce((a, [k, n]) => a + (GEM_BONUS[k] || 0) * n, 0) / 100;
+  const hitPoints = Math.round(base * (1 + gemBonus) * (fight?.power ? 2 : 1) * (fight?.weak > 0 ? 0.5 : 1)
     * treasureBoost(fight?.eq, selTiles, word.length));
   const preview = mode === "monsters" ? hitPoints : firePoints;
   const gemmed = selTiles.some(t => t.kind !== "normal" && t.kind !== "fire");
@@ -497,7 +509,7 @@ export default function SpellingQuest() {
     if (mode === "monsters") {
       setBoard(newBoard(diff, 4, 4));
       const eq = worn.map(i => owned[i]);
-      const status = { freeze: 0, poison: 0, weak: 0, power: eqCount(eq, "rally") > 0, turns: 0, eq };
+      const status = { freeze: 0, poison: 0, weak: 0, shield: 0, mpoison: 0, mburn: 0, mweak: 0, power: eqCount(eq, "rally") > 0, turns: 0, eq };
       if (endless) {
         const m = endlessMonster(1, diff);
         setFight({ foes: null, idx: 0, stage: 1, monster: m, mhp: m.hp, hp: ENDLESS_HERO_HP, hpMax: ENDLESS_HERO_HP, beaten: 0, ...status });
@@ -624,8 +636,12 @@ export default function SpellingQuest() {
     let weak = f.weak;
     let hit = 0; let mends = 0;
     const notes = [];
+    const shieldLeft = !frozen && f.shield > 0 ? f.shield - 1 : f.shield;
+    const mweakLeft = !frozen && f.mweak > 0 ? f.mweak - 1 : f.mweak;
     if (!frozen) {
       hit = Math.max(1, ri(m.hit[0], m.hit[1]) - eqSum(eq, "shield"));
+      if (f.mweak > 0) { hit = Math.max(1, Math.round(hit / 2)); notes.push("garnet weakened its hit"); }
+      if (f.shield > 0) { hit = 0; notes.push("your crystal shield blocked it"); }
       if (m.power === "heal" && turns % 3 === 0) mends = Math.round(m.hp * 0.08);
       if (Math.random() < 0.35) {
         const open = b2.flat().filter(t => !t.stone && !t.burn && t.kind === "normal");
@@ -641,7 +657,7 @@ export default function SpellingQuest() {
     const total = hit + poisonHurt + burnHurt;
     const hp = Math.max(0, f.hp - total);
     const mhp = Math.min(m.hp, f.mhp + mends);
-    const next = { ...f, hp, mhp, turns, poison, weak, freeze: frozen ? f.freeze - 1 : f.freeze };
+    const next = { ...f, hp, mhp, turns, poison, weak, shield: shieldLeft, mweak: mweakLeft, freeze: frozen ? f.freeze - 1 : f.freeze };
     if (!frozen) later(() => { play(null, "lunge"); sound("growl"); }, delay);
     later(() => {
       if (total) { play("hurt", null); floatUp("hero", `-${total}`, "#D7261E"); sound(notes.length && !mends ? "status" : "hurt"); }
@@ -652,7 +668,7 @@ export default function SpellingQuest() {
         later(() => finishRun({ won: false, finalScore: newScore, finalWords: newWords, fightInfo: { beaten: f.beaten, monster: m.name }, items }), 900);
         return;
       }
-      say(`${frozen ? `${m.name} is frozen solid!` : `${m.name} hits you for ${hit}`}${notes.length ? ` · ${notes.join(" · ")}` : ""}`, frozen && !total ? "good" : "warn");
+      say(`${frozen ? `${m.name} is frozen solid!` : hit ? `${m.name} hits you for ${hit}` : `${m.name} can't hurt you`}${notes.length ? ` · ${notes.join(" · ")}` : ""}`, frozen && !total ? "good" : "warn");
       setBusy(false);
     }, frozen ? delay : delay + 260);
   };
@@ -662,9 +678,18 @@ export default function SpellingQuest() {
     const dmg = hitPoints;
     const eq = f.eq || [];
     const regen = eqSum(eq, "regen");
-    const heal = Math.round(f.hpMax * 0.1 * ((gems.emerald || 0) + (gems.diamond || 0))) + regen;
-    const cured = (gems.amethyst || 0) > 0;
+    // Gem effects (Bookworm Adventures): emerald heals a big chunk, diamond heals fully.
+    const heal = gems.diamond ? f.hpMax : Math.round(f.hpMax * 0.2 * (gems.emerald || 0)) + regen;
+    const cured = (gems.crystal || 0) > 0;
     const freezeAdd = gems.sapphire || 0;
+    const mpoison = gems.amethyst ? MON_POISON.turns : Math.max(0, f.mpoison - 1);
+    const mburn = gems.ruby ? MON_BURN.turns : Math.max(0, f.mburn - 1);
+    const mweak = gems.garnet ? 1 : f.mweak;
+    // Poison and fire already on the monster hurt it again with this attack.
+    const dot = (f.mpoison > 0 ? Math.round(f.monster.hp * MON_POISON.share) : 0) + (f.mburn > 0 ? Math.round(f.monster.hp * MON_BURN.share) : 0);
+    // Diamond: one of each potion too.
+    const bagNow = gems.diamond && bag ? Object.fromEntries(POTION_KEYS.map(k => [k, Math.min(POTION_MAX, (bag[k] || 0) + 1)])) : bag;
+    if (bagNow !== bag) setBag(bagNow);
     const used = new Set(sel);
     const gemKind = monsterGem(word.length, eqCount(eq, "gems") > 0);
     const b = cloneBoard(board);
@@ -672,9 +697,10 @@ export default function SpellingQuest() {
     if (gemKind && spawn.length) pick(spawn).kind = gemKind;
     if (cured) for (const col of b) for (const t of col) { t.stone = 0; t.burn = 0; }
     const newWords = [{ word, points: dmg }, ...words];
-    const mhp = f.mhp - dmg;
+    const mhp = f.mhp - dmg - dot;
     const hp = Math.min(f.hpMax, f.hp + heal);
-    const after = { ...f, mhp, hp, power: false, weak: cured ? 0 : Math.max(0, f.weak - 1), poison: cured ? 0 : f.poison, freeze: f.freeze + freezeAdd };
+    const after = { ...f, mhp, hp, power: false, weak: cured ? 0 : Math.max(0, f.weak - 1), poison: cured ? 0 : f.poison, freeze: f.freeze + freezeAdd,
+      shield: cured ? 1 : f.shield, mpoison, mburn, mweak };
     let newScore = score + dmg;
     setBusy(true); setSel([]); setHint(null); setBoard(b); setWords(newWords); setTurn(turn + 1);
     const praise = PRAISE[tier];
@@ -687,18 +713,23 @@ export default function SpellingQuest() {
       if (heal) later(() => sound("heal"), 200);
       if (freezeAdd) later(() => sound("freeze"), 250);
       if (gemKind) later(() => sound("gem"), 160);
-      floatUp("mon", `-${dmg}`, "#D7261E");
+      floatUp("mon", `-${dmg + dot}`, "#D7261E");
       if (heal) floatUp("hero", `+${heal}`, "#2E8B57");
       setFight({ ...after, mhp: Math.max(0, mhp) });
       const bits = [];
-      if (cured) bits.push("amethyst cured you");
+      if (dot) bits.push(`poison and fire hurt it ${dot} more`);
+      if (gems.amethyst) bits.push(`amethyst poisoned ${f.monster.name}`);
+      if (gems.ruby) bits.push(`ruby set ${f.monster.name} on fire`);
+      if (gems.garnet) bits.push(`garnet weakened ${f.monster.name}`);
+      if (cured) bits.push("crystal cleaned you and the board · shield up");
       if (freezeAdd) bits.push(`sapphire froze ${f.monster.name}`);
+      if (gems.diamond) bits.push("diamond healed you fully · +1 of each potion");
       if (bits.length) say(bits.join(" · "), "good");
     }, 380);
 
     if (mhp > 0) {
       setScore(newScore);
-      monsterTurn(after, b, newWords, newScore, bag, 1100);
+      monsterTurn(after, b, newWords, newScore, bagNow, 1100);
       return;
     }
     // Monster beaten: it may drop a potion (a boss always drops two).
@@ -706,7 +737,7 @@ export default function SpellingQuest() {
     newScore += 50 * f.stage;
     const drops = [];
     const dropCount = f.monster.boss ? 2 : Math.random() < Math.min(0.85, 0.35 + eqSum(eq, "finder") / 100) ? 1 : 0;
-    const items = { ...bag };
+    const items = { ...bagNow };
     for (let i = 0; i < dropCount; i++) { const k = pick(POTION_KEYS); if (items[k] < POTION_MAX) { items[k] += 1; drops.push(POTIONS[k].short); } }
     setScore(newScore);
     later(() => { play(null, "ko"); sound("ko"); }, 900);
@@ -721,7 +752,7 @@ export default function SpellingQuest() {
     const healBetween = Math.round(f.hpMax * (f.foes ? 0.1 : 0.15) * eq.reduce((a, t) => a * (t.effect === "mend" ? t.value : 1), 1));
     later(() => {
       setBag(items);
-      setFight({ ...after, idx: f.idx + 1, stage: f.stage + 1, monster: next, mhp: next.hp, hp: Math.min(f.hpMax, hp + healBetween), beaten, freeze: 0, turns: 0 });
+      setFight({ ...after, idx: f.idx + 1, stage: f.stage + 1, monster: next, mhp: next.hp, hp: Math.min(f.hpMax, hp + healBetween), beaten, freeze: 0, turns: 0, mpoison: 0, mburn: 0, mweak: 0, shield: 0 });
       play(null, "enter");
       floatUp("hero", `+${healBetween}`, "#2E8B57");
       say(`You beat ${f.monster.name}!${drops.length ? ` Found: ${drops.join(", ")} potion${drops.length > 1 ? "s" : ""}.` : ""} Here comes ${next.name}${next.boss ? " (boss)" : ""}!`, "good");
@@ -1290,6 +1321,7 @@ function Arena({ fight, hero, world, scene, fx, floats, wide }) {
             {fight.power ? <Chip color="#A8801F">Power ×2</Chip> : null}
             {fight.poison ? <Chip color="#6E8B3E">Poison {fight.poison}</Chip> : null}
             {fight.weak ? <Chip color="#7A6A8C">Weak {fight.weak}</Chip> : null}
+            {fight.shield ? <Chip color="#D267A3">Shield</Chip> : null}
             {(fight.eq || []).map(t => <span key={t.name} title={`${t.name}: ${t.text}`}><TreasureIcon color={t.color} size={16} /></span>)}
           </div>
         </div>
@@ -1297,6 +1329,9 @@ function Arena({ fight, hero, world, scene, fx, floats, wide }) {
           <Bar value={fight.mhp} max={m.hp} color={T.red} label={m.boss ? `${m.name} ★` : m.name} small />
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3, minHeight: 16 }}>
             {fight.freeze ? <Chip color="#3F8DB8">Frozen {fight.freeze}</Chip> : null}
+            {fight.mpoison ? <Chip color="#6E8B3E">Poisoned {fight.mpoison}</Chip> : null}
+            {fight.mburn ? <Chip color="#D7261E">Burning {fight.mburn}</Chip> : null}
+            {fight.mweak ? <Chip color="#E8651E">Weak</Chip> : null}
             {m.power ? <span style={{ fontSize: 11, color: T.slate600 }}>{POWER_TEXT[m.power]}</span> : null}
           </div>
         </div>
