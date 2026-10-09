@@ -2643,6 +2643,83 @@ function MapUnderGrid({ v, px }) {
     </svg>
   );
 }
+// Weather (weather step 1, 2026-10-09): the weather of the open journey over the grid shown, from
+// rpg_map_weather_view (the rule is rpg_map_weather_at, on the server; nothing here decides weather). A grid inside one
+// Country cell gets one weather, drawn over the whole map as a light moving layer (rain streaks, snowflakes, fog, dust);
+// the Country grid marks each cell with a small symbol, only for weather worth seeing (fog, rain, storm, snow, blizzard,
+// dust). Every layer is a tiled picture moved by CSS, so it costs next to nothing to draw, and it stands still for a
+// viewer who has asked their device for less motion.
+const mapWxTile = (w, h, body) => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'>${body}</svg>`)}")`;
+const MAP_WX_RAIN = mapWxTile(48, 48, "<g stroke='rgb(170,195,230)' stroke-width='1.4' stroke-linecap='round' opacity='.75'><line x1='6' y1='2' x2='3' y2='13'/><line x1='22' y1='18' x2='19' y2='29'/><line x1='38' y1='6' x2='35' y2='17'/><line x1='14' y1='34' x2='11' y2='45'/><line x1='42' y1='30' x2='39' y2='41'/></g>");
+const MAP_WX_SNOW = mapWxTile(60, 60, "<g fill='white' opacity='.85'><circle cx='8' cy='6' r='1.8'/><circle cx='30' cy='18' r='1.3'/><circle cx='50' cy='9' r='2.2'/><circle cx='18' cy='38' r='2'/><circle cx='44' cy='44' r='1.5'/><circle cx='4' cy='52' r='1.2'/></g>");
+const MAP_WX_DUST = mapWxTile(80, 40, "<g stroke='rgb(150,110,60)' stroke-width='1.2' stroke-linecap='round' opacity='.45'><line x1='4' y1='6' x2='26' y2='7'/><line x1='40' y1='16' x2='70' y2='17'/><line x1='12' y1='28' x2='34' y2='29'/><line x1='52' y1='35' x2='76' y2='36'/></g>");
+const MAP_WX_CLOUD = "radial-gradient(closest-side, rgba(255,255,255,.55), rgba(255,255,255,0)), radial-gradient(closest-side, rgba(255,255,255,.45), rgba(255,255,255,0))";
+const MAP_WX_SHADE = "radial-gradient(closest-side, rgba(40,50,65,.18), rgba(40,50,65,0)), radial-gradient(closest-side, rgba(40,50,65,.14), rgba(40,50,65,0))";
+// each weather: its layers over the map (CSS background, size and the animation that moves it), a wash of color under
+// them, and on the Country grid the small symbol of a cell (null = not marked)
+const MAP_WEATHER = {
+  clear: { layers: [], wash: null, mark: null },
+  cloudy: { layers: [{ bg: MAP_WX_SHADE, size: "60% 45%, 45% 35%", anim: "rpgWxDrift 60s linear infinite alternate" }], wash: "rgba(90,100,115,.10)", mark: null },
+  fog: { layers: [{ bg: MAP_WX_CLOUD, size: "70% 50%, 55% 40%", anim: "rpgWxDrift 45s linear infinite alternate" }], wash: "rgba(232,236,240,.50)", mark: "fog" },
+  rain: { layers: [{ bg: MAP_WX_RAIN, size: "48px 48px", anim: "rpgWxRain .55s linear infinite" }], wash: "rgba(60,75,95,.12)", mark: "rain" },
+  storm: { layers: [{ bg: MAP_WX_RAIN, size: "48px 48px", anim: "rpgWxRain .4s linear infinite" }, { bg: MAP_WX_RAIN, size: "36px 36px", anim: "rpgWxRain .3s linear infinite" }, { bg: "rgba(255,255,255,.9)", size: "auto", anim: "rpgWxFlash 7s linear infinite" }], wash: "rgba(30,40,60,.26)", mark: "storm" },
+  snow: { layers: [{ bg: MAP_WX_SNOW, size: "60px 60px", anim: "rpgWxSnow 5s linear infinite" }], wash: "rgba(240,244,250,.18)", mark: "snow" },
+  blizzard: { layers: [{ bg: MAP_WX_SNOW, size: "60px 60px", anim: "rpgWxBlow 1.4s linear infinite" }, { bg: MAP_WX_SNOW, size: "40px 40px", anim: "rpgWxBlow .9s linear infinite" }], wash: "rgba(240,244,250,.45)", mark: "blizzard" },
+  dust: { layers: [{ bg: MAP_WX_DUST, size: "80px 40px", anim: "rpgWxDust 1.2s linear infinite" }], wash: "rgba(196,160,100,.35)", mark: "dust" },
+};
+const MAP_WX_CSS = `@keyframes rpgWxRain { from { background-position: 0 0, 0 0 } to { background-position: -12px 48px, -9px 36px } }
+@keyframes rpgWxSnow { from { background-position: 0 0 } to { background-position: 12px 60px } }
+@keyframes rpgWxBlow { from { background-position: 0 0 } to { background-position: 60px 20px } }
+@keyframes rpgWxDust { from { background-position: 0 0 } to { background-position: 80px 4px } }
+@keyframes rpgWxDrift { from { background-position: 10% 20%, 80% 70% } to { background-position: 60% 40%, 20% 30% } }
+@keyframes rpgWxFlash { 0%, 90%, 92.5%, 94%, 100% { opacity: 0 } 91% { opacity: .55 } 93% { opacity: .35 } }
+@media (prefers-reduced-motion: reduce) { .rpg-wx-layer { animation: none !important } }`;
+// the small symbol of a Country cell, drawn in a 24 x 24 box
+function MapWxMark({ kind }) {
+  const cloud = <path d="M6 15a4 4 0 0 1 .6-8 5 5 0 0 1 9.6 1.4A3.3 3.3 0 0 1 17 15z" fill="#f4f6f9" stroke="#5b6675" strokeWidth="1.2" />;
+  const body = {
+    fog: <g stroke="#6b7685" strokeWidth="1.8" strokeLinecap="round"><line x1="4" y1="8" x2="20" y2="8" /><line x1="2" y1="13" x2="18" y2="13" /><line x1="6" y1="18" x2="22" y2="18" /></g>,
+    rain: <>{cloud}<g stroke="#4a78c0" strokeWidth="1.6" strokeLinecap="round"><line x1="8" y1="17" x2="7" y2="21" /><line x1="12" y1="17" x2="11" y2="21" /><line x1="16" y1="17" x2="15" y2="21" /></g></>,
+    storm: <>{cloud}<path d="M12.5 15 9.5 20h3l-1.5 3.5 4.5-5.5h-3l1.5-3z" fill="#f2c230" stroke="#8a6a10" strokeWidth=".8" /></>,
+    snow: <>{cloud}<g fill="#5b8fd6"><circle cx="8" cy="19" r="1.3" /><circle cx="12" cy="21" r="1.3" /><circle cx="16" cy="19" r="1.3" /></g></>,
+    blizzard: <>{cloud}<g stroke="#5b8fd6" strokeWidth="1.6" strokeLinecap="round"><line x1="4" y1="18" x2="20" y2="17" /><line x1="6" y1="21.5" x2="18" y2="20.5" /></g></>,
+    dust: <g stroke="#a0773e" strokeWidth="1.8" strokeLinecap="round" fill="none"><path d="M3 8h12a3 3 0 1 0-3-3" /><path d="M3 13h17" /><path d="M3 18h10a3 3 0 1 1-3 3" /></g>,
+  }[kind];
+  return body ? <svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true">{body}</svg> : null;
+}
+// The weather drawn over the map box (left and top past the 16px edge numbers, like the pieces): w from
+// rpg_map_weather_view; cells = the cells of the grid, so a cell not found yet carries no mark
+function MapWeather({ w, cols, rows, cells }) {
+  if (!w || typeof w !== "object") return null;
+  const box = { position: "absolute", left: 16, top: 16, right: 0, bottom: 0, pointerEvents: "none", overflow: "hidden" };
+  if (w.here && typeof w.here === "object") {
+    const look = MAP_WEATHER[w.here.kind] || MAP_WEATHER.clear;
+    if (!look.wash && look.layers.length === 0) return null;
+    return (
+      <div aria-hidden="true" style={box}>
+        <style>{MAP_WX_CSS}</style>
+        {look.wash && <div style={{ position: "absolute", inset: 0, background: look.wash }} />}
+        {look.layers.map((l, n) => (
+          <div key={n} className="rpg-wx-layer" style={{ position: "absolute", inset: 0, backgroundImage: l.bg.startsWith("rgba") ? "none" : l.bg,
+            backgroundColor: l.bg.startsWith("rgba") ? l.bg : "transparent", backgroundSize: l.size, backgroundRepeat: l.size === "auto" ? "no-repeat" : "repeat", animation: l.anim }} />
+        ))}
+      </div>
+    );
+  }
+  const hidden = new Set((Array.isArray(cells) ? cells : []).filter(c => c.kind === "unknown").map(c => `${c.x},${c.y}`));
+  const marks = (Array.isArray(w.cells) ? w.cells : []).filter(c => (MAP_WEATHER[c.kind] || {}).mark && !hidden.has(`${c.x},${c.y}`));
+  if (marks.length === 0) return null;
+  return (
+    <div aria-hidden="true" style={box}>
+      {marks.map(c => (
+        <div key={`${c.x},${c.y}`} style={{ position: "absolute", left: `${((c.x - 1) / cols) * 100 + (0.58 / cols) * 100}%`, top: `${((c.y - 1) / rows) * 100 + (0.04 / rows) * 100}%`,
+          width: `${(0.38 / cols) * 100}%`, height: `${(0.38 / rows) * 100}%`, filter: "drop-shadow(0 0 1px rgba(255,255,255,.9))" }}>
+          <MapWxMark kind={c.kind} />
+        </div>
+      ))}
+    </div>
+  );
+}
 function MapArt({ art, px }) {
   const names = useMemo(() => mapNames(art.names, art.blocks, px, art.wide, art.high), [art, px]);
   return (
@@ -2787,6 +2864,22 @@ function MapsTab({ isParent, onError, onFight }) {
     setTick(t => t + 1);
   }, [busy, onError]);
   const j = v && v.journey && typeof v.journey === "object" ? v.journey : null;
+  // (weather step 1) the weather over this grid at the journey clock, read after the grid itself; none with no journey
+  // open or on the World and Continent grids
+  const [wx, setWx] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    setWx(null);
+    if (!v || !(v.journey && typeof v.journey === "object") || (Number(v.level) || 1) < 3) return undefined;
+    const [x0, y0] = mapOrigin(v);
+    (async () => {
+      const { data, error } = await supabase.rpc("rpg_map_weather_view", { p_level: Number(v.level), p_x0: x0, p_y0: y0 });
+      if (!alive) return;
+      if (error) { onError(error.message); return; }
+      setWx(data && typeof data === "object" ? data : null);
+    })();
+    return () => { alive = false; };
+  }, [v, onError]);
   // a walk or a placing that no longer fits the journey (the turn passed, the piece left) is dropped
   const live = mode && j && (mode.kind === "place" ? (j.pieces || []).some(p => p.id === mode.id)
     : j.status === "active" && j.current === mode.id);
@@ -2815,7 +2908,7 @@ function MapsTab({ isParent, onError, onFight }) {
         <div style={{ position: "absolute", inset: 0, overflow: "auto", padding: 12, boxSizing: "border-box" }}>
           <div ref={rootRef}>
             {!v ? <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div>
-              : <MapGrid v={v} atHref={atHref} setAt={setAt} journey={j} onCell={onCell} big keyEl={keyEl} />}
+              : <MapGrid v={v} atHref={atHref} setAt={setAt} journey={j} onCell={onCell} big keyEl={keyEl} weather={wx} />}
           </div>
         </div>
         {/* the side panel: kept in place while closed (slid out of sight) so the key drawn into it stays current */}
@@ -2836,12 +2929,12 @@ function MapsTab({ isParent, onError, onFight }) {
       {!v ? <div style={{ color: T.slate500, fontSize: 13 }}>Loading</div> : wide ? (
         <>
           <div style={{ minWidth: 0 }}>{journey}<MapSide v={v} atHref={atHref} setAt={setAt} order={0} /></div>
-          <MapGrid v={v} atHref={atHref} setAt={setAt} journey={j} onCell={onCell} />
+          <MapGrid v={v} atHref={atHref} setAt={setAt} journey={j} onCell={onCell} weather={wx} />
         </>
       ) : (
         <>
           {journey}
-          <MapGrid v={v} atHref={atHref} setAt={setAt} journey={j} onCell={onCell} />
+          <MapGrid v={v} atHref={atHref} setAt={setAt} journey={j} onCell={onCell} weather={wx} />
           <MapSide v={v} atHref={atHref} setAt={setAt} order={2} />
         </>
       )}
@@ -3041,7 +3134,7 @@ function MapSide({ v, atHref, setAt, order }) {
 // The map itself. It is as wide as the space it gets, held to what the height of the screen can show whole. The
 // picture (MapArt) lies under a grid of clear cells; each cell carries its name and what is in it, and opens the
 // grid inside it. Under the map: the scale, then the key to the grounds and places drawn on this grid.
-function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl }) {
+function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl, weather }) {
   const boxRef = useRef(null);
   // the Underground switch (step 12d): the passages under this grid, drawn over the dimmed land
   const [under, setUnder] = useState(false);
@@ -3187,6 +3280,8 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl }) {
           {art && <MapArt art={art} px={px} />}
           {under && hasUnder && (top ? <MapUnderGrid v={v} px={px} /> : <MapUnder v={v} px={px} />)}
           {grid}
+          {/* (weather step 1) the weather over the grid; none under the ground or in a cellar */}
+          {!(under && hasUnder) && shownFloor >= 0 && <MapWeather w={weather} cols={cols} rows={rows} cells={cells} />}
           {/* (storeys step) on an upper floor only the pieces up there stand, and the squares are not tapped (a walk starts
               from the ground floor) */}
           {tokens}
@@ -3295,6 +3390,14 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl }) {
         ))}
         {costly && <span>Each square adds its own share of time to cross it, inside its ground's range; darker is harder. At +60% a square takes 5 × 1.6 = 8 ticks instead of 5 at Speed 10.</span>}
         {(cells.some(c => c.kind === "unknown") || (detail && detail.cells.some(row => String(row).includes("?")))) && <span style={{ display: "flex", alignItems: "center", gap: 5 }}><MapSwatch what="unknown" size={20} />Not found yet</span>}
+        {/* (weather step 1) the weather in words: here, or the symbols used on the Country grid */}
+        {weather && weather.here && <span>Weather here, {weather.time}: {weather.here.name}.</span>}
+        {weather && Array.isArray(weather.cells) && [...new Set(weather.cells.filter(c => (MAP_WEATHER[c.kind] || {}).mark && !cells.some(k => k.x === c.x && k.y === c.y && k.kind === "unknown")).map(c => c.kind))].map(k => (
+          <span key={`wx-${k}`} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 20, height: 20, display: "inline-block" }}><MapWxMark kind={k} /></span>{(weather.cells.find(c => c.kind === k) || {}).name}
+          </span>
+        ))}
+        {weather && Array.isArray(weather.cells) && <span>Weather at {weather.time}.</span>}
       </div>
       ); return keyEl ? createPortal(key, keyEl) : big ? null : key; })()}
     </div>
