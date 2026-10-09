@@ -2864,13 +2864,13 @@ function MapsTab({ isParent, onError, onFight }) {
     setTick(t => t + 1);
   }, [busy, onError]);
   const j = v && v.journey && typeof v.journey === "object" ? v.journey : null;
-  // (weather step 1) the weather over this grid at the journey clock, read after the grid itself; none with no journey
-  // open or on the World and Continent grids
+  // (weather step 1) the weather over this grid at the journey clock (with no journey open, the start of Day 1), read
+  // after the grid itself; none on the World and Continent grids
   const [wx, setWx] = useState(null);
   useEffect(() => {
     let alive = true;
     setWx(null);
-    if (!v || !(v.journey && typeof v.journey === "object") || (Number(v.level) || 1) < 3) return undefined;
+    if (!v || (Number(v.level) || 1) < 3) return undefined;
     const [x0, y0] = mapOrigin(v);
     (async () => {
       const { data, error } = await supabase.rpc("rpg_map_weather_view", { p_level: Number(v.level), p_x0: x0, p_y0: y0 });
