@@ -35,8 +35,8 @@ const FALLBACK = {
   WHY:     { essence: "Stability",  body: "We believe good information leads to good decisions, and good decisions build a stable life." },
   VISION:  { essence: "Trusted",    body: "We are the trusted resource for anyone who wants to protect and grow their assets and wealth." },
   MISSION: { essence: "Understand", body: "We understand people, and we help them understand what they have, what they don\u2019t have, and why it\u2019s important." },
-  CULTURE: { essence: "Better",     body: "We make others better. We\u2019re positive, hard-working problem-solvers. We communicate clearly and speak the truth with respect." },
-  DUTY:    { essence: "Deliver",    body: "We do what we say we will do. We trust our processes, hit our deadlines, and pursue our goals with focused energy \u2014 finding new customers, earning their business honestly, and keeping their trust for the long haul." },
+  CULTURE: { essence: "Better",     body: "We like people. We make others better. We\u2019re positive, hard-working problem-solvers. We communicate clearly, speak the truth with respect, and show sincere appreciation for the trust placed in us." },
+  DUTY:    { essence: "Deliver",    body: "We do what we say we will do. We trust our processes, hit our deadlines, and reach our goals to find customers, win customers, and keep customers." },
 };
 
 const LS_KEY = "newtworks.identityRibbon.expanded";
