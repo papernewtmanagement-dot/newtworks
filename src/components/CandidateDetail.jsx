@@ -1859,6 +1859,9 @@ const StageStepper = ({ status, saving, onPick, onDecline }) => {
           const isCurrent = s === status;
           const isDone    = !offPipeline && i < currentIdx;
           const busy      = saving === s;
+          // Offer is always green with a check mark and sized to match the
+          // Decline button (Peter, 2026-10-09). A ring marks it as current.
+          const isOffer   = s === "offer";
           return (
             <Fragment key={s}>
               {i > 0 && (
@@ -1869,7 +1872,14 @@ const StageStepper = ({ status, saving, onPick, onDecline }) => {
                 onClick={() => { if (!isCurrent && !saving) onPick(s); }}
                 disabled={!!saving || isCurrent}
                 title={isCurrent ? `Currently ${cfg.label}` : `Move to ${cfg.label}`}
-                style={{
+                style={isOffer ? {
+                  flexShrink: 0, whiteSpace: "nowrap", boxSizing: "border-box",
+                  padding: "9px 16px", fontSize: 12, fontWeight: 700, borderRadius: 20,
+                  border: `1px solid ${T.green}`, background: T.green, color: T.white,
+                  boxShadow: isCurrent ? `0 0 0 3px ${T.greenLt}` : "none",
+                  cursor: isCurrent ? "default" : saving ? "wait" : "pointer",
+                  opacity: saving && !busy ? 0.55 : 1,
+                } : {
                   flexShrink: 0, whiteSpace: "nowrap", boxSizing: "border-box",
                   padding: "6px 12px", fontSize: 11, fontWeight: 700, borderRadius: 20,
                   border: `1px solid ${isCurrent ? (cfg.color || T.slate400) : T.slate200}`,
@@ -1879,7 +1889,7 @@ const StageStepper = ({ status, saving, onPick, onDecline }) => {
                   opacity: saving && !busy ? 0.55 : 1,
                 }}
               >
-                {busy ? "Saving…" : cfg.label || s}
+                {busy ? "Saving…" : isOffer ? `✓ ${cfg.label}` : cfg.label || s}
               </button>
             </Fragment>
           );
@@ -1895,10 +1905,11 @@ const StageStepper = ({ status, saving, onPick, onDecline }) => {
           title={isDeclined ? "Currently declined" : "Decline this candidate"}
           style={{
             flexShrink: 0, whiteSpace: "nowrap", boxSizing: "border-box",
-            padding: "6px 12px", fontSize: 11, fontWeight: 700, borderRadius: 20,
-            border: `1.5px solid ${T.red}`,
-            background: isDeclined ? T.red : T.white,
-            color: isDeclined ? T.white : T.red,
+            padding: "9px 16px", fontSize: 12, fontWeight: 700, borderRadius: 20,
+            border: `1px solid ${T.red}`,
+            background: T.red,
+            color: T.white,
+            boxShadow: isDeclined ? `0 0 0 3px ${T.redLt}` : "none",
             cursor: isDeclined ? "default" : saving ? "wait" : "pointer",
             opacity: saving ? 0.55 : 1,
           }}
