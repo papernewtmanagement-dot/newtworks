@@ -2904,11 +2904,14 @@ function MapJourney({ j, busy, note, mode, setMode, act, atHref, setAt, onFight,
             </>
           ) : cur.placed ? (
             <>
-              <div style={{ fontSize: 12, color: T.slate600 }}>{cur.day_left} of walking left today.</div>
+              <div style={{ fontSize: 12, color: T.slate600 }}>{cur.floor ? `Upstairs in a house, on the ${["2nd", "3rd", "4th", "5th"][cur.floor - 1] || `${cur.floor + 1}th`} floor: the way out is down the stair. ` : ""}{cur.day_left} of walking left today.</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <button type="button" disabled={busy} style={btn(mode && mode.kind === "walk" ? "primary" : "soft", true)}
-                  onClick={() => setMode(mode && mode.kind === "walk" ? null : { kind: "walk", id: cur.id })}>{mode && mode.kind === "walk" ? "Tap the map…" : "Walk"}</button>
-                {Array.isArray(cur.walk_to) && (
+                {/* (storeys step) the stair the piece stands on: no time on a journey */}
+                {cur.stair && cur.stair.up && <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => act("rpg_act_stair", { p_participant_id: cur.id, p_dir: 1 })}>Up the stair</button>}
+                {cur.stair && cur.stair.down && <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => act("rpg_act_stair", { p_participant_id: cur.id, p_dir: -1 })}>Down the stair</button>}
+                {!cur.floor && <button type="button" disabled={busy} style={btn(mode && mode.kind === "walk" ? "primary" : "soft", true)}
+                  onClick={() => setMode(mode && mode.kind === "walk" ? null : { kind: "walk", id: cur.id })}>{mode && mode.kind === "walk" ? "Tap the map…" : "Walk"}</button>}
+                {Array.isArray(cur.walk_to) && !cur.floor && (
                   <button type="button" disabled={busy} style={btn("soft", true)}
                     onClick={() => act("rpg_map_walk", { p_participant_id: cur.id, p_x: cur.walk_to[0], p_y: cur.walk_to[1] })}>Keep walking · {cur.to_go}</button>
                 )}
@@ -3072,7 +3075,9 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl }) {
   // (storeys step) the floor shown on a battle grid with houses of two storeys or more: 0 the ground floor
   const upper = top && Array.isArray(v.floors) ? v.floors.reduce((m, f) => Math.max(m, Array.isArray(f) ? Number(f[0]) || 0 : 0), 0) : 0;
   const [floor, setFloor] = useState(0);
-  useEffect(() => { setFloor(0); }, [v.view]);
+  // the one whose turn it is stands up a house: show that floor (as underground, step 12d3)
+  const curFloor = journey && Array.isArray(journey.pieces) ? Number((journey.pieces.find(p => p.id === journey.current) || {}).floor) || 0 : 0;
+  useEffect(() => { setFloor(curFloor); }, [v.view, curFloor]);
   const shownFloor = Math.min(floor, upper);
   const art = useMemo(() => (under && hasUnder ? null : top ? mapBattle(v, byId, shownFloor) : mapFantasy(v, byId)), [v, byId, top, under, hasUnder, shownFloor]);
   // how many screen pixels one unit of the drawing takes (a cell is 100 units)
@@ -3108,7 +3113,8 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl }) {
   // the pieces of the open journey that stand on this grid, at their spot (thousandths of a cell from the top-left
   // corner); pieces sharing a cell sit side by side, and the one whose turn it is wears a ring
   const rows = Number(v.rows) || 12;
-  const pieces = journey && Array.isArray(journey.pieces) ? journey.pieces.filter(p => Array.isArray(p.spot)) : [];
+  // (storeys step) on a battle grid only the pieces on the floor shown stand on it
+  const pieces = journey && Array.isArray(journey.pieces) ? journey.pieces.filter(p => Array.isArray(p.spot) && (!top || (Number(p.floor) || 0) === shownFloor)) : [];
   const shared = {};
   const tokens = pieces.map(p => {
     const k = `${Math.floor(p.spot[0] / 1000)},${Math.floor(p.spot[1] / 1000)}`;
@@ -3177,8 +3183,10 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl }) {
           {art && <MapArt art={art} px={px} />}
           {under && hasUnder && (top ? <MapUnderGrid v={v} px={px} /> : <MapUnder v={v} px={px} />)}
           {grid}
-          {/* (storeys step) on an upper floor the pieces below are not shown, and the squares are not tapped */}
-          {shownFloor === 0 ? tokens : <div style={{ position: "absolute", left: 16, top: 16, right: 0, bottom: 0 }} />}
+          {/* (storeys step) on an upper floor only the pieces up there stand, and the squares are not tapped (a walk starts
+              from the ground floor) */}
+          {tokens}
+          {shownFloor > 0 && <div style={{ position: "absolute", left: 16, top: 16, right: 0, bottom: 0 }} />}
         </div>
       </div>
       {/* the key under the map; in full screen it sits in the side panel instead (keyEl), out of the map's way */}
@@ -4060,8 +4068,12 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
   const cols = Array.isArray(b.cols) ? b.cols : [];
   const rows = Array.isArray(b.rows) ? b.rows : [];
   const away = b.away && typeof b.away === "object" ? b.away : {};
+  // (storeys step) up a house the board is one floor of it: only the fighters on that floor stand on it
+  const up = Number(b.floor) || 0;
+  const floorName = (f) => (f === 0 ? "Ground floor" : `${["2nd", "3rd", "4th", "5th"][f - 1] || `${f + 1}th`} floor`);
   const at = {};
-  parts.filter(p => p.pos_x != null).forEach(p => { at[`${p.pos_x},${p.pos_y}`] = p; });
+  parts.filter(p => p.pos_x != null && (Number(p.floor) || 0) === up).forEach(p => { at[`${p.pos_x},${p.pos_y}`] = p; });
+  const stair = st && st.stair && typeof st.stair === "object" ? st.stair : null;
   const moveAt = {};
   if (actor && !pending && mode === "move") moves.forEach(m => { moveAt[`${m.x},${m.y}`] = m; });
   const pick = parts.some(p => p.id === who) ? who : (parts[0]?.id || "");
@@ -4092,17 +4104,21 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
       const below = typeof b.under === "string";
       const part = below && Array.isArray(b.parts) ? b.parts[j * w + i] : null;
       const look = part ? MAP_UNDER_PART[part] : null;
+      // (storeys step) up a house: wall, inside wall, floor, stair, or the open air outside its walls
+      const fpart = up > 0 && Array.isArray(b.parts) ? b.parts[j * w + i] || "air" : null;
+      const fcolor = { wall: MAP_WALLS.wall.fill, masonry: MAP_WALLS.masonry.fill, inner: MAP_WALLS.inner.fill, stair: MAP_FEATURE.stair.fill, floor: MAP_FEATURE.floor.fill, air: "#E6EBEE" };
+      const fwords = { wall: "a wall", masonry: "a wall", inner: "an inside wall", stair: "the stair", floor: "floorboards", air: "open air" };
       const n = Number(g[0]) || 0;
       const steps = Math.min(n, 600) / 100;
       const forest = !!g[1];
       const fire = !!g[2];
-      const title = `${nameOf(x, y)}${sea ? (below ? (part === "column" ? ` · ${MAP_UNDER_PART.column.words}` : " · solid rock") : " · sea") : look ? ` · ${look.words}` : ""}${n ? ` · +${n}% time to cross` : ""}${forest ? " · forest" : ""}${fire ? ` · burning (+${s.burn_cost}% more to step into)` : ""}${p ? ` · ${p.name}${p.out ? ` (${p.out})` : ""}` : ""}${m ? ` · ${m.ticks} ticks to get here` : ""}`;
+      const title = fpart ? `${nameOf(x, y)} · ${fwords[fpart] || fpart}${p ? ` · ${p.name}${p.out ? ` (${p.out})` : ""}` : ""}${m ? ` · ${m.ticks} ticks to get here` : ""}` : `${nameOf(x, y)}${sea ? (below ? (part === "column" ? ` · ${MAP_UNDER_PART.column.words}` : " · solid rock") : " · sea") : look ? ` · ${look.words}` : ""}${n ? ` · +${n}% time to cross` : ""}${forest ? " · forest" : ""}${fire ? ` · burning (+${s.burn_cost}% more to step into)` : ""}${p ? ` · ${p.name}${p.out ? ` (${p.out})` : ""}` : ""}${m ? ` · ${m.ticks} ticks to get here` : ""}`;
       const live = pending || (isParent && mode !== "move") || m;
       cells.push(
         <button key={k} type="button" title={title} onClick={() => click(x, y, g)}
           style={{ aspectRatio: "1 / 1", minWidth: 0, padding: 0, margin: 0, position: "relative", borderRadius: 3, fontFamily: "inherit",
                    border: m ? `2px solid ${T.blue}` : `1px solid ${T.slate200}`, cursor: live ? "pointer" : "default",
-                   background: below && sea ? (part === "column" ? MAP_UNDER_PART.column.fill : MAP_UNDER_ROCK) : sea ? "#B9D3DE" : fire ? `hsl(24, 90%, ${86 - steps * 6}%)` : forest ? `hsl(130, 32%, ${88 - steps * 8}%)`
+                   background: fpart ? (fcolor[fpart] || fcolor.air) : below && sea ? (part === "column" ? MAP_UNDER_PART.column.fill : MAP_UNDER_ROCK) : sea ? "#B9D3DE" : fire ? `hsl(24, 90%, ${86 - steps * 6}%)` : forest ? `hsl(130, 32%, ${88 - steps * 8}%)`
                      : look && part !== "floor" ? look.fill : below ? `hsl(36, 16%, ${80 - steps * 8}%)` : n > 0 ? `hsl(75, 28%, ${92 - steps * 9}%)` : T.slate50,
                    display: "flex", alignItems: "center", justifyContent: "center" }}>
           {n > 0 && <span style={{ position: "absolute", top: 0, left: 2, fontSize: 8, lineHeight: 1.2, color: n >= 300 || (below && part !== "floor") ? T.white : T.slate600 }}>{n}</span>}
@@ -4126,6 +4142,9 @@ function FightGrid({ st, isParent, actor, ended, busy, run, pending, onPending }
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <div style={label}>Board</div>
         {under && <div style={{ fontSize: 12, color: T.slate700, fontWeight: 600 }}>{under}. Dark squares are solid rock.</div>}
+        {up > 0 && <div style={{ fontSize: 12, color: T.slate700, fontWeight: 600 }}>{floorName(up)} of a house. Brown squares are walls; pale ones are open air.</div>}
+        {actor && !pending && stair && stair.up && <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => run("rpg_act_stair", { p_participant_id: actor.id, p_dir: 1 }, actor.id)}>Up the stair · {stair.up_ticks} ticks</button>}
+        {actor && !pending && stair && stair.down && <button type="button" disabled={busy} style={btn("soft", true)} onClick={() => run("rpg_act_stair", { p_participant_id: actor.id, p_dir: -1 }, actor.id)}>Down the stair · {stair.down_ticks} ticks</button>}
         {pending ? (
           <>
             <div style={{ fontSize: 12, color: T.slate800, fontWeight: 600 }}>Tap a square for {pending.name}.</div>
