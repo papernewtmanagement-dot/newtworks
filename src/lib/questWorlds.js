@@ -265,13 +265,24 @@ export const levelInfo = n => WORLDS[worldOf(n)].levels[stepOf(n) - 1];
 export const levelName = n => levelInfo(n).name;
 
 // The five monsters in level n (1–400), toughest last. diff scales health and hits.
-// Health is in points: a word hits for its exact score.
+// Health is in points: a word hits for its exact score. Tuned from real games (Oct 2026: kids were
+// winning every fight in one word) and a board simulation: on Medium a good word scores about 250,
+// so a normal monster takes about 3 good words, the last about 4 and a boss about 7. Monsters hit
+// hard enough that a good-word player ends a level near half health, so 3 stars takes better play.
+// Health grows gently by world (about 1.8x by the last world). Hits are a share of the hero's health,
+// eased as fights get longer, so each world is a little harder than the last, not a wall.
+const HP_GROWTH = (w, s) => 1 + 0.04 * w + 0.003 * (s - 1);
+const MONSTER_HP = (w, s) => Math.round(750 * HP_GROWTH(w, s));
+const MONSTER_HIT = (w, s, heroHp) => {
+  const k = heroHp / HP_GROWTH(w, s) ** 0.95;
+  return [Math.max(1, Math.round(k * 0.067)), Math.max(2, Math.round(k * 0.117)) + (s >= 14 ? 1 : 0)];
+};
 export function monstersForLevel(n, diff) {
   const w = worldOf(n);
   const s = stepOf(n);
   const world = WORLDS[w];
-  const hp = 60 + 18 * w + 3 * (s - 1);
-  const hit = [2 + Math.round(w * 0.3), 4 + Math.round(w * 0.5) + (s >= 14 ? 1 : 0)];
+  const hp = MONSTER_HP(w, s);
+  const hit = MONSTER_HIT(w, s, heroHpForLevel(n));
   const keys = [];
   for (let i = 0; i < MONSTERS_PER_LEVEL; i++) keys.push(world.monsters[(s + i) % 4]);
   if (s === LEVELS_PER_WORLD) keys[MONSTERS_PER_LEVEL - 1] = world.boss;
@@ -284,7 +295,7 @@ function makeMonster(key, diff, hp, hit) {
   const boss = !!m.boss;
   return {
     key, ...m,
-    hp: Math.max(20, Math.round((hp * (boss ? 2.4 : 1) * diff.monsterHp) / 10) * 10),
+    hp: Math.max(20, Math.round((hp * (boss ? 2 : 1) * diff.monsterHp) / 10) * 10),
     hit: [Math.max(1, Math.round(hit[0] * diff.monsterHit * (boss ? 1.2 : 1))), Math.max(1, Math.round(hit[1] * diff.monsterHit * (boss ? 1.2 : 1)))],
   };
 }
@@ -300,7 +311,8 @@ export function endlessMonster(stage, diff) {
   const round = Math.floor((stage - 1) / ENDLESS_KEYS.length);
   const w = endlessWorld(stage);
   const k = 1 + 0.4 * round;
-  return makeMonster(key, diff, Math.round((60 + 18 * w) * k), [Math.round((2 + w * 0.3) * k), Math.round((4 + w * 0.5) * k)]);
+  const [lo, hi] = MONSTER_HIT(w, 1, ENDLESS_HERO_HP);
+  return makeMonster(key, diff, Math.round(MONSTER_HP(w, 1) * k), [Math.round(lo * k), Math.round(hi * k)]);
 }
 export const ENDLESS_HERO_HP = 80;
 

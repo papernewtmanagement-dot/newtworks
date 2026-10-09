@@ -191,9 +191,9 @@ function announce(text) {
 //   fire         multiply the chance a fire drops in; burnEvery: fire burns every Nth word
 //   goal         multiply the score a Fire level asks for; hints per level
 const DIFFICULTY = {
-  starter: { label: "Starter", ages: "5–7",   hardLetters: 0,   vowels: [0.38, 0.55], minLen: 3, monsterHp: 0.6,  monsterHit: 0.5,  fire: 0.5,  burnEvery: 2, goal: 0.6, hints: Infinity },
-  easy:    { label: "Easy",    ages: "8–10",  hardLetters: 0.5, vowels: [0.33, 0.5],  minLen: 3, monsterHp: 0.8,  monsterHit: 0.75, fire: 0.75, burnEvery: 1, goal: 0.8, hints: 3 },
-  medium:  { label: "Medium",  ages: "11–13", hardLetters: 1,   vowels: [0.3, 0.5],   minLen: 3, monsterHp: 1,    monsterHit: 1,    fire: 1,    burnEvery: 1, goal: 1,   hints: 1 },
+  starter: { label: "Starter", ages: "5–7",   hardLetters: 0,   vowels: [0.38, 0.55], minLen: 3, monsterHp: 0.25, monsterHit: 1,    fire: 0.5,  burnEvery: 2, goal: 0.6, hints: Infinity },
+  easy:    { label: "Easy",    ages: "8–10",  hardLetters: 0.5, vowels: [0.33, 0.5],  minLen: 3, monsterHp: 0.8,  monsterHit: 0.9,  fire: 0.75, burnEvery: 1, goal: 0.8, hints: 3 },
+  medium:  { label: "Medium",  ages: "11–13", hardLetters: 1,   vowels: [0.3, 0.5],   minLen: 3, monsterHp: 1,    monsterHit: 1.05, fire: 1,    burnEvery: 1, goal: 1,   hints: 1 },
   hard:    { label: "Hard",    ages: "14+",   hardLetters: 1,   vowels: [0.28, 0.48], minLen: 4, monsterHp: 1.25, monsterHit: 1.2,  fire: 1.3,  burnEvery: 1, goal: 1.3, hints: 0 },
 };
 const DIFF_KEYS = ["starter", "easy", "medium", "hard"];
