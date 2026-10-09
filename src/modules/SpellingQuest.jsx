@@ -11,6 +11,7 @@ import {
   POTIONS, POTION_KEYS, POTION_MAX, TREASURES, EQUIP_MAX, treasuresOwned, treasureLevel, STORY_PARTS,
 } from "../lib/questWorlds.js";
 import { levelStory } from "../lib/questStories.js";
+import { SOUND, setMuted, tone, noise, notes, playSound, speak, stopSpeaking, gameBtn as btn, ReadAloud } from "../lib/gameKit.jsx";
 
 // =========================================================================
 // SpellingQuest.jsx — the Family spelling game (in the style of Bookworm and
@@ -67,6 +68,51 @@ const VOWELS = new Set(["A", "E", "I", "O", "U"]);
 const LEN_MULT = { 3: 1, 4: 1.25, 5: 1.5, 6: 2, 7: 2.5, 8: 3, 9: 3.5 };
 const GEM_FOR_LEN = len => (len >= 7 ? "diamond" : len === 6 ? "gold" : len === 5 ? "green" : null);
 const FIRE_GEM_BONUS = { green: 0.5, gold: 1, diamond: 2 };
+// Gems hold off fire, like Bookworm: a fire has to burn this many times to get through one.
+const GEM_TOUGH = { green: 2, gold: 3, diamond: 4 };
+
+// Bonus word (Fire): one word to find; spelling it pays ×3, the next bonus word ×4, and so on.
+const BONUS_LEN = { starter: [3, 4], easy: [4, 5], medium: [4, 6], hard: [5, 6] };
+const BONUS_POOL = {};
+function pickBonusWord(common, dict, diffKey, skip) {
+  const [lo, hi] = BONUS_LEN[diffKey] || [4, 5];
+  const key = `${diffKey}`;
+  if (!BONUS_POOL[key]) BONUS_POOL[key] = [...common].filter(w => w.length >= lo && w.length <= hi && /^[a-pr-z]+$/.test(w) && dict.has(w));
+  const pool = BONUS_POOL[key].filter(w => w !== skip);
+  return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+}
+// New letters lean toward the bonus word's missing letters, so it can actually be spelled.
+function seedBonus(board, tiles, word, chance) {
+  if (!word) return;
+  const have = {};
+  for (const col of board) for (const t of col) if (t.kind !== "fire") have[t.ch] = (have[t.ch] || 0) + 1;
+  const missing = [];
+  for (const ch of word.toUpperCase()) { if (have[ch] > 0) have[ch] -= 1; else missing.push(ch); }
+  for (const t of tiles) {
+    if (!missing.length) return;
+    if (t.kind !== "normal" || Math.random() >= chance) continue;
+    t.ch = missing.splice(Math.floor(Math.random() * missing.length), 1)[0];
+  }
+}
+
+// Word books (Fire), like Bookworm's books: spell any word in a book to open it; the book then
+// lists its other words. Found words stay found from game to game; 10 finds a book.
+const BOOK_GOAL = 10;
+const BOOK_DONE_POINTS = 1000;
+const WORD_BOOKS = [
+  { key: "animals", name: "Animals", icon: "🐾", words: "cat dog pig cow hen fox owl bat ant bee bear deer frog goat lion wolf".split(" ") },
+  { key: "food",    name: "Food",    icon: "🍎", words: "egg ham pie jam bun tea rice bean corn cake meat soup pear plum nut pea".split(" ") },
+  { key: "body",    name: "Body",    icon: "🖐️", words: "arm leg ear eye toe lip hip jaw rib hand foot nose knee chin neck hair".split(" ") },
+  { key: "colors",  name: "Colors",  icon: "🎨", words: "red tan blue pink gold gray teal rose rust navy jade ruby sand mint plum lime".split(" ") },
+  { key: "weather", name: "Weather", icon: "⛅", words: "sun fog ice wet hot dry rain snow wind hail mist cold warm heat gust storm".split(" ") },
+  { key: "home",    name: "Home",    icon: "🏠", words: "bed mat cup pan pot rug mop lamp sofa sink door wall desk fork bowl dish".split(" ") },
+  { key: "sea",     name: "Sea",     icon: "🌊", words: "sea eel ray cod ship boat wave reef tide clam kelp gull shell salt dock fish".split(" ") },
+  { key: "play",    name: "Play",    icon: "🪁", words: "toy ball kite game doll bike swim run hop top card drum slide swing tag jump".split(" ") },
+];
+// Book words this word fills that weren't found before (saved finds plus this game's).
+function newBookFinds(word, found) {
+  return WORD_BOOKS.filter(bk => bk.words.includes(word) && !(found[bk.key] || []).includes(word)).map(bk => bk.key);
+}
 // Monsters mode gems (like Bookworm Adventures): which one a long word leaves.
 function monsterGem(len, fourToo) {
   if (len >= 7) return "diamond";
@@ -101,57 +147,7 @@ function treasureBoost(eq, tiles, letters) {
   return k;
 }
 
-// ── Read aloud: the browser's own voice. onWord gets the index of the word being spoken.
-function speak(text, onWord, onEnd, opts = {}) {
-  try {
-    const synth = window.speechSynthesis;
-    if (!synth || typeof SpeechSynthesisUtterance === "undefined") return false;
-    synth.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = opts.rate || 0.9; u.pitch = opts.pitch || 1.05;
-    const voice = synth.getVoices().find(v => /^en[-_]US/i.test(v.lang)) || synth.getVoices().find(v => /^en/i.test(v.lang));
-    if (voice) u.voice = voice;
-    const starts = [];
-    text.replace(/\S+/g, (w, at) => { starts.push(at); return w; });
-    u.onboundary = e => { if (e.name === "word" || e.name === undefined) { let i = 0; while (i + 1 < starts.length && starts[i + 1] <= e.charIndex) i += 1; onWord(i); } };
-    u.onend = () => onEnd();
-    u.onerror = () => onEnd();
-    synth.speak(u);
-    return true;
-  } catch { return false; }
-}
-function stopSpeaking() { try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch { /* fine */ } }
-
-// ── Sounds: tiny made-up beeps, no files. Off when muted.
-const SOUND = { muted: false, ctx: null };
-try { SOUND.muted = window.localStorage.getItem("sq_muted") === "1"; } catch { SOUND.muted = false; }
-// Each sound is built from tones and noise bursts with WebAudio (no files).
-function audioCtx() {
-  if (SOUND.muted || typeof window === "undefined") return null;
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return null;
-  const ctx = SOUND.ctx || (SOUND.ctx = new AC());
-  if (ctx.state === "suspended") ctx.resume();
-  return ctx;
-}
-function tone(ctx, type, f1, f2, at, len, vol = 0.08) {
-  const o = ctx.createOscillator(); const g = ctx.createGain();
-  o.type = type; o.frequency.setValueAtTime(f1, at); o.frequency.exponentialRampToValueAtTime(Math.max(20, f2), at + len);
-  g.gain.setValueAtTime(vol, at); g.gain.exponentialRampToValueAtTime(0.001, at + len);
-  o.connect(g); g.connect(ctx.destination); o.start(at); o.stop(at + len + 0.02);
-}
-function noise(ctx, at, len, f1, f2, vol = 0.15) {
-  const n = Math.floor(ctx.sampleRate * len);
-  const buf = ctx.createBuffer(1, n, ctx.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
-  const src = ctx.createBufferSource(); src.buffer = buf;
-  const f = ctx.createBiquadFilter(); f.type = "bandpass"; f.Q.value = 1.2;
-  f.frequency.setValueAtTime(f1, at); f.frequency.exponentialRampToValueAtTime(f2, at + len);
-  const g = ctx.createGain(); g.gain.setValueAtTime(vol, at); g.gain.exponentialRampToValueAtTime(0.001, at + len);
-  src.connect(f); f.connect(g); g.connect(ctx.destination); src.start(at); src.stop(at + len);
-}
-const notes = (ctx, t, list, type = "triangle", len = 0.1, vol = 0.07) => list.forEach((f, i) => tone(ctx, type, f, f, t + i * len, len * 1.4, vol));
+// ── Sounds: tiny made-up beeps, no files (building blocks in gameKit). Off when muted.
 const SFX = {
   // tapping letters: each letter a step higher, like Bookworm's rising chime
   tap: (ctx, t, n = 1) => tone(ctx, "triangle", 330 * 2 ** ((Math.min(n, 14) - 1) * 2 / 12), 330 * 2 ** ((Math.min(n, 14) - 1) * 2 / 12), t, 0.08, 0.07),
@@ -176,9 +172,7 @@ const SFX = {
   win: (ctx, t) => notes(ctx, t, [523, 659, 784, 1047, 784, 1047], "triangle", 0.12, 0.08),
   lose: (ctx, t) => { tone(ctx, "sine", 392, 330, t, 0.2, 0.08); tone(ctx, "sine", 294, 196, t + 0.2, 0.4, 0.08); },
 };
-function sound(name, arg) {
-  try { const ctx = audioCtx(); if (ctx && SFX[name]) SFX[name](ctx, ctx.currentTime, arg); } catch { /* no sound on this device */ }
-}
+const sound = (name, arg) => playSound(SFX, name, arg);
 
 // Praise for a word, like Bookworm's announcer: longer words (and gem words) get bigger praise.
 const PRAISE = ["", "", "", "", "Good!", "Great!", "Awesome!", "Fantastic!", "Amazing!", "Incredible!", "Spectacular!"];
@@ -340,7 +334,7 @@ const basePoints = tiles => {
 };
 
 // Guest progress and potions, kept until the page closes.
-const GUEST = { unlocked: {}, items: { heal: 1, power: 1, freeze: 0, cure: 0 }, stars: {}, equip: [], treasure_xp: {} };
+const GUEST = { unlocked: {}, items: { heal: 1, power: 1, freeze: 0, cure: 0 }, stars: {}, equip: [], treasure_xp: {}, books: {} };
 
 export default function SpellingQuest() {
   const _vp = useViewport();
@@ -377,7 +371,10 @@ export default function SpellingQuest() {
   const [equip, setEquip] = useState([]);     // treasure numbers worn (up to 3)
   const [bonusKind, setBonusKind] = useState(null); // "rush" | "unscramble" while a bonus round is on
   const [story, setStory] = useState(null); // { world, kind: "intro" | "outro", level } while a story page is up
-  const [muted, setMuted] = useState(SOUND.muted);
+  const [muted, setMutedState] = useState(SOUND.muted);
+  const [bonus, setBonus] = useState(null);     // Fire: { word, n } the bonus word to find and how many found this game
+  const [runBooks, setRunBooks] = useState({}); // Fire: book words found this game, { bookKey: [words] }
+  const runBooksRef = useRef({});
   const msgTimer = useRef(0);
   const timers = useRef([]);
   const boxRef = useRef(null);
@@ -408,6 +405,12 @@ export default function SpellingQuest() {
     return Object.fromEntries(POTION_KEYS.map(k => [k, Math.max(0, Math.min(POTION_MAX, Number(src[k]) || 0))]));
   }, [player, guestTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const savedBooks = player ? (player.bests?.books || {}) : GUEST.books;
+  const foundBooks = useMemo(() => {
+    const out = {};
+    for (const bk of WORD_BOOKS) out[bk.key] = [...new Set([...(savedBooks[bk.key] || []), ...(runBooks[bk.key] || [])])];
+    return out;
+  }, [savedBooks, runBooks]);
   const starsMap = player ? (player.bests?.stars || {}) : GUEST.stars;
   const starsOf = n => Number(starsMap[`${diffKey}:${n}`]) || 0;
   // Treasures: won by beating a world's boss on any difficulty.
@@ -425,8 +428,7 @@ export default function SpellingQuest() {
   };
   const toggleMute = () => {
     const m = !muted;
-    SOUND.muted = m; setMuted(m);
-    try { window.localStorage.setItem("sq_muted", m ? "1" : "0"); } catch { /* fine */ }
+    setMuted(m); setMutedState(m);
   };
 
   const choosePlayer = id => {
@@ -448,7 +450,10 @@ export default function SpellingQuest() {
   const valid = !!dict && word.length >= diff.minLen && dict.has(word);
   const base = valid ? basePoints(selTiles) : 0;
   const gems = selTiles.reduce((a, t) => ({ ...a, [t.kind]: (a[t.kind] || 0) + 1 }), {});
-  const firePoints = Math.round(base * (1 + Math.min(3, selTiles.reduce((a, t) => a + (FIRE_GEM_BONUS[t.kind] || 0), 0))));
+  const bonusHit = mode === "fire" && valid && !!bonus && word === bonus.word;
+  const bookHits = mode === "fire" && valid ? newBookFinds(word, foundBooks) : [];
+  const firePoints = Math.round(base * (1 + Math.min(3, selTiles.reduce((a, t) => a + (FIRE_GEM_BONUS[t.kind] || 0), 0)))
+    * (bonusHit ? 3 + bonus.n : 1) * (bookHits.length ? 2 : 1));
   const hitPoints = Math.round(base * (1 + 0.5 * (gems.ruby || 0) + (gems.diamond || 0)) * (fight?.power ? 2 : 1) * (fight?.weak > 0 ? 0.5 : 1)
     * treasureBoost(fight?.eq, selTiles, word.length));
   const preview = mode === "monsters" ? hitPoints : firePoints;
@@ -470,6 +475,22 @@ export default function SpellingQuest() {
   };
   const play = (heroMove, monMove) => setFx(f => ({ key: f.key + 1, hero: heroMove, mon: monMove, fly: null, praise: null }));
 
+  // Pick the next bonus word and nudge the board toward its letters.
+  const newBonusWord = (n, skip, fresh) => {
+    loadList("common").then(common => {
+      const w = dict ? pickBonusWord(common, dict, diffKey, skip) : null;
+      if (!w) return;
+      setBonus({ word: w, n });
+      if (!fresh) return; // mid-game, only new letters lean toward it (see submitFire)
+      setBoard(b => {
+        if (!b) return b;
+        const nb = cloneBoard(b);
+        seedBonus(nb, nb.flat().sort(() => Math.random() - 0.5), w, fresh ? 0.5 : 0.25);
+        return nb;
+      });
+    }).catch(() => {});
+  };
+
   const startRun = (endless, level = null) => {
     stopTimers();
     NEXT_ID = 1;
@@ -489,6 +510,8 @@ export default function SpellingQuest() {
     } else {
       setBoard(newBoard(diff, FIRE_SIZE, FIRE_SIZE, endless ? 0 : fireLevel(level, diff).startFires));
       setFight(null); setBag(null);
+      runBooksRef.current = {}; setRunBooks({}); setBonus(null);
+      newBonusWord(0, null, true);
     }
     setSel([]); setScore(0); setWords([]); setTurn(0); setResult(null); setMessage(null); setHint(null);
     setFloats([]); setBusy(false); setFx(f => ({ key: f.key + 1, hero: null, mon: "enter", fly: null }));
@@ -519,6 +542,7 @@ export default function SpellingQuest() {
       if (nextOpen) { const k = `${mode}:${diffKey}`; GUEST.unlocked[k] = Math.max(GUEST.unlocked[k] || 1, nextOpen); }
       if (items) GUEST.items = { ...items };
       if (starKey) GUEST.stars[starKey] = Math.max(GUEST.stars[starKey] || 0, stars);
+      if (mode === "fire") for (const [k, list] of Object.entries(runBooksRef.current)) GUEST.books[k] = [...new Set([...(GUEST.books[k] || []), ...list])];
       setGuestTick(t => t + 1);
       return;
     }
@@ -530,6 +554,7 @@ export default function SpellingQuest() {
       ...(items ? { items, equip: worn } : {}),
       ...(starKey ? { stars_key: starKey, stars } : {}),
       ...(xpAdd.length ? { treasure_xp_add: xpAdd } : {}),
+      ...(mode === "fire" && Object.keys(runBooksRef.current).length ? { books_add: runBooksRef.current } : {}),
     };
     const r = await recordFamilyGame(player.id, gameKey, finalScore, detail);
     setResult({ ...summary, saved: r.saved, isBest: r.isBest });
@@ -743,6 +768,20 @@ export default function SpellingQuest() {
     if (gemKind && spawn.length) pick(spawn).kind = gemKind;
     const plain = spawn.filter(t => t.kind === "normal");
     if (addFire && plain.length) pick(plain).kind = "fire";
+    // Bonus word found: the next one pays more. New letters lean toward whichever bonus word is up.
+    const nextBonusN = bonusHit ? bonus.n + 1 : bonus?.n || 0;
+    if (!bonusHit) seedBonus(b, spawn, bonus?.word, 0.3);
+    // Word books: new finds this game, and any book that just reached its goal.
+    const books = { ...runBooksRef.current };
+    const finished = [];
+    for (const k of bookHits) {
+      books[k] = [...(books[k] || []), word];
+      const had = foundBooks[k].length;
+      if (had < BOOK_GOAL && had + 1 >= BOOK_GOAL) finished.push(k);
+    }
+    runBooksRef.current = books;
+    if (bookHits.length) setRunBooks(books);
+    const bookPoints = finished.length * BOOK_DONE_POINTS;
     let lost = false;
     const rows = b[0].length;
     if (nextTurn % diff.burnEvery === 0) {
@@ -751,19 +790,29 @@ export default function SpellingQuest() {
         for (const id of fires) {
           const r = b[c].findIndex(t => t.id === id);
           if (r === rows - 1) { lost = true; continue; }
-          if (b[c][r + 1].kind === "fire") continue; // a fire never burns another fire
+          const below = b[c][r + 1];
+          if (below.kind === "fire") continue; // a fire never burns another fire
+          // A gem takes a few burns before it gives way.
+          if (GEM_TOUGH[below.kind] && (below.heat || 0) + 1 < GEM_TOUGH[below.kind]) { below.heat = (below.heat || 0) + 1; continue; }
           b[c].splice(r + 1, 1);
           b[c].unshift(newTile(b, diff));
         }
       }
     }
-    const newScore = score + points;
+    const newScore = score + points + bookPoints;
     const newWords = [{ word, points }, ...words];
     setBoard(b); setSel([]); setWords(newWords); setTurn(nextTurn); setHint(null); setScore(newScore);
+    if (bonusHit) newBonusWord(nextBonusN, word, false);
     if (lost) { finishRun({ won: false, finalScore: newScore, finalWords: newWords }); return; }
     if (!run.endless && newScore >= fireCfg.goal) { finishRun({ won: true, finalScore: newScore, finalWords: newWords }); return; }
-    if (tier >= 5) { announce(PRAISE[tier]); sound("fanfare", tier); } else sound("gem");
+    if (tier >= 5 || bonusHit || finished.length) { announce(bonusHit ? "Bonus word!" : PRAISE[tier] || "Book finished!"); sound("fanfare", Math.max(tier, 7)); } else sound("gem");
     const bits = [`${PRAISE[tier] ? `${PRAISE[tier]} ` : ""}${word.toUpperCase()} +${points}`];
+    if (bonusHit) bits.push(`bonus word ×${3 + bonus.n}!`);
+    for (const k of bookHits) {
+      const bk = WORD_BOOKS.find(x => x.key === k);
+      const n = foundBooks[k].length + 1;
+      bits.push(finished.includes(k) ? `${bk.icon} ${bk.name} book finished! +${BOOK_DONE_POINTS}` : n === 1 ? `${bk.icon} ${bk.name} book opened!` : `${bk.icon} ${bk.name} ${Math.min(n, BOOK_GOAL)}/${BOOK_GOAL}`);
+    }
     if (putOut) bits.push("fire out!");
     if (gemKind) bits.push(`${gemKind} tile earned`);
     if (addFire) bits.push("a fire dropped in");
@@ -875,7 +924,7 @@ export default function SpellingQuest() {
       </button>
     );
     if (mode === "fire") {
-      return wrap(<>{title}{head}<FireMap diff={diff} unlocked={unlocked} onPlay={n => startRun(false, n)} />{endlessBtn}</>);
+      return wrap(<>{title}{head}<FireMap diff={diff} unlocked={unlocked} onPlay={n => startRun(false, n)} />{endlessBtn}<BooksPanel found={foundBooks} /></>);
     }
     if (worldView == null) {
       const part = (n, text) => <div style={{ fontSize: 13, color: T.slate700, lineHeight: 1.5, margin: n ? "14px 0 8px" : "0 0 8px" }}><b>Part {n + 1}.</b> {text}</div>;
@@ -1013,6 +1062,13 @@ export default function SpellingQuest() {
       </div>
     </div>
     {mode === "fire" && !run.endless ? <Bar value={score} max={fireCfg.goal} color={T.amber} label="Goal" /> : null}
+    {mode === "fire" && bonus ? (
+      <div style={{ display: "flex", justifyContent: "center", margin: "6px 0" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "4px 12px", borderRadius: 999, background: "#FFF3CD", border: "1px solid #E2B13C", fontSize: 13, color: "#5B4300" }}>
+          ⭐ Bonus word <b style={{ fontSize: 16, letterSpacing: 2 }}>{bonus.word.toUpperCase()}</b> ×{3 + bonus.n}
+        </span>
+      </div>
+    ) : null}
     {mode === "monsters" && !run.endless ? (
       <div style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, color: T.slate600, lineHeight: 1.45, fontStyle: "italic", marginBottom: 4 }}>
         <button type="button" title="Read it to me" aria-label="Read the story to me" onClick={() => speak(levelStory(run.level), () => {}, () => {})}
@@ -1186,9 +1242,6 @@ function BonusRound({ kind, diff, diffKey, dict, width, onDone }) {
   );
 }
 
-function btn(bg) {
-  return { padding: "10px 18px", borderRadius: 10, border: "none", background: bg, color: T.white, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
-}
 
 function QuestStyles() {
   return (
@@ -1373,18 +1426,6 @@ function WorldMap({ world, index, unlocked, starsOf, onPlay, onStory }) {
 
 // A story page: the world's picture, its boss, and the text, read aloud with each word lit up as it's spoken.
 function StoryPage({ world, index, kind, text, label, level, step, button, onDone }) {
-  const words = text.split(/\s+/).filter(Boolean);
-  const [at, setAt] = useState(-1);
-  const [reading, setReading] = useState(false);
-  const canSpeak = typeof window !== "undefined" && !!window.speechSynthesis;
-  const read = () => {
-    if (reading) { stopSpeaking(); setReading(false); setAt(-1); return; }
-    if (speak(text, setAt, () => { setReading(false); setAt(-1); })) setReading(true);
-  };
-  useEffect(() => {
-    if (!SOUND.muted && canSpeak) { const t = setTimeout(read, 300); return () => { clearTimeout(t); stopSpeaking(); }; }
-    return () => stopSpeaking();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div style={{ borderRadius: 16, overflow: "hidden", border: `1px solid ${T.slate200}`, background: T.white }}>
       <div style={{ position: "relative", height: 170, background: world.sky[1] }}>
@@ -1396,17 +1437,7 @@ function StoryPage({ world, index, kind, text, label, level, step, button, onDon
           World {index + 1}: {world.name} · {label}
         </div>
       </div>
-      <div style={{ padding: 16, display: "grid", gap: 14 }}>
-        <div style={{ fontSize: 20, lineHeight: 1.6, color: T.slate900, fontFamily: "Georgia, 'Times New Roman', serif" }}>
-          {words.map((w, i) => (
-            <span key={i} style={{ background: i === at ? "#FFE680" : "transparent", borderRadius: 4, transition: "background 0.1s" }}>{w}{i < words.length - 1 ? " " : ""}</span>
-          ))}
-        </div>
-        <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
-          {canSpeak ? <button type="button" onClick={read} style={btn(T.blue)}>{reading ? "⏹ Stop reading" : "🔊 Read to me"}</button> : null}
-          <button type="button" onClick={onDone} style={btn(T.teal)}>{button}</button>
-        </div>
-      </div>
+      <ReadAloud text={text} button={button} onDone={onDone} />
     </div>
   );
 }
@@ -1457,6 +1488,45 @@ function TreasurePanel({ owned, worn, onToggle }) {
           })}
         </div>
       ) : <div style={{ fontSize: 12, color: T.slate500 }}>Beat a world's boss to find its treasure.</div>}
+    </div>
+  );
+}
+
+// Word books: closed until one of their words is spelled; then the book shows every word, found ones filled in.
+function BooksPanel({ found }) {
+  const [openKey, setOpenKey] = useState(null);
+  const done = WORD_BOOKS.filter(bk => found[bk.key].length >= BOOK_GOAL).length;
+  const shown = WORD_BOOKS.find(bk => bk.key === openKey && found[bk.key].length);
+  return (
+    <div style={{ background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 14, padding: 12, marginTop: 12 }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: T.slate800 }}>Word books · {done} of {WORD_BOOKS.length} finished</div>
+      <div style={{ fontSize: 12, color: T.slate500, marginBottom: 8 }}>Spell a word from a book to open it. Book words score double the first time; find {BOOK_GOAL} to finish a book for +{BOOK_DONE_POINTS}.</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(88px, 1fr))", gap: 6 }}>
+        {WORD_BOOKS.map(bk => {
+          const n = found[bk.key].length;
+          const open = n > 0;
+          const fin = n >= BOOK_GOAL;
+          return (
+            <button key={bk.key} type="button" disabled={!open} onClick={() => setOpenKey(openKey === bk.key ? null : bk.key)} style={{
+              padding: "8px 4px", borderRadius: 10, fontFamily: "inherit", cursor: open ? "pointer" : "default",
+              background: fin ? T.greenLt : open ? (openKey === bk.key ? "#FFF3CD" : T.white) : T.slate100,
+              border: `2px solid ${fin ? T.green : open ? "#E2B13C" : T.slate200}`,
+            }}>
+              <div style={{ fontSize: 20, filter: open ? "none" : "grayscale(1)", opacity: open ? 1 : 0.5 }}>{open ? bk.icon : "📕"}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: open ? T.slate800 : T.slate400 }}>{open ? bk.name : "Closed"}</div>
+              <div style={{ fontSize: 11, color: T.slate500 }}>{fin ? "Finished ✓" : `${n} / ${BOOK_GOAL}`}</div>
+            </button>
+          );
+        })}
+      </div>
+      {shown ? (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+          {shown.words.map(w => {
+            const got = found[shown.key].includes(w);
+            return <span key={w} style={{ padding: "3px 8px", borderRadius: 8, fontSize: 13, fontWeight: got ? 700 : 400, background: got ? T.greenLt : T.slate100, color: got ? T.green : T.slate500, letterSpacing: 1 }}>{got ? `✓ ${w.toUpperCase()}` : w.toUpperCase()}</span>;
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1557,7 +1627,7 @@ function Tile({ tile, size, left, top, order, hinted, danger, onTap }) {
       {gem ? <GemCut gem={gem} id={tile.id || 0} /> : null}
       <span style={{ position: "relative", fontSize: Math.round(size * (tile.ch.length > 1 ? 0.4 : 0.5)), fontWeight: 700, lineHeight: 1 }}>{tile.ch === "QU" ? "Qu" : tile.ch}</span>
       <span style={{ position: "absolute", right: 5, bottom: 3, fontSize: Math.max(9, Math.round(size * 0.17)), opacity: gem ? 0.9 : 0.7 }}>
-        {stone ? tile.stone : burning ? `🔥${tile.burn}` : Math.round((VALUE[tile.ch] || 1) * 10)}
+        {stone ? tile.stone : burning ? `🔥${tile.burn}` : tile.heat && GEM_TOUGH[tile.kind] ? `🛡${GEM_TOUGH[tile.kind] - tile.heat}` : Math.round((VALUE[tile.ch] || 1) * 10)}
       </span>
       {chosen ? <span style={{ position: "absolute", left: 5, top: 3, fontSize: Math.max(9, Math.round(size * 0.19)), fontWeight: 700, opacity: gem ? 1 : 0.85 }}>{order + 1}</span> : null}
     </button>
