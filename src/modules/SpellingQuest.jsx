@@ -7,7 +7,7 @@ import QuestMonster from "../components/QuestMonster.jsx";
 import QuestScene from "../components/QuestScene.jsx";
 import {
   WORLDS, MONSTERS as QUEST_MONSTERS, LEVELS_PER_WORLD, MONSTERS_PER_LEVEL, LEVEL_TOTAL, worldOf, stepOf, levelInfo, levelName,
-  monstersForLevel, heroHpForLevel, endlessMonster, endlessWorld, ENDLESS_HERO_HP, starsFor,
+  monstersForLevel, heroHpForLevel, endlessMonster, endlessWorld, ENDLESS_HERO_HP, heroAttackForLevel, ENDLESS_HERO_ATK, starsFor,
   POTIONS, POTION_KEYS, POTION_MAX, TREASURES, EQUIP_MAX, treasuresOwned, treasureLevel, STORY_PARTS,
 } from "../lib/questWorlds.js";
 import { levelStory } from "../lib/questStories.js";
@@ -116,14 +116,34 @@ function newBookFinds(word, found) {
   return WORD_BOOKS.filter(bk => bk.words.includes(word) && !(found[bk.key] || []).includes(word)).map(bk => bk.key);
 }
 // Monsters mode gems (like Bookworm Adventures): which one a long word leaves.
-function monsterGem(len, fourToo) {
-  if (len >= 9) return "diamond";
-  if (len === 8) return "crystal";
-  if (len === 7) return "ruby";
-  if (len === 6) return Math.random() < 0.5 ? "garnet" : "sapphire";
-  if (len === 5) return Math.random() < 0.55 ? "emerald" : "amethyst";
-  if (len === 4 && fourToo) return "emerald";
+function monsterGem(len, fiveToo) {
+  if (len >= 10) return "diamond";
+  if (len === 9) return "crystal";
+  if (len === 8) return "ruby";
+  if (len === 7) return Math.random() < 0.5 ? "garnet" : "sapphire";
+  if (len === 6 || (len === 5 && fiveToo)) return Math.random() < 0.55 ? "emerald" : "amethyst";
   return null;
+}
+// Overkill (hitting for more than the monster had left) earns a gem too, as in the original.
+function overkillGem(hearts) {
+  if (hearts >= 8) return "diamond";
+  if (hearts >= 5) return "crystal";
+  if (hearts >= 3) return "ruby";
+  if (hearts >= 1.5) return Math.random() < 0.5 ? "garnet" : "sapphire";
+  if (hearts >= 0.5) return Math.random() < 0.55 ? "emerald" : "amethyst";
+  return null;
+}
+// Monsters mode damage is Bookworm Adventures' own: harder letters count as more than one letter
+// (B C F H M P 1.25, V W Y 1.5, J K 1.75, X Z 2, Qu 2.75), and that length sets the hearts:
+// 3 letters 1/2 heart, 4 = 3/4, 5 = 1, 6 = 1 1/2, 7 = 2, 8 = 2 3/4, 9 = 3 1/2 ... 16 = 13 hearts.
+// 100 points to a heart, so the damage shown is still the word's score.
+const LETTER_WEIGHT = { B: 1.25, C: 1.25, F: 1.25, H: 1.25, M: 1.25, P: 1.25, V: 1.5, W: 1.5, Y: 1.5, J: 1.75, K: 1.75, X: 2, Z: 2, QU: 2.75 };
+const DAMAGE_HEARTS = [0, 0, 0, 0.5, 0.75, 1, 1.5, 2, 2.75, 3.5, 4.5, 5.5, 6.75, 8, 9.5, 11, 13];
+function wordDamage(tiles) {
+  const len = tiles.reduce((a, t) => a + (LETTER_WEIGHT[t.ch] || 1), 0);
+  if (len >= 16) return Math.round(100 * (13 + (len - 16) * 2));
+  const lo = Math.floor(len);
+  return Math.round(100 * (DAMAGE_HEARTS[lo] + (DAMAGE_HEARTS[lo + 1] - DAMAGE_HEARTS[lo]) * (len - lo)));
 }
 // Extra damage each gem in the word adds (Bookworm Adventures' values).
 const GEM_BONUS = { amethyst: 15, emerald: 20, sapphire: 25, garnet: 30, ruby: 35, crystal: 50, diamond: 100 };
@@ -203,7 +223,7 @@ function announce(text) {
 //   goal         multiply the score a Fire level asks for; hints per level
 const DIFFICULTY = {
   starter: { label: "Starter", ages: "5–7",   hardLetters: 0,   vowels: [0.38, 0.55], minLen: 3, monsterHp: 0.25, monsterHit: 1,    fire: 0.5,  burnEvery: 2, goal: 0.6, hints: Infinity },
-  easy:    { label: "Easy",    ages: "8–10",  hardLetters: 0.5, vowels: [0.33, 0.5],  minLen: 3, monsterHp: 0.8,  monsterHit: 0.9,  fire: 0.75, burnEvery: 1, goal: 0.8, hints: 3 },
+  easy:    { label: "Easy",    ages: "8–10",  hardLetters: 0.5, vowels: [0.33, 0.5],  minLen: 3, monsterHp: 0.8,  monsterHit: 0.8,  fire: 0.75, burnEvery: 1, goal: 0.8, hints: 3 },
   medium:  { label: "Medium",  ages: "11–13", hardLetters: 1,   vowels: [0.3, 0.5],   minLen: 3, monsterHp: 1,    monsterHit: 1.05, fire: 1,    burnEvery: 1, goal: 1,   hints: 1 },
   hard:    { label: "Hard",    ages: "14+",   hardLetters: 1,   vowels: [0.28, 0.48], minLen: 4, monsterHp: 1.25, monsterHit: 1.2,  fire: 1.3,  burnEvery: 1, goal: 1.3, hints: 0 },
 };
@@ -459,14 +479,14 @@ export default function SpellingQuest() {
   }, [board, sel]);
   const word = selTiles.map(t => t.ch).join("").toLowerCase();
   const valid = !!dict && word.length >= diff.minLen && dict.has(word);
-  const base = valid ? basePoints(selTiles) : 0;
+  const base = valid ? (mode === "monsters" ? wordDamage(selTiles) : basePoints(selTiles)) : 0;
   const gems = selTiles.reduce((a, t) => ({ ...a, [t.kind]: (a[t.kind] || 0) + 1 }), {});
   const bonusHit = mode === "fire" && valid && !!bonus && word === bonus.word;
   const bookHits = mode === "fire" && valid ? newBookFinds(word, foundBooks) : [];
   const firePoints = Math.round(base * (1 + Math.min(3, selTiles.reduce((a, t) => a + (FIRE_GEM_BONUS[t.kind] || 0), 0)))
     * (bonusHit ? 3 + bonus.n : 1) * (bookHits.length ? 2 : 1));
   const gemBonus = Object.entries(gems).reduce((a, [k, n]) => a + (GEM_BONUS[k] || 0) * n, 0) / 100;
-  const hitPoints = Math.round(base * (1 + gemBonus) * (fight?.power ? 2 : 1) * (fight?.weak > 0 ? 0.5 : 1)
+  const hitPoints = Math.round(base * (fight?.atk || 1) * (1 + gemBonus) * (fight?.power ? 2 : 1) * (fight?.weak > 0 ? 0.5 : 1)
     * treasureBoost(fight?.eq, selTiles, word.length));
   const preview = mode === "monsters" ? hitPoints : firePoints;
   const gemmed = selTiles.some(t => t.kind !== "normal" && t.kind !== "fire");
@@ -509,7 +529,8 @@ export default function SpellingQuest() {
     if (mode === "monsters") {
       setBoard(newBoard(diff, 4, 4));
       const eq = worn.map(i => owned[i]);
-      const status = { freeze: 0, poison: 0, weak: 0, shield: 0, mpoison: 0, mburn: 0, mweak: 0, power: eqCount(eq, "rally") > 0, turns: 0, eq };
+      const status = { freeze: 0, poison: 0, weak: 0, shield: 0, mpoison: 0, mburn: 0, mweak: 0, power: eqCount(eq, "rally") > 0, turns: 0, eq,
+        atk: endless ? ENDLESS_HERO_ATK : heroAttackForLevel(level) };
       if (endless) {
         const m = endlessMonster(1, diff);
         setFight({ foes: null, idx: 0, stage: 1, monster: m, mhp: m.hp, hp: ENDLESS_HERO_HP, hpMax: ENDLESS_HERO_HP, beaten: 0, ...status });
@@ -679,7 +700,7 @@ export default function SpellingQuest() {
     const eq = f.eq || [];
     const regen = eqSum(eq, "regen");
     // Gem effects (Bookworm Adventures): emerald heals a big chunk, diamond heals fully.
-    const heal = gems.diamond ? f.hpMax : Math.round(f.hpMax * 0.2 * (gems.emerald || 0)) + regen;
+    const heal = gems.diamond ? f.hpMax : 200 * (gems.emerald || 0) + regen; // emerald: 2 hearts, as in the original
     const cured = (gems.crystal || 0) > 0;
     const freezeAdd = gems.sapphire || 0;
     const mpoison = gems.amethyst ? MON_POISON.turns : Math.max(0, f.mpoison - 1);
@@ -691,7 +712,10 @@ export default function SpellingQuest() {
     const bagNow = gems.diamond && bag ? Object.fromEntries(POTION_KEYS.map(k => [k, Math.min(POTION_MAX, (bag[k] || 0) + 1)])) : bag;
     if (bagNow !== bag) setBag(bagNow);
     const used = new Set(sel);
-    const gemKind = monsterGem(word.length, eqCount(eq, "gems") > 0);
+    // A gem from a long word, or from overkill; the better of the two.
+    const overkill = Math.max(0, dmg + (f.mpoison > 0 ? Math.round(f.monster.hp * MON_POISON.share) : 0) + (f.mburn > 0 ? Math.round(f.monster.hp * MON_BURN.share) : 0) - f.mhp) / 100;
+    const gemKind = [monsterGem(word.length, eqCount(eq, "gems") > 0), overkillGem(overkill)].filter(Boolean)
+      .sort((a, z) => GEM_BONUS[z] - GEM_BONUS[a])[0] || null;
     const b = cloneBoard(board);
     const spawn = refill(b, used, diff);
     if (gemKind && spawn.length) pick(spawn).kind = gemKind;
@@ -1139,7 +1163,7 @@ export default function SpellingQuest() {
     <div ref={boxRef} style={{ width: "100%" }}>
       <div style={{ position: "relative", width: S * cols, height: S * rows, margin: "0 auto", userSelect: "none", touchAction: "manipulation" }}>
         {board.map((col, c) => col.map((t, r) => (
-          <Tile key={t.id} tile={t} size={S} left={c * S} top={r * S}
+          <Tile key={t.id} tile={t} size={S} left={c * S} top={r * S} value={anyOrder ? Math.round((LETTER_WEIGHT[t.ch] || 1) * 10) : null}
             order={sel.indexOf(t.id)} hinted={!!hint && hint.includes(t.id)} danger={t.kind === "fire" && r >= rows - 2} onTap={() => tap(t)} />
         )))}
       </div>
@@ -1318,6 +1342,7 @@ function Arena({ fight, hero, world, scene, fx, floats, wide }) {
         <div style={{ flex: 1, background: "rgba(255,255,255,0.82)", borderRadius: 10, padding: "4px 8px" }}>
           <Bar value={fight.hp} max={fight.hpMax} color={T.green} label={hero ? hero.label : "You"} small />
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3, minHeight: 16 }}>
+            {fight.atk > 1.05 ? <Chip color="#5C5E50">Attack ×{fight.atk.toFixed(1)}</Chip> : null}
             {fight.power ? <Chip color="#A8801F">Power ×2</Chip> : null}
             {fight.poison ? <Chip color="#6E8B3E">Poison {fight.poison}</Chip> : null}
             {fight.weak ? <Chip color="#7A6A8C">Weak {fight.weak}</Chip> : null}
@@ -1629,7 +1654,7 @@ function GemCut({ gem, id }) {
   );
 }
 
-function Tile({ tile, size, left, top, order, hinted, danger, onTap }) {
+function Tile({ tile, size, left, top, order, hinted, danger, onTap, value = null }) {
   const chosen = order >= 0;
   const fire = tile.kind === "fire";
   const stone = tile.stone > 0;
@@ -1662,7 +1687,7 @@ function Tile({ tile, size, left, top, order, hinted, danger, onTap }) {
       {gem ? <GemCut gem={gem} id={tile.id || 0} /> : null}
       <span style={{ position: "relative", fontSize: Math.round(size * (tile.ch.length > 1 ? 0.4 : 0.5)), fontWeight: 700, lineHeight: 1 }}>{tile.ch === "QU" ? "Qu" : tile.ch}</span>
       <span style={{ position: "absolute", right: 5, bottom: 3, fontSize: Math.max(9, Math.round(size * 0.17)), opacity: gem ? 0.9 : 0.7 }}>
-        {stone ? tile.stone : burning ? `🔥${tile.burn}` : tile.heat && GEM_TOUGH[tile.kind] ? `🛡${GEM_TOUGH[tile.kind] - tile.heat}` : Math.round((VALUE[tile.ch] || 1) * 10)}
+        {stone ? tile.stone : burning ? `🔥${tile.burn}` : tile.heat && GEM_TOUGH[tile.kind] ? `🛡${GEM_TOUGH[tile.kind] - tile.heat}` : (value ?? Math.round((VALUE[tile.ch] || 1) * 10))}
       </span>
       {chosen ? <span style={{ position: "absolute", left: 5, top: 3, fontSize: Math.max(9, Math.round(size * 0.19)), fontWeight: 700, opacity: gem ? 1 : 0.85 }}>{order + 1}</span> : null}
     </button>

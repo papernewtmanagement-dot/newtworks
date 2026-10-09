@@ -343,17 +343,20 @@ export function newMonster(w, slot) {
 }
 
 // The five monsters in level n (1–400), toughest last. diff scales health and hits.
-// Health is in points: a word hits for its exact score. Tuned from real games (Oct 2026: kids were
-// winning every fight in one word) and a board simulation: on Medium a good word scores about 250,
-// so a normal monster takes about 3 good words, the last about 4 and a boss about 7. Monsters hit
-// hard enough that a good-word player ends a level near half health, so 3 stars takes better play.
-// Health grows gently by world (about 1.8x by the last world). Hits are a share of the hero's health,
-// eased as fights get longer, so each world is a little harder than the last, not a wall.
-const HP_GROWTH = (w, s) => 1 + 0.04 * w + 0.003 * (s - 1);
-const MONSTER_HP = (w, s) => Math.round(750 * HP_GROWTH(w, s));
+// Health is in points, 100 to a heart, as in Bookworm Adventures (a word hits for its exact score).
+// Monster health follows the original's scale: about 4 hearts at the start (its early chapters
+// have 4-5 heart enemies) growing to about 27 by the end (a Book 4, Chapter 10 enemy has 27).
+// How hard monsters hit and how fast the hero's attack grows aren't published, so those are estimates,
+// set by simulation so a good player ends a level with about two-thirds of their health: early hits
+// are about 1 to 2 hearts, a little smaller later as fights get longer (our levels are five monsters
+// in a row), and the hero's attack grows to 3x by the last level, the way Lex levels up in attack.
+const levelProgress = (w, s) => (w * LEVELS_PER_WORLD + s - 1) / (LEVEL_TOTAL - 1);
+const MONSTER_HP = (w, s) => Math.round(100 * (4 + 23 * levelProgress(w, s)));
+const HP_GROWTH = (w, s) => MONSTER_HP(w, s) / 400;
+const EASE = 0.7;
 const MONSTER_HIT = (w, s, heroHp) => {
-  const k = heroHp / HP_GROWTH(w, s) ** 0.95;
-  return [Math.max(1, Math.round(k * 0.067)), Math.max(2, Math.round(k * 0.117)) + (s >= 14 ? 1 : 0)];
+  const k = heroHp / HP_GROWTH(w, s) ** EASE;
+  return [Math.max(1, Math.round(k * 0.11)), Math.max(2, Math.round(k * 0.19 + (s >= 14 ? k * 0.02 : 0)))];
 };
 export function monstersForLevel(n, diff) {
   const w = worldOf(n);
@@ -383,8 +386,8 @@ function sizeMonster(m, diff, hp, hit) {
   };
 }
 
-// Your hero gets tougher as the map goes on: 60 at the start, 231 by the last level.
-export const heroHpForLevel = n => 60 + 8 * worldOf(n) + (stepOf(n) - 1);
+// Your hero gets tougher as the map goes on: 10 hearts at the start, 30 (the original's top) by the last level.
+export const heroHpForLevel = n => Math.round((1000 + 2000 * (n - 1) / (LEVEL_TOTAL - 1)) / 10) * 10;
 
 // Endless: monsters from every world in turn, a bit tougher each time round.
 const ENDLESS_KEYS = WORLDS.flatMap(w => [...w.monsters, w.boss]);
@@ -399,7 +402,10 @@ export function endlessMonster(stage, diff) {
   const m = fresh ? newMonster(w, 1000 + stage) : { key, ...MONSTERS[key] };
   return sizeMonster(m, diff, Math.round(MONSTER_HP(w, 1) * k), [Math.round(lo * k), Math.round(hi * k)]);
 }
-export const ENDLESS_HERO_HP = 80;
+export const ENDLESS_HERO_HP = 1500;
+// The hero's attack grows as the map goes on (an estimate; the original's exact growth isn't published).
+export const heroAttackForLevel = n => 1 + 2 * (n - 1) / (LEVEL_TOTAL - 1);
+export const ENDLESS_HERO_ATK = 1.5;
 
 // Stars for a won level: how much health you finished with.
 export const starsFor = (hp, hpMax) => (hp >= hpMax * 0.6 ? 3 : hp >= hpMax * 0.3 ? 2 : 1);
@@ -419,32 +425,32 @@ export const POTION_MAX = 5;
 //   long     +30% damage for words of 6 or more letters
 //   regen    get back this much health after each of your words
 //   finder   monsters drop potions more often
-//   shield   every monster hit does 1 less
+//   shield   every monster hit does a little less
 //   sturdy   letters can't be turned to stone or set burning
 //   antidote poison and weakness can't touch you
-//   gems     5-letter gems come from 4-letter words too
+//   gems     5-letter words make gems too (normally 6+)
 //   rally    start every level with a Power potion's effect
 //   mend     get back twice as much health between monsters
 export const TREASURES = [
   { name: "Silver Bookmark",   color: "#B9C7D6", effect: "letters", letters: "BKP", text: "+25% damage for words with B, K or P" },
-  { name: "Acorn Locket",      color: "#B07A3E", effect: "regen", amount: 2, text: "Get back 2 health after each word" },
+  { name: "Acorn Locket",      color: "#B07A3E", effect: "regen", amount: 25, text: "Get back 25 health after each word" },
   { name: "Echo Crystal",      color: "#8E5CB8", effect: "long", text: "+30% damage for words of 6+ letters" },
   { name: "Captain's Compass", color: "#3E6E8C", effect: "finder", text: "Monsters drop potions more often" },
   { name: "Sphinx Scarab",     color: "#2E7A6E", effect: "antidote", text: "Poison and weakness can't touch you" },
-  { name: "Yeti Mittens",      color: "#E8E6F2", effect: "shield", text: "Every monster hit does 1 less" },
+  { name: "Yeti Mittens",      color: "#E8E6F2", effect: "shield", text: "Every monster hit does 25 less" },
   { name: "Song Feather",      color: "#E58FA8", effect: "mend", text: "Get back twice as much health between monsters" },
   { name: "Golden Gear",       color: "#E2B13C", effect: "sturdy", text: "Letters can't turn to stone or burn" },
-  { name: "Dream Lantern",     color: "#B9F2C8", effect: "gems", text: "4-letter words can make gems too" },
+  { name: "Dream Lantern",     color: "#B9F2C8", effect: "gems", text: "5-letter words can make gems too" },
   { name: "Dragon Scale",      color: "#8E3B5C", effect: "rally", text: "Start every level with a power boost" },
   { name: "Candy Crown",       color: "#E2557A", effect: "letters", letters: "CDGM", text: "+25% damage for words with C, D, G or M" },
-  { name: "Jungle Idol",       color: "#7A8C5E", effect: "regen", amount: 3, text: "Get back 3 health after each word" },
+  { name: "Jungle Idol",       color: "#7A8C5E", effect: "regen", amount: 35, text: "Get back 35 health after each word" },
   { name: "Ember Heart",       color: "#D7261E", effect: "long", text: "+30% damage for words of 6+ letters" },
   { name: "Lucky Ticket",      color: "#FFE680", effect: "finder", text: "Monsters drop potions more often" },
   { name: "Star Map",          color: "#6C5B9C", effect: "letters", letters: "FHWY", text: "+25% damage for words with F, H, W or Y" },
-  { name: "Wind-Up Key",       color: "#9AA0A6", effect: "shield", text: "Every monster hit does 1 less" },
+  { name: "Wind-Up Key",       color: "#9AA0A6", effect: "shield", text: "Every monster hit does 25 less" },
   { name: "Prism Shard",       color: "#8CCFF2", effect: "letters", letters: "JQXZV", text: "+25% damage for words with J, Qu, X, Z or V" },
   { name: "Giant's Seed",      color: "#4E8B3E", effect: "mend", text: "Get back twice as much health between monsters" },
-  { name: "Amber Fossil",      color: "#E2A33C", effect: "regen", amount: 4, text: "Get back 4 health after each word" },
+  { name: "Amber Fossil",      color: "#E2A33C", effect: "regen", amount: 50, text: "Get back 50 health after each word" },
   { name: "Word Hero's Crown", color: "#E2B13C", effect: "long", text: "+30% damage for words of 6+ letters" },
 ];
 export const EQUIP_MAX = 3;
@@ -455,7 +461,7 @@ export const TREASURE_LEVEL_AT = [0, 10, 25];
 export const treasureLevel = xp => (xp >= TREASURE_LEVEL_AT[2] ? 3 : xp >= TREASURE_LEVEL_AT[1] ? 2 : 1);
 // What each effect is worth at levels 1, 2 and 3. The on/off treasures (sturdy,
 // antidote, gems, rally) add a little damage instead as they level up.
-const POWER = { letters: [25, 35, 50], long: [30, 40, 60], regen: [1, 1.5, 2], finder: [25, 35, 50], shield: [1, 2, 3], mend: [2, 2.5, 3], extra: [0, 10, 20] };
+const POWER = { letters: [25, 35, 50], long: [30, 40, 60], regen: [1, 1.5, 2], finder: [25, 35, 50], shield: [25, 50, 75], mend: [2, 2.5, 3], extra: [0, 10, 20] };
 export function treasurePower(t, lv) {
   const k = Math.max(1, Math.min(3, lv)) - 1;
   const extra = POWER.extra[k];
