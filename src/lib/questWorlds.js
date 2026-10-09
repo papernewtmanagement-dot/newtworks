@@ -17,6 +17,8 @@
 // Beating a world's boss wins its treasure (equip up to three).
 // =========================================================================
 
+import { LEVEL_STORIES } from "./questStories.js";
+
 export const LEVELS_PER_WORLD = 20;
 export const MONSTERS_PER_LEVEL = 5;
 
@@ -264,6 +266,82 @@ export const stepOf = n => ((n - 1) % LEVELS_PER_WORLD) + 1;          // 1–20 
 export const levelInfo = n => WORLDS[worldOf(n)].levels[stepOf(n) - 1];
 export const levelName = n => levelInfo(n).name;
 
+
+// ── New monsters for every level ──────────────────────────────────────
+// Each world has its own hand-made monsters (named in the level stories) and a boss. Every
+// other monster is made fresh for its level and slot: a name from the world's things plus a
+// creature word, its own body shape, add-ons, eyes, mouth and a color from the world's palette.
+// Same level, same monsters every time (seeded), and no name repeats inside a world.
+const THEME_WORDS = [
+  ["Page", "Ink", "Quill", "Scroll", "Shelf", "Book", "Glue", "Bookmark"],
+  ["Moss", "Twig", "Acorn", "Fern", "Bark", "Thorn", "Leafy", "Toadstool"],
+  ["Gem", "Crystal", "Pebble", "Glow", "Drip", "Rock", "Cave", "Geode"],
+  ["Wave", "Kelp", "Salt", "Coral", "Bubble", "Tide", "Shell", "Foam"],
+  ["Sand", "Dune", "Cactus", "Sun", "Scarab", "Mirage", "Oasis", "Tumble"],
+  ["Frost", "Snow", "Ice", "Icicle", "Sleet", "Blizzard", "Chill", "Flake"],
+  ["Cloud", "Mist", "Breeze", "Rain", "Thunder", "Puffy", "Sky", "Rainbow"],
+  ["Gear", "Cog", "Spring", "Bolt", "Tick", "Steam", "Rivet", "Sprocket"],
+  ["Bog", "Reed", "Swamp", "Mud", "Moon", "Firefly", "Lily", "Murk"],
+  ["Gloom", "Shadow", "Torch", "Brick", "Moat", "Tower", "Gargoyle", "Dungeon"],
+  ["Gumdrop", "Taffy", "Sprinkle", "Fudge", "Lolly", "Jelly", "Cocoa", "Sugar"],
+  ["Vine", "Jungle", "Temple", "Mango", "Idol", "Canopy", "Ruin", "Parrot"],
+  ["Lava", "Ember", "Ash", "Magma", "Cinder", "Smoke", "Blaze", "Spark"],
+  ["Balloon", "Ticket", "Popcorn", "Juggle", "Confetti", "Whistle", "Tent", "Ringmaster"],
+  ["Star", "Comet", "Rocket", "Orbit", "Nebula", "Meteor", "Laser", "Astro"],
+  ["Block", "Puppet", "Marble", "Yo-Yo", "Teddy", "Button", "Wobble", "Domino"],
+  ["Mirror", "Glint", "Prism", "Shine", "Flicker", "Gleam", "Glass", "Twinkle"],
+  ["Sprout", "Beanstalk", "Petal", "Thistle", "Pumpkin", "Turnip", "Bramble", "Seed"],
+  ["Fossil", "Raptor", "Dino", "Tar", "Egg", "Tusk", "Boulder", "Volcano"],
+  ["Hush", "Whisper", "Murmur", "Mute", "Hollow", "Shade", "Quiet", "Silent"],
+];
+const CREATURES = ["Mite", "Gobbler", "Wisp", "Biter", "Crawler", "Nibbler", "Snapper", "Creeper", "Imp", "Goblin",
+  "Blob", "Grub", "Lurker", "Muncher", "Sprite", "Beast", "Grumbler", "Hopper", "Snatcher", "Gnasher"];
+const LOOKS = ["round", "blob", "tall", "wide", "bug"];
+const MOUTHS = ["smile", "o", "fangs", "frown"];
+const HEADGEAR = new Set(["hat", "cap", "helmet", "flame", "crystals", "leaf", "star", "crown"]);
+const ANY_BITS = ["spots", "stripes", "horns", "antennae", "ears", "tail", "spikes", "claws", "wings", "fins", "tentacles"];
+// Small seeded random numbers, so a level's monsters are the same every time it's played.
+function seeded(seed) {
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function tint(hex, rnd) {
+  const n = parseInt(hex.slice(1), 16);
+  const shift = Math.round((rnd() - 0.5) * 70);
+  const ch = v => Math.max(20, Math.min(235, v + shift + Math.round((rnd() - 0.5) * 50)));
+  return `#${((ch(n >> 16) << 16) | (ch((n >> 8) & 255) << 8) | ch(n & 255)).toString(16).padStart(6, "0")}`;
+}
+// Every name in a world, shuffled once per world; slot k of the world gets name k.
+const NAME_ORDER = {};
+function worldNames(w) {
+  if (!NAME_ORDER[w]) {
+    const rnd = seeded(9001 + w * 131);
+    const taken = new Set(Object.values(MONSTERS).map(m => m.name));
+    const all = THEME_WORDS[w].flatMap(t => CREATURES.map(c => `${t} ${c}`)).filter(n => !taken.has(n));
+    for (let i = all.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [all[i], all[j]] = [all[j], all[i]]; }
+    NAME_ORDER[w] = all;
+  }
+  return NAME_ORDER[w];
+}
+export function newMonster(w, slot) {
+  const world = WORLDS[w];
+  const rnd = seeded(7919 * (w + 1) + 104729 * (slot + 1));
+  const pick = arr => arr[Math.floor(rnd() * arr.length)];
+  const kin = world.monsters.map(k => MONSTERS[k]);
+  const worldBits = [...new Set(kin.flatMap(m => m.bits))].filter(b => b !== "crown");
+  const bits = [];
+  const want = 1 + Math.floor(rnd() * 3);
+  for (let tries = 0; bits.length < want && tries < 12; tries++) {
+    const b = rnd() < 0.6 && worldBits.length ? pick(worldBits) : pick(ANY_BITS);
+    if (bits.includes(b) || (HEADGEAR.has(b) && bits.some(x => HEADGEAR.has(x)))) continue;
+    bits.push(b);
+  }
+  const powers = [...new Set(kin.map(m => m.power).filter(Boolean))];
+  const power = rnd() < 0.3 + 0.015 * w ? pick(powers.length ? powers : ["stone", "burn", "poison", "weaken"]) : undefined;
+  const eyes = pick([1, 2, 2, 2, 3]);
+  return { key: `new-${w}-${slot}`, name: worldNames(w)[slot % worldNames(w).length], body: tint(pick(kin).body, rnd), look: pick(LOOKS), bits, mouth: pick(MOUTHS), eyes, ...(power ? { power } : {}) };
+}
+
 // The five monsters in level n (1–400), toughest last. diff scales health and hits.
 // Health is in points: a word hits for its exact score. Tuned from real games (Oct 2026: kids were
 // winning every fight in one word) and a board simulation: on Medium a good word scores about 250,
@@ -283,18 +361,23 @@ export function monstersForLevel(n, diff) {
   const world = WORLDS[w];
   const hp = MONSTER_HP(w, s);
   const hit = MONSTER_HIT(w, s, heroHpForLevel(n));
-  const keys = [];
-  for (let i = 0; i < MONSTERS_PER_LEVEL; i++) keys.push(world.monsters[(s + i) % 4]);
-  if (s === LEVELS_PER_WORLD) keys[MONSTERS_PER_LEVEL - 1] = world.boss;
+  // Five different monsters: brand-new ones, plus the world's own monster when this level's story
+  // names it (it's the last, toughest fight), and the boss at the end of the world.
+  const story = (LEVEL_STORIES[w] && LEVEL_STORIES[w][s - 1]) || "";
+  const named = world.monsters.find(k => story.includes(MONSTERS[k].name));
+  const list = [];
+  for (let i = 0; i < MONSTERS_PER_LEVEL; i++) list.push(newMonster(w, (s - 1) * MONSTERS_PER_LEVEL + i));
+  if (s === LEVELS_PER_WORLD) list[MONSTERS_PER_LEVEL - 1] = { key: world.boss, ...MONSTERS[world.boss] };
+  else if (named) list[MONSTERS_PER_LEVEL - 1] = { key: named, ...MONSTERS[named] };
   // The last monster of every level is a little tougher than the rest.
-  return keys.map((k, i) => makeMonster(k, diff, Math.round(hp * (i === MONSTERS_PER_LEVEL - 1 ? 1.3 : 1)), hit));
+  return list.map((m, i) => sizeMonster(m, diff, Math.round(hp * (i === MONSTERS_PER_LEVEL - 1 ? 1.3 : 1)), hit));
 }
 
-function makeMonster(key, diff, hp, hit) {
-  const m = MONSTERS[key];
+// Health and hits for a monster at this difficulty (bosses are tougher).
+function sizeMonster(m, diff, hp, hit) {
   const boss = !!m.boss;
   return {
-    key, ...m,
+    ...m,
     hp: Math.max(20, Math.round((hp * (boss ? 2 : 1) * diff.monsterHp) / 10) * 10),
     hit: [Math.max(1, Math.round(hit[0] * diff.monsterHit * (boss ? 1.2 : 1))), Math.max(1, Math.round(hit[1] * diff.monsterHit * (boss ? 1.2 : 1)))],
   };
@@ -308,11 +391,13 @@ const ENDLESS_KEYS = WORLDS.flatMap(w => [...w.monsters, w.boss]);
 export const endlessWorld = stage => Math.min(WORLDS.length - 1, Math.floor((stage - 1) / 5));
 export function endlessMonster(stage, diff) {
   const key = ENDLESS_KEYS[(stage - 1) % ENDLESS_KEYS.length];
+  const fresh = stage % 5 !== 0; // bosses keep their own look; everything else is a new monster
   const round = Math.floor((stage - 1) / ENDLESS_KEYS.length);
   const w = endlessWorld(stage);
   const k = 1 + 0.4 * round;
   const [lo, hi] = MONSTER_HIT(w, 1, ENDLESS_HERO_HP);
-  return makeMonster(key, diff, Math.round(MONSTER_HP(w, 1) * k), [Math.round(lo * k), Math.round(hi * k)]);
+  const m = fresh ? newMonster(w, 1000 + stage) : { key, ...MONSTERS[key] };
+  return sizeMonster(m, diff, Math.round(MONSTER_HP(w, 1) * k), [Math.round(lo * k), Math.round(hi * k)]);
 }
 export const ENDLESS_HERO_HP = 80;
 
