@@ -59,8 +59,9 @@ import { processCareerplugMode } from "./parsers/careerplug_applicant.ts";
 import { processResumeManualBatch } from "./parsers/resume_manual_batch.ts";
 import { parseCtsProfile, matchCtsCandidate } from "./parsers/cts_profile.ts";
 import {
-  ctsLogin, ctsListUnarchivedCompleted, ctsFindSalesReport, ctsFetchReportHtml,
-  ctsDownloadReportPdf, ctsArchiveProfile, parseCtsReportHtml,
+  ctsLogin, ctsListCompleted, ctsFindSalesReport, ctsFetchReportHtml,
+  ctsDownloadReportPdf, ctsToggleArchived, parseCtsReportHtml,
+  type CtsSiteProfile, type CtsSiteSession,
 } from "./parsers/cts_site.ts";
 import { stageFileWithComposio } from "../_shared/composio_stage.ts";
 import { processWrapupMode } from "./parsers/wrapup_ingest.ts";
@@ -2856,8 +2857,12 @@ function bytesToB64(buf: Uint8Array): string {
 // or with body.dry_run = true, it reads the site and reports what it would do:
 // no Newtworks write, no Drive file, no alert, nothing archived in CTS.
 //
-// Employees on the CTS list are left alone. A candidate it cannot match to
-// exactly one record gets a hand-entry task and stays unarchived in CTS.
+// Team members (Peter, 2026-10-09): anyone on the Newtworks team is never
+// archived by the candidate pass. Every run also keeps CTS in step with the
+// team: an active team member's profile is unarchived (a new hire's profile
+// was archived back when their result came in), and a terminated team
+// member's profile is archived. A candidate it cannot match to exactly one
+// record gets a hand-entry task and stays unarchived in CTS.
 interface CtsSiteOutcome {
   name: string;
   email: string | null;
@@ -2878,17 +2883,22 @@ async function processCtsSiteMode(
   const pass = await getSetting(ctx.agencyId, "cts_admin_password");
   if (!user || !pass) return { live, considered: 0, outcomes: [], error: "CTS login is not saved in settings" };
 
-  let session;
-  let profiles;
+  let session: CtsSiteSession;
+  let allProfiles: CtsSiteProfile[];
   try {
     session = await ctsLogin(user, pass);
-    profiles = await ctsListUnarchivedCompleted(session);
+    allProfiles = await ctsListCompleted(session, { includeArchived: true });
   } catch (e) {
     return { live, considered: 0, outcomes: [], error: e instanceof Error ? e.message : String(e) };
   }
 
+  // Team sync first, so a team member is never touched by the candidate pass.
+  const teamSync = await ctsSyncTeamProfiles(ctx, session, allProfiles, live);
+  const onTeam = new Set(teamSync.map((o) => o.codeId));
+  const profiles = allProfiles.filter((p) => !p.archived && !onTeam.has(p.codeId));
+
   const maxProfiles = Math.min(Math.max(Number(body?.max_profiles ?? 15) || 15, 1), 25);
-  const outcomes: CtsSiteOutcome[] = [];
+  const outcomes: CtsSiteOutcome[] = teamSync.map(({ codeId: _c, ...o }) => o);
   const handAlert = async (p: { name: string; codeNumber: string | null }, why: string) => {
     if (!live) return;
     await ctsNeedsHandAlert(ctx.agencyId, `CTS site ${p.codeNumber ?? p.name}`, p.name,
@@ -2896,7 +2906,7 @@ async function processCtsSiteMode(
   };
 
   for (const p of profiles) {
-    if (outcomes.filter((o) => o.status !== "skipped_employee").length >= maxProfiles) break;
+    if (outcomes.filter((o) => !["skipped_employee", "team_member", "unarchived_team", "archived_terminated"].includes(o.status)).length >= maxProfiles) break;
     const base = { name: p.name, email: p.email };
     if (p.category !== "Candidate") {
       outcomes.push({ ...base, status: "skipped_employee" });
@@ -2918,7 +2928,7 @@ async function processCtsSiteMode(
       if (cand?.cts_completed_at) {
         // Already on file (an earlier pull, a PDF, or the hand form). Nothing
         // to record; just clear it off the CTS list.
-        const archived = live ? await ctsArchiveProfile(session, p.codeId) : false;
+        const archived = live ? await ctsToggleArchived(session, p.codeId) : false;
         outcomes.push({ ...base, status: "already_on_file", candidateId: match.candidateId, archivedInCts: archived });
         continue;
       }
@@ -2969,7 +2979,7 @@ async function processCtsSiteMode(
         outcomes.push({ ...base, status: "error", candidateId: match.candidateId, report: report.reportName, error: results.map((r) => r.error).filter(Boolean).join("; ") || "not recorded" });
         continue;
       }
-      const archived = await ctsArchiveProfile(session, p.codeId);
+      const archived = await ctsToggleArchived(session, p.codeId);
       outcomes.push({ ...base, status: "recorded", candidateId: match.candidateId, report: report.reportName, archivedInCts: archived });
     } catch (e) {
       const why = e instanceof Error ? e.message : String(e);
@@ -2977,6 +2987,66 @@ async function processCtsSiteMode(
     }
   }
   return { live, considered: profiles.length, outcomes };
+}
+
+/**
+ * Keep CTS archiving in step with the Newtworks team.
+ *   active team member, profile archived    -> unarchive ("unarchived_team")
+ *   terminated team member, profile showing -> archive  ("archived_terminated")
+ *   active team member, profile showing     -> leave it ("team_member")
+ * Terminated = team.is_active false, or an end_date on or before today.
+ * A team member is tied to a CTS profile by email (personal, State Farm, or
+ * the address on their hiring record) or, failing that, exact first + last
+ * name. Exactly one profile or nothing: an ambiguous person is left alone.
+ */
+async function ctsSyncTeamProfiles(
+  ctx: RunCtx, session: CtsSiteSession, profiles: CtsSiteProfile[], live: boolean,
+): Promise<Array<CtsSiteOutcome & { codeId: string }>> {
+  const out: Array<CtsSiteOutcome & { codeId: string }> = [];
+  const { data: team, error } = await sb.from("team")
+    .select("id, first_name, last_name, email_personal, email_sf, is_active, end_date, is_test_user")
+    .eq("agency_id", ctx.agencyId);
+  if (error) {
+    console.error(`[cts_site] team read failed, team sync skipped: ${error.message}`);
+    return out;
+  }
+  const { data: hired } = await sb.from("hiring_candidates")
+    .select("candidate_name, email").eq("agency_id", ctx.agencyId).eq("status", "hired");
+
+  const norm = (x: string | null | undefined) => (x ?? "").toLowerCase().replace(/[^a-z]+/g, " ").trim();
+  const mail = (x: string | null | undefined) => (x ?? "").trim().toLowerCase();
+  const today = new Date().toISOString().slice(0, 10);
+  const isTerminated = (t: any) => t.is_active === false || (t.end_date && String(t.end_date) <= today);
+  // A rehire leaves an old, ended row beside the new active one. The active
+  // row decides; the old one is never used to archive.
+  const activeNames = new Set(((team ?? []) as any[]).filter((t) => !isTerminated(t)).map((t) => norm(`${t.first_name} ${t.last_name}`)));
+
+  for (const t of (team ?? []) as any[]) {
+    if (t.is_test_user) continue;
+    const name = norm(`${t.first_name} ${t.last_name}`);
+    const emails = new Set([mail(t.email_personal), mail(t.email_sf)].filter(Boolean));
+    for (const h of (hired ?? []) as any[]) if (norm(h.candidate_name) === name && h.email) emails.add(mail(h.email));
+
+    let hits = profiles.filter((p) => p.email && emails.has(mail(p.email)));
+    if (hits.length === 0) hits = profiles.filter((p) => norm(p.name) === name);
+    if (hits.length !== 1) continue;
+    const p = hits[0];
+
+    const terminated = isTerminated(t);
+    if (terminated && activeNames.has(name)) continue;
+    const base = { codeId: p.codeId, name: p.name, email: p.email };
+    if (terminated) {
+      if (p.archived) continue;
+      const ok = live ? await ctsToggleArchived(session, p.codeId) : false;
+      out.push({ ...base, status: "archived_terminated", archivedInCts: ok });
+    } else if (p.archived) {
+      const ok = live ? await ctsToggleArchived(session, p.codeId) : false;
+      out.push({ ...base, status: "unarchived_team", archivedInCts: live ? !ok : true });
+    } else {
+      out.push({ ...base, status: "team_member" });
+    }
+  }
+  return out;
 }
 
 /**

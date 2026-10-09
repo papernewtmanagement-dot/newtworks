@@ -26,7 +26,7 @@
 //   - Report menu per profile: POST /ajax ajax_nav=report_link_dropdown.
 //   - PDF: the report URL with pdf=1 (the page's download button).
 //   - Archive: POST /ajax ajax_nav=toggle_archived. It is a TOGGLE, so it is
-//     only ever sent for a profile this run just read off the unarchived list.
+//     only ever sent for a profile whose state this run just read.
 //   - The server drops the connection on rapid repeat calls: pace, retry once.
 // =========================================================================
 
@@ -74,6 +74,7 @@ export interface CtsSiteProfile {
   completed: string | null; // YYYY-MM-DD
   codeNumber: string | null; // the 12-digit code in the notice email
   category: string;     // "Candidate" or "Employee"
+  archived: boolean;
 }
 
 export interface CtsSiteReport {
@@ -168,17 +169,24 @@ function usDateToIso(s: string): string | null {
   return m ? `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}` : null;
 }
 
-/** Every finished profile not yet archived in CTS. */
-export async function ctsListUnarchivedCompleted(s: CtsSiteSession): Promise<CtsSiteProfile[]> {
+/**
+ * Finished profiles. Unarchived only by default; includeArchived reads the
+ * whole list (every profile ever taken, archived ones flagged) so team members
+ * can be kept in step with Newtworks. The archived filter is sent on every
+ * call because the site remembers the last choice for this login.
+ */
+export async function ctsListCompleted(
+  s: CtsSiteSession, opts: { includeArchived?: boolean } = {},
+): Promise<CtsSiteProfile[]> {
+  const want = opts.includeArchived ? "1" : "0";
   const res = await ctsFetch(s.cookies, `${CTS_BASE}/access`, {
-    form: { nav: "profiles", sub_nav: "completed", auth_id: s.authId },
+    form: { nav: "profiles", sub_nav: "completed", auth_id: s.authId, filter_archived: want },
   });
   const html = await res.text();
   if (!/Completed Profiles/i.test(html)) throw new Error("CTS completed-profiles page did not load");
-  // The archived filter must be on Hide, or archived people would come back.
   const filt = html.match(/<select[^>]*name="filter_archived"[\s\S]*?<\/select>/);
-  if (filt && !/<option value="0" selected>/.test(filt[0])) {
-    throw new Error("CTS completed list is showing archived profiles; refusing to read it");
+  if (filt && !new RegExp(`<option value="${want}" selected>`).test(filt[0])) {
+    throw new Error(`CTS completed list ignored the archived filter (${want}); refusing to read it`);
   }
   const tbody = html.match(/<table id="main_table"[\s\S]*?<tbody>([\s\S]*?)<\/tbody>/);
   if (!tbody) throw new Error("CTS completed list has no table");
@@ -197,7 +205,7 @@ export async function ctsListUnarchivedCompleted(s: CtsSiteSession): Promise<Cts
     if (!code) continue;
     // Archived column: the checkbox carries "checked" when archived.
     const archived = /class="TA_\d+"\s+checked/.test(cells[7]);
-    if (archived) continue;
+    if (archived && !opts.includeArchived) continue;
     out.push({
       codeId: code[1],
       userId: userIdByCode.get(code[1]) ?? null,
@@ -206,6 +214,7 @@ export async function ctsListUnarchivedCompleted(s: CtsSiteSession): Promise<Cts
       completed: usDateToIso(cellText(cells[2])),
       codeNumber: cellText(cells[3]) || null,
       category: cellText(cells[4]),
+      archived,
     });
   }
   return out;
@@ -247,8 +256,12 @@ export async function ctsDownloadReportPdf(s: CtsSiteSession, report: CtsSiteRep
   return buf;
 }
 
-/** Archive one profile in CTS. Only call for a profile read off the unarchived list this run. */
-export async function ctsArchiveProfile(s: CtsSiteSession, codeId: string): Promise<boolean> {
+/**
+ * Flip one profile's archived switch in CTS. The site only offers a toggle, so
+ * callers pass a profile whose archived state they read this run and only
+ * when it is the opposite of what they want.
+ */
+export async function ctsToggleArchived(s: CtsSiteSession, codeId: string): Promise<boolean> {
   const res = await ctsFetch(s.cookies, `${CTS_BASE}/ajax`, {
     ajax: true, form: { ajax_nav: "toggle_archived", auth_id: s.authId, code_id: codeId },
   });
