@@ -263,6 +263,10 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
   // Major cards start folded and open by themselves once a subcard in them
   // opens; a click on the header overrides either way.
   const [cardOpen, setCardOpen] = useState({});
+  // Finished subcards and cards stay hidden unless asked for, so a tick
+  // made by mistake can still be found and undone (Peter 2026-10-09).
+  const [showFinished, setShowFinished] = useState({});
+  const [showFinishedCards, setShowFinishedCards] = useState(false);
 
   const handleToggle = async (step) => {
     setSavingId(step.id);
@@ -757,7 +761,9 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
         // Finished cards disappear (Peter 2026-10-06). The count on the header
         // still reads against every card in it.
         const openSteps = phaseSteps.filter(s => !s.completed_at);
-        if (openSteps.length === 0) return null;
+        const finishedCount = phaseSteps.length - openSteps.length;
+        if (openSteps.length === 0 && !showFinishedCards) return null;
+        const shownSteps = (showFinished[cardKey] || openSteps.length === 0) ? phaseSteps : openSteps;
         const meta = phaseMeta(phase);
         const phaseP = progress(phaseSteps);
         const cardName = meta.weeksLong > 1 && week
@@ -794,8 +800,8 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
 
             {isOpen && (() => {
             // Goals and the like sit across the top of the card.
-            const banners = openSteps.filter(s => s.full_width);
-            const rest = openSteps.filter(s => !s.full_width);
+            const banners = shownSteps.filter(s => s.full_width);
+            const rest = shownSteps.filter(s => !s.full_width);
             const bannerRow = banners.length > 0 && (
               <div style={bannerStyle}>{banners.map(renderStep)}</div>
             );
@@ -819,9 +825,25 @@ function PlanDetail({ plan, subjectName, isCandidate, steps, onBack, onToggleSte
               </>
             );
             })()}
+            {isOpen && finishedCount > 0 && openSteps.length > 0 && (
+              <button
+                onClick={() => setShowFinished(o => ({ ...o, [cardKey]: !o[cardKey] }))}
+                style={{ fontSize: 11, color: T.blue, background: "none", border: "none", padding: 0, marginTop: 10, cursor: "pointer" }}
+              >{showFinished[cardKey] ? "Hide finished" : `Show ${finishedCount} finished`}</button>
+            )}
           </Card>
         );
       })}
+      {(() => {
+        const n = byPhase.filter(p => p.steps.length > 0 && p.steps.every(s => s.completed_at)).length;
+        if (n === 0) return null;
+        return (
+          <button
+            onClick={() => setShowFinishedCards(v => !v)}
+            style={{ fontSize: 11, color: T.blue, background: "none", border: "none", padding: 0, marginTop: 4, cursor: "pointer" }}
+          >{showFinishedCards ? "Hide finished cards" : `Show ${n} finished card${n === 1 ? "" : "s"}`}</button>
+        );
+      })()}
     </div>
   );
 }

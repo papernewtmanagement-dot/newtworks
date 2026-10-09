@@ -1877,6 +1877,11 @@ function ManualPage({ page, allRows, cfg, manualType, userRole, onMutated, selec
     const el = root ? Array.from(root.querySelectorAll("[id]")).find((n) => n.id === id) : null;
     if (!el) return;
     jumpedTo.current = key;
+    // A heading inside a closed expander is invisible; open every expander
+    // around it so the link lands on something the reader can see.
+    for (let d = el.parentElement; d && d !== root; d = d.parentElement) {
+      if (d.tagName === "DETAILS") d.open = true;
+    }
     requestAnimationFrame(() => el.scrollIntoView({ block: "start" }));
   }, [html]);
   // A closed expander is hidden by the browser itself, so its text would be
