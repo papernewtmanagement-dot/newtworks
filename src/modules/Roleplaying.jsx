@@ -2043,7 +2043,8 @@ function mapTop(cols, rows, x0, y0, what, washes, show, hard, slope, cliff) {
     if (a.pebble && rnd(54) < a.pebble) for (let n = 0; n < 1 + Math.floor(rnd(55) * 3); n++) { const [x, y] = at(56 + n * 2); add("pebble", mapCircle(x, y, U * (0.025 + rnd(62 + n) * 0.03))); }
     if (a.flower && rnd(65) < a.flower) for (let n = 0; n < 1 + Math.floor(rnd(66) * 3); n++) { const [x, y] = at(67 + n * 2); add(rnd(73 + n) < 0.5 ? "petal" : "gold", mapCircle(x, y, U * 0.035)); }
     if (a.cobble && rnd(76) < a.cobble) for (let n = 0; n < 3 + Math.floor(rnd(77) * 3); n++) { const [x, y] = at(78 + n * 2); add("cobble", mapStar(x, y, U * (0.06 + rnd(88 + n) * 0.04), 6, 0.9, (q) => rnd(q + n * 7), rnd(94 + n) * 3)); }
-    if (a.rock && rnd(100) < a.rock) { const [x, y] = at(101); const r = U * (0.2 + rnd(103) * 0.22), t = rnd(104) * 3; add("shade", mapStar(x + r * 0.16, y + r * 0.2, r, 7, 0.86, rnd, t)); add("rock", mapStar(x, y, r, 7, 0.86, rnd, t)); add("rockLit", mapStar(x - r * 0.18, y - r * 0.2, r * 0.5, 7, 0.86, rnd, t)); }
+    // (step 14f-battle) a stone a hand or two across: the boulders that block a square come from the map (mapLying)
+    if (a.rock && rnd(100) < a.rock) { const [x, y] = at(101); const r = U * (0.08 + rnd(103) * 0.09), t = rnd(104) * 3; add("shade", mapStar(x + r * 0.16, y + r * 0.2, r, 7, 0.86, rnd, t)); add("rock", mapStar(x, y, r, 7, 0.86, rnd, t)); add("rockLit", mapStar(x - r * 0.18, y - r * 0.2, r * 0.5, 7, 0.86, rnd, t)); }
     if (a.block && rnd(105) < a.block) for (let n = 0; n < 1 + Math.floor(rnd(106) * 2); n++) {
       const [x, y] = at(107 + n * 2); const w = U * (0.16 + rnd(111 + n) * 0.14), h = U * (0.1 + rnd(113 + n) * 0.08), t = rnd(115 + n) * 3.2, c = Math.cos(t), s = Math.sin(t);
       const box = (ox, oy) => mapPoly([[-w, -h], [w, -h], [w, h * 0.3], [w * 0.6, h], [-w, h]].map(([px, py]) => [x + ox + px * c - py * s, y + oy + px * s + py * c]));
@@ -2220,10 +2221,46 @@ function mapBattle(v, byId) {
   }
   if (!slope && cells.some(c => c.kind === "mountains" || c.kind === "hills")) { const t = mapRand(7, Math.floor(o0[0] / cols), Math.floor(o0[1] / rows), 800) * 2 * Math.PI; slope = { ux: Math.cos(t), uy: Math.sin(t) }; }
   const layers = mapTop(cols, rows, o0[0], o0[1], (i, j) => get(i, j).what, washes, false, (i, j) => get(i, j).h, slope, (i, j) => (inGrid(i, j) ? get(i, j).cliff : null));
+  // what lies on the squares (step 14f-battle): boulders, fallen logs, reeds at the water's edge
+  layers.push(...mapLying(cells));
   // the buildings (step 3: their floor plans, walls, doors and floors, square by square) and the landmarks (step 12b2)
   layers.push(...mapBuilt(cols, rows, cells));
   const fog = mapFog(cols, rows, 100, (i, j) => get(i, j).what === "unknown", 0.3, cols, rows, 7, o0[0], o0[1]);
   return { wide: cols * 100, high: rows * 100, unit: 100, layers: layers.concat([{ d: lines.join(""), line: "#2B2418", w: 1, o: 0.3 }], fog), names: [], blocks: [] };
+}
+// What lies on the battle grid's squares (step 14f-battle; rpg_map_lie, the cells' lie), drawn from above over the
+// ground: a boulder (no way through; full cover) a rough rock filling most of its square with its shadow and the light
+// on its top; a fallen log (+100% time; half cover) a trunk lying across the square at its own angle, its cut ends
+// pale; reeds at the edge of a river or a lake, a few tufts. Each square's look is steady (mapRand of where it is).
+function mapLying(cells) {
+  const g = { shade: "", rock: "", lit: "", log: "", ring: "", reed: "" };
+  cells.forEach(c => {
+    if (!c.lie) return;
+    const x = (c.x - 1) * 100, y = (c.y - 1) * 100;
+    const wx = Array.isArray(c.to) ? c.to[0] : c.x, wy = Array.isArray(c.to) ? c.to[1] : c.y;
+    const rnd = (k) => mapRand(1801, wx, wy, k);
+    if (c.lie === "boulder") {
+      const cx = x + 50 + (rnd(1) - 0.5) * 6, cy = y + 48 + (rnd(2) - 0.5) * 6, r = 44 + rnd(3) * 4, t = rnd(4) * 3;
+      g.shade += mapStar(cx + r * 0.14, cy + r * 0.18, r, 9, 0.88, rnd, t);
+      g.rock += mapStar(cx, cy, r, 9, 0.88, rnd, t);
+      g.lit += mapStar(cx - r * 0.2, cy - r * 0.22, r * 0.48, 9, 0.88, rnd, t);
+    } else if (c.lie === "log") {
+      const a = rnd(5) * Math.PI, ux = Math.cos(a), uy = Math.sin(a), L = 46, W = 13 + rnd(6) * 4, cx = x + 50, cy = y + 50;
+      const p = (s, t) => [cx + ux * s - uy * t, cy + uy * s + ux * t];
+      g.log += mapPoly([p(-L, -W), p(L, -W), p(L, W), p(-L, W)]);
+      [-L, L].forEach(s => { const [ex, ey] = p(s, 0); g.ring += `M${(ex - W * 0.8).toFixed(1)} ${ey.toFixed(1)}a${(W * 0.8).toFixed(1)} ${(W * 0.8).toFixed(1)} 0 1 0 ${(W * 1.6).toFixed(1)} 0a${(W * 0.8).toFixed(1)} ${(W * 0.8).toFixed(1)} 0 1 0 ${(-W * 1.6).toFixed(1)} 0Z`; });
+    } else if (c.lie === "reeds") {
+      for (let n = 0; n < 3; n++) {
+        const bx = x + 18 + rnd(10 + n) * 64, by = y + 30 + rnd(20 + n) * 60, h = 20 + rnd(30 + n) * 14;
+        g.reed += mapLine([[bx, by], [bx - h * 0.25, by - h]]) + mapLine([[bx, by], [bx + h * 0.05, by - h * 1.15]]) + mapLine([[bx, by], [bx + h * 0.32, by - h * 0.85]]);
+      }
+    }
+  });
+  const out = [];
+  if (g.rock) out.push({ d: g.shade, fill: "#000000", o: 0.32 }, { d: g.rock, fill: "#8E887D", line: "#38342E", w: 2.4 }, { d: g.lit, fill: "#B9B3A8", o: 0.9 });
+  if (g.log) out.push({ d: g.log, fill: "#6B4A2E", line: "#3E2A18", w: 1.6 }, { d: g.ring, fill: "#C9A878", line: "#7A5A3A", w: 1.2 });
+  if (g.reed) out.push({ d: g.reed, line: "#4E5D2B", w: 1.6 });
+  return out;
 }
 // The squares landmarks stand on (step 12b2), over the ground and the houses: each kind as one outline of its squares,
 // a castle wall, a keep or a ruin with the courses of its stones, a cairn with its stones.
@@ -3189,6 +3226,9 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl }) {
             <MapSwatch what={k} size={20} top={top} />{k === "bridge" ? "Bridge: the road carried over the water" : "Ford: the water is knee-deep here (+50% a square), waded; a walk sent through one needs no swim"}
           </span>
         ))}
+        {/* what lies on the squares (step 14f-battle; rpg_map_lie) */}
+        {cells.some(c => c.lie === "boulder") && <span>Boulder: higher than a person; nobody steps into it, and someone right behind one is in full cover (no blow reaches them from the far side).</span>}
+        {cells.some(c => c.lie === "log") && <span>Fallen log: +100% more time on that square, on top of its ground (a forest square at +60% is +160%: 5 × 2.6 = 13 ticks at Speed 10); someone right behind one is in half cover (half the blows that land strike the log).</span>}
         {kinds.map(k => (
           <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <MapSwatch what={k} size={20} top={top} />{ground(k)}
