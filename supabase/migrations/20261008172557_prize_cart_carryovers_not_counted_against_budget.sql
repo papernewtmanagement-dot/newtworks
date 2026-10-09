@@ -30,3 +30,4 @@ BEGIN
   v_def := replace(v_def, v_old, 'v_available_budget := v_next_budget;  -- carryovers are never subtracted from the budget (Peter 2026-10-08)');
   EXECUTE v_def;
 END $$;
+

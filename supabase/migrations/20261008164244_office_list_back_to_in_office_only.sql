@@ -12,3 +12,4 @@ BEGIN
   EXECUTE replace(v_def, 'IF NOT public.inventory_can_see(p_location) THEN', 'IF NOT public.inventory_can_use(p_location) THEN');
 END $$;
 DROP FUNCTION IF EXISTS public.inventory_can_see(text);
+

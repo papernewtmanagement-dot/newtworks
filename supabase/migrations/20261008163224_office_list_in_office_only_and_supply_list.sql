@@ -113,3 +113,4 @@ WHERE id = 'ca344d8e-a5bd-4e4a-a4b1-afdd1536e870'
 
 -- 5. Delete the Supply-Stocking Process page from the manual (Peter's instruction).
 DELETE FROM public.manuals WHERE id = '1b2c18f0-84eb-4a4e-bd19-a1f2cdfe9e47' AND title = 'Supply-Stocking Process';
+

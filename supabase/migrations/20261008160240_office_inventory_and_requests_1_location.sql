@@ -29,3 +29,4 @@ AS $function$
     WHEN 'office' THEN COALESCE(public.current_app_user_role() IN ('owner', 'admin', 'staff', 'readonly', 'accountant'), false)
     ELSE false END;
 $function$;
+

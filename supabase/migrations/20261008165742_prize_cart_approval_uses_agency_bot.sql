@@ -8,3 +8,4 @@ BEGIN
   IF position(v_old in v_def) = 0 THEN RAISE EXCEPTION 'send call not found'; END IF;
   EXECUTE replace(v_def, v_old, 'v_res := public.telegram_send_message_v2(v_chat, v_text, ''pjsagency'', NULL, NULL);');
 END $$;
+

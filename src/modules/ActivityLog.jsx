@@ -5213,14 +5213,192 @@ function RecordEditor({ target, values, sources, types, isOwner, roster, onLogge
     onLogged={onLogged} refreshKey={refreshKey} allowCancel editing={target} onCloseEdit={onClose} />;
 }
 
+// =====================================================================
+// My points this week (Peter 2026-10-09). One button on History. One person's week
+// split into Marketing, Quotes, Sales and Retention. Each section says what was logged
+// BEFORE the week this quarter, then lists every log THIS week. Nothing is worked out on
+// this page: rp_my_points_week reads the same board the Score tab shows.
+// =====================================================================
+function MyPointsCard({ title, total, note, before, children }) {
+  return (
+    <div style={{ ...cardStyle, padding: "14px 16px", display: "grid", gap: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: T.slate900 }}>{title}</div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: T.slate900, whiteSpace: "nowrap" }}>{total}</div>
+      </div>
+      {note && <div style={{ fontSize: 11, color: T.slate500 }}>{note}</div>}
+      <div style={{ background: T.slate50, borderRadius: 8, padding: "8px 10px" }}>
+        <div style={{ fontSize: 11, color: T.slate500 }}>Before this week</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800 }}>{before}</div>
+      </div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: T.slate500, textTransform: "uppercase", letterSpacing: 0.4 }}>This week</div>
+      <div style={{ display: "grid", gap: 8 }}>{children}</div>
+    </div>
+  );
+}
+
+function MyPointsLine({ what, sub, value }) {
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "flex-start", justifyContent: "space-between", fontSize: 13 }}>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ color: T.slate800, fontWeight: 600 }}>{what}</div>
+        {sub ? <div style={{ fontSize: 11, color: T.slate500 }}>{sub}</div> : null}
+      </div>
+      {value != null && value !== "" && <div style={{ fontWeight: 700, color: T.slate900, whiteSpace: "nowrap" }}>{value}</div>}
+    </div>
+  );
+}
+
+function MyPointsWeek({ backHref, onBack }) {
+  const todayEnd = weekEndOf(todayCentral());
+  const [weekEnd, setWeekEnd, weekHref] = useTabParam("mweek", todayEnd);
+  const safeWeek = /^\d{4}-\d{2}-\d{2}$/.test(weekEnd || "") ? weekEndOf(weekEnd) : todayEnd;
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true); setErr("");
+      try {
+        const r = await supabase.rpc("rp_my_points_week", { p_week_end: safeWeek });
+        if (!alive) return;
+        if (r.error) throw r.error;
+        if (r.data && r.data.ok === false) throw new Error(r.data.error || "Could not load your week.");
+        setData(r.data || null);
+      } catch (e) {
+        if (alive) { setErr(errText(e)); setData(null); }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [safeWeek]);
+
+  const d = data || {};
+  const show = d.show || {};
+  const mk = d.marketing || {}, qt = d.quotes || {}, sl = d.sales || {}, rt = d.retention || null;
+  const money = (n) => Number(n) < 0 ? `-$${fmtPts(-Number(n))}` : `$${fmtPts(n)}`;
+  const policies = (n) => `${n} ${Number(n) === 1 ? "policy" : "policies"}`;
+  const dateOf = (iso) => (iso ? fmtDate(iso) : null);
+  const subOf = (...parts) => parts.filter(Boolean).join(" · ");
+  const nothingBefore = `Nothing before this week. The quarter started ${fmtDate(d.cycle_start)}.`;
+  const none = <div style={{ fontSize: 13, color: T.slate500 }}>Nothing logged this week.</div>;
+  const weekStart = addDays(safeWeek, -6);
+
+  const marketingBefore = !d.has_prior ? nothingBefore
+    : mk.prior_logs == null ? `${fmtPts(mk.prior_points)} points (earlier weeks came from the weekly report)`
+    : `${plural(mk.prior_logs, "log")} · ${fmtPts(mk.prior_points)} points`;
+  const quotesBefore = !d.has_prior ? nothingBefore : `${plural(qt.prior_count || 0, "household quote")}`;
+  const salesBefore = !d.has_prior ? nothingBefore : `${policies(sl.prior_logs || 0)} issued · ${fmtPts(sl.prior_points)} points`;
+  const retentionBefore = !d.has_prior ? nothingBefore : `${plural(rt?.prior_logs || 0, "log")} · ${fmtPts(rt?.prior_points)} points paid in earlier weeks`;
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={cardStyle}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: T.slate900 }}>
+              My points · {fmtDate(weekStart)} – {fmtDate(safeWeek)} {loading ? <span style={{ color: T.slate400, fontWeight: 400, fontSize: 13 }}>· loading…</span> : null}
+            </div>
+            <div style={{ fontSize: 12, color: T.slate500 }}>Sunday through Saturday. Before this week means earlier weeks of the same quarter.</div>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <TabLink href={backHref} onSelect={onBack} style={btnGhost}>← Back to History</TabLink>
+            <TabLink href={weekHref(addDays(safeWeek, -7))} onSelect={() => setWeekEnd(addDays(safeWeek, -7))} style={btnGhost}>← Prior week</TabLink>
+            <TabLink href={weekHref(todayEnd)} onSelect={() => setWeekEnd(todayEnd)} style={btnGhost}>This week</TabLink>
+            <TabLink href={weekHref(addDays(safeWeek, 7))} onSelect={() => setWeekEnd(addDays(safeWeek, 7))} style={btnGhost} disabled={safeWeek >= todayEnd}>Next week →</TabLink>
+          </div>
+        </div>
+      </div>
+
+      {err && <Notice kind="error">{err}</Notice>}
+      {data && d.on_board === false && (
+        <div style={{ ...cardStyle, fontSize: 14, color: T.slate700 }}>You are not on the points board, so there is nothing to show here.</div>
+      )}
+
+      {data && d.on_board !== false && (
+        <>
+          {d.mode === "reported" && (
+            <div style={{ fontSize: 12, color: T.slate500 }}>Marketing and Sales only this week, from what was reported at the time.</div>
+          )}
+
+          <MyPointsCard title="Marketing Points" total={fmtWk(mk.week_points)} before={marketingBefore}
+            note={`${fmtPts(mk.qtd_points)} this quarter`}>
+            {(mk.items || []).length === 0
+              ? (Number(mk.week_points) > 0
+                  ? <div style={{ fontSize: 13, color: T.slate500 }}>This week came from the weekly report, so there are no individual logs.</div>
+                  : none)
+              : (mk.items || []).map((it, i) => (
+                  <MyPointsLine key={it.id || i}
+                    what={`${it.label || it.kind}${Number(it.nth) > 1 ? ` (${nth(Number(it.nth))} this quarter)` : ""}`}
+                    sub={subOf(dateOf(it.on_date), it.customer)} value={fmtPts(it.points)} />
+                ))}
+          </MyPointsCard>
+
+          {show.quotes !== false && (
+            <MyPointsCard title="Quotes" total={Number(qt.week_count || 0)} note="Household quotes. One per customer per week."
+              before={quotesBefore}>
+              {(qt.items || []).length === 0 ? none : (qt.items || []).map((it, i) => (
+                <MyPointsLine key={it.id || i} what={it.customer || "—"}
+                  sub={subOf(dateOf(it.on_date),
+                    it.types || (it.products || []).map(k => PRODUCT_SHORT[k] || k).join(", "),
+                    it.source ? String(it.source).replace(/_/g, " ") : null,
+                    it.dup ? "repeat this week" : null)} />
+              ))}
+            </MyPointsCard>
+          )}
+
+          <MyPointsCard title="Sales Points" total={fmtWk(sl.week_points)} before={salesBefore}
+            note={`${fmtPts(sl.qtd_points)} this quarter. Counted the week a policy issues. Amounts are premium.`}>
+            {(sl.items || []).length === 0 ? none : (sl.items || []).map((it, i) => (
+              <MyPointsLine key={it.id || i}
+                what={it.type || (it.line ? it.line.charAt(0).toUpperCase() + it.line.slice(1) : "Policy")}
+                sub={subOf(dateOf(it.issued_on), it.customer, Number(it.policies) > 1 ? policies(it.policies) : null)}
+                value={money(it.premium)} />
+            ))}
+          </MyPointsCard>
+
+          {show.retention !== false && rt && (
+            <MyPointsCard title="Retention Points" total={fmtWk(rt.net)} before={retentionBefore}
+              note={`${fmtPts(rt.gross)} gross${Number(rt.reduction_pct) > 0 ? `, less ${fmtPts(rt.reduction_pct)}% for ${fmtPts(rt.missed_pct)}% missed calls` : ""}. Net is what pays.`}>
+              <MyPointsLine what="Hours in office" sub={`${fmtPts(rt.hours)} hours`} value={fmtPts(rt.hour_points)} />
+              <MyPointsLine what="Calls answered" sub={`${rt.calls || 0} calls`} value={fmtPts(rt.call_points)} />
+              {(rt.paid_items || []).map((it, i) => (
+                <MyPointsLine key={it.id || i} what={it.label || it.activity_key}
+                  sub={subOf(dateOf(it.on_date), it.customer)} value={fmtPts(it.points)} />
+              ))}
+              {Number(rt.adjust) !== 0 && (
+                <MyPointsLine what="Cancelation takebacks" sub="Reviews and claims touches whose policy canceled" value={fmtPts(rt.adjust)} />
+              )}
+              {(rt.later_items || []).map((it, i) => (
+                <MyPointsLine key={`l-${it.id || i}`} what={it.label || it.activity_key}
+                  sub={subOf(dateOf(it.on_date), it.customer, `pays ${fmtDate(it.clears_on)}`)} value="later" />
+              ))}
+            </MyPointsCard>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function HistoryTab({ values, sources, types, isOwner, isAdmin, myTeamId, roster, nameOf, onLogged, refreshKey }) {
   const [editing, setEditing] = useState(null);
   const [flash, setFlash] = useState("");
   const [listKey, setListKey] = useState(0);
   const closeEdit = (msg) => { setEditing(null); setFlash(msg || ""); setListKey(k => k + 1); };
   const openEdit = (target) => { setFlash(""); setEditing(target); };
+  // "My points this week" (Peter 2026-10-09). A link, so right-click opens it in a new tab,
+  // and the URL carries it so a refresh stays put.
+  const [mine, setMine, mineHref] = useTabParam("mine", "", ["", "1"]);
+  if (mine === "1") return <MyPointsWeek backHref={mineHref("")} onBack={() => setMine("")} />;
   return (
     <div style={{ display: "grid", gap: 16 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <TabLink href={mineHref("1")} onSelect={() => setMine("1")} style={{ ...btnPrimary(false), padding: "8px 14px", fontSize: 13 }}>My points this week</TabLink>
+      </div>
       <RecentEntries isAdmin={isAdmin} roster={roster} refreshKey={refreshKey + listKey} onEdit={openEdit} flash={flash} />
       {editing && (
         <Modal title="Editing a record already on file" onClose={() => closeEdit("")}>

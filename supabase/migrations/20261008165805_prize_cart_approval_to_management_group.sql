@@ -17,3 +17,4 @@ BEGIN
   v_def := replace(v_def, $o$'🛒 ' || v_label || ' prize cart is shopped and ready for you'$o$, $n$'🛒 Alvi, the ' || v_label || ' prize cart is shopped and ready for you'$n$);
   EXECUTE v_def;
 END $$;
+

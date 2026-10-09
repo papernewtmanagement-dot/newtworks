@@ -165,3 +165,4 @@ GRANT EXECUTE ON FUNCTION public.office_request_snack(text, text) TO authenticat
 GRANT EXECUTE ON FUNCTION public.prize_cart_idea_add(text, text) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.prize_cart_ideas_mine() TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.prize_cart_idea_remove(uuid) TO authenticated, service_role;
+
