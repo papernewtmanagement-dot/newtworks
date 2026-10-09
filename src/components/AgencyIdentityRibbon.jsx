@@ -206,6 +206,9 @@ export default function AgencyIdentityRibbon() {
     name: "", address: "", phone: "", customer_email: "",
     sf_agent_code: "", txdi: "", npn: "", jackson_id: "",
   });
+  // The shared login the team uses to sign up for group trainings. It comes
+  // from the database, never from this file, because the repo is public.
+  const [trainingLogin, setTrainingLogin] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -229,6 +232,12 @@ export default function AgencyIdentityRibbon() {
           });
         }
       } catch (_) { /* keep fallback */ }
+
+      try {
+        const { data: tl } = await supabase.rpc("ribbon_training_login");
+        const row = Array.isArray(tl) ? tl[0] : tl;
+        if (active && row && (row.email || row.password)) setTrainingLogin(row);
+      } catch (_) { /* row just hides */ }
 
       try {
         const { data: ag } = await supabase
@@ -478,7 +487,7 @@ export default function AgencyIdentityRibbon() {
 
   const hasContact = office.phone || office.customer_email;
   const hasCodes   = office.sf_agent_code || office.txdi || office.npn || office.jackson_id;
-  const hasAnyOffice = office.name || office.address || hasContact || hasCodes;
+  const hasAnyOffice = office.name || office.address || hasContact || hasCodes || trainingLogin;
 
   return (
     <div style={css.wrap} aria-label="Agency identity">
@@ -611,6 +620,13 @@ export default function AgencyIdentityRibbon() {
                       {office.txdi && <div>TXDI {office.txdi}</div>}
                       {office.npn && <div>NPN {office.npn}</div>}
                       {office.jackson_id && <div>Jackson ID {office.jackson_id}</div>}
+                      {trainingLogin && (
+                        <div style={{ marginTop: 8 }}>
+                          <div style={css.officeName}>Group training sign-up</div>
+                          {trainingLogin.email && <div>{trainingLogin.email}</div>}
+                          {trainingLogin.password && <div>{trainingLogin.password}</div>}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
