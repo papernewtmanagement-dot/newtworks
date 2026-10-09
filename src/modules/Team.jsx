@@ -1073,8 +1073,10 @@ const StaffDirectory = ({ staff }) => {
       if (error) throw error;
       setOverrides(o => ({ ...o, [member.id]: { ...(o[member.id]||{}), ...payload } }));
       setSigStatus("Fields saved.");
+      return true;
     } catch (e) {
       setSigError(`Save failed: ${e?.message || String(e)}`);
+      return false;
     } finally {
       setSigSaving(false);
     }
@@ -1082,6 +1084,8 @@ const StaffDirectory = ({ staff }) => {
 
   const sendSignatureNow = async (member) => {
     if (sigSending) return;
+    // Save what is typed in the boxes first, so the signature sent matches the screen.
+    if (!(await saveSignatureFields(member))) return;
     setSigSending(true); setSigError(""); setSigStatus("");
     try {
       const { data, error } = await supabase.rpc("send_signature_email", {
