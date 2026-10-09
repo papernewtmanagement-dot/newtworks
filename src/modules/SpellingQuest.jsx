@@ -75,14 +75,15 @@ function monsterGem(len, fourToo) {
   if (len === 4 && fourToo) return "emerald";
   return null;
 }
+// Cut-gem colors: hi = top/table glint, mid = left facet, base = body, lo = right facet, deep = bottom facet.
 const GEM_LOOK = {
-  green:    { bg: "linear-gradient(160deg,#B9F2C8,#4CBF72)", border: "#2E8B57", ink: "#0F3D22" },
-  gold:     { bg: "linear-gradient(160deg,#FFE9A6,#E2B13C)", border: "#A8801F", ink: "#4A3500" },
-  diamond:  { bg: "linear-gradient(160deg,#FFFFFF,#BCE6F7)", border: "#3F8DB8", ink: "#0E3550" },
-  emerald:  { bg: "linear-gradient(160deg,#B9F2C8,#4CBF72)", border: "#2E8B57", ink: "#0F3D22" },
-  ruby:     { bg: "linear-gradient(160deg,#FFC2C2,#D7261E)", border: "#8E1B14", ink: "#FFFFFF" },
-  sapphire: { bg: "linear-gradient(160deg,#C9DEFF,#2F6FD6)", border: "#1B3E8E", ink: "#FFFFFF" },
-  amethyst: { bg: "linear-gradient(160deg,#EBD5FF,#8E5CB8)", border: "#5C3480", ink: "#FFFFFF" },
+  green:    { hi: "#D9FBE3", mid: "#6FDB93", base: "#34B464", lo: "#1E8A49", deep: "#11602F", border: "#0D4A24" },
+  emerald:  { hi: "#D9FBE3", mid: "#6FDB93", base: "#34B464", lo: "#1E8A49", deep: "#11602F", border: "#0D4A24" },
+  gold:     { hi: "#FFF6CF", mid: "#FFD866", base: "#F0B429", lo: "#C98A10", deep: "#8F5E05", border: "#6E4700" },
+  diamond:  { hi: "#FFFFFF", mid: "#E4F6FF", base: "#B8E3F7", lo: "#8CC6E8", deep: "#6AA6D1", border: "#3F7FAE", rainbow: true },
+  ruby:     { hi: "#FFD6D6", mid: "#FF6B6B", base: "#E0201A", lo: "#A8130E", deep: "#6E0905", border: "#560603" },
+  sapphire: { hi: "#DCE9FF", mid: "#6FA0FF", base: "#2A62D9", lo: "#1A44A6", deep: "#0E2A6E", border: "#0A1F55" },
+  amethyst: { hi: "#F1E2FF", mid: "#C08AF0", base: "#9255C9", lo: "#6A3699", deep: "#45206A", border: "#341650" },
 };
 const GEM_KEY = "Gems: emerald heals · amethyst cures · sapphire freezes · ruby +50% · diamond ×2 and heals";
 
@@ -1194,6 +1195,7 @@ function QuestStyles() {
     <style>{`
       @keyframes sqDrop { from { transform: translateY(-16px); opacity: 0 } to { transform: none; opacity: 1 } }
       @keyframes sqFlicker { from { filter: brightness(1) } to { filter: brightness(1.18) } }
+      @keyframes sqTwinkle { 0%,70%,100% { opacity: 0; transform: scale(0.3) rotate(0deg) } 82% { opacity: 1; transform: scale(1) rotate(45deg) } }
       @keyframes sqHint { from { box-shadow: 0 0 0 2px #F59E0B } to { box-shadow: 0 0 0 6px #F59E0B } }
       @keyframes sqIdle { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-4px) } }
       @keyframes sqLungeR { 0% { transform: translateX(0) } 35% { transform: translateX(46px) rotate(6deg) } 100% { transform: translateX(0) } }
@@ -1481,34 +1483,83 @@ function FireMap({ diff, unlocked, onPlay }) {
   );
 }
 
+// A cut gem drawn under the letter: bright center table, four slanted facets,
+// a glossy streak and a twinkle. Same drawing for every gem kind; colors come from GEM_LOOK.
+function GemCut({ gem, id }) {
+  const g = `gc${id}`;
+  return (
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+      <defs>
+        <radialGradient id={`${g}t`} cx="38%" cy="32%" r="75%">
+          <stop offset="0%" stopColor={gem.hi} />
+          <stop offset="55%" stopColor={gem.mid} />
+          <stop offset="100%" stopColor={gem.base} />
+        </radialGradient>
+        {gem.rainbow ? (
+          <linearGradient id={`${g}r`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#FFB3E6" />
+            <stop offset="35%" stopColor="#FFF3A6" />
+            <stop offset="65%" stopColor="#A6FFE0" />
+            <stop offset="100%" stopColor="#B3C8FF" />
+          </linearGradient>
+        ) : null}
+      </defs>
+      <polygon points="0,0 100,0 78,22 22,22" fill={gem.mid} />
+      <polygon points="0,0 22,22 22,78 0,100" fill={gem.base} />
+      <polygon points="100,0 100,100 78,78 78,22" fill={gem.lo} />
+      <polygon points="0,100 22,78 78,78 100,100" fill={gem.deep} />
+      <rect x="22" y="22" width="56" height="56" fill={`url(#${g}t)`} />
+      {gem.rainbow ? <rect x="0" y="0" width="100" height="100" fill={`url(#${g}r)`} opacity="0.35" /> : null}
+      <g stroke="#FFFFFF" strokeOpacity="0.45" strokeWidth="1.2" fill="none">
+        <path d="M0,0 L22,22 M100,0 L78,22 M0,100 L22,78 M100,100 L78,78" />
+        <rect x="22" y="22" width="56" height="56" />
+        <path d="M22,22 L50,36 L78,22 M22,78 L50,64 L78,78" strokeOpacity="0.2" />
+      </g>
+      <polygon points="6,4 40,4 14,44 4,40" fill="#FFFFFF" opacity="0.4" />
+      <g style={{ transformOrigin: "80px 18px", animation: `sqTwinkle ${2.6 + (id % 5) * 0.4}s ease-in-out ${(id % 7) * 0.45}s infinite` }}>
+        <path d="M80,6 L83,15 L92,18 L83,21 L80,30 L77,21 L68,18 L77,15 Z" fill="#FFFFFF" />
+      </g>
+    </svg>
+  );
+}
+
 function Tile({ tile, size, left, top, order, hinted, danger, onTap }) {
   const chosen = order >= 0;
-  const gem = GEM_LOOK[tile.kind];
   const fire = tile.kind === "fire";
   const stone = tile.stone > 0;
   const burning = tile.burn > 0;
-  const bg = burning ? "linear-gradient(170deg,#FFE3B0 0%,#FFB067 60%,#FF7A2F 100%)" : stone ? "linear-gradient(170deg,#B5B2A8,#7A7C6E)" : chosen ? T.blue : fire ? "linear-gradient(170deg,#FFD27A 0%,#FF7A2F 45%,#D7261E 100%)" : gem ? gem.bg : "linear-gradient(170deg,#FFF9EC,#EADFC4)";
-  const ink = stone ? "#4D503F" : chosen ? T.white : fire ? "#fff" : gem ? gem.ink : T.slate900;
-  const border = stone ? "#5C5E50" : chosen ? T.chromeBgDeep : fire ? "#9E1B14" : gem ? gem.border : "#C9BB98";
+  // A chosen gem keeps its gem look and gets a bright ring, so kids see what they picked.
+  const gem = !stone && !burning ? GEM_LOOK[tile.kind] : null;
+  const lightGem = gem && gem.rainbow;
+  const bg = burning ? "linear-gradient(170deg,#FFE3B0 0%,#FFB067 60%,#FF7A2F 100%)" : stone ? "linear-gradient(170deg,#B5B2A8,#7A7C6E)" : gem ? gem.base : chosen ? T.blue : fire ? "linear-gradient(170deg,#FFD27A 0%,#FF7A2F 45%,#D7261E 100%)" : "linear-gradient(170deg,#FFF9EC,#EADFC4)";
+  const ink = stone ? "#4D503F" : gem ? (lightGem ? "#0E3550" : "#FFFFFF") : chosen ? T.white : fire ? "#fff" : T.slate900;
+  const border = stone ? "#5C5E50" : gem ? gem.border : chosen ? T.chromeBgDeep : fire ? "#9E1B14" : "#C9BB98";
+  const shadow = danger || burning ? "0 0 0 3px rgba(239,68,68,0.6)"
+    : gem && chosen ? `0 0 0 3px ${T.blue}, 0 3px 0 rgba(0,0,0,0.2)`
+    : gem ? "0 3px 0 rgba(0,0,0,0.2), 0 0 8px rgba(255,255,255,0.35)"
+    : "0 3px 0 rgba(0,0,0,0.15)";
+  const textShadow = gem ? (lightGem ? "0 1px 0 #FFFFFF, 0 0 4px #FFFFFF" : "0 1px 2px rgba(0,0,0,0.7), 0 0 3px rgba(0,0,0,0.45)") : "none";
   return (
     <button
       type="button"
       onClick={onTap}
       disabled={stone}
-      aria-label={`${tile.ch}${fire ? " fire" : gem ? ` ${tile.kind}` : ""}${stone ? " stone" : ""}${burning ? " burning" : ""}`}
+      aria-label={`${tile.ch}${fire ? " fire" : GEM_LOOK[tile.kind] ? ` ${tile.kind}` : ""}${stone ? " stone" : ""}${burning ? " burning" : ""}`}
       style={{
         position: "absolute", left: left + 3, top: top + 3, width: size - 6, height: size - 6, padding: 0, cursor: stone ? "default" : "pointer",
-        borderRadius: Math.round(size * 0.16), border: `2px solid ${border}`, background: bg, color: ink,
-        boxShadow: danger || burning ? "0 0 0 3px rgba(239,68,68,0.6)" : "0 3px 0 rgba(0,0,0,0.15)",
+        borderRadius: Math.round(size * 0.16), border: `2px solid ${border}`, background: bg, color: ink, overflow: "hidden",
+        boxShadow: shadow, textShadow,
         transition: "top 0.25s ease-out, background 0.15s", fontFamily: "Georgia, 'Times New Roman', serif",
         animation: hinted ? "sqHint 0.6s ease-in-out infinite alternate" : tile.fresh ? "sqDrop 0.3s ease-out" : fire || burning ? "sqFlicker 0.9s ease-in-out infinite alternate" : "none",
       }}
     >
-      <span style={{ fontSize: Math.round(size * (tile.ch.length > 1 ? 0.4 : 0.5)), fontWeight: 700, lineHeight: 1 }}>{tile.ch === "QU" ? "Qu" : tile.ch}</span>
-      <span style={{ position: "absolute", right: 5, bottom: 3, fontSize: Math.max(9, Math.round(size * 0.17)), opacity: 0.7 }}>
+      {gem ? <GemCut gem={gem} id={tile.id || 0} /> : null}
+      <span style={{ position: "relative", fontSize: Math.round(size * (tile.ch.length > 1 ? 0.4 : 0.5)), fontWeight: 700, lineHeight: 1 }}>{tile.ch === "QU" ? "Qu" : tile.ch}</span>
+      <span style={{ position: "absolute", right: 5, bottom: 3, fontSize: Math.max(9, Math.round(size * 0.17)), opacity: gem ? 0.9 : 0.7 }}>
         {stone ? tile.stone : burning ? `🔥${tile.burn}` : Math.round((VALUE[tile.ch] || 1) * 10)}
       </span>
-      {chosen ? <span style={{ position: "absolute", left: 5, top: 3, fontSize: Math.max(9, Math.round(size * 0.19)), fontWeight: 700, opacity: 0.85 }}>{order + 1}</span> : null}
+      {chosen ? <span style={{ position: "absolute", left: 5, top: 3, fontSize: Math.max(9, Math.round(size * 0.19)), fontWeight: 700, opacity: gem ? 1 : 0.85 }}>{order + 1}</span> : null}
     </button>
   );
 }
