@@ -192,6 +192,7 @@ export default function Family({ userRole }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(null);
   const [celebrate, setCelebrate] = useState(null);
+  const [celebratePoints, setCelebratePoints] = useState(0);
   const [champsShow, setChampsShow] = useState(null); // { last, current } category rows for the standings box
   const [closing, setClosing] = useState(null);
   const [mathKid, setMathKid] = useState(null);
@@ -307,7 +308,12 @@ export default function Family({ userRole }) {
     const { data } = await supabase.rpc("family_week_board", { p_kid_id: kidId, p_week_start: viewWeek });
     const rows = Array.isArray(data) ? data : board;
     setBoard(rows);
-    if (!wasDone && todayDone(rows) && kid) setCelebrate(kid);
+    if (!wasDone && todayDone(rows) && kid) {
+      // The database paid the character for the day when the last chore was saved (family_day_award).
+      const pts = await supabase.rpc("family_day_points", { p_kid_id: kid.id, p_date: today });
+      setCelebratePoints(pts.error ? 0 : (pts.data || 0));
+      setCelebrate(kid);
+    }
     refreshTodo();
     load();
     const d = changedDay || day;
@@ -397,7 +403,7 @@ export default function Family({ userRole }) {
           onDone={() => { setMathKid(null); refreshTodo(); load(); }} onCancel={() => { setMathKid(null); refreshTodo(); }} />
       )}
       {celebrate && (
-        <Celebration kid={celebrate}
+        <Celebration kid={celebrate} points={celebratePoints}
           titles={[burpees.find(b => b.kid_id === celebrate.id)?.champion_title, burpees.find(b => b.kid_id === celebrate.id)?.chore_title, burpees.find(b => b.kid_id === celebrate.id)?.water_title].filter(Boolean)}
           onClose={() => setCelebrate(null)} />
       )}
@@ -1021,7 +1027,7 @@ function SchoolWeek({ kids, weekStart, today, dateHref, setDate, setErr }) {
 
 // The day-done dance. Last week's burpee and/or chore champion dances all this week under a
 // trophy, with their title(s) (family_burpee_week's champion_title / chore_title).
-function Celebration({ kid, titles, onClose }) {
+function Celebration({ kid, titles, points, onClose }) {
   const _vp = useViewport();
   const size = _vp.isPhone ? 76 : 120;
   const hasTitle = (titles || []).length > 0;
@@ -1052,6 +1058,12 @@ function Celebration({ kid, titles, onClose }) {
           )
           : <Dancer key={w + i} which={w} size={size} delay={i * 120} />))}
       </div>
+      {points > 0 && (
+        <div style={{ fontSize: _vp.isPhone ? 16 : 18, fontWeight: 700, color: T.slate900, textAlign: "center" }}>
+          Your character earned {Math.round(points).toLocaleString()} skill points today.{" "}
+          <a href="/roleplaying" onClick={ev => ev.stopPropagation()} style={{ color: T.blue }}>See your character</a>
+        </div>
+      )}
       <button style={btn("primary")} onClick={onClose}>Yay!</button>
     </div>
   );
