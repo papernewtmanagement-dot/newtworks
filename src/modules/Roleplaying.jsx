@@ -2073,6 +2073,13 @@ function mapFantasy(v, byId) {
   });
   const wide = (k) => (rw[k - 1] || 0) / 1000 * unit;
   const roadways = [];
+  // grand bridges: where a highway or road crosses open water it is drawn as a stone bridge, piers under a dark-sided
+  // pale deck, clipped to the water so the land stretch stays an ordinary road
+  const wetArea = paths[1] || paths[2] ? mapOutline(C, R, (i, j) => { const k = get(i, j).k; return k === "sea" || mapWet(k); }, unit, 0.45, wob) : "";
+  if (wetArea) MAP_ROADS.forEach(({ k }) => { if (paths[k] && k < 3) roadways.push(
+    { d: paths[k], line: "#3E352B", units: wide(k) * 3.2, min: 9, dash: [1.6, 8], cap: "butt", clip: wetArea },
+    { d: paths[k], line: "#3E352B", units: wide(k) * 2.2, min: 5, clip: wetArea },
+    { d: paths[k], line: "#B9A98C", units: wide(k) * 1.7, min: 3.6, clip: wetArea }); });
   MAP_ROADS.forEach(({ k, edge, mid }) => { if (paths[k]) roadways.push({ d: paths[k], line: edge.line, units: wide(k), min: edge.min, dash: edge.dash, cap: edge.dash ? "butt" : "round" }); });
   MAP_ROADS.forEach(({ k, edge, mid }) => { if (paths[k]) roadways.push({ d: paths[k], line: mid.line, units: wide(k), inset: mid.inset, min: mid.min }); });
   // (step 3) the streets, lanes and market places of the District grid, paved, over the roads they meet: each street
