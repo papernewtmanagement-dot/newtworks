@@ -3601,6 +3601,8 @@ function CreatureCard({ id, onBack, backHref, onError }) {
     setC(data);
   }, [id, onError]);
   useEffect(() => { load(); }, [load]);
+  // the card's figure that walks on the map; every character made from this card uses it unless it has its own
+  const cardIcons = useRpgImageUrls([c?.icon_path]);
 
   const toggleShown = async () => {
     if (!c || busy) return;
@@ -3628,6 +3630,9 @@ function CreatureCard({ id, onBack, backHref, onError }) {
       <ManualBodyStyles />
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
         {backLink}
+        {c.icon_path && cardIcons[c.icon_path] && (
+          <img src={cardIcons[c.icon_path]} alt="" title="Map figure" style={{ width: 28, height: 42, objectFit: "contain", display: "block" }} />
+        )}
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900 }}>{c.name}</div>
           {c.scholarly_name && <div style={{ fontSize: 13, color: T.slate500, fontStyle: "italic" }}>{c.scholarly_name}</div>}
