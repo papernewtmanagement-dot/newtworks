@@ -302,6 +302,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
   const [busy, setBusy] = useState(false);
   const [openStat, setOpenStat] = useState(null);          // the calculated stat whose parents are open
   const debounce = useRef(null);
+  const sheetIcons = useRpgImageUrls([sheet?.icon_path]);
 
   const load = useCallback(async (diff) => {
     const [s, r] = await Promise.all([
@@ -466,8 +467,10 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
         <a href={backHref} onClick={(e) => { if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); onBack(); }}
           style={{ ...btn("soft", true), textDecoration: "none", display: "inline-block" }}>← Characters</a>
-        <div style={{ width: 34, height: 34, borderRadius: "50%", background: sheet.color || T.blue, color: T.white, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, boxSizing: "border-box" }}>
-          {String(sheet.name || "?").slice(0, 1).toUpperCase()}
+        <div style={{ width: 34, height: 34, borderRadius: "50%", background: sheet.color || T.blue, color: T.white, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, boxSizing: "border-box", overflow: "hidden" }}>
+          {sheet.icon_path && sheetIcons[sheet.icon_path]
+            ? <img src={sheetIcons[sheet.icon_path]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            : String(sheet.name || "?").slice(0, 1).toUpperCase()}
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 18, fontWeight: 700, color: T.slate900 }}>{sheet.name}{sheet.side === "evil" && <span style={{ ...tag("off"), marginLeft: 8, verticalAlign: "middle" }}>Evil</span>}</div>
@@ -476,6 +479,16 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
         <button type="button" style={btn("soft", true)} onClick={editing ? () => setEditing(false) : startEdit}>{editing ? "Cancel" : "Edit"}</button>
         {canReroll && <button type="button" style={btn("soft", true)} onClick={reroll} title={unplayed ? "Roll a fresh set of strengths" : "Parents can re-roll any time"}>Re-roll strengths</button>}
       </div>
+
+      {/* the character's picture (rpg_characters.image_path), the same box a creature card uses */}
+      {(sheet.image_path || isParent) && (
+        <Fold title="Picture" open={!!sheet.image_path}>
+          <div style={{ maxWidth: 360 }}>
+            <CreaturePicture c={{ id: sheet.id, key: `characters/${sheet.id}`, name: sheet.name, image_path: sheet.image_path, lore: sheet.notes }}
+              gm={isParent} onError={onError} onSaved={() => load(effDiff)} table="rpg_characters" />
+          </div>
+        </Fold>
+      )}
 
       {editing && (
         <div style={{ ...card, marginBottom: 12 }}>
@@ -3223,6 +3236,8 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl, weather }) {
   useEffect(() => { setFloor(curFloor); }, [v.view, curFloor]);
   const shownFloor = Math.max(Math.min(floor, upper), lower);
   const art = useMemo(() => (under && hasUnder ? null : top ? mapBattle(v, byId, shownFloor) : mapFantasy(v, byId)), [v, byId, top, under, hasUnder, shownFloor]);
+  // a character with an icon (rpg_characters.icon_path, sent as the piece's icon) stands on the map as that icon
+  const iconUrls = useRpgImageUrls(journey && Array.isArray(journey.pieces) ? journey.pieces.map(p => p.icon) : []);
   // how many screen pixels one unit of the drawing takes (a cell is 100 units)
   const px = width > 16 ? (width - 16) / (cols * 100) : 1;
   const ground = (k) => { const g = grounds[k]; return g && typeof g === "object" ? [g.name, g.penalty].filter(Boolean).join(" · ") : String(g || k); };
@@ -3263,14 +3278,16 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl, weather }) {
     const k = `${Math.floor(p.spot[0] / 1000)},${Math.floor(p.spot[1] / 1000)}`;
     const n = shared[k] = (shared[k] || 0) + 1;
     const turn = journey.status === "active" && journey.current === p.id;
+    const icon = p.icon ? iconUrls[p.icon] : null;
+    const size = icon ? 30 : 22;
     return (
       <span key={p.id} title={p.under ? `${p.name} · ${p.under}` : p.name} aria-hidden="true"
         style={{ position: "absolute", left: `calc(16px + (100% - 16px) * ${p.spot[0] / (cols * 1000)} + ${(n - 1) * 12}px)`, top: `calc(16px + (100% - 16px) * ${p.spot[1] / (rows * 1000)})`,
-          transform: "translate(-50%, -50%)", width: 22, height: 22, background: p.color || T.slate500, border: p.under ? "2px dashed #fff" : "2px solid #fff",
+          transform: "translate(-50%, -50%)", width: size, height: size, background: p.color || T.slate500, overflow: "hidden", border: p.under ? "2px dashed #fff" : "2px solid #fff",
           boxShadow: turn ? `0 0 0 3px ${T.blue}, 0 1px 3px rgba(0,0,0,.4)` : "0 1px 3px rgba(0,0,0,.4)", color: "#fff", fontSize: 11, fontWeight: 800,
           borderRadius: p.creature ? 5 : "50%", borderColor: p.creature ? "#5A1E1E" : "#fff", opacity: p.out ? 0.4 : 1,
           display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", boxSizing: "border-box", zIndex: turn ? 3 : 2 }}>
-        {String(p.name || "?").charAt(0)}
+        {icon ? <img src={icon} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /> : String(p.name || "?").charAt(0)}
       </span>
     );
   });
@@ -3461,7 +3478,38 @@ const imagePrompt = (c) => [
   "Painted storybook style, dramatic natural lighting, the creature centered and fully in frame, square image, no words or letters anywhere.",
 ].filter(Boolean).join(" ");
 
-function CreaturePicture({ c, gm, onError, onSaved }) {
+// One signed link per file in rpg-images, kept for 50 minutes of its hour, so a card, a sheet and every map piece
+// showing the same picture ask for it once.
+const rpgImageLinks = {};
+function rpgImageUrl(path) {
+  const hit = rpgImageLinks[path];
+  if (hit && hit.until > Date.now()) return hit.p;
+  const p = supabase.storage.from("rpg-images").createSignedUrl(path, 3600).then(({ data, error }) => {
+    if (error) { delete rpgImageLinks[path]; throw error; }
+    return data?.signedUrl || null;
+  });
+  rpgImageLinks[path] = { p, until: Date.now() + 50 * 60 * 1000 };
+  return p;
+}
+// The signed links for a list of rpg-images paths, as { path: url }; a path that fails is left out.
+function useRpgImageUrls(paths) {
+  const want = Array.from(new Set((paths || []).filter(Boolean))).sort().join("|");
+  const [urls, setUrls] = useState({});
+  useEffect(() => {
+    let alive = true;
+    if (!want) { setUrls({}); return undefined; }
+    const list = want.split("|");
+    Promise.all(list.map(x => rpgImageUrl(x).catch(() => null))).then(got => {
+      if (alive) setUrls(Object.fromEntries(list.map((x, n) => [x, got[n]]).filter(e => e[1])));
+    });
+    return () => { alive = false; };
+  }, [want]);
+  return urls;
+}
+
+// The same picture box serves a creature card (rpg_creatures) and a character sheet (rpg_characters): `table` says
+// which row the uploaded picture is saved on.
+function CreaturePicture({ c, gm, onError, onSaved, table = "rpg_creatures" }) {
   const [url, setUrl] = useState(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -3469,12 +3517,7 @@ function CreaturePicture({ c, gm, onError, onSaved }) {
     let alive = true;
     setUrl(null);
     if (!c.image_path) return undefined;
-    (async () => {
-      const { data, error } = await supabase.storage.from("rpg-images").createSignedUrl(c.image_path, 3600);
-      if (!alive) return;
-      if (error) { onError(error.message); return; }
-      setUrl(data?.signedUrl || null);
-    })();
+    rpgImageUrl(c.image_path).then(u => { if (alive) setUrl(u); }, e => { if (alive) onError(e.message); });
     return () => { alive = false; };
   }, [c.image_path, onError]);
 
@@ -3485,7 +3528,7 @@ function CreaturePicture({ c, gm, onError, onSaved }) {
     const path = `${c.key || c.id}/${Date.now()}_${safe}`;
     const up = await supabase.storage.from("rpg-images").upload(path, file, { contentType: file.type, upsert: true });
     if (up.error) { setBusy(false); onError(up.error.message); return; }
-    const { error } = await supabase.from("rpg_creatures").update({ image_path: path }).eq("id", c.id);
+    const { error } = await supabase.from(table).update({ image_path: path }).eq("id", c.id);
     setBusy(false);
     if (error) { onError(error.message); return; }
     onSaved();
