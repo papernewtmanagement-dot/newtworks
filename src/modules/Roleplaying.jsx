@@ -2878,17 +2878,36 @@ function MapsTab({ isParent, onError, onFight }) {
     })();
     return () => { alive = false; if (retry) clearTimeout(retry); };
   }, [at, setAt, onError, tick]);
+  // (walk speed step) how many times a walk that timed out has been tried again since its ground was sent to be worked out
+  const walkTries = useRef(0);
+  const actRef = useRef(null);
   const act = useCallback(async (fn, args) => {
     if (busy) return;
     setBusy(true);
     const { data, error } = await supabase.rpc(fn, args);
     setBusy(false);
-    if (error) { onError(error.message); return; }
+    if (error) {
+      // a walk that ran past the time a read may take: its ground is worked out in the background (rpg_map_walk_prepare)
+      // and the walk is tried again every 15 seconds, up to 8 times, while the map stays as it is
+      if (fn === "rpg_map_walk" && (error.code === "57014" || /statement timeout/i.test(error.message || ""))) {
+        walkTries.current += 1;
+        if (walkTries.current === 1) supabase.rpc("rpg_map_walk_prepare", args).then(() => {}, () => {});
+        if (walkTries.current <= 8) {
+          setNote("Working out this ground for the first time. The walk goes on its own in a moment.");
+          setTimeout(() => { if (actRef.current) actRef.current(fn, args); }, 15000);
+          return;
+        }
+      }
+      walkTries.current = 0;
+      onError(error.message); return;
+    }
+    walkTries.current = 0;
     setMode(null);
     setNote(data && typeof data === "object" && data.text ? data.text : null);
     seen.current.clear();
     setTick(t => t + 1);
   }, [busy, onError]);
+  actRef.current = act;
   const j = v && v.journey && typeof v.journey === "object" ? v.journey : null;
   // (weather step 1) the weather over this grid at the journey clock (with no journey open, the start of Day 1), read
   // after the grid itself; none on the World and Continent grids
