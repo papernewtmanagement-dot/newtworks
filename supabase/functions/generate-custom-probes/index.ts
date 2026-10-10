@@ -60,10 +60,10 @@
 
 import { getDocumentProxy, extractText as unpdfExtractText } from "npm:unpdf@1.3.2";
 import { callComposio, ComposioCallResult } from "../_shared/composio.ts";
-import { SUPABASE_URL, SERVICE_ROLE_KEY, CORS_HEADERS, getSettingOrNull } from "../_shared/supabase.ts";
+import { sb, SUPABASE_URL, SERVICE_ROLE_KEY, CORS_HEADERS, getSettingOrNull, stripFences } from "../_shared/supabase.ts";
+import { fitMaxTokens, readWithBackup, CLAUDE_BACKUP_MODEL } from "../_shared/llm.ts";
 
 const GROQ_MODEL_FALLBACK = "openai/gpt-oss-120b";
-const GROQ_ENDPOINT       = "https://api.groq.com/openai/v1/chat/completions";
 
 // Interview time budget shipped 2026-07-17. Deep-dive = 35 min, ~3-4 min per probe → cap 10, hard max 12.
 const TIME_BUDGET_MINUTES = 35;
@@ -307,7 +307,19 @@ Output requirements:
   "notes": "optional string — caveats about generation, e.g. 'resume text not available so no resume-signal probes included'"
 }`;
 
-async function generateProbes(context: any, groqKey: string, model: string): Promise<any> {
+// Safety check on one answer: JSON with a sections array. Shared by the
+// Claude backup (via readWithBackup) and the parse below.
+function probesAnswerProblem(raw: string): string | null {
+  let parsed: any;
+  try { parsed = JSON.parse(stripFences(raw)); }
+  catch (e) { return "output not valid JSON: " + (e as Error).message; }
+  return Array.isArray(parsed?.sections) ? null : "output missing 'sections' array";
+}
+
+// 2026-10-09: reads through the shared readWithBackup (Groq paced against the
+// per-minute cap, Claude only when Groq fails or fails the check above). This
+// file used to carry its own direct Groq call.
+async function generateProbes(context: any, groqKey: string | null, model: string): Promise<any> {
   const pressOnBlock = context.press_on_facets.length === 0
     ? ""
     : `\n\nAREAS TO PRESS ON (role-relevant facets at/below p20 or at/above p80 vs typical adults):\n${
@@ -327,24 +339,21 @@ RESUME TEXT: ${context.resume_text ? context.resume_text : "(not available — d
 
 Generate the JSON now. Target ${PROBE_COUNT_TARGET} total probes, hard cap ${PROBE_COUNT_HARD_MAX}. Return only the JSON object, nothing else.`;
 
-  const resp = await fetch(GROQ_ENDPOINT, {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${groqKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model, temperature: 0.4, max_tokens: 2500,
-      messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: userMsg }],
-      response_format: { type: "json_object" },
-    }),
+  const read = await readWithBackup({
+    agencyId: context.a.agency_id,
+    groqKey,
+    model,
+    systemPrompt: SYSTEM_PROMPT,
+    userContent: userMsg,
+    maxTokens: fitMaxTokens(SYSTEM_PROMPT, userMsg, 2500),
+    claudeMaxTokens: 4000,
+    temperature: 0.4,
+    jsonObject: true,
+    check: probesAnswerProblem,
+    label: `generate-custom-probes candidate=${context.a.id}`,
   });
-  if (!resp.ok) { const txt = await resp.text(); throw new Error(`Groq API ${resp.status}: ${txt.slice(0, 500)}`); }
-  const data = await resp.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Groq returned no content");
-  let parsed: any;
-  try { parsed = JSON.parse(content); }
-  catch (e) { throw new Error("Groq output not valid JSON: " + (e as Error).message); }
-  if (!Array.isArray(parsed?.sections)) throw new Error("Groq output missing 'sections' array");
-  return parsed;
+  if (!read.ok) throw new Error(read.error ?? "probe read failed");
+  return { ...JSON.parse(stripFences(read.raw)), reader: read.reader };
 }
 
 Deno.serve(async (req: Request) => {
@@ -386,8 +395,8 @@ Deno.serve(async (req: Request) => {
       position: a.position,
       resume_text: resumeFetch.text, a, press_on_facets: pressOnFacets,
     };
+    // A missing Groq key no longer stops the read: the Claude backup covers it.
     const groqKey = await getSettingOrNull(a.agency_id, "groq_api_key");
-    if (!groqKey) return json({ error: "settings.groq_api_key missing for agency" }, 500);
     const model = (await getSettingOrNull(a.agency_id, "groq_model_default")) || GROQ_MODEL_FALLBACK;
     const raw = await generateProbes(context, groqKey, model);
     const capped = enforceProbeCap(raw);
@@ -395,7 +404,7 @@ Deno.serve(async (req: Request) => {
 
     // Stamp metadata
     probes.version              = 13.0;
-    probes.model                = model;
+    probes.model                = raw.reader === "claude" ? CLAUDE_BACKUP_MODEL : model;
     probes.resume_analyzed      = Boolean(context.resume_text);
     probes.resume_source        = resumeFetch.source;
     probes.resume_length_chars  = context.resume_text?.length ?? 0;

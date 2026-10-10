@@ -324,6 +324,7 @@ export async function readWithBackup(opts: {
   maxTokens: number;            // Groq answer ceiling (callers clamp to the cap first)
   claudeMaxTokens?: number;     // default 8000; Claude has no 8,000 request cap
   temperature?: number;
+  jsonObject?: boolean;         // ask Groq for a JSON object (Claude follows the prompt)
   reasoningEffort?: "none" | "low" | "medium" | "high";
   groqTimeoutMs?: number;
   claudeTimeoutMs?: number;
@@ -348,6 +349,7 @@ export async function readWithBackup(opts: {
       userContent: opts.userContent,
       maxTokens: opts.maxTokens,
       temperature: opts.temperature ?? 0.1,
+      jsonObject: opts.jsonObject,
       reasoningEffort: opts.reasoningEffort,
       timeoutMs: opts.groqTimeoutMs,
       agencyId: opts.agencyId,
