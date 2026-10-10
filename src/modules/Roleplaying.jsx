@@ -65,7 +65,7 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //                                            cards and fixed-seed rolls for unnamed ground (sea, open land, forest,
 //                                            hills, mountains, and by climate grassy plains, pine forest, jungle,
 //                                            desert, sand dunes, salt flats, savanna and scrub, tundra, snow and
-//                                            ice, swamp, bog; an oasis, a river delta; a beach; a glacier), with the list that grid shows
+//                                            ice, swamp, bog; an oasis, a river delta; a beach; a glacier; volcanic ash, a lava field), with the list that grid shows
 //                                            (the places one level down), the lands it lies in and, for the world,
 //                                            every cell of the
 //                                            Continent grids to draw it fine; and the open journey (its clock in
@@ -1132,7 +1132,7 @@ const MAP_SERIF = "Georgia, 'Times New Roman', serif";
 const MAP_PAPER = { sea: "#B4CACB", shallow: "#C6D9D6", shore: "#D6E4DD", land: "#EFE5C8" };
 // The kinds of unnamed ground, in the order the key lists them, each with its letter in a grid drawn fine (v.detail;
 // the same letters as rpg_map_grounds).
-const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["savanna", "v"], ["beach", "y"], ["forest", "t"], ["pine", "p"], ["jungle", "j"], ["hills", "h"], ["mountains", "m"], ["glacier", "x"], ["desert", "d"], ["dunes", "e"], ["salt", "f"], ["oasis", "o"], ["tundra", "u"], ["ice", "i"], ["swamp", "s"], ["bog", "b"], ["delta", "l"], ["town", "n"], ["road", "r"], ["pass", "a"], ["water", "w"], ["deep", "k"]];
+const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["savanna", "v"], ["beach", "y"], ["forest", "t"], ["pine", "p"], ["jungle", "j"], ["hills", "h"], ["mountains", "m"], ["glacier", "x"], ["ash", "z"], ["lava", "q"], ["desert", "d"], ["dunes", "e"], ["salt", "f"], ["oasis", "o"], ["tundra", "u"], ["ice", "i"], ["swamp", "s"], ["bog", "b"], ["delta", "l"], ["town", "n"], ["road", "r"], ["pass", "a"], ["water", "w"], ["deep", "k"]];
 // Rivers drawn as lines on a grid too coarse to hold them as water (rpg_map_view: cells' river, detail.rivers): the
 // line's width in screen pixels by its size, 2 a great river down to 5 a brook.
 const MAP_RIVER_W = { 2: 4.6, 3: 3.3, 4: 2.2, 5: 1.4 };
@@ -1523,7 +1523,7 @@ const MAP_ART = {
     { k: "tuft", line: "#7A8A4C", w: 0.9 }, { k: "tuftDry", line: "#9C9450", w: 0.9 }, { k: "tuftCold", line: "#8A9579", w: 0.9 },
     { k: "dip", line: "#8C8156", w: 1 }, { k: "stream", line: "#6C9BAE", w: 1.5 }, { k: "marsh", line: "#7FA0A0", w: 1.2 }, { k: "reed", line: "#5C6B37", w: 1 },
     { k: "dune", line: "#B0925A", w: 1.1 }, { k: "duneFace", fill: "#D9BC85" }, { k: "salt", line: "#ADA594", w: 0.9 }, { k: "pool", fill: "#9DB6B4", line: "#6F8E8E", w: 0.8 },
-    { k: "acacia", fill: "#A3A55E", line: MAP_INK, w: 0.9 }, { k: "sand", fill: "#C9B27A" }, { k: "smoke", fill: "#B9B3AA", line: "#8F887E", w: 0.8 }, { k: "crevasse", line: "#8EA9B8", w: 0.9 }, { k: "drift", fill: "#FBFCFC", line: "#A9BFCB", w: 0.9 }, { k: "ridge", line: "#8EA9B8", w: 1 },
+    { k: "acacia", fill: "#A3A55E", line: MAP_INK, w: 0.9 }, { k: "sand", fill: "#C9B27A" }, { k: "smoke", fill: "#B9B3AA", line: "#8F887E", w: 0.8 }, { k: "crevasse", line: "#8EA9B8", w: 0.9 }, { k: "cinder", fill: "#6F6964" }, { k: "lavaRock", fill: "#4A4440", line: "#2E2A27", w: 0.8 }, { k: "lavaGlow", line: "#D0602E", w: 1.1 }, { k: "drift", fill: "#FBFCFC", line: "#A9BFCB", w: 0.9 }, { k: "ridge", line: "#8EA9B8", w: 1 },
     { k: "mist", line: "#8E8AA3", w: 1.7 }, { k: "wave", line: "#8DAEB1", w: 1 },
   ],
   fantasy: {
@@ -1795,6 +1795,18 @@ const MAP_ART = {
       if (few) { capped(x + (0.5 + (rnd(1) - 0.5) * 0.3) * s, y + (0.98 + (rnd(2) - 0.5) * 0.16) * s, s * (1.3 + rnd(3) * 0.4), s * (1.1 + rnd(4) * 0.5), (rnd(5) - 0.5) * 0.16); return; }
       [[0.38, 0.7, 0.66, 0.6], [0.74, 0.94, 0.48, 0.4], [0.2, 0.96, 0.34, 0.28]].forEach(([u, v, w, h], k) => capped(x + (u + (rnd(k) - 0.5) * 0.1) * s, y + (v + (rnd(10 + k) - 0.5) * 0.06) * s, s * w, s * h * (0.9 + rnd(20 + k) * 0.3), (rnd(30 + k) - 0.5) * 0.16));
     },
+    // more terrain step 3c (2026-10-10): the ash and cinders round a great volcano, and its lava flows
+    ash(add, x, y, s, rnd, few) {
+      const dot = (cx, cy, r) => add(cy, "cinder", `M${mapPt([cx - r, cy])}a${mapNum(r)} ${mapNum(r)} 0 1 0 ${mapNum(2 * r)} 0a${mapNum(r)} ${mapNum(r)} 0 1 0 ${mapNum(-2 * r)} 0Z`);
+      const n = few ? 4 : 9;
+      for (let k = 0; k < n; k++) dot(x + (0.1 + rnd(k) * 0.8) * s, y + (0.1 + rnd(20 + k) * 0.8) * s, s * (few ? 0.04 : 0.028));
+    },
+    lava(add, x, y, s, rnd, few) {
+      const block = (cx, cy, w) => add(cy, "lavaRock", mapPoly([[cx - w * 0.5, cy], [cx - w * 0.3, cy - w * 0.4], [cx + w * 0.2, cy - w * 0.45], [cx + w * 0.5, cy - w * 0.05], [cx + w * 0.2, cy + w * 0.15]]));
+      const glow = (cx, cy, w) => add(cy + w, "lavaGlow", mapLine([[cx - w * 0.5, cy], [cx - w * 0.15, cy + w * 0.2], [cx + w * 0.1, cy - w * 0.05], [cx + w * 0.5, cy + w * 0.15]]));
+      if (few) { block(x + 0.4 * s, y + 0.55 * s, s * 0.5); glow(x + 0.5 * s, y + 0.75 * s, s * 0.4); return; }
+      [[0.3, 0.35], [0.7, 0.5], [0.4, 0.8]].forEach(([u, v], k) => { block(x + (u + (rnd(k) - 0.5) * 0.1) * s, y + (v + (rnd(5 + k) - 0.5) * 0.08) * s, s * 0.24); if (rnd(10 + k) < 0.7) glow(x + (u + 0.08) * s, y + (v + 0.1) * s, s * 0.18); });
+    },
     // a volcano (a great peak, peak or mountain that is one): a cone with a crater, smoke rising
     volcano(add, x, y, s, rnd, few) {
       const base = y + 0.96 * s, cx = x + 0.5 * s, w = s * 0.92, h = s * 0.74, tw = w * 0.2;
@@ -1883,6 +1895,9 @@ const MAP_ART = {
     dunes:     { tones: ["#EAC98A", "#E7C687", "#EDCC8D"], ripple: 0.85 },
     salt:      { tones: ["#E9E5D8", "#E6E2D5", "#ECE8DB"], crack: 0.55, pebble: 0.02 },
     bog:       { tones: ["#7D7B55", "#7A7852", "#807E58"], puddle: 0.42, blade: 0.4, bush: 0.06, reed: 0.1, mist: 0.06 },
+    // (more terrain step 3c) volcanic ash: dark grey cinders and pumice; a lava field: black broken rock
+    ash:       { tones: ["#7A7470", "#77716D", "#7D7773"], pebble: 0.55, rock: 0.04, crack: 0.1 },
+    lava:      { tones: ["#3F3B38", "#3C3835", "#423E3B"], crack: 0.6, rock: 0.25, slab: 0.2 },
     // (more terrain step 3b) a glacier: blue-white ice, cracked by crevasses, with drifts of snow
     glacier:   { tones: ["#DCE8EE", "#D9E5EB", "#DFEBF1"], frost: 0.5, drift: 0.2, crack: 0.05 },
     // (more terrain step 3a) a beach: pale sand with ripples and a few shells and pebbles
