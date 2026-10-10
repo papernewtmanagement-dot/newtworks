@@ -1604,11 +1604,18 @@ async function processOneAttachment(
 ): Promise<ProcessedAttachment[]> {
   const results: ProcessedAttachment[] = [];
 
-  const docType = classifyDocument({
+  const classified = classifyDocument({
     fromEmail: att.fromEmail,
     subject: att.subject,
     fileName: att.fileName,
   });
+  // Emailed CTS report (Peter 2026-10-09): ignored entirely. Not downloaded,
+  // not filed to Drive, no document row; it takes the ordinary skip path, so
+  // only a trace row records it and the hourly run does not re-read it.
+  // Scores come from the CTS site pull (ctsPayload set). The hand-run Drive
+  // loader (cts_drive, parentArchive "Drive") still reads.
+  const docType: DocType = (classified === "cts_profile" && !att.ctsPayload && att.parentArchive !== "Drive")
+    ? "skip" : classified;
 
   // Idempotency check: skip if this exact filename was already processed.
   // (The fetcher already checks this for outer attachments; this catches
@@ -2188,22 +2195,6 @@ async function processOneAttachment(
         // preserveFormat is on: the default path reinjects newlines using a
         // pattern shaped for State Farm's own PDFs, and this is a different
         // vendor's layout.
-        // Emailed CTS report (Peter 2026-10-09): filed to Drive, never read.
-        // Scores come from the CTS site pull now, so an emailed copy gets no
-        // AI read, no candidate match and no alert. The hand-run Drive mode
-        // (cts_drive, parentArchive "Drive") still reads, as before.
-        if (!att.ctsPayload && att.parentArchive !== "Drive") {
-          await markDocument(documentId, "processed", 0, ["documents"],
-            "Emailed CTS report filed to Drive only; not read (scores come from the CTS site pull).");
-          await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
-          results.push({
-            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
-            docType, status: "processed", jeCount: 0, suspenseCount: 0,
-            sourceLabel: uploadSource,
-          });
-          break;
-        }
-
         // CTS site pull: the scores were read off the vendor's report page
         // already (parsers/cts_site.ts, no AI). The PDF is only filed.
         let parsed: { ok: true; candidateName: string | null; payload: Record<string, unknown> } | { ok: false; candidateName: string | null; error: string };
