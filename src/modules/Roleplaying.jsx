@@ -1817,6 +1817,10 @@ const MAP_ART = {
     // and flat stones, a little stiller than the river round it
     bridge:    { tones: ["#9C7A4E", "#99774B", "#9F7D51"], plank: true },
     ford:      { tones: ["#A4C6C4", "#A1C3C1", "#A7C9C7"], wave: 0.3, pebble: 0.55, slab: 0.12 },
+    // (more terrain step 2a) rapids: a river running fast over hills or mountains, white water among rocks; a
+    // waterfall: the river falling over a cliff, all foam and spray
+    rapids:    { tones: ["#7FB4C2", "#7CB1BF", "#82B7C5"], wave: 0.95, rock: 0.06, pebble: 0.12 },
+    falls:     { tones: ["#C9E2E8", "#C6DFE5", "#CCE5EB"], wave: 1, mist: 0.35, rock: 0.04 },
     pass:      { tones: ["#ABA08A", "#A89D87", "#AEA38D"], streak: 0.45, pebble: 0.45, crack: 0.12, rock: 0.04 },
     ruins:     { tones: ["#AEAA6E", "#ABA76B", "#B1AD71"], block: 0.17, pebble: 0.3, blade: 0.45 },
     valley:    { tones: ["#86B45C", "#83B159", "#89B75F"], blade: 0.85, flower: 0.32 },
@@ -1865,7 +1869,7 @@ const mapMix = (a, b, t) => "#" + [1, 3, 5].map(n => Math.round(parseInt(a.slice
 // has no look of its own for is open land.
 const mapWash = (what) => (what === "sea" || what === "deep" ? MAP_PAPER.sea : what === "water" ? mapMix(MAP_PAPER.shallow, MAP_PAPER.sea, 0.45) : mapMix(MAP_PAPER.land, (MAP_ART.top[what] || MAP_ART.top.land).tones[0], MAP_TINT));
 // Water on the map: rivers and lakes, waded or swum (rpg_map_water); a ford is knee-deep water (step 11)
-const mapWet = (k) => k === "water" || k === "deep" || k === "ford";
+const mapWet = (k) => k === "water" || k === "deep" || k === "ford" || k === "rapids" || k === "falls";
 // Harder ground drawn darker (Peter 2026-10-03: thicker forest, deeper water darker): h(i, j) = how hard a square is
 // inside its ground, 0 to 9 (rpg_map_view: cells' hard, detail.hard), nothing when not known. Each step from 2 up adds
 // a thin dark wash over the squares at or above it, so 9 (a thicket) is the darkest; deep water is shaded in blue.
@@ -2528,7 +2532,7 @@ function mapBattle(v, byId, floor = 0) {
   // a square carried over water by a bridge, or in a ford, draws as that (step 11; rpg_map_view: cells' cross)
   // (step 3) a paved square of a town or city draws as its street or market place, and a road or a lane through a
   // village as the road, though each carries its settlement as its place (for its wash and its name)
-  cells.forEach(c => { const p = c.place && !mapWet(c.kind) ? byId[c.place] : null; grid[(c.y - 1) * cols + (c.x - 1)] = { what: c.cross === "bridge" || c.cross === "ford" ? c.cross : c.paved === 2 ? "market" : c.paved === 1 ? "street" : c.kind === "road" || c.kind === "pass" ? c.kind : p ? (MAP_ART.top[p.icon] ? p.icon : "plain") : c.kind, id: c.place || null, h: c.hard == null ? null : Number(c.hard), cliff: c.cliff == null ? null : Number(c.cliff) }; });
+  cells.forEach(c => { const p = c.place && !mapWet(c.kind) ? byId[c.place] : null; grid[(c.y - 1) * cols + (c.x - 1)] = { what: c.rush === "rapids" || c.rush === "falls" ? c.rush : c.cross === "bridge" || c.cross === "ford" ? c.cross : c.paved === 2 ? "market" : c.paved === 1 ? "street" : c.kind === "road" || c.kind === "pass" ? c.kind : p ? (MAP_ART.top[p.icon] ? p.icon : "plain") : c.kind, id: c.place || null, h: c.hard == null || c.rush ? null : Number(c.hard), cliff: c.cliff == null ? null : Number(c.cliff) }; });
   const get = (i, j) => grid[(j < 0 ? 0 : j >= rows ? rows - 1 : j) * cols + (i < 0 ? 0 : i >= cols ? cols - 1 : i)] || { what: "plain" };
   const washes = [];
   Array.from(new Set(grid.filter(g => g && g.id).map(g => g.id))).forEach(id => { const p = byId[id]; if (p && p.color) washes.push({ d: mapOutline(cols, rows, (i, j) => get(i, j).id === id, 100, 0.3), fill: p.color, o: 0.14 }); });
@@ -3766,6 +3770,12 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl, weather }) {
         {crosses.map(k => (
           <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
             <MapSwatch what={k} size={20} top={top} />{k === "bridge" ? "Bridge: the road carried over the water" : "Ford: the water is knee-deep here (+50% a square), waded; a walk sent through one needs no swim"}
+          </span>
+        ))}
+        {/* (more terrain step 2a) fast water on the battle grid (rpg_map_rush) */}
+        {["rapids", "falls"].filter(k => cells.some(c => c.rush === k)).map(k => (
+          <span key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <MapSwatch what={k} size={20} top={top} />{k === "rapids" ? "Rapids: the river runs fast over hills (1.5 times its pull) or mountains (2 times): a river's middle pulls 1.8 m/s in hills (Swimming against 12.9) and 2.4 in mountains, too rough to swim" : "Waterfall: the river falls over a cliff at 3 m/s, too rough for anyone to swim"}
           </span>
         ))}
         {/* what lies on the squares (step 14f-battle; rpg_map_lie) */}
