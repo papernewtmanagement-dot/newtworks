@@ -647,6 +647,15 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
     if (error) onError(error.message);
     load(effDiff);
   };
+  // (starter gear by rule) the game master gives a character made before the rule its starter kit (rpg_give_starter_gear)
+  const giveStarter = async () => {
+    if (busy || !window.confirm(`Give ${sheet?.name} the starter kit: their best weapon, a shield if it leaves a hand free, a cloak and a torch?`)) return;
+    setBusy(true);
+    const { error } = await supabase.rpc("rpg_give_starter_gear", { p_character_id: id });
+    setBusy(false);
+    if (error) onError(error.message);
+    load(effDiff);
+  };
   const deleteItem = async (it) => {
     if (!window.confirm(`Delete ${it.name}?`)) return;
     const { error } = await supabase.rpc("rpg_item_delete", { p_item_id: it.id });
@@ -870,7 +879,10 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
       {/* Items and coins */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 10, marginBottom: 12 }}>
         <div style={card}>
-          <div style={label}>Items</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+            <div style={label}>Items</div>
+            {isParent && !sheet.is_npc && <button type="button" style={btn("soft", true)} disabled={busy} onClick={giveStarter} title="Their best weapon, a shield if it leaves a hand free, a cloak and a torch">Give starter gear</button>}
+          </div>
           {(sheet.items || []).length === 0 && <div style={{ fontSize: 13, color: T.slate500, marginTop: 6 }}>Nothing carried yet.</div>}
           {(sheet.items || []).map(it => (
             <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: `1px solid ${T.slate100}` }}>
