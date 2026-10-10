@@ -469,7 +469,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
           style={{ ...btn("soft", true), textDecoration: "none", display: "inline-block" }}>← Characters</a>
         <div style={{ width: 34, height: 34, borderRadius: "50%", background: sheet.color || T.blue, color: T.white, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, boxSizing: "border-box", overflow: "hidden" }}>
           {sheet.icon_path && sheetIcons[sheet.icon_path]
-            ? <img src={sheetIcons[sheet.icon_path]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            ? <img src={sheetIcons[sheet.icon_path]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "top", display: "block", background: "#fff" }} />
             : String(sheet.name || "?").slice(0, 1).toUpperCase()}
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
@@ -3279,15 +3279,24 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl, weather }) {
     const n = shared[k] = (shared[k] || 0) + 1;
     const turn = journey.status === "active" && journey.current === p.id;
     const icon = p.icon ? iconUrls[p.icon] : null;
-    const size = icon ? 30 : 22;
+    // a character with an icon walks on the map as its whole figure, standing on its spot; the one whose turn it is
+    // glows blue
+    if (icon) {
+      return (
+        <img key={p.id} src={icon} alt="" title={p.under ? `${p.name} · ${p.under}` : p.name}
+          style={{ position: "absolute", left: `calc(16px + (100% - 16px) * ${p.spot[0] / (cols * 1000)} + ${(n - 1) * 12}px)`, top: `calc(16px + (100% - 16px) * ${p.spot[1] / (rows * 1000)})`,
+            transform: "translate(-50%, -80%)", width: 26, height: 39, objectFit: "contain", pointerEvents: "none", opacity: p.out ? 0.4 : p.under ? 0.6 : 1,
+            filter: turn ? `drop-shadow(0 0 2px ${T.blue}) drop-shadow(0 0 2px ${T.blue})` : "drop-shadow(0 1px 1.5px rgba(0,0,0,.55))", zIndex: turn ? 3 : 2 }} />
+      );
+    }
     return (
       <span key={p.id} title={p.under ? `${p.name} · ${p.under}` : p.name} aria-hidden="true"
         style={{ position: "absolute", left: `calc(16px + (100% - 16px) * ${p.spot[0] / (cols * 1000)} + ${(n - 1) * 12}px)`, top: `calc(16px + (100% - 16px) * ${p.spot[1] / (rows * 1000)})`,
-          transform: "translate(-50%, -50%)", width: size, height: size, background: p.color || T.slate500, overflow: "hidden", border: p.under ? "2px dashed #fff" : "2px solid #fff",
+          transform: "translate(-50%, -50%)", width: 22, height: 22, background: p.color || T.slate500, border: p.under ? "2px dashed #fff" : "2px solid #fff",
           boxShadow: turn ? `0 0 0 3px ${T.blue}, 0 1px 3px rgba(0,0,0,.4)` : "0 1px 3px rgba(0,0,0,.4)", color: "#fff", fontSize: 11, fontWeight: 800,
           borderRadius: p.creature ? 5 : "50%", borderColor: p.creature ? "#5A1E1E" : "#fff", opacity: p.out ? 0.4 : 1,
           display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", boxSizing: "border-box", zIndex: turn ? 3 : 2 }}>
-        {icon ? <img src={icon} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /> : String(p.name || "?").charAt(0)}
+        {String(p.name || "?").charAt(0)}
       </span>
     );
   });
