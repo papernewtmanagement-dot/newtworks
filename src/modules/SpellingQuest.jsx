@@ -42,6 +42,11 @@ import { SOUND, setMuted, tone, noise, notes, playSound, speak, stopSpeaking, ga
 // down or corner to corner). Short words can drop fire tiles that burn down a
 // row after each word; a map level is won by reaching its score first.
 //
+// Family (a walk-up mode): every family name is a big button. Anyone taps
+// their name, gets a fresh 4x4 board at the level for their age, and spells one
+// word. Each person's best single word is kept: game_bests.bookworm_family.best
+// is the top word score and best_detail.word is that word.
+//
 // Difficulty (Starter, Easy, Medium, Hard) sets the letters, monster strength,
 // fire speed, hints and shortest word. A kid starts at the level for their age,
 // so each plays where they win most of the time but not all of it, where
@@ -371,8 +376,8 @@ export default function SpellingQuest() {
   const _vp = useViewport();
   const _pad = _vp.isPhone ? "12px" : _vp.isTablet ? "16px 18px" : "20px 24px";
 
-  const [mode, setMode] = useState("monsters"); // monsters | fire
-  const gameKey = mode === "monsters" ? "bookworm_battle" : "bookworm";
+  const [mode, setMode] = useState("monsters"); // monsters | fire | family
+  const gameKey = mode === "monsters" ? "bookworm_battle" : mode === "fire" ? "bookworm" : FAMILY_GAME;
   const { players, loading, error, reload } = useFamilyPlayers(gameKey);
   const { all: heroes, ready: heroesReady } = useDancers();
 
@@ -915,11 +920,29 @@ export default function SpellingQuest() {
     <div style={{ marginBottom: 12 }}>
       <div style={{ fontSize: 22, fontWeight: 700, color: T.slate900 }}>Spelling Quest</div>
       <div style={{ fontSize: 13, color: T.slate500 }}>
-         {mode === "monsters" ? "Win back the pages and lost chapters of the Great Word Book." : "Spell words with touching letters. Keep the fire off the bottom row."}
+         {mode === "monsters" ? "Win back the pages and lost chapters of the Great Word Book."
+           : mode === "fire" ? "Spell words with touching letters. Keep the fire off the bottom row."
+           : "Tap your name and spell one word. Your best word is saved."}
       </div>
     </div>
   );
   const label = text => <div style={{ fontSize: 13, fontWeight: 600, color: T.slate600, marginBottom: 8 }}>{text}</div>;
+
+  const modeChips = (
+    <Chips value={mode} onChange={m => { setMode(m); setWorldView(null); setScreen("setup"); }} options={[
+      ["monsters", "Monsters", `A quest through ${WORLDS.length} worlds`], ["fire", "Fire", "Keep fire off the bottom"], ["family", "Family", "Tap your name, spell a word"],
+    ]} />
+  );
+
+  if (mode === "family") {
+    return wrap(<>
+      {title}
+      <div style={{ marginBottom: 12 }}>{modeChips}</div>
+      {error ? <div style={{ color: T.red, fontSize: 13, marginBottom: 8 }}>{error}</div> : null}
+      {dictError ? <div style={{ color: T.red, fontSize: 13, marginBottom: 8 }}>{dictError}</div> : null}
+      <FamilyMode players={players} loading={loading} reload={reload} dict={dict} fsButton={fs.button} />
+    </>);
+  }
 
   if (screen === "setup") {
     return wrap(<>
@@ -932,7 +955,7 @@ export default function SpellingQuest() {
         </div>
         <div>
           {label("Mode")}
-          <Chips value={mode} onChange={m => { setMode(m); setWorldView(null); }} options={[["monsters", "Monsters", `A quest through ${WORLDS.length} worlds`], ["fire", "Fire", "Keep fire off the bottom"]]} />
+          {modeChips}
         </div>
         <div>
           {label("Difficulty")}
@@ -1187,6 +1210,164 @@ export default function SpellingQuest() {
       ) : null}
       <button type="button" onClick={scramble} disabled={busy} style={{ ...btn(T.amber), padding: "8px 14px", fontSize: 14 }}>{mode === "monsters" ? "Shuffle (monster gets a turn)" : "Shuffle (adds fire)"}</button>
       <button type="button" onClick={quit} style={{ ...btn(T.slate400), padding: "8px 14px", fontSize: 14 }}>Quit</button>
+    </div>
+  </>);
+}
+
+// ── Family mode: a walk-up game. Every family name is a big button; tap yours,
+// spell one word on a fresh board at the level for your age, and it's saved.
+// Each person's best single word is kept (game_bests.bookworm_family: best =
+// top word score, best_detail.word = that word, plays = words spelled).
+const FAMILY_GAME = "bookworm_family";
+const FAMILY_GRID = 4;
+
+function FamilyMode({ players, loading, reload, dict, fsButton }) {
+  const [who, setWho] = useState(null);       // id of the person spelling now
+  const [board, setBoard] = useState(null);
+  const [sel, setSel] = useState([]);
+  const [hint, setHint] = useState(null);
+  const [hintsLeft, setHintsLeft] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState(null);     // warning while spelling
+  const [last, setLast] = useState(null);     // { name, word, score, isBest, saved }
+  const boxRef = useRef(null);
+  const [boxW, setBoxW] = useState(420);
+  useEffect(() => {
+    const el = boxRef.current; if (!el) return undefined;
+    const measure = () => setBoxW(el.clientWidth || 420);
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    if (ro) ro.observe(el);
+    return () => { if (ro) ro.disconnect(); };
+  }, [who]);
+
+  const player = (players || []).find(p => p.id === who) || null;
+  const diffKey = diffForAge(player ? player.age : null);
+  const diff = DIFFICULTY[diffKey];
+  const tiles = board ? board.flat() : [];
+  const selTiles = sel.map(id => tiles.find(t => t.id === id)).filter(Boolean);
+  const word = selTiles.map(t => t.ch).join("").toLowerCase();
+  const valid = !!dict && word.length >= diff.minLen && dict.has(word);
+  const points = valid ? basePoints(selTiles) : 0;
+  const letters = selTiles.reduce((a, t) => a + t.ch.length, 0);
+  const tier = valid ? praiseTier(letters, false) : 0;
+  useEffect(() => { if (valid) sound("valid", word.length); }, [valid, word]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const bestOf = p => ({ score: Number(p?.bests?.best) || 0, word: p?.bests?.best_detail?.word || null });
+  const top = (players || []).reduce((acc, p) => { const b = bestOf(p); return b.word && (!acc || b.score > acc.score) ? { ...b, name: p.name } : acc; }, null);
+
+  const freshBoard = d => { setBoard(newBoard(d, FAMILY_GRID, FAMILY_GRID)); setSel([]); setHint(null); setNote(null); };
+  const start = p => {
+    const d = DIFFICULTY[diffForAge(p.age)];
+    setWho(p.id); setLast(null); setHintsLeft(d.hints); freshBoard(d);
+  };
+  const tap = t => {
+    if (saving) return;
+    setHint(null);
+    const idx = sel.indexOf(t.id);
+    sound("tap", idx >= 0 ? Math.max(1, idx) : sel.length + 1);
+    setSel(idx >= 0 ? sel.filter(id => id !== t.id) : [...sel, t.id]); // tap again to take it back out
+  };
+  const askHint = async () => {
+    if (!board || !dict || hintsLeft <= 0 || saving) return;
+    let common = null;
+    try { common = await loadList("common"); } catch { common = null; }
+    const h = (common && hintAnyOrder(board, common, diff.minLen)) || hintAnyOrder(board, dict, diff.minLen);
+    if (!h) { setNote("No word found · try Shuffle"); return; }
+    setSel([]); setHint(h.ids);
+    if (Number.isFinite(hintsLeft)) setHintsLeft(hintsLeft - 1);
+  };
+  const submit = async () => {
+    if (!valid || !player || saving) return;
+    setSaving(true);
+    const prev = bestOf(player);
+    if (PRAISE[tier]) { sound("fanfare", tier); if (letters >= 5) announce(PRAISE[tier]); } else sound("valid", word.length);
+    const r = await recordFamilyGame(player.id, FAMILY_GAME, points, { word, diff: diffKey });
+    const isBest = r.saved && points > prev.score;
+    if (isBest) sound("win");
+    setLast({ name: player.name, word, score: points, isBest, saved: r.saved, prev });
+    setSaving(false); setWho(null); setBoard(null); setSel([]); setHint(null);
+    reload();
+  };
+
+  // Names screen
+  if (!player || !board) {
+    return (<>
+      <QuestStyles />
+      {last ? (
+        <div style={{
+          marginBottom: 12, padding: "12px 14px", borderRadius: 12, textAlign: "center", animation: "sqPop 0.3s ease-out",
+          background: !last.saved ? T.amberLt : last.isBest ? "#FFF3CD" : T.greenLt, border: `1px solid ${last.isBest ? "#E2B13C" : T.slate200}`,
+        }}>
+          <div style={{ fontSize: 15, color: T.slate800 }}><b>{last.name}</b> spelled <b style={{ letterSpacing: 2 }}>{last.word.toUpperCase()}</b> for <b>{last.score.toLocaleString()}</b></div>
+          <div style={{ fontSize: 13, color: T.slate600, marginTop: 2 }}>
+            {!last.saved ? "Didn't save · try again" : last.isBest ? "⭐ New best word!" : `Best is still ${last.prev.word ? last.prev.word.toUpperCase() : ""} · ${last.prev.score.toLocaleString()}`}
+          </div>
+        </div>
+      ) : null}
+      {top ? <div style={{ fontSize: 13, color: T.slate600, textAlign: "center", marginBottom: 10 }}>🏆 Family best · <b>{top.name}</b> · {top.word.toUpperCase()} · {top.score.toLocaleString()}</div> : null}
+      {loading ? <div style={{ color: T.slate400, fontSize: 13 }}>Loading…</div> : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+          {(players || []).map(p => {
+            const b = bestOf(p);
+            return (
+              <button key={p.id} type="button" onClick={() => start(p)} disabled={!dict} style={{
+                padding: "18px 12px", borderRadius: 16, cursor: dict ? "pointer" : "default", fontFamily: "inherit",
+                border: `2px solid ${T.teal}`, background: T.white, color: T.slate900, textAlign: "center",
+              }}>
+                <div style={{ fontSize: 22, fontWeight: 800 }}>{p.name}</div>
+                <div style={{ fontSize: 12, color: T.slate500, marginTop: 4 }}>{b.word ? <>Best {b.word.toUpperCase()} · {b.score.toLocaleString()}</> : "No words yet"}</div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {!dict ? <div style={{ color: T.slate400, fontSize: 13, marginTop: 10, textAlign: "center" }}>Loading words…</div> : null}
+    </>);
+  }
+
+  // Spelling screen
+  const S = Math.max(56, Math.min(84, Math.floor(boxW / 4.2)));
+  const mine = bestOf(player);
+  return (<>
+    <QuestStyles />
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+      <div style={{ fontSize: 16, color: T.slate800 }}><b>{player.name}</b>'s word · {diff.label}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 13, color: T.slate600 }}>{mine.word ? `Best ${mine.word.toUpperCase()} · ${mine.score.toLocaleString()}` : "No best yet"}</span>
+        {fsButton}
+      </div>
+    </div>
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", margin: "10px 0", borderRadius: 12, minHeight: 52,
+      background: T.white, border: `2px solid ${valid ? T.green : T.slate200}`, flexWrap: "wrap",
+    }}>
+      <div style={{ flex: "1 1 160px", fontSize: 24, fontWeight: 800, letterSpacing: 2, color: valid ? T.slate900 : T.slate500, minWidth: 0, overflowWrap: "anywhere" }}>
+        {word ? word.toUpperCase() : <span style={{ fontSize: 14, fontWeight: 500, letterSpacing: 0, color: T.slate400 }}>
+          Tap letters in any order{diff.minLen > 3 ? ` · ${diff.minLen}+ letters` : ""}
+        </span>}
+      </div>
+      {valid && PRAISE[tier] ? <div key={tier} style={{ fontSize: 15, fontWeight: 900, color: PRAISE_COLOR[tier], animation: "sqPop 0.3s ease-out" }}>{PRAISE[tier]}</div> : null}
+      {valid ? <div style={{ fontSize: 14, fontWeight: 700, color: T.green }}>{points.toLocaleString()}</div> : null}
+      <button type="button" onClick={() => setSel([])} disabled={!sel.length} style={{ ...btn(T.slate400), padding: "8px 12px", opacity: sel.length ? 1 : 0.5 }}>Clear</button>
+      <button type="button" onClick={submit} disabled={!valid || saving} style={{ ...btn(T.teal), opacity: valid && !saving ? 1 : 0.4 }}>Go</button>
+    </div>
+    <div ref={boxRef} style={{ width: "100%" }}>
+      <div style={{ position: "relative", width: S * FAMILY_GRID, height: S * FAMILY_GRID, margin: "0 auto", userSelect: "none", touchAction: "manipulation" }}>
+        {board.map((col, c) => col.map((t, r) => (
+          <Tile key={t.id} tile={t} size={S} left={c * S} top={r * S} order={sel.indexOf(t.id)} hinted={!!hint && hint.includes(t.id)} danger={false} onTap={() => tap(t)} />
+        )))}
+      </div>
+    </div>
+    {note ? <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 10, fontSize: 14, fontWeight: 600, textAlign: "center", background: T.amberLt, color: "#7A4B00" }}>{note}</div> : null}
+    <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap", marginTop: 12 }}>
+      {diff.hints > 0 ? (
+        <button type="button" onClick={askHint} disabled={hintsLeft <= 0 || saving} style={{ ...btn(T.blue), padding: "8px 14px", fontSize: 14, opacity: hintsLeft > 0 ? 1 : 0.4 }}>
+          Hint{Number.isFinite(hintsLeft) ? ` (${hintsLeft})` : ""}
+        </button>
+      ) : null}
+      <button type="button" onClick={() => freshBoard(diff)} disabled={saving} style={{ ...btn(T.amber), padding: "8px 14px", fontSize: 14 }}>Shuffle</button>
+      <button type="button" onClick={() => { setWho(null); setBoard(null); }} style={{ ...btn(T.slate400), padding: "8px 14px", fontSize: 14 }}>Back</button>
     </div>
   </>);
 }
