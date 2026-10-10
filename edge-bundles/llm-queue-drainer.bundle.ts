@@ -1425,10 +1425,17 @@ function balancesFromText(text: string): { open: number | null; close: number | 
 // nothing else noticed, and the account showed a statement from the future.
 // A period that ends after today, starts after it ends, or ends well past the
 // last transaction is refused so the item retries instead of writing bad dates.
+//
+// The "well past the last transaction" test is skipped when the end date that
+// was read is printed on the statement as its closing/ending date: a quiet
+// card month is real (US Bank SF Personal CC 26-10, 2026-10-09: "Closing Date:
+// 10/07/2026", last charge 09/22, refused by Groq AND Claude reading the same
+// thing). A "next closing date" misread is still caught by the future-date test.
 function checkStatementPeriod(
   period: { start: string; end: string },
   txns: ReaderTxn[],
   todayIso: string,
+  statementText?: string,
 ): string | null {
   const iso = /^\d{4}-\d{2}-\d{2}$/;
   if (!iso.test(period.start) || !iso.test(period.end)) return `period is not in YYYY-MM-DD form (${period.start} to ${period.end})`;
@@ -1438,9 +1445,21 @@ function checkStatementPeriod(
   if (dates.length) {
     const lastTxn = dates[dates.length - 1];
     const gapDays = (Date.parse(period.end) - Date.parse(lastTxn)) / 86400000;
-    if (gapDays > 10) return `period ends ${period.end}, ${Math.round(gapDays)} days after the last transaction (${lastTxn}) — period looks misread`;
+    if (gapDays > 10 && !(statementText && endDatePrintedAsClosing(statementText, period.end))) return `period ends ${period.end}, ${Math.round(gapDays)} days after the last transaction (${lastTxn}) — period looks misread`;
   }
   return null;
+}
+
+// True when the statement prints this date right after a closing/ending label
+// ("Closing Date: 10/07/2026", "Statement Period 09/09/2026 - 10/07/2026",
+// "through 10/07/26"). Accepts MM/DD/YYYY and MM/DD/YY, with or without a
+// leading zero.
+function endDatePrintedAsClosing(text: string, endIso: string): boolean {
+  const [y, m, d] = endIso.split("-");
+  const mm = `0?${Number(m)}`, dd = `0?${Number(d)}`;
+  const date = `${mm}/${dd}/(?:${y}|${y.slice(2)})\\b`;
+  const label = String.raw`(?:closing\s+date|statement\s+(?:closing\s+)?date|ending\s+date|period\s+end(?:ing)?|statement\s+period|billing\s+period|through|thru)`;
+  return new RegExp(`${label}[^\\n]{0,40}?${date}`, "i").test(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -1763,7 +1782,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   // The account's own last four win over what the model read off the page
   // (a September test read 0353 as "5353").
   const accountLast4 = acct.account_number_last4 ?? read.accountLast4;
-  const periodProblem = checkStatementPeriod(period, txns, new Date().toISOString().slice(0, 10));
+  const periodProblem = statementPeriodProblem(read, item.user_content);
   if (periodProblem) return { ok: false, error: periodProblem };
 
   if (dryRun) {
@@ -1857,11 +1876,18 @@ type StatementRead =
     }
   | { ok: false; error: string };
 
+// The one place the period check is called from, with the statement text so
+// a closing date printed on the statement is believed.
+function statementPeriodProblem(r: StatementRead, statementText: string): string | null {
+  if (!r.ok) return r.error;
+  return checkStatementPeriod(r.period, r.txns, new Date().toISOString().slice(0, 10), statementText);
+}
+
 // The safety check both readers' answers face: a read that failed, a period
 // that looks misread, or lines that do not tie.
-function statementReadProblem(r: StatementRead): string | null {
+function statementReadProblem(r: StatementRead, statementText: string): string | null {
   if (!r.ok) return r.error;
-  const periodProblem = checkStatementPeriod(r.period, r.txns, new Date().toISOString().slice(0, 10));
+  const periodProblem = statementPeriodProblem(r, statementText);
   if (periodProblem) return periodProblem;
   if (r.tied === false) return r.controlNote;
   return null;
@@ -1871,13 +1897,13 @@ function statementReadProblem(r: StatementRead): string | null {
 // whose ONLY fault is lines not tying is still used, as before the backup
 // existed (the writer holds it for review); Claude's first, then Groq's.
 function settleStatementRead(
-  backed: BackedReadResult, interpret: (raw: string) => StatementRead,
+  backed: BackedReadResult, interpret: (raw: string) => StatementRead, statementText: string,
 ): StatementRead {
   if (backed.ok) return { ...interpret(backed.raw), reader: backed.reader } as StatementRead;
   for (const [raw, who] of [[backed.claudeRaw, "claude"], [backed.groqRaw, "groq"]] as const) {
     if (!raw) continue;
     const r = interpret(raw);
-    if (r.ok && r.tied === false && !checkStatementPeriod(r.period, r.txns, new Date().toISOString().slice(0, 10))) {
+    if (r.ok && r.tied === false && !statementPeriodProblem(r, statementText)) {
       return { ...r, reader: who };
     }
   }
@@ -1920,8 +1946,8 @@ async function readInvestmentStatement(
     };
   };
   const backed = await readItem(item, groqKey, BANK_STATEMENT_MODEL, INVESTMENT_SUMMARY_PROMPT, userContent,
-    { ceiling: 1500, floor: 600, claude: 2000 }, (raw) => statementReadProblem(interpret(raw)), "low");
-  return settleStatementRead(backed, interpret);
+    { ceiling: 1500, floor: 600, claude: 2000 }, (raw) => statementReadProblem(interpret(raw), rawText), "low");
+  return settleStatementRead(backed, interpret, rawText);
 }
 
 // Bank and card statements: every transaction line, then the control checks.
@@ -1942,8 +1968,8 @@ async function readBankOrCardStatement(
   // A cut-off answer counts as a failed read in readWithBackup itself.
   const interpret = (raw: string) => interpretBankAnswer(raw, rawText, statementText, prepared.removed, accountKind);
   const backed = await readItem(item, groqKey, BANK_STATEMENT_MODEL, BANK_STATEMENT_PROMPT_COMPACT, statementText,
-    { ceiling: 6000, floor: 1200, claude: 12000 }, (raw) => statementReadProblem(interpret(raw)), "low");
-  return settleStatementRead(backed, interpret);
+    { ceiling: 6000, floor: 1200, claude: 12000 }, (raw) => statementReadProblem(interpret(raw), rawText), "low");
+  return settleStatementRead(backed, interpret, rawText);
 }
 
 // One answer (from either reader) turned into a statement read, with the

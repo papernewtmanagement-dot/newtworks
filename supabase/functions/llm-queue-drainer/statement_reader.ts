@@ -400,10 +400,17 @@ export function balancesFromText(text: string): { open: number | null; close: nu
 // nothing else noticed, and the account showed a statement from the future.
 // A period that ends after today, starts after it ends, or ends well past the
 // last transaction is refused so the item retries instead of writing bad dates.
+//
+// The "well past the last transaction" test is skipped when the end date that
+// was read is printed on the statement as its closing/ending date: a quiet
+// card month is real (US Bank SF Personal CC 26-10, 2026-10-09: "Closing Date:
+// 10/07/2026", last charge 09/22, refused by Groq AND Claude reading the same
+// thing). A "next closing date" misread is still caught by the future-date test.
 export function checkStatementPeriod(
   period: { start: string; end: string },
   txns: ReaderTxn[],
   todayIso: string,
+  statementText?: string,
 ): string | null {
   const iso = /^\d{4}-\d{2}-\d{2}$/;
   if (!iso.test(period.start) || !iso.test(period.end)) return `period is not in YYYY-MM-DD form (${period.start} to ${period.end})`;
@@ -413,9 +420,21 @@ export function checkStatementPeriod(
   if (dates.length) {
     const lastTxn = dates[dates.length - 1];
     const gapDays = (Date.parse(period.end) - Date.parse(lastTxn)) / 86400000;
-    if (gapDays > 10) return `period ends ${period.end}, ${Math.round(gapDays)} days after the last transaction (${lastTxn}) — period looks misread`;
+    if (gapDays > 10 && !(statementText && endDatePrintedAsClosing(statementText, period.end))) return `period ends ${period.end}, ${Math.round(gapDays)} days after the last transaction (${lastTxn}) — period looks misread`;
   }
   return null;
+}
+
+// True when the statement prints this date right after a closing/ending label
+// ("Closing Date: 10/07/2026", "Statement Period 09/09/2026 - 10/07/2026",
+// "through 10/07/26"). Accepts MM/DD/YYYY and MM/DD/YY, with or without a
+// leading zero.
+function endDatePrintedAsClosing(text: string, endIso: string): boolean {
+  const [y, m, d] = endIso.split("-");
+  const mm = `0?${Number(m)}`, dd = `0?${Number(d)}`;
+  const date = `${mm}/${dd}/(?:${y}|${y.slice(2)})\\b`;
+  const label = String.raw`(?:closing\s+date|statement\s+(?:closing\s+)?date|ending\s+date|period\s+end(?:ing)?|statement\s+period|billing\s+period|through|thru)`;
+  return new RegExp(`${label}[^\\n]{0,40}?${date}`, "i").test(text);
 }
 
 // ---------------------------------------------------------------------------

@@ -189,7 +189,7 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   // The account's own last four win over what the model read off the page
   // (a September test read 0353 as "5353").
   const accountLast4 = acct.account_number_last4 ?? read.accountLast4;
-  const periodProblem = checkStatementPeriod(period, txns, new Date().toISOString().slice(0, 10));
+  const periodProblem = statementPeriodProblem(read, item.user_content);
   if (periodProblem) return { ok: false, error: periodProblem };
 
   if (dryRun) {
@@ -283,11 +283,18 @@ type StatementRead =
     }
   | { ok: false; error: string };
 
+// The one place the period check is called from, with the statement text so
+// a closing date printed on the statement is believed.
+function statementPeriodProblem(r: StatementRead, statementText: string): string | null {
+  if (!r.ok) return r.error;
+  return checkStatementPeriod(r.period, r.txns, new Date().toISOString().slice(0, 10), statementText);
+}
+
 // The safety check both readers' answers face: a read that failed, a period
 // that looks misread, or lines that do not tie.
-function statementReadProblem(r: StatementRead): string | null {
+function statementReadProblem(r: StatementRead, statementText: string): string | null {
   if (!r.ok) return r.error;
-  const periodProblem = checkStatementPeriod(r.period, r.txns, new Date().toISOString().slice(0, 10));
+  const periodProblem = statementPeriodProblem(r, statementText);
   if (periodProblem) return periodProblem;
   if (r.tied === false) return r.controlNote;
   return null;
@@ -297,13 +304,13 @@ function statementReadProblem(r: StatementRead): string | null {
 // whose ONLY fault is lines not tying is still used, as before the backup
 // existed (the writer holds it for review); Claude's first, then Groq's.
 function settleStatementRead(
-  backed: BackedReadResult, interpret: (raw: string) => StatementRead,
+  backed: BackedReadResult, interpret: (raw: string) => StatementRead, statementText: string,
 ): StatementRead {
   if (backed.ok) return { ...interpret(backed.raw), reader: backed.reader } as StatementRead;
   for (const [raw, who] of [[backed.claudeRaw, "claude"], [backed.groqRaw, "groq"]] as const) {
     if (!raw) continue;
     const r = interpret(raw);
-    if (r.ok && r.tied === false && !checkStatementPeriod(r.period, r.txns, new Date().toISOString().slice(0, 10))) {
+    if (r.ok && r.tied === false && !statementPeriodProblem(r, statementText)) {
       return { ...r, reader: who };
     }
   }
@@ -346,8 +353,8 @@ async function readInvestmentStatement(
     };
   };
   const backed = await readItem(item, groqKey, BANK_STATEMENT_MODEL, INVESTMENT_SUMMARY_PROMPT, userContent,
-    { ceiling: 1500, floor: 600, claude: 2000 }, (raw) => statementReadProblem(interpret(raw)), "low");
-  return settleStatementRead(backed, interpret);
+    { ceiling: 1500, floor: 600, claude: 2000 }, (raw) => statementReadProblem(interpret(raw), rawText), "low");
+  return settleStatementRead(backed, interpret, rawText);
 }
 
 // Bank and card statements: every transaction line, then the control checks.
@@ -368,8 +375,8 @@ async function readBankOrCardStatement(
   // A cut-off answer counts as a failed read in readWithBackup itself.
   const interpret = (raw: string) => interpretBankAnswer(raw, rawText, statementText, prepared.removed, accountKind);
   const backed = await readItem(item, groqKey, BANK_STATEMENT_MODEL, BANK_STATEMENT_PROMPT_COMPACT, statementText,
-    { ceiling: 6000, floor: 1200, claude: 12000 }, (raw) => statementReadProblem(interpret(raw)), "low");
-  return settleStatementRead(backed, interpret);
+    { ceiling: 6000, floor: 1200, claude: 12000 }, (raw) => statementReadProblem(interpret(raw), rawText), "low");
+  return settleStatementRead(backed, interpret, rawText);
 }
 
 // One answer (from either reader) turned into a statement read, with the
