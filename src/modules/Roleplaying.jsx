@@ -865,6 +865,10 @@ const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["forest", "t
 // line's width in screen pixels by its size, 2 a great river down to 5 a brook.
 const MAP_RIVER_W = { 2: 4.6, 3: 3.3, 4: 2.2, 5: 1.4 };
 const MAP_RIVER = "#5E93AB";
+// A gorge (canyons, Peter 2026-10-09: rivers through hills or mountains cut canyons; rpg_map_cliffs): where a stream,
+// river or great river runs through hills or mountains it runs between walls of bare rock, drawn as a band of rock either
+// side of it with a dark rim; a brook cuts none.
+const MAP_GORGE = { rock: "#9C8A70", rim: "#4A3F33" };
 // The rivers traced as lines (step 14c, Peter 2026-10-07: rivers wind at every zoom and never cross;
 // rpg_map_river_trace through rpg_map_view: river_lines): the pieces [size, x1, y1, x2, y2] (thousandths of a cell
 // from the first one) meet end to end, so each river is one chain of them, drawn as one smooth line. A river never
@@ -1716,6 +1720,13 @@ function mapFantasy(v, byId) {
   // kept to the land as drawn (step 14d3, Peter 2026-10-07: rivers ran over the sea where the coast is drawn rounder
   // than its cells): a river never shows over the sea or ground not found yet, nor anywhere on a map with no land drawn
   // (step 14f1: a great river runs on into the sea cell it flows into)
+  // (canyons) a river through hills or mountains runs in its gorge: a band of rock three times its width with a dark rim,
+  // kept to the hills and mountains, under the river
+  const rugged = land ? mapOutline(C, R, (i, j) => { const what = shows(get(i, j)); return what === "hills" || what === "mountains"; }, unit, 0.45, wob) : "";
+  if (rugged) Object.keys(runs).sort().reverse().filter(k => Number(k) < 5).forEach(k => {
+    const w = MAP_RIVER_W[k] || 1;
+    layers.push({ d: runs[k], line: MAP_GORGE.rim, w: w * 3 + 2.2, clip: rugged, o: 0.7 }, { d: runs[k], line: MAP_GORGE.rock, w: w * 3, clip: rugged });
+  });
   if (land) Object.keys(runs).sort().reverse().forEach(k => layers.push({ d: runs[k], line: MAP_RIVER, w: MAP_RIVER_W[k] || 1, clip: land }));
   layers.push({ d: land, line: MAP_INK, w: 1.25 });
   const strokes = mapRows(unit * (detail ? 1 : 0.12));
