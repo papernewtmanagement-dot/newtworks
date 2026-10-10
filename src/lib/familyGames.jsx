@@ -5,11 +5,13 @@ import { T } from "./theme.js";
 // =========================================================================
 // familyGames.jsx — shared by the Family games (SpellingQuest.jsx, MathBlast.jsx).
 // One job each:
-//   useFamilyPlayers(game)   the active kids, their chore-chart animal and saved bests for that game
+//   useFamilyPlayers(game, { adults })   the active kids, their chore-chart animal and saved bests for that game;
+//                            with adults: true, the grown-ups who play too (Mom, Dad; database: family_game_adults)
 //   recordFamilyGame(...)    saves one finished game (database: family_game_record)
 //   PlayerPicker             the "who's playing?" chips, Guest included
 //   ageOf(birthday)          whole years
-// Bests live on each kid's own row (family_kids.game_bests). Guest games are not saved.
+// Bests live on each kid's own row (family_kids.game_bests); a grown-up's on
+// family_settings.adult_game_bests, and their player id is "adult:<key>". Guest games are not saved.
 // =========================================================================
 
 export function ageOf(birthday) {
@@ -23,7 +25,7 @@ export function ageOf(birthday) {
   return a;
 }
 
-export function useFamilyPlayers(game) {
+export function useFamilyPlayers(game, { adults = false } = {}) {
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -38,19 +40,29 @@ export function useFamilyPlayers(game) {
         .eq("agency_id", AGENCY_ID)
         .eq("is_active", true)
         .order("sort_order");
+      const grown = adults ? await supabase.rpc("family_game_adults", { p_game: game }) : { data: [] };
       if (!alive) return;
-      if (err) setError(err.message);
-      setPlayers((data || []).map(k => ({
-        id: k.id,
-        name: k.name,
-        age: ageOf(k.birthday),
-        animal: k.animal || null, // their chore-chart character (dancers.key)
-        bests: (k.game_bests && k.game_bests[game]) || {},
-      })));
+      if (err || grown.error) setError((err || grown.error).message);
+      setPlayers([
+        ...(data || []).map(k => ({
+          id: k.id,
+          name: k.name,
+          age: ageOf(k.birthday),
+          animal: k.animal || null, // their chore-chart character (dancers.key)
+          bests: (k.game_bests && k.game_bests[game]) || {},
+        })),
+        ...(grown.data || []).map(a => ({
+          id: `adult:${a.adult_key}`,
+          name: a.name,
+          age: ageOf(a.birthday),
+          animal: null,
+          bests: a.bests || {},
+        })),
+      ]);
       setLoading(false);
     })();
     return () => { alive = false; };
-  }, [game, nonce]);
+  }, [game, adults, nonce]);
 
   return { players, loading, error, reload: () => setNonce(n => n + 1) };
 }
@@ -58,8 +70,9 @@ export function useFamilyPlayers(game) {
 // Returns { saved, isBest, bests } — never throws; a failed save shows as saved:false.
 export async function recordFamilyGame(kidId, game, score, detail) {
   if (!kidId) return { saved: false, isBest: false, bests: null };
+  const adultKey = String(kidId).startsWith("adult:") ? String(kidId).slice(6) : null;
   const { data, error } = await supabase.rpc("family_game_record", {
-    p_kid_id: kidId, p_game: game, p_score: Math.max(0, Math.round(score || 0)), p_detail: detail || {},
+    p_kid_id: adultKey ? null : kidId, p_adult_key: adultKey, p_game: game, p_score: Math.max(0, Math.round(score || 0)), p_detail: detail || {},
   });
   if (error) return { saved: false, isBest: false, bests: null, error: error.message };
   const isBest = !!data && Number(data.best) === Math.round(score || 0) && data.best_at === data.last_at;

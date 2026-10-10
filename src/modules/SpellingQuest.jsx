@@ -42,7 +42,7 @@ import { SOUND, setMuted, tone, noise, notes, playSound, speak, stopSpeaking, ga
 // down or corner to corner). Short words can drop fire tiles that burn down a
 // row after each word; a map level is won by reaching its score first.
 //
-// Family (a walk-up mode): every family name is a big button. Anyone taps
+// Family (a walk-up mode): every family name is a big button, Mom and Dad included. Anyone taps
 // their name, gets a fresh 4x4 board at the level for their age, and spells one
 // word. Each person's best single word is kept: game_bests.bookworm_family.best
 // is the top word score and best_detail.word is that word.
@@ -378,7 +378,7 @@ export default function SpellingQuest() {
 
   const [mode, setMode] = useState("monsters"); // monsters | fire | family
   const gameKey = mode === "monsters" ? "bookworm_battle" : mode === "fire" ? "bookworm" : FAMILY_GAME;
-  const { players, loading, error, reload } = useFamilyPlayers(gameKey);
+  const { players, loading, error, reload } = useFamilyPlayers(gameKey, { adults: mode === "family" });
   const { all: heroes, ready: heroesReady } = useDancers();
 
   const [dict, setDict] = useState(null);
