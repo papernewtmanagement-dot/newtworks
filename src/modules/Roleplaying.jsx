@@ -64,7 +64,8 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //   rpg_map_view(level, x, y)                the Maps tab in one read: one grid of the world map, from the place
 //                                            cards and fixed-seed rolls for unnamed ground (sea, open land, forest,
 //                                            hills, mountains, and by climate grassy plains, pine forest, jungle,
-//                                            desert, tundra, snow and ice, swamp), with the list that grid shows
+//                                            desert, sand dunes, salt flats, savanna and scrub, tundra, snow and
+//                                            ice, swamp, bog), with the list that grid shows
 //                                            (the places one level down), the lands it lies in and, for the world,
 //                                            every cell of the
 //                                            Continent grids to draw it fine; and the open journey (its clock in
@@ -1104,7 +1105,8 @@ function ObjectsTab({ onError }) {
 // The world map, drawn at every level (rpg_map_view): seven nested grids from an Earth-size world down to a battle
 // grid. Ground comes from the place cards (Old Forest, Haven, ...) and, where no place is, from fixed-seed rolls
 // (land and sea, then forest, hills and mountains, then the climate of the spot: snow and ice and tundra toward the
-// poles, pine forest in the cold, desert, grassy plains, jungle and swamp by how wet it is); nothing is stored per
+// poles, pine forest in the cold, desert with its sand dunes and salt flats, grassy plains, savanna and scrub, jungle,
+// swamp and bog by how warm and wet it is); nothing is stored per
 // square. The function sends every cell,
 // name, size, symbol name and link, and the page only draws them. A cell opens the grid inside it; the open grid
 // lives in the URL (map=level-x-y, none = the world). A place opens where its link says: the grid inside one cell
@@ -1130,7 +1132,7 @@ const MAP_SERIF = "Georgia, 'Times New Roman', serif";
 const MAP_PAPER = { sea: "#B4CACB", shallow: "#C6D9D6", shore: "#D6E4DD", land: "#EFE5C8" };
 // The kinds of unnamed ground, in the order the key lists them, each with its letter in a grid drawn fine (v.detail;
 // the same letters as rpg_map_grounds).
-const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["forest", "t"], ["pine", "p"], ["jungle", "j"], ["hills", "h"], ["mountains", "m"], ["desert", "d"], ["tundra", "u"], ["ice", "i"], ["swamp", "s"], ["town", "n"], ["road", "r"], ["pass", "a"], ["water", "w"], ["deep", "k"]];
+const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["savanna", "v"], ["forest", "t"], ["pine", "p"], ["jungle", "j"], ["hills", "h"], ["mountains", "m"], ["desert", "d"], ["dunes", "e"], ["salt", "f"], ["tundra", "u"], ["ice", "i"], ["swamp", "s"], ["bog", "b"], ["town", "n"], ["road", "r"], ["pass", "a"], ["water", "w"], ["deep", "k"]];
 // Rivers drawn as lines on a grid too coarse to hold them as water (rpg_map_view: cells' river, detail.rivers): the
 // line's width in screen pixels by its size, 2 a great river down to 5 a brook.
 const MAP_RIVER_W = { 2: 4.6, 3: 3.3, 4: 2.2, 5: 1.4 };
@@ -1248,7 +1250,7 @@ const MAP_ROADS = [
 const MAP_MARK_TEXT = { village: 10.5, town: 12, city: 13, great_city: 14.5, peak: 12, castle: 12, tower: 11, stones: 11, stone: 10.5, rock: 10.5, cairn: 10.5,
   cave: 10.5, mine: 10.5, shrine: 10.5, camp: 10.5, hut: 10.5 };
 // The grounds drawn thick with symbols, where a landmark's mark gets a disc of paper behind it (step 12b).
-const MAP_BUSY = ["mountains", "hills", "forest", "pine", "jungle", "swamp"];
+const MAP_BUSY = ["mountains", "hills", "forest", "pine", "jungle", "swamp", "bog", "dunes"];
 // The squares a landmark stands on, seen from above on the battle grid (step 12b2; rpg_map_view: cells' climb, part
 // first): cut stone for a keep, a castle wall and a tower, weathered stone for a ruin, grey slabs for standing stones,
 // rough rock for a boulder, loose stones for a cairn, turf for a motte. round = how rounded the outline is; joints =
@@ -1520,7 +1522,8 @@ const MAP_ART = {
     { k: "wall", fill: "#F6EED8", line: MAP_INK, w: 1 }, { k: "roof", fill: "#B4633C", line: MAP_INK, w: 1 }, { k: "roofThatch", fill: "#C9A65E", line: MAP_INK, w: 1 }, { k: "roofSlate", fill: "#7F8288", line: MAP_INK, w: 1 }, { k: "door", line: MAP_INK, w: 1 },
     { k: "tuft", line: "#7A8A4C", w: 0.9 }, { k: "tuftDry", line: "#9C9450", w: 0.9 }, { k: "tuftCold", line: "#8A9579", w: 0.9 },
     { k: "dip", line: "#8C8156", w: 1 }, { k: "stream", line: "#6C9BAE", w: 1.5 }, { k: "marsh", line: "#7FA0A0", w: 1.2 }, { k: "reed", line: "#5C6B37", w: 1 },
-    { k: "dune", line: "#B0925A", w: 1.1 }, { k: "drift", fill: "#FBFCFC", line: "#A9BFCB", w: 0.9 }, { k: "ridge", line: "#8EA9B8", w: 1 },
+    { k: "dune", line: "#B0925A", w: 1.1 }, { k: "duneFace", fill: "#D9BC85" }, { k: "salt", line: "#ADA594", w: 0.9 }, { k: "pool", fill: "#9DB6B4", line: "#6F8E8E", w: 0.8 },
+    { k: "acacia", fill: "#A3A55E", line: MAP_INK, w: 0.9 }, { k: "drift", fill: "#FBFCFC", line: "#A9BFCB", w: 0.9 }, { k: "ridge", line: "#8EA9B8", w: 1 },
     { k: "mist", line: "#8E8AA3", w: 1.7 }, { k: "wave", line: "#8DAEB1", w: 1 },
   ],
   fantasy: {
@@ -1755,6 +1758,38 @@ const MAP_ART = {
       if (few) { if (rnd(1) < 0.6) { const cx = x + (0.35 + rnd(2) * 0.3) * s, cy = y + (0.55 + rnd(3) * 0.3) * s; reeds(cx, cy, s * 0.6); water(cx + s * 0.2, cy + s * 0.12, s * 0.7); } return; }
       [[0.3, 0.4], [0.7, 0.72]].forEach(([u, v], k) => { const cx = x + (u + (rnd(k) - 0.5) * 0.12) * s, cy = y + (v + (rnd(5 + k) - 0.5) * 0.1) * s; reeds(cx, cy, s * 0.16); water(cx + s * 0.1, cy + s * 0.05, s * 0.26); water(cx + s * 0.16, cy + s * 0.11, s * 0.16); });
     },
+    // more terrain step 1 (2026-10-10): savanna and scrub, dry grass with a flat-topped thorn tree here and there
+    savanna(add, x, y, s, rnd, few) {
+      const acacia = (cx, base, d) => {
+        add(base, "trunk", mapLine([[cx, base], [cx, base - d * 0.42]]) + mapLine([[cx, base - d * 0.3], [cx - d * 0.2, base - d * 0.5]]) + mapLine([[cx, base - d * 0.34], [cx + d * 0.22, base - d * 0.52]]));
+        const cy = base - d * 0.56, rx = d * 0.46, ry = d * 0.13;
+        add(base, "acacia", `M${mapPt([cx - rx, cy])}a${mapNum(rx)} ${mapNum(ry)} 0 1 0 ${mapNum(2 * rx)} 0a${mapNum(rx)} ${mapNum(ry)} 0 1 0 ${mapNum(-2 * rx)} 0Z`);
+      };
+      if (few) { const r = rnd(1); if (r < 0.35) acacia(x + (0.3 + rnd(2) * 0.4) * s, y + (0.7 + rnd(3) * 0.2) * s, s * 0.9); else if (r < 0.8) mapTuft(add, x + (0.3 + rnd(2) * 0.4) * s, y + (0.55 + rnd(3) * 0.35) * s, s * 0.5, "tuftDry"); return; }
+      [[0.24, 0.4], [0.76, 0.5], [0.4, 0.86]].forEach(([u, v], k) => { if (k < 2 || rnd(k) < 0.6) mapTuft(add, x + (u + (rnd(5 + k) - 0.5) * 0.12) * s, y + (v + (rnd(10 + k) - 0.5) * 0.1) * s, s * 0.12, "tuftDry"); });
+      if (rnd(20) < 0.7) acacia(x + (0.5 + (rnd(21) - 0.5) * 0.4) * s, y + (0.62 + rnd(22) * 0.12) * s, s * 0.42);
+    },
+    // sand dunes: rows of crests, each with its shaded slip face
+    dunes(add, x, y, s, rnd, few) {
+      const crest = (cx, cy, w) => {
+        add(cy, "duneFace", `M${mapPt([cx - w / 2, cy])}Q${mapPt([cx - w * 0.1, cy - w * 0.32])} ${mapPt([cx + w / 2, cy - w * 0.04])}Q${mapPt([cx + w * 0.1, cy + w * 0.06])} ${mapPt([cx - w / 2, cy])}Z`);
+        add(cy, "dune", `M${mapPt([cx - w / 2, cy])}Q${mapPt([cx - w * 0.1, cy - w * 0.32])} ${mapPt([cx + w / 2, cy - w * 0.04])}`);
+      };
+      if (few) { crest(x + (0.35 + rnd(2) * 0.3) * s, y + (0.4 + rnd(3) * 0.2) * s, s * 1.2); if (rnd(4) < 0.7) crest(x + (0.3 + rnd(5) * 0.4) * s, y + (0.75 + rnd(6) * 0.15) * s, s); return; }
+      [[0.26, 0.26, 0.4], [0.72, 0.36, 0.42], [0.42, 0.6, 0.46], [0.22, 0.9, 0.36], [0.74, 0.88, 0.4]].forEach(([u, v, w], k) => crest(x + (u + (rnd(k) - 0.5) * 0.1) * s, y + (v + (rnd(10 + k) - 0.5) * 0.06) * s, s * w));
+    },
+    // salt flats: a white crust broken into plates
+    salt(add, x, y, s, rnd, few) {
+      const plate = (cx, cy, r, k) => { const pts = []; for (let n = 0; n < 6; n++) { const a = (n / 6) * Math.PI * 2 + rnd(30 + k) * 0.5, rr = r * (0.8 + rnd(40 + k * 6 + n) * 0.35); pts.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr * 0.6]); } pts.push(pts[0]); add(cy + r, "salt", mapLine(pts)); };
+      if (few) { if (rnd(1) < 0.6) plate(x + (0.35 + rnd(2) * 0.3) * s, y + (0.4 + rnd(3) * 0.3) * s, s * 0.32, 0); return; }
+      [[0.28, 0.32], [0.7, 0.4], [0.46, 0.74], [0.82, 0.84]].forEach(([u, v], k) => { if (k < 3 || rnd(k) < 0.5) plate(x + (u + (rnd(k) - 0.5) * 0.1) * s, y + (v + (rnd(10 + k) - 0.5) * 0.08) * s, s * 0.12, k); });
+    },
+    // bog: hummocks of sedge and heather between dark peat pools
+    bog(add, x, y, s, rnd, few) {
+      const pool = (cx, cy, w) => add(cy, "pool", `M${mapPt([cx - w, cy])}a${mapNum(w)} ${mapNum(w * 0.38)} 0 1 0 ${mapNum(2 * w)} 0a${mapNum(w)} ${mapNum(w * 0.38)} 0 1 0 ${mapNum(-2 * w)} 0Z`);
+      if (few) { if (rnd(1) < 0.6) { const cx = x + (0.35 + rnd(2) * 0.3) * s, cy = y + (0.55 + rnd(3) * 0.3) * s; pool(cx + s * 0.18, cy + s * 0.06, s * 0.28); mapTuft(add, cx - s * 0.12, cy, s * 0.45, "tuftCold"); } return; }
+      [[0.28, 0.42], [0.7, 0.7]].forEach(([u, v], k) => { const cx = x + (u + (rnd(k) - 0.5) * 0.12) * s, cy = y + (v + (rnd(5 + k) - 0.5) * 0.1) * s; pool(cx + s * 0.12, cy + s * 0.04, s * 0.11); mapTuft(add, cx - s * 0.06, cy, s * 0.13, "tuftCold"); mapTuft(add, cx + s * 0.26, cy + s * 0.02, s * 0.1, "tuftCold"); });
+    },
   },
   // The battle grid, seen from above. Each ground: its three tones, then how likely a square of it is to carry each
   // thing (blade = grass, pebble, flower, rock = a boulder, slab and crack = bare stone, bush, thorn, block = a cut
@@ -1795,6 +1830,12 @@ const MAP_ART = {
     tundra:    { tones: ["#A7AE93", "#A4AB90", "#AAB196"], blade: 0.22, pebble: 0.3, bush: 0.03, drift: 0.08, rock: 0.04 },
     ice:       { tones: ["#E6EDF0", "#E3EAED", "#E9F0F3"], frost: 0.3, drift: 0.12 },
     swamp:     { tones: ["#7B8A5B", "#788758", "#7E8D5E"], puddle: 0.38, reed: 0.5, blade: 0.3, root: 0.06, mist: 0.06 },
+    // more terrain step 1: savanna and scrub (dry grass, thorn bushes, a lone tree), sand dunes (blown sand), salt flats
+    // (a white crust in plates), bog (peat pools between sedge and heather)
+    savanna:   { tones: ["#C2B26A", "#BFAF67", "#C5B56D"], blade: 0.8, bush: 0.05, thorn: 0.03, pebble: 0.05, tree: 0.006 },
+    dunes:     { tones: ["#EAC98A", "#E7C687", "#EDCC8D"], ripple: 0.85 },
+    salt:      { tones: ["#E9E5D8", "#E6E2D5", "#ECE8DB"], crack: 0.55, pebble: 0.02 },
+    bog:       { tones: ["#7D7B55", "#7A7852", "#807E58"], puddle: 0.42, blade: 0.4, bush: 0.06, reed: 0.1, mist: 0.06 },
     plain:     { tones: ["#93B262", "#90AF5F", "#96B565"] },
   },
   // The strokes of the battle grid, in the order they are painted.
