@@ -286,6 +286,237 @@ function CharacterList({ isParent, kids, onOpen, hrefFor, onError }) {
 }
 
 // ── The character sheet ──────────────────────────────────────────────────────
+// The looks builder (Peter 2026-10-10: a player sets up how their character looks at the start of the game and changes it
+// any time; new armor and weapons are switched there, which changes what is equipped). The choices are saved on the
+// character (rpg_characters.looks, rpg_character_set_looks); what is worn or held comes from the items equipped, each in
+// its slot of the body (rpg_item_slot: head, neck, back, body, wrists, feet, anoint, hand, hand2 for both hands). Looks
+// change nothing in the rules; what is equipped does.
+const LOOK_OPTIONS = [
+  ["skin", "Skin", [["porcelain", "Porcelain", "#F6E1D3"], ["fair", "Fair", "#EFCFB5"], ["tan", "Tan", "#D8A47F"], ["olive", "Olive", "#B98A5E"], ["brown", "Brown", "#8D5A3B"], ["deep", "Deep brown", "#5B3826"], ["green", "Green", "#8DB36B"], ["gray", "Gray", "#9AA3A8"]]],
+  ["hair", "Hair", [["short", "Short"], ["long", "Long"], ["curly", "Curly"], ["braids", "Braids"], ["ponytail", "Ponytail"], ["spiky", "Spiky"], ["bald", "Bald"]]],
+  ["hair_color", "Hair color", [["black", "Black", "#2B2522"], ["brown", "Brown", "#5A3B26"], ["auburn", "Auburn", "#8A3B22"], ["blonde", "Blonde", "#D8B25A"], ["red", "Red", "#B5432A"], ["gray", "Gray", "#9C9C9C"], ["white", "White", "#EDEDED"], ["blue", "Blue", "#3B6FB5"], ["purple", "Purple", "#7A4FA8"]]],
+  ["eyes", "Eyes", [["brown", "Brown", "#5A3B26"], ["blue", "Blue", "#3C7BD0"], ["green", "Green", "#3E8E4F"], ["hazel", "Hazel", "#8A7A3A"], ["gray", "Gray", "#7D8790"], ["amber", "Amber", "#C28A2A"]]],
+  ["ears", "Ears", [["round", "Round"], ["pointed", "Pointed"]]],
+  ["build", "Build", [["slim", "Slim"], ["average", "Average"], ["broad", "Broad"]]],
+  ["height", "Height", [["short", "Short"], ["average", "Average"], ["tall", "Tall"]]],
+  ["outfit", "Clothes", [["tunic", "Tunic"], ["robe", "Robe"], ["dress", "Dress"]]],
+  ["outfit_color", "Clothes color", [["red", "Red", "#B23A3A"], ["blue", "Blue", "#2F5DA8"], ["green", "Green", "#3F7D44"], ["purple", "Purple", "#6B4594"], ["brown", "Brown", "#7A5232"], ["gold", "Gold", "#C9A23A"], ["gray", "Gray", "#7B8188"], ["white", "White", "#EEEAE0"], ["black", "Black", "#2A2A2E"]]],
+  ["trim_color", "Belt and trousers", [["brown", "Brown", "#5E3F27"], ["black", "Black", "#2A2A2E"], ["gray", "Gray", "#6D737A"], ["green", "Green", "#3D5E3A"], ["blue", "Blue", "#2C3E66"], ["red", "Red", "#7E2A2A"], ["white", "White", "#E4E0D6"]]],
+  ["extra", "Extra", [["none", "None"], ["freckles", "Freckles"], ["glasses", "Glasses"], ["beard", "Beard"]]],
+];
+const LOOK_DEFAULTS = { skin: "fair", hair: "short", hair_color: "brown", eyes: "brown", ears: "round", build: "average", height: "average", outfit: "tunic", outfit_color: "blue", trim_color: "brown", extra: "none" };
+const lookOf = (looks, key) => { const v = looks && typeof looks === "object" ? looks[key] : null; const list = (LOOK_OPTIONS.find(o => o[0] === key) || [null, null, []])[2]; return list.find(o => o[0] === v) || list.find(o => o[0] === LOOK_DEFAULTS[key]) || list[0]; };
+const lookColor = (looks, key) => (lookOf(looks, key) || [])[2];
+// The slots of the body as the builder lists them; the hands hold up to two things (or one that takes both)
+const GEAR_SLOTS = [["head", "Head"], ["neck", "Neck"], ["back", "Back"], ["body", "Body"], ["wrists", "Wrists"], ["feet", "Feet"], ["anoint", "Anointed with"], ["hand", "Hands"]];
+// What a thing held looks like, by its card or its name
+const gearShape = (it) => {
+  const n = `${it.card || ""} ${it.name || ""}`.toLowerCase();
+  if (/shield/.test(n)) return "shield";
+  if (/crossbow/.test(n)) return "crossbow";
+  if (/bow/.test(n)) return "bow";
+  if (/torch/.test(n)) return "torch";
+  if (/staff/.test(n)) return "staff";
+  if (/spear|lance|fork/.test(n)) return "spear";
+  if (/hammer|mace|club|flail/.test(n)) return "hammer";
+  if (/axe/.test(n)) return "axe";
+  if (/dagger|knife/.test(n)) return "dagger";
+  if (/sling/.test(n)) return "sling";
+  return "sword";
+};
+// A few words of how the character looks, for the picture prompt
+const looksText = (looks, items) => {
+  const w = (k) => String((lookOf(looks, k) || [])[1] || "").toLowerCase();
+  const worn = (items || []).filter(i => i.equipped).map(i => i.name).filter(Boolean);
+  return `Looks: ${w("height")}, ${w("build")} build, ${w("skin")} skin, ${w("hair") === "bald" ? "bald" : `${w("hair")} ${w("hair_color")} hair`}, ${w("eyes")} eyes, ${w("ears")} ears, a ${w("outfit_color")} ${w("outfit")}${w("extra") !== "none" ? `, ${w("extra")}` : ""}.${worn.length ? ` Carrying: ${worn.join(", ")}.` : ""}`;
+};
+function CharacterPortrait({ looks, items, color, head = false, size = 180 }) {
+  const skin = lookColor(looks, "skin"), hairC = lookColor(looks, "hair_color"), eyeC = lookColor(looks, "eyes");
+  const cloth = lookColor(looks, "outfit_color"), trim = lookColor(looks, "trim_color");
+  const hair = lookOf(looks, "hair")[0], outfit = lookOf(looks, "outfit")[0], extra = lookOf(looks, "extra")[0], ears = lookOf(looks, "ears")[0];
+  const build = lookOf(looks, "build")[0], height = lookOf(looks, "height")[0];
+  const eq = (items || []).filter(i => i.equipped && !i.broken);
+  const inSlot = (s) => eq.filter(i => i.slot === s);
+  const legs = { short: 30, average: 36, tall: 42 }[height] || 36;
+  const tw = { slim: 26, average: 32, broad: 40 }[build] || 32;
+  const feetY = 160, hipY = feetY - legs, shY = hipY - 44, headCy = shY - 6 - 17;
+  const cx = 60, l = cx - tw / 2, r = cx + tw / 2;
+  const ink = "#3A2E26";
+  const back = inSlot("back")[0], armor = inSlot("body")[0], headIt = inSlot("head")[0], neckIt = inSlot("neck")[0];
+  const wrists = inSlot("wrists")[0], feet = inSlot("feet")[0], anoint = inSlot("anoint")[0];
+  const held = [...inSlot("hand2"), ...inSlot("hand")];
+  const shield = held.find(i => gearShape(i) === "shield");
+  const rightIt = held.find(i => i !== shield);
+  const leftIt = shield || held.filter(i => i !== rightIt)[0];
+  const capeC = color || "#8A2E2E";
+  const handY = hipY - 2, rhX = l - 7, lhX = r + 7;
+  const hairCap = (d) => <path d={d} fill={hairC} stroke={ink} strokeWidth="1" strokeLinejoin="round" />;
+  const R = 17, hy = headCy;
+  const weapon = (it, x, y, side) => {
+    if (!it) return null;
+    const s = gearShape(it), k = `${side}-${it.id}`;
+    const metal = "#B8BEC6", wood = "#8A5A32";
+    if (s === "sword") return <g key={k}><path d={`M${x - 2.5} ${y - 8} V${y - 50} L${x} ${y - 56} L${x + 2.5} ${y - 50} V${y - 8} Z`} fill={metal} stroke={ink} strokeWidth=".9" /><rect x={x - 8} y={y - 9} width="16" height="3.5" rx="1" fill="#C9A23A" stroke={ink} strokeWidth=".8" /><rect x={x - 1.8} y={y - 6} width="3.6" height="9" fill={wood} stroke={ink} strokeWidth=".5" /></g>;
+    if (s === "dagger") return <g key={k}><path d={`M${x - 2.5} ${y - 8} V${y - 26} L${x} ${y - 31} L${x + 2.5} ${y - 26} V${y - 8} Z`} fill={metal} stroke={ink} strokeWidth=".9" /><rect x={x - 6} y={y - 9} width="12" height="3" rx="1" fill="#C9A23A" stroke={ink} strokeWidth=".6" /><rect x={x - 1.5} y={y - 6} width="3" height="7" fill={wood} /></g>;
+    if (s === "axe") return <g key={k}><rect x={x - 1.5} y={y - 40} width="3" height="46" fill={wood} stroke={ink} strokeWidth=".6" /><path d={`M${x + (side === "r" ? -1 : 1)} ${y - 40} q${side === "r" ? -14 : 14} 4 ${side === "r" ? -12 : 12} 16 l${side === "r" ? 12 : -12} -4 Z`} fill={metal} stroke={ink} strokeWidth=".8" /></g>;
+    if (s === "hammer") return <g key={k}><rect x={x - 1.5} y={y - 36} width="3" height="42" fill={wood} stroke={ink} strokeWidth=".6" /><rect x={x - 8} y={y - 42} width="16" height="9" rx="1.5" fill={metal} stroke={ink} strokeWidth=".8" /></g>;
+    if (s === "spear") return <g key={k}><rect x={x - 1.3} y={y - 70} width="2.6" height="84" fill={wood} stroke={ink} strokeWidth=".5" /><path d={`M${x} ${y - 82} L${x + 4} ${y - 68} L${x - 4} ${y - 68} Z`} fill={metal} stroke={ink} strokeWidth=".8" /></g>;
+    if (s === "staff") return <g key={k}><rect x={x - 1.8} y={y - 72} width="3.6" height="86" rx="1.5" fill={wood} stroke={ink} strokeWidth=".6" /><circle cx={x} cy={y - 74} r="3.5" fill={wood} stroke={ink} strokeWidth=".6" /></g>;
+    if (s === "bow") return <g key={k}><path d={`M${x} ${y - 40} q${side === "r" ? -16 : 16} 40 0 80`} fill="none" stroke={wood} strokeWidth="3" /><line x1={x} y1={y - 40} x2={x} y2={y + 40} stroke="#D9D2C2" strokeWidth=".8" /></g>;
+    if (s === "crossbow") return <g key={k}><rect x={x - 2} y={y - 26} width="4" height="30" fill={wood} stroke={ink} strokeWidth=".6" /><path d={`M${x - 14} ${y - 18} q14 -8 28 0`} fill="none" stroke={wood} strokeWidth="3" /></g>;
+    if (s === "torch") return <g key={k}><rect x={x - 1.8} y={y - 22} width="3.6" height="28" fill={wood} stroke={ink} strokeWidth=".6" /><path d={`M${x} ${y - 36} q7 8 3 13 q-3 3 -6 0 q-4 -5 3 -13 Z`} fill="#F2A33A" stroke="#C0601E" strokeWidth=".8" /></g>;
+    if (s === "sling") return <path key={k} d={`M${x} ${y} q-4 10 0 18 q4 -8 0 -18`} fill="none" stroke={wood} strokeWidth="1.4" />;
+    if (s === "shield") return <g key={k}><path d={`M${x - 11} ${y - 22} h22 v12 q0 14 -11 20 q-11 -6 -11 -20 Z`} fill={capeC} stroke={ink} strokeWidth="1.2" /><path d={`M${x} ${y - 20} v26 M${x - 9} ${y - 12} h18`} stroke="#E8D9A8" strokeWidth="2" /></g>;
+    return null;
+  };
+  const body = (
+    <>
+      {anoint && <ellipse cx={cx} cy={(hy + feetY) / 2} rx={tw + 14} ry={(feetY - hy) / 2 + 14} fill="#F7E7A6" opacity=".35" />}
+      <ellipse cx={cx} cy={feetY + 4} rx={tw / 2 + 12} ry="4" fill="#000" opacity=".12" />
+      {back && <path d={`M${l - 2} ${shY + 2} L${l - 12} ${feetY - 4} Q${cx} ${feetY + 4} ${r + 12} ${feetY - 4} L${r + 2} ${shY + 2} Z`} fill={capeC} stroke={ink} strokeWidth="1" />}
+      {/* legs and feet */}
+      <rect x={cx - tw / 2 + 3} y={hipY} width={tw / 2 - 4} height={legs - 4} fill={trim} stroke={ink} strokeWidth=".8" />
+      <rect x={cx + 1} y={hipY} width={tw / 2 - 4} height={legs - 4} fill={trim} stroke={ink} strokeWidth=".8" />
+      <path d={`M${cx - tw / 2 + 1} ${feetY - (feet ? 10 : 5)} h${tw / 2 - 1} v${feet ? 10 : 5} h-${tw / 2 + 3} q0 -4 3 -4 Z`} fill={feet ? "#6B4426" : "#3E2D22"} stroke={ink} strokeWidth=".8" />
+      <path d={`M${cx} ${feetY - (feet ? 10 : 5)} h${tw / 2 - 1} q3 0 3 4 v${feet ? 6 : 1} h-${tw / 2 + 2} Z`} fill={feet ? "#6B4426" : "#3E2D22"} stroke={ink} strokeWidth=".8" />
+      {/* arms */}
+      <rect x={l - 10} y={shY + 2} width="9" height={handY - shY - 6} rx="4" fill={cloth} stroke={ink} strokeWidth=".8" />
+      <rect x={r + 1} y={shY + 2} width="9" height={handY - shY - 6} rx="4" fill={cloth} stroke={ink} strokeWidth=".8" />
+      {wrists && <><rect x={l - 10} y={handY - 9} width="9" height="3.5" fill="#D4AF37" stroke={ink} strokeWidth=".5" /><rect x={r + 1} y={handY - 9} width="9" height="3.5" fill="#D4AF37" stroke={ink} strokeWidth=".5" /></>}
+      {/* clothes */}
+      {outfit === "robe" && <path d={`M${l} ${shY} L${l - 6} ${feetY - 2} L${r + 6} ${feetY - 2} L${r} ${shY} Z`} fill={cloth} stroke={ink} strokeWidth="1" />}
+      {outfit === "dress" && <path d={`M${l} ${shY} L${l - 8} ${hipY + legs * 0.6} L${r + 8} ${hipY + legs * 0.6} L${r} ${shY} Z`} fill={cloth} stroke={ink} strokeWidth="1" />}
+      {outfit === "tunic" && <path d={`M${l} ${shY} L${l - 3} ${hipY + 10} L${r + 3} ${hipY + 10} L${r} ${shY} Z`} fill={cloth} stroke={ink} strokeWidth="1" />}
+      {armor && <g><path d={`M${l + 1} ${shY + 2} L${l - 1} ${hipY + 2} L${r + 1} ${hipY + 2} L${r - 1} ${shY + 2} Z`} fill="#A7AFB8" stroke={ink} strokeWidth="1" />
+        <path d={`M${l + 2} ${shY + 14} H${r - 2} M${l + 1} ${shY + 26} H${r - 1} M${cx} ${shY + 3} V${hipY}`} stroke="#6E7781" strokeWidth="1" /></g>}
+      <rect x={l - 2} y={hipY - 4} width={tw + 4} height="4" fill={trim} stroke={ink} strokeWidth=".6" />
+      {/* neck */}
+      <rect x={cx - 4} y={shY - 7} width="8" height="9" fill={skin} stroke={ink} strokeWidth=".6" />
+      {neckIt && <g><path d={`M${cx - 7} ${shY} q7 9 14 0`} fill="none" stroke="#D4AF37" strokeWidth="1.2" /><circle cx={cx} cy={shY + 6} r="2.6" fill="#D4AF37" stroke={ink} strokeWidth=".5" /></g>}
+      {/* hands and what they hold */}
+      {weapon(rightIt, rhX + 4.5, handY, "r")}
+      {weapon(leftIt, lhX - 4.5, handY, "l")}
+      <circle cx={rhX + 4.5} cy={handY - 3} r="4" fill={skin} stroke={ink} strokeWidth=".8" />
+      <circle cx={lhX - 4.5} cy={handY - 3} r="4" fill={skin} stroke={ink} strokeWidth=".8" />
+    </>
+  );
+  const headG = (
+    <>
+      {hair === "long" && <path d={`M${cx - R - 2} ${hy - 4} Q${cx - R - 5} ${hy + 22} ${cx - R + 2} ${hy + 30} H${cx + R - 2} Q${cx + R + 5} ${hy + 22} ${cx + R + 2} ${hy - 4} Z`} fill={hairC} stroke={ink} strokeWidth="1" />}
+      {hair === "ponytail" && <path d={`M${cx + R - 2} ${hy - 6} q14 6 8 30 q-6 -10 -12 -22 Z`} fill={hairC} stroke={ink} strokeWidth="1" />}
+      {ears === "pointed"
+        ? <><path d={`M${cx - R + 1} ${hy - 2} L${cx - R - 9} ${hy - 12} L${cx - R + 2} ${hy + 6} Z`} fill={skin} stroke={ink} strokeWidth=".8" /><path d={`M${cx + R - 1} ${hy - 2} L${cx + R + 9} ${hy - 12} L${cx + R - 2} ${hy + 6} Z`} fill={skin} stroke={ink} strokeWidth=".8" /></>
+        : <><circle cx={cx - R} cy={hy + 1} r="3.5" fill={skin} stroke={ink} strokeWidth=".8" /><circle cx={cx + R} cy={hy + 1} r="3.5" fill={skin} stroke={ink} strokeWidth=".8" /></>}
+      <circle cx={cx} cy={hy} r={R} fill={skin} stroke={ink} strokeWidth="1" />
+      {/* face */}
+      <ellipse cx={cx - 6} cy={hy + 1} rx="3.2" ry="3.6" fill="#fff" stroke={ink} strokeWidth=".5" />
+      <ellipse cx={cx + 6} cy={hy + 1} rx="3.2" ry="3.6" fill="#fff" stroke={ink} strokeWidth=".5" />
+      <circle cx={cx - 6} cy={hy + 1.5} r="1.9" fill={eyeC} /><circle cx={cx + 6} cy={hy + 1.5} r="1.9" fill={eyeC} />
+      <circle cx={cx - 6} cy={hy + 1.5} r=".8" fill="#111" /><circle cx={cx + 6} cy={hy + 1.5} r=".8" fill="#111" />
+      <path d={`M${cx - 5} ${hy + 9} q5 4 10 0`} fill="none" stroke={ink} strokeWidth="1.2" strokeLinecap="round" />
+      {extra === "freckles" && [[-9, 6], [-7, 8], [-10, 9], [9, 6], [7, 8], [10, 9]].map(([a, b], n) => <circle key={n} cx={cx + a} cy={hy + b} r=".7" fill="#8A5A3A" />)}
+      {extra === "glasses" && <g fill="none" stroke={ink} strokeWidth="1"><circle cx={cx - 6} cy={hy + 1} r="4.6" /><circle cx={cx + 6} cy={hy + 1} r="4.6" /><path d={`M${cx - 1.4} ${hy + 1} h2.8`} /></g>}
+      {extra === "beard" && <path d={`M${cx - R + 3} ${hy + 4} Q${cx - R + 4} ${hy + R + 6} ${cx} ${hy + R + 9} Q${cx + R - 4} ${hy + R + 6} ${cx + R - 3} ${hy + 4} Q${cx} ${hy + 14} ${cx - R + 3} ${hy + 4} Z`} fill={hairC} stroke={ink} strokeWidth=".8" />}
+      {/* hair on top */}
+      {hair === "short" && hairCap(`M${cx - R} ${hy - 1} Q${cx - R} ${hy - R - 3} ${cx} ${hy - R - 3} Q${cx + R} ${hy - R - 3} ${cx + R} ${hy - 1} Q${cx + 6} ${hy - 9} ${cx - R} ${hy - 1} Z`)}
+      {(hair === "long" || hair === "ponytail" || hair === "braids") && hairCap(`M${cx - R - 1} ${hy + 2} Q${cx - R - 1} ${hy - R - 4} ${cx} ${hy - R - 4} Q${cx + R + 1} ${hy - R - 4} ${cx + R + 1} ${hy + 2} Q${cx + 4} ${hy - 11} ${cx - R - 1} ${hy + 2} Z`)}
+      {hair === "curly" && [[-14, -6], [-10, -13], [-3, -17], [4, -17], [11, -13], [15, -6], [-16, 1], [16, 1]].map(([a, b], n) => <circle key={n} cx={cx + a} cy={hy + b} r="6" fill={hairC} stroke={ink} strokeWidth=".8" />)}
+      {hair === "spiky" && hairCap(`M${cx - R} ${hy - 2} L${cx - R + 1} ${hy - 14} L${cx - 10} ${hy - 12} L${cx - 8} ${hy - 24} L${cx - 2} ${hy - 15} L${cx + 3} ${hy - 26} L${cx + 6} ${hy - 15} L${cx + 12} ${hy - 22} L${cx + 12} ${hy - 11} L${cx + R} ${hy - 12} L${cx + R} ${hy - 2} Q${cx} ${hy - 10} ${cx - R} ${hy - 2} Z`)}
+      {hair === "braids" && <><path d={`M${cx - R + 2} ${hy + 4} q-3 14 1 30`} stroke={hairC} strokeWidth="5" fill="none" strokeLinecap="round" /><path d={`M${cx + R - 2} ${hy + 4} q3 14 -1 30`} stroke={hairC} strokeWidth="5" fill="none" strokeLinecap="round" /></>}
+      {/* what is worn on the head */}
+      {headIt && (/helm/i.test(headIt.name || "")
+        ? <path d={`M${cx - R - 2} ${hy - 1} Q${cx - R - 2} ${hy - R - 6} ${cx} ${hy - R - 6} Q${cx + R + 2} ${hy - R - 6} ${cx + R + 2} ${hy - 1} Z`} fill="#A7AFB8" stroke={ink} strokeWidth="1" />
+        : /crown|tiara|circlet/i.test(headIt.name || "")
+          ? <path d={`M${cx - 12} ${hy - R + 1} l3 -9 l4 6 l5 -9 l5 9 l4 -6 l3 9 Z`} fill="#D4AF37" stroke={ink} strokeWidth=".8" />
+          : <path d={`M${cx - R + 1} ${hy - 8} Q${cx} ${hy - 13} ${cx + R - 1} ${hy - 8}`} fill="none" stroke={/hood/i.test(headIt.name || "") ? capeC : "#D4AF37"} strokeWidth="3.2" strokeLinecap="round" />)}
+    </>
+  );
+  return (
+    <svg viewBox={head ? `${cx - 26} ${hy - 26} 52 52` : "0 0 120 170"} width={head ? size : size} height={head ? size : size * 170 / 120} style={{ display: "block" }} aria-label="Character portrait">
+      {!head && body}
+      {headG}
+    </svg>
+  );
+}
+// The looks builder on the character sheet: the portrait, the choices, and what is worn and held, slot by slot.
+function LooksCard({ sheet, isPhone, onError, onChanged }) {
+  const [looks, setLooks] = useState(() => ({ ...LOOK_DEFAULTS, ...(sheet.looks && typeof sheet.looks === "object" ? sheet.looks : {}) }));
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setLooks({ ...LOOK_DEFAULTS, ...(sheet.looks && typeof sheet.looks === "object" ? sheet.looks : {}) }); }, [sheet.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const items = Array.isArray(sheet.items) ? sheet.items : [];
+  const pick = async (key, value) => {
+    const next = { ...looks, [key]: value };
+    setLooks(next);
+    const { error } = await supabase.rpc("rpg_character_set_looks", { p_character_id: sheet.id, p_looks: next });
+    if (error) onError(error.message); else onChanged(false);
+  };
+  const equip = async (it, on) => {
+    if (busy || !it) return;
+    setBusy(true);
+    const { error } = await supabase.rpc("rpg_item_set_equipped", { p_item_id: it.id, p_equipped: on });
+    setBusy(false);
+    if (error) onError(error.message); else onChanged(true);
+  };
+  const chooseSlot = async (slot, id) => {
+    const now = items.filter(i => i.slot === slot && i.equipped);
+    if (!id) { for (const it of now) await equip(it, false); return; }
+    await equip(items.find(i => i.id === id), true);
+  };
+  const lab = { fontSize: 11, color: T.slate500, marginBottom: 2 };
+  return (
+    <Fold title="Looks and gear" open>
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div style={{ background: "linear-gradient(#F4EFE3, #E9E1CF)", borderRadius: 12, padding: 8, margin: isPhone ? "0 auto" : 0 }}>
+          <CharacterPortrait looks={looks} items={items} color={sheet.color} size={isPhone ? 150 : 170} />
+        </div>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
+            {LOOK_OPTIONS.map(([key, name, list]) => (
+              <label key={key} style={{ display: "block" }}>
+                <div style={lab}>{name}</div>
+                <select style={{ ...input, width: "100%" }} value={looks[key] || LOOK_DEFAULTS[key]} onChange={e => pick(key, e.target.value)}>
+                  {list.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+                </select>
+              </label>
+            ))}
+          </div>
+          <div style={{ ...label, marginTop: 12 }}>Worn and held</div>
+          <div style={{ fontSize: 11, color: T.slate500, margin: "2px 0 6px" }}>One thing in each place on the body; two in the hands, or one that takes both. What is chosen here is what is equipped.</div>
+          {items.length === 0 && <div style={{ fontSize: 13, color: T.slate500 }}>Nothing carried yet. Add items below.</div>}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+            {GEAR_SLOTS.map(([slot, name]) => {
+              const here = items.filter(i => slot === "hand" ? (i.slot === "hand" || i.slot === "hand2") : i.slot === slot);
+              if (!here.length) return null;
+              if (slot === "hand") return (
+                <div key={slot} style={{ gridColumn: "1 / -1" }}>
+                  <div style={lab}>{name}</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {here.map(it => (
+                      <button key={it.id} type="button" disabled={busy} onClick={() => equip(it, !it.equipped)}
+                        style={{ ...btn(it.equipped ? "primary" : "soft", true), opacity: it.broken ? 0.5 : 1 }} title={it.slot === "hand2" ? "Takes both hands" : "One hand"}>
+                        {it.name}{it.slot === "hand2" ? " · both hands" : ""}{it.broken ? " · broken" : ""}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+              const on = here.find(i => i.equipped);
+              return (
+                <label key={slot} style={{ display: "block" }}>
+                  <div style={lab}>{name}</div>
+                  <select style={{ ...input, width: "100%" }} disabled={busy} value={on ? on.id : ""} onChange={e => chooseSlot(slot, e.target.value)}>
+                    <option value="">Nothing</option>
+                    {here.map(it => <option key={it.id} value={it.id}>{it.name}{it.broken ? " (broken)" : ""}</option>)}
+                  </select>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </Fold>
+  );
+}
 function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, onError }) {
   const [sheet, setSheet] = useState(null);
   const [rolls, setRolls] = useState([]);
@@ -470,7 +701,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
         <div style={{ width: 34, height: 34, borderRadius: "50%", background: sheet.color || T.blue, color: T.white, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, boxSizing: "border-box", overflow: "hidden" }}>
           {sheet.icon_path && sheetIcons[sheet.icon_path]
             ? <img src={sheetIcons[sheet.icon_path]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "top", display: "block", background: "#fff" }} />
-            : String(sheet.name || "?").slice(0, 1).toUpperCase()}
+            : <CharacterPortrait head looks={sheet.looks} items={sheet.items} color={sheet.color} size={34} />}
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 18, fontWeight: 700, color: T.slate900 }}>{sheet.name}{sheet.side === "evil" && <span style={{ ...tag("off"), marginLeft: 8, verticalAlign: "middle" }}>Evil</span>}</div>
@@ -480,11 +711,14 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
         {canReroll && <button type="button" style={btn("soft", true)} onClick={reroll} title={unplayed ? "Roll a fresh set of strengths" : "Parents can re-roll any time"}>Re-roll strengths</button>}
       </div>
 
+      {/* (looks builder) how the character looks, and what is worn and held */}
+      <LooksCard sheet={sheet} isPhone={isPhone} onError={onError} onChanged={() => load(effDiff)} />
+
       {/* the character's picture (rpg_characters.image_path), the same box a creature card uses */}
       {(sheet.image_path || isParent) && (
         <Fold title="Picture" open={!!sheet.image_path}>
           <div style={{ maxWidth: 360 }}>
-            <CreaturePicture c={{ id: sheet.id, key: `characters/${sheet.id}`, name: sheet.name, image_path: sheet.image_path, lore: sheet.notes }}
+            <CreaturePicture c={{ id: sheet.id, key: `characters/${sheet.id}`, name: sheet.name, image_path: sheet.image_path, lore: [looksText(sheet.looks, sheet.items), sheet.notes].filter(Boolean).join(" ") }}
               gm={isParent} onError={onError} onSaved={() => load(effDiff)} table="rpg_characters" />
           </div>
         </Fold>
