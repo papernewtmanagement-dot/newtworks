@@ -65,7 +65,7 @@ import { ManualBodyStyles } from "../lib/manualBodyStyles.jsx";
 //                                            cards and fixed-seed rolls for unnamed ground (sea, open land, forest,
 //                                            hills, mountains, and by climate grassy plains, pine forest, jungle,
 //                                            desert, sand dunes, salt flats, savanna and scrub, tundra, snow and
-//                                            ice, swamp, bog; an oasis, a river delta), with the list that grid shows
+//                                            ice, swamp, bog; an oasis, a river delta; a beach), with the list that grid shows
 //                                            (the places one level down), the lands it lies in and, for the world,
 //                                            every cell of the
 //                                            Continent grids to draw it fine; and the open journey (its clock in
@@ -1132,7 +1132,7 @@ const MAP_SERIF = "Georgia, 'Times New Roman', serif";
 const MAP_PAPER = { sea: "#B4CACB", shallow: "#C6D9D6", shore: "#D6E4DD", land: "#EFE5C8" };
 // The kinds of unnamed ground, in the order the key lists them, each with its letter in a grid drawn fine (v.detail;
 // the same letters as rpg_map_grounds).
-const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["savanna", "v"], ["forest", "t"], ["pine", "p"], ["jungle", "j"], ["hills", "h"], ["mountains", "m"], ["desert", "d"], ["dunes", "e"], ["salt", "f"], ["oasis", "o"], ["tundra", "u"], ["ice", "i"], ["swamp", "s"], ["bog", "b"], ["delta", "l"], ["town", "n"], ["road", "r"], ["pass", "a"], ["water", "w"], ["deep", "k"]];
+const MAP_GROUNDS = [["sea", "~"], ["land", "."], ["plains", "g"], ["savanna", "v"], ["beach", "y"], ["forest", "t"], ["pine", "p"], ["jungle", "j"], ["hills", "h"], ["mountains", "m"], ["desert", "d"], ["dunes", "e"], ["salt", "f"], ["oasis", "o"], ["tundra", "u"], ["ice", "i"], ["swamp", "s"], ["bog", "b"], ["delta", "l"], ["town", "n"], ["road", "r"], ["pass", "a"], ["water", "w"], ["deep", "k"]];
 // Rivers drawn as lines on a grid too coarse to hold them as water (rpg_map_view: cells' river, detail.rivers): the
 // line's width in screen pixels by its size, 2 a great river down to 5 a brook.
 const MAP_RIVER_W = { 2: 4.6, 3: 3.3, 4: 2.2, 5: 1.4 };
@@ -1523,7 +1523,7 @@ const MAP_ART = {
     { k: "tuft", line: "#7A8A4C", w: 0.9 }, { k: "tuftDry", line: "#9C9450", w: 0.9 }, { k: "tuftCold", line: "#8A9579", w: 0.9 },
     { k: "dip", line: "#8C8156", w: 1 }, { k: "stream", line: "#6C9BAE", w: 1.5 }, { k: "marsh", line: "#7FA0A0", w: 1.2 }, { k: "reed", line: "#5C6B37", w: 1 },
     { k: "dune", line: "#B0925A", w: 1.1 }, { k: "duneFace", fill: "#D9BC85" }, { k: "salt", line: "#ADA594", w: 0.9 }, { k: "pool", fill: "#9DB6B4", line: "#6F8E8E", w: 0.8 },
-    { k: "acacia", fill: "#A3A55E", line: MAP_INK, w: 0.9 }, { k: "drift", fill: "#FBFCFC", line: "#A9BFCB", w: 0.9 }, { k: "ridge", line: "#8EA9B8", w: 1 },
+    { k: "acacia", fill: "#A3A55E", line: MAP_INK, w: 0.9 }, { k: "sand", fill: "#C9B27A" }, { k: "drift", fill: "#FBFCFC", line: "#A9BFCB", w: 0.9 }, { k: "ridge", line: "#8EA9B8", w: 1 },
     { k: "mist", line: "#8E8AA3", w: 1.7 }, { k: "wave", line: "#8DAEB1", w: 1 },
   ],
   fantasy: {
@@ -1784,6 +1784,12 @@ const MAP_ART = {
       if (few) { if (rnd(1) < 0.6) plate(x + (0.35 + rnd(2) * 0.3) * s, y + (0.4 + rnd(3) * 0.3) * s, s * 0.32, 0); return; }
       [[0.28, 0.32], [0.7, 0.4], [0.46, 0.74], [0.82, 0.84]].forEach(([u, v], k) => { if (k < 3 || rnd(k) < 0.5) plate(x + (u + (rnd(k) - 0.5) * 0.1) * s, y + (v + (rnd(10 + k) - 0.5) * 0.08) * s, s * 0.12, k); });
     },
+    // more terrain step 3a (2026-10-10): a beach, sand stippled along the shore
+    beach(add, x, y, s, rnd, few) {
+      const dot = (cx, cy, r) => add(cy, "sand", `M${mapPt([cx - r, cy])}a${mapNum(r)} ${mapNum(r)} 0 1 0 ${mapNum(2 * r)} 0a${mapNum(r)} ${mapNum(r)} 0 1 0 ${mapNum(-2 * r)} 0Z`);
+      const n = few ? 3 : 7;
+      for (let k = 0; k < n; k++) dot(x + (0.12 + rnd(k) * 0.76) * s, y + (0.12 + rnd(20 + k) * 0.76) * s, s * (few ? 0.035 : 0.025));
+    },
     // more terrain step 2b (2026-10-10): an oasis, palms round a spring in the desert
     oasis(add, x, y, s, rnd, few) {
       const pool = (cx, cy, w) => add(cy, "pool", `M${mapPt([cx - w, cy])}a${mapNum(w)} ${mapNum(w * 0.4)} 0 1 0 ${mapNum(2 * w)} 0a${mapNum(w)} ${mapNum(w * 0.4)} 0 1 0 ${mapNum(-2 * w)} 0Z`);
@@ -1855,6 +1861,8 @@ const MAP_ART = {
     dunes:     { tones: ["#EAC98A", "#E7C687", "#EDCC8D"], ripple: 0.85 },
     salt:      { tones: ["#E9E5D8", "#E6E2D5", "#ECE8DB"], crack: 0.55, pebble: 0.02 },
     bog:       { tones: ["#7D7B55", "#7A7852", "#807E58"], puddle: 0.42, blade: 0.4, bush: 0.06, reed: 0.1, mist: 0.06 },
+    // (more terrain step 3a) a beach: pale sand with ripples and a few shells and pebbles
+    beach:     { tones: ["#E9DCB0", "#E6D9AD", "#ECDFB3"], ripple: 0.3, pebble: 0.06 },
     // (more terrain step 2b) an oasis: green grass and palms round a spring; a river delta: silt, reeds and pools
     oasis:     { tones: ["#8DB25A", "#8AAF57", "#90B55D"], blade: 0.8, flower: 0.05, bush: 0.06, tree: 0.04, puddle: 0.12 },
     delta:     { tones: ["#8E9A62", "#8B975F", "#919D65"], blade: 0.5, reed: 0.35, puddle: 0.35, mist: 0.03 },
