@@ -443,7 +443,7 @@ function CharacterPortrait({ looks, items, color, head = false, size = 180 }) {
   );
 }
 // The looks builder on the character sheet: the portrait, the choices, and what is worn and held, slot by slot.
-function LooksCard({ sheet, isPhone, onError, onChanged }) {
+function LooksCard({ sheet, isPhone, gm, onError, onChanged }) {
   const [looks, setLooks] = useState(() => ({ ...LOOK_DEFAULTS, ...(sheet.looks && typeof sheet.looks === "object" ? sheet.looks : {}) }));
   const [busy, setBusy] = useState(false);
   useEffect(() => { setLooks({ ...LOOK_DEFAULTS, ...(sheet.looks && typeof sheet.looks === "object" ? sheet.looks : {}) }); }, [sheet.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -472,10 +472,23 @@ function LooksCard({ sheet, isPhone, onError, onChanged }) {
   return (
     <Fold title="Looks and gear" open>
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
-        <div style={{ background: "linear-gradient(#F4EFE3, #E9E1CF)", borderRadius: 12, padding: 8, margin: isPhone ? "0 auto" : 0 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-start", margin: isPhone ? "0 auto" : 0 }}>
+        {/* the picture sits small in this row, before the figure, not in its own big section (Peter 2026-10-10). A character
+            with no picture of its own borrows its card's (rpg_sheet card_image_path), so the four turtles show the
+            Cistern Turtle picture of all four. */}
+        {(sheet.image_path || sheet.card_image_path || gm) && (
+          <div style={{ width: isPhone ? 110 : 130 }}>
+            <CreaturePicture compact height={isPhone ? 241 : 271}
+              c={{ id: sheet.id, key: `characters/${sheet.id}`, name: sheet.name, image_path: sheet.image_path || sheet.card_image_path, lore: [looksText(sheet.looks, sheet.items), sheet.notes].filter(Boolean).join(" ") }}
+              borrowed={!sheet.image_path && !!sheet.card_image_path}
+              gm={gm} onError={onError} onSaved={() => onChanged(false)} table="rpg_characters" />
+          </div>
+        )}
+        <div style={{ background: "linear-gradient(#F4EFE3, #E9E1CF)", borderRadius: 12, padding: 8 }}>
           {sheet.icon_path && figure[sheet.icon_path]
             ? <img src={figure[sheet.icon_path]} alt={sheet.name} style={{ width: isPhone ? 150 : 170, height: isPhone ? 225 : 255, objectFit: "contain", display: "block" }} />
             : <CharacterPortrait looks={looks} items={items} color={sheet.color} size={isPhone ? 150 : 170} />}
+        </div>
         </div>
         <div style={{ flex: 1, minWidth: 220 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
@@ -729,17 +742,7 @@ function CharacterSheet({ id, isParent, kids, defs, isPhone, onBack, backHref, o
       </div>
 
       {/* (looks builder) how the character looks, and what is worn and held */}
-      <LooksCard sheet={sheet} isPhone={isPhone} onError={onError} onChanged={() => load(effDiff)} />
-
-      {/* the character's picture (rpg_characters.image_path), the same box a creature card uses */}
-      {(sheet.image_path || isParent) && (
-        <Fold title="Picture" open={!!sheet.image_path}>
-          <div style={{ maxWidth: 360 }}>
-            <CreaturePicture c={{ id: sheet.id, key: `characters/${sheet.id}`, name: sheet.name, image_path: sheet.image_path, lore: [looksText(sheet.looks, sheet.items), sheet.notes].filter(Boolean).join(" ") }}
-              gm={isParent} onError={onError} onSaved={() => load(effDiff)} table="rpg_characters" />
-          </div>
-        </Fold>
-      )}
+      <LooksCard sheet={sheet} isPhone={isPhone} gm={isParent} onError={onError} onChanged={() => load(effDiff)} />
 
       {editing && (
         <div style={{ ...card, marginBottom: 12 }}>
@@ -3790,7 +3793,7 @@ function useRpgImageUrls(paths) {
 
 // The same picture box serves a creature card (rpg_creatures) and a character sheet (rpg_characters): `table` says
 // which row the uploaded picture is saved on.
-function CreaturePicture({ c, gm, onError, onSaved, table = "rpg_creatures" }) {
+function CreaturePicture({ c, gm, onError, onSaved, table = "rpg_creatures", compact = false, height = 271, borrowed = false }) {
   const [url, setUrl] = useState(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -3822,6 +3825,28 @@ function CreaturePicture({ c, gm, onError, onSaved, table = "rpg_creatures" }) {
       {busy ? "Uploading…" : url ? "Replace picture" : "Upload a picture"}
       <input type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} disabled={busy} onChange={e => upload(e.target.files?.[0])} />
     </label>
+  );
+
+  if (compact) return (
+    <div style={{ display: "grid", gap: 6 }}>
+      {url ? (
+        <img src={url} alt={c.name} title={borrowed ? "The card's picture" : c.name}
+          style={{ width: "100%", height: height - (gm ? 34 : 0), objectFit: "cover", objectPosition: "top", borderRadius: 10, display: "block", border: `1px solid ${T.slate200}` }} />
+      ) : (
+        <div style={{ height: height - (gm ? 34 : 0), borderRadius: 10, border: `2px dashed ${T.slate200}`, background: T.slate50, display: "flex", alignItems: "center", justifyContent: "center", color: T.slate500, fontSize: 12, textAlign: "center", padding: 8, boxSizing: "border-box" }}>
+          No picture yet
+        </div>
+      )}
+      {gm && (
+        <div style={{ display: "flex", gap: 4 }}>
+          <label style={{ ...btn("soft", true), flex: 1, textAlign: "center", padding: "4px 6px", fontSize: 12, cursor: busy ? "wait" : "pointer" }} title={borrowed || !url ? "Upload this character's own picture" : "Replace the picture"}>
+            {busy ? "…" : (url && !borrowed) ? "Replace" : "Upload"}
+            <input type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} disabled={busy} onChange={e => upload(e.target.files?.[0])} />
+          </label>
+          {(!url || borrowed) && <button type="button" style={{ ...btn("soft", true), padding: "4px 6px", fontSize: 12 }} onClick={copy} title="Copy a prompt to paste into ChatGPT">{copied ? "Copied" : "Prompt"}</button>}
+        </div>
+      )}
+    </div>
   );
 
   return (
