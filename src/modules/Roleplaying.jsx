@@ -231,6 +231,8 @@ function CharacterList({ isParent, kids, onOpen, hrefFor, onError }) {
     setLoading(false);
   }, [onError]);
   useEffect(() => { load(); }, [load]);
+  // each character's map figure (rpg_characters.icon_path; Peter 2026-10-10: the figure on every card, not a generic picture)
+  const figures = useRpgImageUrls(rows.map(r => r.icon_path));
 
   const create = async () => {
     if (!name.trim() || busy) return;
@@ -270,9 +272,11 @@ function CharacterList({ isParent, kids, onOpen, hrefFor, onError }) {
         {rows.map(r => (
           <TabLink key={r.id} href={hrefFor(r.id)} onSelect={() => onOpen(r.id)}
             style={{ ...card, display: "flex", alignItems: "center", gap: 12, textDecoration: "none", color: "inherit", cursor: "pointer" }}>
-            <div style={{ width: 40, height: 40, borderRadius: "50%", background: r.color || T.blue, color: T.white, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 16, flexShrink: 0, boxSizing: "border-box" }}>
-              {String(r.name || "?").slice(0, 1).toUpperCase()}
-            </div>
+            {r.icon_path && figures[r.icon_path]
+              ? <img src={figures[r.icon_path]} alt="" style={{ width: 40, height: 60, objectFit: "contain", display: "block", flexShrink: 0 }} />
+              : <div style={{ width: 40, height: 40, borderRadius: "50%", background: r.color || T.blue, color: T.white, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 16, flexShrink: 0, boxSizing: "border-box" }}>
+                  {String(r.name || "?").slice(0, 1).toUpperCase()}
+                </div>}
             <div style={{ minWidth: 0 }}>
               <div style={{ fontWeight: 700, color: T.slate900, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</div>
               <div style={{ fontSize: 12, color: T.slate500 }}>{r.is_npc ? "NPC" : (r.kid_name ? `Played by ${r.kid_name}` : "No player yet")}{Number(r.vitality_damage) > 0 ? ` · hurt ${r.vitality_damage}` : ""}</div>
@@ -444,6 +448,8 @@ function LooksCard({ sheet, isPhone, onError, onChanged }) {
   const [busy, setBusy] = useState(false);
   useEffect(() => { setLooks({ ...LOOK_DEFAULTS, ...(sheet.looks && typeof sheet.looks === "object" ? sheet.looks : {}) }); }, [sheet.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const items = Array.isArray(sheet.items) ? sheet.items : [];
+  // a character with a map figure (rpg_characters.icon_path) shows that figure here, not the generic picture (Peter 2026-10-10)
+  const figure = useRpgImageUrls([sheet.icon_path]);
   const pick = async (key, value) => {
     const next = { ...looks, [key]: value };
     setLooks(next);
@@ -467,7 +473,9 @@ function LooksCard({ sheet, isPhone, onError, onChanged }) {
     <Fold title="Looks and gear" open>
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
         <div style={{ background: "linear-gradient(#F4EFE3, #E9E1CF)", borderRadius: 12, padding: 8, margin: isPhone ? "0 auto" : 0 }}>
-          <CharacterPortrait looks={looks} items={items} color={sheet.color} size={isPhone ? 150 : 170} />
+          {sheet.icon_path && figure[sheet.icon_path]
+            ? <img src={figure[sheet.icon_path]} alt={sheet.name} style={{ width: isPhone ? 150 : 170, height: isPhone ? 225 : 255, objectFit: "contain", display: "block" }} />
+            : <CharacterPortrait looks={looks} items={items} color={sheet.color} size={isPhone ? 150 : 170} />}
         </div>
         <div style={{ flex: 1, minWidth: 220 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
@@ -3526,10 +3534,21 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl, weather }) {
   const rows = Number(v.rows) || 12;
   // (storeys step) on a battle grid only the pieces on the floor shown stand on it
   const pieces = journey && Array.isArray(journey.pieces) ? journey.pieces.filter(p => Array.isArray(p.spot) && (!top || (Number(p.floor) || 0) === shownFloor)) : [];
+  // (Peter 2026-10-10: a piece stood right on the edge of two or more squares, so which one to tap was unclear) every piece
+  // stands in the middle of the cell it is in, sized to fit the cell; pieces sharing a cell stand side by side inside it
+  const cellPx = width > 16 ? (width - 16) / cols : 30;
+  const inCell = {};
+  pieces.forEach(p => { const k = `${Math.floor(p.spot[0] / 1000)},${Math.floor(p.spot[1] / 1000)}`; inCell[k] = (inCell[k] || 0) + 1; });
   const shared = {};
   const tokens = pieces.map(p => {
-    const k = `${Math.floor(p.spot[0] / 1000)},${Math.floor(p.spot[1] / 1000)}`;
+    const cx = Math.floor(p.spot[0] / 1000), cy = Math.floor(p.spot[1] / 1000);
+    const k = `${cx},${cy}`;
     const n = shared[k] = (shared[k] || 0) + 1;
+    const m = inCell[k] || 1;
+    const pLeft = `calc(16px + (100% - 16px) * ${(cx * 1000 + (n - 0.5) * 1000 / m) / (cols * 1000)})`;
+    const pTop = `calc(16px + (100% - 16px) * ${(cy * 1000 + 500) / (rows * 1000)})`;
+    const figW = Math.max(8, Math.min(26, cellPx * 0.62, cellPx * 0.95 / m));
+    const dot = Math.max(8, Math.min(22, cellPx * 0.8, cellPx * 0.95 / m));
     const turn = journey.status === "active" && journey.current === p.id;
     const icon = p.icon ? iconUrls[p.icon] : null;
     // a character with an icon walks on the map as its whole figure, standing on its spot; the one whose turn it is
@@ -3537,15 +3556,15 @@ function MapGrid({ v, atHref, setAt, journey, onCell, big, keyEl, weather }) {
     if (icon) {
       return (
         <img key={p.id} src={icon} alt="" title={p.under ? `${p.name} · ${p.under}` : p.name}
-          style={{ position: "absolute", left: `calc(16px + (100% - 16px) * ${p.spot[0] / (cols * 1000)} + ${(n - 1) * 12}px)`, top: `calc(16px + (100% - 16px) * ${p.spot[1] / (rows * 1000)})`,
-            transform: "translate(-50%, -80%)", width: 26, height: 39, objectFit: "contain", pointerEvents: "none", opacity: p.out ? 0.4 : p.under ? 0.6 : 1,
+          style={{ position: "absolute", left: pLeft, top: pTop,
+            transform: "translate(-50%, -50%)", width: figW, height: figW * 1.5, objectFit: "contain", pointerEvents: "none", opacity: p.out ? 0.4 : p.under ? 0.6 : 1,
             filter: turn ? `drop-shadow(0 0 2px ${T.blue}) drop-shadow(0 0 2px ${T.blue})` : "drop-shadow(0 1px 1.5px rgba(0,0,0,.55))", zIndex: turn ? 3 : 2 }} />
       );
     }
     return (
       <span key={p.id} title={p.under ? `${p.name} · ${p.under}` : p.name} aria-hidden="true"
-        style={{ position: "absolute", left: `calc(16px + (100% - 16px) * ${p.spot[0] / (cols * 1000)} + ${(n - 1) * 12}px)`, top: `calc(16px + (100% - 16px) * ${p.spot[1] / (rows * 1000)})`,
-          transform: "translate(-50%, -50%)", width: 22, height: 22, background: p.color || T.slate500, border: p.under ? "2px dashed #fff" : "2px solid #fff",
+        style={{ position: "absolute", left: pLeft, top: pTop,
+          transform: "translate(-50%, -50%)", width: dot, height: dot, background: p.color || T.slate500, border: p.under ? "2px dashed #fff" : "2px solid #fff",
           boxShadow: turn ? `0 0 0 3px ${T.blue}, 0 1px 3px rgba(0,0,0,.4)` : "0 1px 3px rgba(0,0,0,.4)", color: "#fff", fontSize: 11, fontWeight: 800,
           borderRadius: p.creature ? 5 : "50%", borderColor: p.creature ? "#5A1E1E" : "#fff", opacity: p.out ? 0.4 : 1,
           display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", boxSizing: "border-box", zIndex: turn ? 3 : 2 }}>
