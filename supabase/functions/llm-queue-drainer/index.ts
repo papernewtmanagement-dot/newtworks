@@ -26,7 +26,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { sb, jsonResponse, getSettingOrNull, stripFences } from "../_shared/supabase.ts";
-import { callGroqChat } from "../_shared/llm.ts";
+import { fitMaxTokens, readWithBackup, type BackedReadResult } from "../_shared/llm.ts";
 import { requireSharedSecret } from "../_shared/auth.ts";
 import { writeParsedStatement } from "../_shared/statement_writer.ts";
 import { ensureWatcherTask } from "../_shared/watchers.ts";
@@ -73,46 +73,42 @@ const WRAPUP_MODEL = "openai/gpt-oss-120b";
 // handler function below AND appending its key here.
 const SUPPORTED_PURPOSES = ["parse_bank_statement", "careerplug_applicant_extract", "wrapup_organize"];
 
-// Thin adapter over the shared Groq caller so the drain call sites keep their
-// positional signature. temperature 0.1 preserved from the original inline copy.
-// The org's Groq tier caps EVERY request (prompt + completion together) at a
-// fixed token budget — currently 8000 for openai/gpt-oss-120b. A hardcoded
-// maxTokens blows that ceiling the moment prompt tokens alone get close to
-// it (seen live: a 13.7K-char bank statement + system prompt = ~4.2K prompt
-// tokens, then maxTokens:8000 requested 11.3K total -> HTTP 413). Size the
-// completion budget to what's actually left after the prompt, every call.
-const GROQ_REQUEST_TOKEN_CAP = 8000;
-const GROQ_SAFETY_MARGIN = 300; // token-estimate is a 4-chars/token approximation, not exact
-
-// 4 chars/token is the usual rule of thumb for prose, but statement text is
-// dense with digits, currency symbols and punctuation, which tokenize far
-// worse. Measured on AMEX 26-08 after boilerplate trimming: ~13,400 chars came
-// in at 3,619 real tokens, i.e. 3.70 chars/token. At the 4.0 estimate the
-// request was sized at 8,319 against a hard 8,000 cap and Groq rejected the
-// whole call with HTTP 413 — which, unlike a 429, burns an attempt. Estimate
-// low so the sizing errs toward a slightly smaller answer budget instead of a
-// rejected request.
-const CHARS_PER_TOKEN_EST = 3.4;
-
-function fitMaxTokens(systemPrompt: string, userContent: string, ceiling: number, floor: number): number {
-  const promptTokensEst = Math.ceil((systemPrompt.length + userContent.length) / CHARS_PER_TOKEN_EST);
-  const available = GROQ_REQUEST_TOKEN_CAP - promptTokensEst - GROQ_SAFETY_MARGIN;
-  return Math.max(floor, Math.min(ceiling, available));
-}
-
+// Every read goes through the shared readWithBackup(): Groq first (paced
+// against the per-minute token cap, answer budget fitted by the one shared
+// fitMaxTokens clamp), Claude only when Groq errors, cuts off or fails the
+// check passed in. Both readers get the same instructions and the same text.
 // Statement text handling, prompts, sign repairs and checks live in
 // ./statement_reader.ts (pure functions, testable against real statements).
-
-async function callGroq(
-  apiKey: string,
+async function readItem(
+  item: QueueItem,
+  groqKey: string,
   model: string,
   systemPrompt: string,
   userContent: string,
-  maxTokens = 8000,
+  budget: { ceiling: number; floor: number; claude?: number },
+  check: (raw: string) => string | null,
   reasoningEffort?: "none" | "low" | "medium" | "high",
-): Promise<{ ok: boolean; raw: string; error?: string; finishReason?: string | null }> {
-  const r = await callGroqChat({ apiKey, model, systemPrompt, userContent, maxTokens, temperature: 0.1, reasoningEffort });
-  return { ok: r.ok, raw: r.raw, error: r.error ?? undefined, finishReason: r.finishReason ?? null };
+): Promise<BackedReadResult> {
+  const r = await readWithBackup({
+    agencyId: item.agency_id,
+    groqKey,
+    model,
+    systemPrompt,
+    userContent,
+    maxTokens: fitMaxTokens(systemPrompt, userContent, budget.ceiling, budget.floor),
+    claudeMaxTokens: budget.claude ?? 8000,
+    reasoningEffort,
+    check,
+    label: `purpose=${item.purpose} queue=${item.id}`,
+  });
+  if (r.reader === "claude" && r.ok) console.log(`[drainer] ${item.purpose} ${item.id} read by the Claude backup (Groq: ${r.groqProblem})`);
+  return r;
+}
+
+// Answer must be JSON (fences stripped). Used by the small purposes.
+function notJsonProblem(raw: string): string | null {
+  try { JSON.parse(stripFences(raw)); return null; }
+  catch (_e) { return `answer is not JSON: ${raw.slice(0, 160)}`; }
 }
 
 interface QueueItem {
@@ -183,11 +179,13 @@ async function drainBankStatementItem(item: QueueItem, groqKey: string, dryRun: 
   const read = acct.account_kind === "investment"
     ? await readInvestmentStatement(item.user_content, acct.account_number_last4 ?? null,
         (acct.institution && !String(acct.account_name ?? "").includes(acct.institution)
-          ? `${acct.institution} ${acct.account_name ?? ""}` : String(acct.account_name ?? "")).trim(), groqKey)
-    : await readBankOrCardStatement(item.user_content, acct.account_kind, groqKey);
+          ? `${acct.institution} ${acct.account_name ?? ""}` : String(acct.account_name ?? "")).trim(), groqKey, item)
+    : await readBankOrCardStatement(item.user_content, acct.account_kind, groqKey, item);
   if (!read.ok) return { ok: false, error: read.error };
 
-  const { period, openingBalance, closingBalance, txns, controlNote } = read;
+  const { period, openingBalance, closingBalance, txns } = read;
+  const controlNote = read.reader === "claude"
+    ? `${read.controlNote}${read.controlNote ? " | " : ""}read by the Claude backup` : read.controlNote;
   // The account's own last four win over what the model read off the page
   // (a September test read 0353 as "5353").
   const accountLast4 = acct.account_number_last4 ?? read.accountLast4;
@@ -277,13 +275,45 @@ type StatementRead =
       accountLast4: string | null;
       txns: ReaderTxn[];
       controlNote: string;
+      // Did the lines tie to the balances or summary totals? null: nothing to
+      // tie against. A false read is still written (the writer holds it), but
+      // it counts as a failed check, so the Claude backup gets a turn first.
+      tied?: boolean | null;
+      reader?: "groq" | "claude" | null;
     }
   | { ok: false; error: string };
+
+// The safety check both readers' answers face: a read that failed, a period
+// that looks misread, or lines that do not tie.
+function statementReadProblem(r: StatementRead): string | null {
+  if (!r.ok) return r.error;
+  const periodProblem = checkStatementPeriod(r.period, r.txns, new Date().toISOString().slice(0, 10));
+  if (periodProblem) return periodProblem;
+  if (r.tied === false) return r.controlNote;
+  return null;
+}
+
+// Pick the answer to use. Clean pass: that reader's read. Both failed: a read
+// whose ONLY fault is lines not tying is still used, as before the backup
+// existed (the writer holds it for review); Claude's first, then Groq's.
+function settleStatementRead(
+  backed: BackedReadResult, interpret: (raw: string) => StatementRead,
+): StatementRead {
+  if (backed.ok) return { ...interpret(backed.raw), reader: backed.reader } as StatementRead;
+  for (const [raw, who] of [[backed.claudeRaw, "claude"], [backed.groqRaw, "groq"]] as const) {
+    if (!raw) continue;
+    const r = interpret(raw);
+    if (r.ok && r.tied === false && !checkStatementPeriod(r.period, r.txns, new Date().toISOString().slice(0, 10))) {
+      return { ...r, reader: who };
+    }
+  }
+  return { ok: false, error: backed.error ?? "read failed" };
+}
 
 // Health savings and other investment accounts: summary only (Peter,
 // 2026-09-26). Three figures and the balance, checked to the cent.
 async function readInvestmentStatement(
-  rawText: string, last4: string | null, label: string, groqKey: string,
+  rawText: string, last4: string | null, label: string, groqKey: string, item: QueueItem,
 ): Promise<StatementRead> {
   // Read by position first; the model is only asked when that does not tie.
   const fromText = investmentSummaryFromText(rawText, last4);
@@ -301,21 +331,23 @@ async function readInvestmentStatement(
   }
   const window = investmentWindow(rawText, last4);
   const userContent = `ACCOUNT NUMBER ENDS IN: ${last4 ?? "unknown"}\n\n${window}`;
-  const maxTokens = fitMaxTokens(INVESTMENT_SUMMARY_PROMPT, userContent, 1500, 600);
-  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, INVESTMENT_SUMMARY_PROMPT, userContent, maxTokens, "low");
-  if (!llm.ok) return { ok: false, error: llm.error ?? "groq failed" };
-  const s = parseInvestmentSummary(llm.raw);
-  const lines = investmentSummaryToLines(s, label || "Investment account");
-  if (!lines.ok) return { ok: false, error: `${lines.error}. Answer head: ${llm.raw.slice(0, 200)}` };
-  return {
-    ok: true,
-    period: s.period!,
-    openingBalance: s.open,
-    closingBalance: s.close,
-    accountLast4: last4,
-    txns: lines.txns,
-    controlNote: lines.note,
+  const interpret = (raw: string): StatementRead => {
+    const s = parseInvestmentSummary(raw);
+    const lines = investmentSummaryToLines(s, label || "Investment account");
+    if (!lines.ok) return { ok: false, error: `${lines.error}. Answer head: ${raw.slice(0, 200)}` };
+    return {
+      ok: true,
+      period: s.period!,
+      openingBalance: s.open,
+      closingBalance: s.close,
+      accountLast4: last4,
+      txns: lines.txns,
+      controlNote: lines.note,
+    };
   };
+  const backed = await readItem(item, groqKey, BANK_STATEMENT_MODEL, INVESTMENT_SUMMARY_PROMPT, userContent,
+    { ceiling: 1500, floor: 600, claude: 2000 }, (raw) => statementReadProblem(interpret(raw)), "low");
+  return settleStatementRead(backed, interpret);
 }
 
 // Bank and card statements: every transaction line, then the control checks.
@@ -325,27 +357,29 @@ async function readInvestmentStatement(
 // openai/gpt-oss-120b bills hidden thinking against max_tokens, so "medium"
 // returned an EMPTY answer and a verbose prompt dropped lines. One compact line
 // per transaction is ~17 tokens instead of ~90.
-async function readBankOrCardStatement(rawText: string, accountKind: string, groqKey: string): Promise<StatementRead> {
+async function readBankOrCardStatement(
+  rawText: string, accountKind: string, groqKey: string, item: QueueItem,
+): Promise<StatementRead> {
   const prepared = prepareStatementText(rawText);
   const statementText = prepared.text;
   if (prepared.removed > 0) {
     console.log(`[drainer] trimmed ${prepared.removed} chars of fine print (${rawText.length} -> ${statementText.length})`);
   }
-  const bankMaxTokens = fitMaxTokens(BANK_STATEMENT_PROMPT_COMPACT, statementText, 6000, 1200);
-  const llm = await callGroq(groqKey, BANK_STATEMENT_MODEL, BANK_STATEMENT_PROMPT_COMPACT, statementText, bankMaxTokens, "low");
-  if (!llm.ok) return { ok: false, error: llm.error ?? "groq failed" };
+  // A cut-off answer counts as a failed read in readWithBackup itself.
+  const interpret = (raw: string) => interpretBankAnswer(raw, rawText, statementText, prepared.removed, accountKind);
+  const backed = await readItem(item, groqKey, BANK_STATEMENT_MODEL, BANK_STATEMENT_PROMPT_COMPACT, statementText,
+    { ceiling: 6000, floor: 1200, claude: 12000 }, (raw) => statementReadProblem(interpret(raw)), "low");
+  return settleStatementRead(backed, interpret);
+}
 
-  // A cut-off answer is a budget problem; name it plainly.
-  if (llm.finishReason === "length") {
-    return {
-      ok: false,
-      error: `answer truncated: ran out of budget at max_tokens=${bankMaxTokens} `
-        + `(prompt ~${Math.ceil((BANK_STATEMENT_PROMPT_COMPACT.length + statementText.length) / 4)} tokens, `
-        + `${llm.raw.length} chars returned).`,
-    };
-  }
-  const json = parseCompactStatement(llm.raw);
-  if (!json) return { ok: false, error: `compact parse produced no transactions. Head: ${llm.raw.slice(0, 200)}` };
+// One answer (from either reader) turned into a statement read, with the
+// control checks. Pure: no calls out, so both readers' answers face the same
+// checks and an answer can be re-interpreted for free.
+function interpretBankAnswer(
+  raw: string, rawText: string, statementText: string, removed: number, accountKind: string,
+): StatementRead {
+  const json = parseCompactStatement(raw);
+  if (!json) return { ok: false, error: `compact parse produced no transactions. Head: ${raw.slice(0, 200)}` };
 
   // CONTROL CHECK. Two independent checks on the lines the model read:
   //   balances  opening + lines = closing, to the cent. Opening and closing
@@ -361,6 +395,7 @@ async function readBankOrCardStatement(rawText: string, accountKind: string, gro
   //   repair 1  card refunds misread as charges (the statement's credits blocks)
   //   repair 2  deposit-account withdrawals misread as deposits (trailing minus)
   let controlNote = "";
+  let tied: boolean | null = null;
   let openingBalance: number | null = typeof json.opening_balance === "number" ? json.opening_balance : null;
   let closingBalance: number | null = typeof json.closing_balance === "number" ? json.closing_balance : null;
   {
@@ -403,6 +438,7 @@ async function readBankOrCardStatement(rawText: string, accountKind: string, gro
     if (pairs.length === 0 && !haveDeclared) {
       controlNote = "no balances or summary totals could be read, so nothing to check against";
     } else if (ties(json.transactions)) {
+      tied = true;
       const p = tiedPair(json.transactions);
       controlNote = p
         ? `lines tie to ${p.label}: ${p.open} -> ${p.close}`
@@ -429,10 +465,12 @@ async function readBankOrCardStatement(rawText: string, accountKind: string, gro
           controlNote = `repaired ${r.count} line(s): ${rep.name}; lines now tie to `
             + (p ? `${p.label}: ${p.open} -> ${p.close}` : "the Account Summary totals");
           fixed = true;
+          tied = true;
           break;
         }
       }
       if (!fixed) {
+        tied = false;
         controlNote = `lines DO NOT tie: parsed charges ${before.charges.toFixed(2)} vs declared `
           + `${json.declared_charges ?? "n/a"}, parsed credits ${before.credits.toFixed(2)} vs declared `
           + `${json.declared_credits ?? "n/a"}, balances tried ${pairs.map((p) => `${p.open}->${p.close}`).join(", ") || "none"}. `
@@ -454,7 +492,8 @@ async function readBankOrCardStatement(rawText: string, accountKind: string, gro
     closingBalance,
     accountLast4: json.account_last4 ?? null,
     txns: json.transactions,
-    controlNote: prepared.removed > 0
+    tied,
+    controlNote: removed > 0
       ? `${controlNote}${controlNote ? " | " : ""}fine print trimmed: ${rawText.length} -> ${statementText.length} chars`
       : controlNote,
   };
@@ -476,9 +515,9 @@ async function readBankOrCardStatement(rawText: string, accountKind: string, gro
 async function drainCareerplugItem(item: QueueItem, groqKey: string, dryRun: boolean): Promise<DrainResult> {
   // 1. Call Groq. Careerplug messages are small; 1500 max_tokens covers the
   // biggest daily digest we've observed.
-  const careerplugMaxTokens = fitMaxTokens(item.system_prompt, item.user_content, 1500, 600);
-  const llm = await callGroq(groqKey, CAREERPLUG_MODEL, item.system_prompt, item.user_content, careerplugMaxTokens);
-  if (!llm.ok) return { ok: false, error: llm.error };
+  const llm = await readItem(item, groqKey, CAREERPLUG_MODEL, item.system_prompt, item.user_content,
+    { ceiling: 1500, floor: 600, claude: 4000 }, notJsonProblem);
+  if (!llm.ok) return { ok: false, error: llm.error ?? "read failed" };
 
   // 2. Parse JSON. Expect { "applicants": [ {...}, ... ] }
   let json: any;
@@ -589,15 +628,23 @@ function wupExtractSnapshotFromUserContent(userContent: string): string | null {
   return raw === "(none yet)" ? "" : raw;
 }
 
+// Safety check on one wrap-up answer, shared by the Claude backup and the guard below.
+function wrapupAnswerProblem(raw: string): string | null {
+  const notJson = notJsonProblem(raw);
+  if (notJson) return notJson;
+  const t = JSON.parse(stripFences(raw))?.organized_text;
+  return typeof t === "string" && t.trim() ? null : "LLM returned empty organized_text";
+}
+
 async function drainWrapupOrganizeItem(item: QueueItem, groqKey: string, dryRun: boolean): Promise<DrainResult> {
   const detailId = item.target_ref?.detail_id as string | undefined;
   if (!detailId) {
     return { ok: false, error: "target_ref.detail_id missing — job predates target_ref (2026-08-07) or was enqueued without a write target; cannot resolve which weekly_cpr_team_detail row to write" };
   }
 
-  const wrapupMaxTokens = fitMaxTokens(item.system_prompt, item.user_content, 2500, 800);
-  const llm = await callGroq(groqKey, WRAPUP_MODEL, item.system_prompt, item.user_content, wrapupMaxTokens);
-  if (!llm.ok) return { ok: false, error: llm.error ?? "groq failed" };
+  const llm = await readItem(item, groqKey, WRAPUP_MODEL, item.system_prompt, item.user_content,
+    { ceiling: 2500, floor: 800, claude: 4000 }, wrapupAnswerProblem);
+  if (!llm.ok) return { ok: false, error: llm.error ?? "read failed" };
 
   let parsed: any;
   try {
@@ -607,9 +654,8 @@ async function drainWrapupOrganizeItem(item: QueueItem, groqKey: string, dryRun:
   }
 
   const organizedText: string = typeof parsed?.organized_text === "string" ? parsed.organized_text : "";
-  if (!organizedText.trim()) {
-    return { ok: false, error: "LLM returned empty organized_text" };
-  }
+  const emptyProblem = wrapupAnswerProblem(llm.raw);
+  if (emptyProblem) return { ok: false, error: emptyProblem };
   const coverage = parsed?.coverage ?? {};
   const allCovered =
     coverage.item_1 === true && coverage.item_2 === true && coverage.item_3 === true &&

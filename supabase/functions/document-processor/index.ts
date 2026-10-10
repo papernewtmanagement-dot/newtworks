@@ -2188,6 +2188,22 @@ async function processOneAttachment(
         // preserveFormat is on: the default path reinjects newlines using a
         // pattern shaped for State Farm's own PDFs, and this is a different
         // vendor's layout.
+        // Emailed CTS report (Peter 2026-10-09): filed to Drive, never read.
+        // Scores come from the CTS site pull now, so an emailed copy gets no
+        // AI read, no candidate match and no alert. The hand-run Drive mode
+        // (cts_drive, parentArchive "Drive") still reads, as before.
+        if (!att.ctsPayload && att.parentArchive !== "Drive") {
+          await markDocument(documentId, "processed", 0, ["documents"],
+            "Emailed CTS report filed to Drive only; not read (scores come from the CTS site pull).");
+          await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "processed", jeCount: 0, suspenseCount: 0,
+            sourceLabel: uploadSource,
+          });
+          break;
+        }
+
         // CTS site pull: the scores were read off the vendor's report page
         // already (parsers/cts_site.ts, no AI). The PDF is only filed.
         let parsed: { ok: true; candidateName: string | null; payload: Record<string, unknown> } | { ok: false; candidateName: string | null; error: string };

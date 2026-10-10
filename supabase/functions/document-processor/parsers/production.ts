@@ -127,31 +127,10 @@ function resolveStaffId(idx: Map<string, string>, docName: string): string | nul
   return null;
 }
 
-export async function parseProductionReport(opts: {
-  agencyId: string;
-  composioApiKey: string;
-  composioUserId: string;
-  documentId: string;
-  reportVariant: "commission_report" | "team_production";
-  statementText: string;
-}): Promise<ParseProductionResult> {
-  const result = await parseWithLLM({
-    agencyId: opts.agencyId,
-    composioApiKey: opts.composioApiKey,
-    composioUserId: opts.composioUserId,
-    systemPrompt: SYSTEM_PROMPT,
-    userContent: `Report variant: ${opts.reportVariant}\n\n${opts.statementText}`,
-    documentId: opts.documentId,
-    purpose: `parse_${opts.reportVariant}`,
-    maxTokens: 6000,
-  });
-
-  if (!result.ok) {
-    if (result.queued) return { ok: false, queued: true, queueId: result.queueId };
-    return { ok: false, queued: false, error: result.error };
-  }
-
-  const rawRows: any[] = Array.isArray(result.json?.rows) ? result.json.rows : [];
+// The rows the parser can use from one AI answer. Also the safety check the
+// Claude backup reads against: no usable rows means the read failed.
+function productionRowsFrom(json: any): ProductionRow[] {
+  const rawRows: any[] = Array.isArray(json?.rows) ? json.rows : [];
   const rows: ProductionRow[] = [];
   for (const r of rawRows) {
     if (typeof r?.premium_issued !== "number") continue;
@@ -172,6 +151,35 @@ export async function parseProductionReport(opts: {
       notes: r.notes ? String(r.notes).slice(0, 500) : null,
     });
   }
+  return rows;
+}
+
+export async function parseProductionReport(opts: {
+  agencyId: string;
+  composioApiKey: string;
+  composioUserId: string;
+  documentId: string;
+  reportVariant: "commission_report" | "team_production";
+  statementText: string;
+}): Promise<ParseProductionResult> {
+  const result = await parseWithLLM({
+    agencyId: opts.agencyId,
+    composioApiKey: opts.composioApiKey,
+    composioUserId: opts.composioUserId,
+    systemPrompt: SYSTEM_PROMPT,
+    userContent: `Report variant: ${opts.reportVariant}\n\n${opts.statementText}`,
+    documentId: opts.documentId,
+    purpose: `parse_${opts.reportVariant}`,
+    maxTokens: 6000,
+    check: (json) => productionRowsFrom(json).length === 0 ? "answer has no usable production rows" : null,
+  });
+
+  if (!result.ok) {
+    if (result.queued) return { ok: false, queued: true, queueId: result.queueId };
+    return { ok: false, queued: false, error: result.error };
+  }
+
+  const rows = productionRowsFrom(result.json);
 
   if (rows.length === 0) {
     return { ok: false, queued: false, error: "LLM returned no parseable rows" };

@@ -1,47 +1,26 @@
 // =========================================================================
-// lib/llm.ts  (v3 — direct Groq API)
+// lib/llm.ts  (v4 — shared reader, Claude backup)
 // =========================================================================
-// Single chokepoint for LLM calls inside the document-processor.
+// Single chokepoint for AI reads inside the document-processor.
 //
-// CHANGED IN v3: Switched from COMPOSIO_SEARCH_GROQ_CHAT (which 404s on this
-// agency's composio_api_key) to calling Groq's HTTPS endpoint directly using
-// a `groq_api_key` setting.
+// v4 (2026-10-09): the Groq call, the token clamp and the "Groq first, Claude
+// as backup" decision all live in ../../_shared/llm.ts (readWithBackup). This
+// file used to carry its own Groq caller and its own copy of the clamp; both
+// are gone so there is one of each.
 //
-// Behavior on failure:
-//   1. Direct Groq call returns 4xx/5xx OR network error → fall through
-//   2. LLM returns non-JSON content → fall through
-//   3. Fall-through: INSERT into llm_parse_queue for workbench-side retry
-//
-// The queue path is now a true last resort, not the steady-state.
+// Order of readers:
+//   1. Groq, paced against the per-minute token cap.
+//   2. Claude (pay-per-use key, settings.anthropic_api_key) ONLY when Groq
+//      errors, is busy, cuts off, returns non-JSON, or fails the caller's
+//      check(). Same instructions, same extracted text, nothing else.
+//   3. Queue row in llm_parse_queue for llm-queue-drainer (true last resort,
+//      unless the caller set skipQueueOnFailure).
 // =========================================================================
 
 import { sb, stripFences, getSetting } from "../../_shared/supabase.ts";
+import { getDefaultModel, fitMaxTokens, readWithBackup } from "../../_shared/llm.ts";
 
-const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
-const LLM_MODEL_FALLBACK = "openai/gpt-oss-120b";
 const GROQ_TIMEOUT_MS = 25000;
-
-// TIMEOUT HANDLING added 2026-08-06 (Task 4, build-instructions 2026-08-06).
-// See lib/composio.ts's header comment for the full "why" -- same rationale
-// applies here: a stuck Groq call should fail fast and catchably instead of
-// riding the invocation to the platform's own wall-clock kill (observed as
-// an uncaught-exception 546 after ~105-113s). No retry added on purpose.
-function writeGroqTimeoutReport(elapsedMs: number, context: string): void {
-  console.error(
-    `[document-processor:groq_timeout] Groq call did not respond within ${elapsedMs}ms and was aborted. Context: ${context}`,
-  );
-}
-
-// Reads settings.groq_model_default for the agency; falls back to LLM_MODEL_FALLBACK
-// if the row is missing OR the settings read errors.
-async function getDefaultModel(agencyId: string): Promise<string> {
-  try {
-    const v = await getSetting(agencyId, "groq_model_default");
-    return (v && v.trim()) || LLM_MODEL_FALLBACK;
-  } catch (_e) {
-    return LLM_MODEL_FALLBACK;
-  }
-}
 
 export interface ParseLLMOpts {
   agencyId: string;
@@ -53,24 +32,24 @@ export interface ParseLLMOpts {
   purpose: string;
   model?: string;
   maxTokens?: number;
-  // When true, a failed Groq call returns { ok:false, queued:false } instead of
+  // When true, a failed read returns { ok:false, queued:false } instead of
   // parking a row in llm_parse_queue. For callers that already have their own
-  // fallback and would otherwise leave rows nobody drains — see the note on
-  // Step 3 below.
+  // fallback and would otherwise leave rows nobody drains.
   skipQueueOnFailure?: boolean;
   // Pointer to the row this job must write its result back to, stored on the
   // queue row as target_ref and read by llm-queue-drainer. Required for any
   // purpose whose write target is NOT implied by documentId or by the parsed
-  // payload itself. Shape is purpose-specific — the drainer's handler for the
-  // purpose defines it. Added 2026-08-07 after a queued wrapup_organize job
-  // proved undrainable: nothing recorded which weekly_cpr_team_detail row it
-  // belonged to, and the source email had already been archived.
+  // payload itself (2026-08-07, an undrainable wrapup_organize job).
   targetRef?: Record<string, unknown>;
-  // When true, skip the direct call entirely and queue the job for
-  // llm-queue-drainer. For purposes whose ONLY reader is the drainer — bank,
-  // card and investment statements since 2026-09-26, so every statement gets
-  // the same fine-print trimming, sign repairs and checks.
+  // When true, skip the direct read and queue the job for llm-queue-drainer.
+  // For purposes whose ONLY reader is the drainer — bank, card and investment
+  // statements since 2026-09-26. The drainer applies the same Groq-then-Claude
+  // order with the statement checks.
   queueOnly?: boolean;
+  // The parser's own safety check on the parsed answer: null when it is
+  // usable, otherwise a short reason. A failed check sends the read to the
+  // Claude backup. Answers that are not JSON always fail.
+  check?: (json: any) => string | null;
 }
 
 export type ParseLLMResult =
@@ -78,148 +57,49 @@ export type ParseLLMResult =
   | { ok: false; queued: true; queueId: string }
   | { ok: false; queued: false; error: string };
 
-async function callGroqDirect(opts: {
-  apiKey: string;
-  model: string;
-  systemPrompt: string;
-  userContent: string;
-  maxTokens: number;
-  context: string; // e.g. "purpose=resume_identity_extract document=<id>" -- for the timeout alert
-}): Promise<{ ok: boolean; raw: string; error: string | null; httpStatus: number }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);
-  const startedAt = Date.now();
-  try {
-    const res = await fetch(GROQ_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${opts.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: opts.model,
-        messages: [
-          { role: "system", content: opts.systemPrompt },
-          { role: "user", content: opts.userContent },
-        ],
-        temperature: 0.1,
-        max_tokens: opts.maxTokens,
-        // Groq supports response_format hinting for newer models; safe to omit.
-      }),
-      signal: controller.signal,
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      return {
-        ok: false,
-        raw: "",
-        error: `Groq HTTP ${res.status}: ${text.slice(0, 400)}`,
-        httpStatus: res.status,
-      };
-    }
-    let parsed: any;
-    try { parsed = JSON.parse(text); }
-    catch (e) {
-      return { ok: false, raw: text, error: `Groq returned non-JSON envelope: ${String(e)}`, httpStatus: res.status };
-    }
-    const content = parsed?.choices?.[0]?.message?.content ?? "";
-    if (!content || typeof content !== "string") {
-      return { ok: false, raw: "", error: "Groq returned empty content", httpStatus: res.status };
-    }
-    return { ok: true, raw: content, error: null, httpStatus: res.status };
-  } catch (e) {
-    const elapsedMs = Date.now() - startedAt;
-    const timedOut = e instanceof Error && e.name === "AbortError";
-    if (timedOut) writeGroqTimeoutReport(elapsedMs, opts.context);
-    const error = timedOut
-      ? `Groq call timed out after ${elapsedMs}ms`
-      : `Groq fetch failed: ${(e as Error).message}`;
-    return { ok: false, raw: "", error, httpStatus: 0 };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// ---------- Request budget ----------
-//
-// Groq caps EVERY request — prompt AND completion together — at a fixed token
-// budget, 8,000 on this account tier. A caller's maxTokens is therefore a
-// CEILING, not a reservation. Asking for 8,000 completion tokens on top of a
-// 4,200-token prompt is an 11,300-token request, and it comes back HTTP 413.
-//
-// A 413 is not a 429. A 429 means slow down and the identical payload succeeds
-// later; a 413 means this one request is too big and it will fail the same way
-// forever. Retrying it just delays the alert.
-//
-// llm-queue-drainer has fitted its budget this way since the AMEX statement
-// incident. The ingest side did not, so bank.ts still asked for a flat 8,000
-// and payroll, production and PFA each asked for 6,000 — every one of them a
-// 413 waiting for a large enough document. Clamping here fixes all call sites
-// at once and means no future caller can get it wrong.
-const GROQ_REQUEST_TOKEN_CAP = 8000;
-const GROQ_SAFETY_MARGIN = 300;
-// 4 chars/token is the prose rule of thumb, but statement and payroll text is
-// dense with digits and punctuation and tokenizes worse. Measured at 3.70 on a
-// real AMEX statement. Estimate low so sizing errs toward a slightly smaller
-// answer budget rather than a rejected request.
-const CHARS_PER_TOKEN_EST = 3.4;
-const GROQ_MIN_COMPLETION_TOKENS = 400;
-
-function fitMaxTokens(systemPrompt: string, userContent: string, ceiling: number): number {
-  const promptTokensEst = Math.ceil((systemPrompt.length + userContent.length) / CHARS_PER_TOKEN_EST);
-  const available = GROQ_REQUEST_TOKEN_CAP - promptTokensEst - GROQ_SAFETY_MARGIN;
-  return Math.max(GROQ_MIN_COMPLETION_TOKENS, Math.min(ceiling, available));
-}
-
 export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> {
-  // Step 0: resolve the model once — settings.groq_model_default or fallback
   const model = opts.model ?? await getDefaultModel(opts.agencyId);
-  // Step 1: load the Groq API key for this agency
-  const groqKey = await getSetting(opts.agencyId, "groq_api_key");
+  let directError: string | null = null;
 
-  // Step 2: try the direct Groq call (if key is present), unless the caller
-  // routes this purpose to the queue's reader only.
-  // What the direct call actually said. Carried into the failure below so a
-  // caller sees "Groq HTTP 429: ..." instead of a bare "failed" (2026-09-26:
-  // 14 CTS reads failed with nothing to say why).
-  let directError: string | null = groqKey ? null : "no groq_api_key setting";
-  if (groqKey && !opts.queueOnly) {
-    const llm = await callGroqDirect({
-      apiKey: groqKey,
+  if (!opts.queueOnly) {
+    const groqKey = await getSetting(opts.agencyId, "groq_api_key");
+    const read = await readWithBackup({
+      agencyId: opts.agencyId,
+      groqKey: groqKey || null,
       model,
       systemPrompt: opts.systemPrompt,
       userContent: opts.userContent,
       maxTokens: fitMaxTokens(opts.systemPrompt, opts.userContent, opts.maxTokens ?? 4000),
-      context: `purpose=${opts.purpose} document=${opts.documentId ?? "none"}`,
+      claudeMaxTokens: Math.max(opts.maxTokens ?? 4000, 4000),
+      groqTimeoutMs: GROQ_TIMEOUT_MS,
+      claudeTimeoutMs: 60000,
+      label: `purpose=${opts.purpose} document=${opts.documentId ?? "none"}`,
+      check: (raw) => {
+        let json: any;
+        try { json = JSON.parse(stripFences(raw)); }
+        catch (_e) { return `answer is not JSON: ${stripFences(raw).slice(0, 160)}`; }
+        return opts.check ? opts.check(json) : null;
+      },
     });
-
-    if (llm.ok) {
-      const cleaned = stripFences(llm.raw);
-      try {
-        return { ok: true, json: JSON.parse(cleaned), raw: cleaned };
-      } catch (_e) {
-        directError = `model returned non-JSON content: ${cleaned.slice(0, 160)}`;
-        // LLM returned non-JSON content. Fall through to queue with the raw
-        // content recorded as user_content so workbench can salvage it later.
+    if (read.ok) {
+      const cleaned = stripFences(read.raw);
+      if (read.reader === "claude") {
+        console.log(`[document-processor] ${opts.purpose} read by the Claude backup (Groq: ${read.groqProblem})`);
       }
+      return { ok: true, json: JSON.parse(cleaned), raw: cleaned };
     }
-    if (!llm.ok) directError = llm.error;
-    // Any failure path falls through to the queue below.
+    directError = read.error;
   }
 
-  // Step 3: queue for workbench-side processing (true last resort)
-  //
-  // Opt-out: llm-queue-drainer only handles the purposes it has handlers for.
-  // A caller whose purpose the drainer does not know would leave rows pending
-  // forever, inflating the queue with work nobody will ever pick up. Callers
-  // that carry their own fallback set skipQueueOnFailure and take the plain
-  // failure instead. (Found 2026-08-04: 69 stranded resume_identity_extract
-  // rows from the first full resume backlog run.)
+  // Last resort: queue for llm-queue-drainer, which only handles the purposes
+  // it has handlers for. A caller whose purpose the drainer does not know
+  // would leave rows pending forever (2026-08-04: 69 stranded rows), so those
+  // callers set skipQueueOnFailure and take the plain failure instead.
   if (opts.skipQueueOnFailure) {
     return {
       ok: false,
       queued: false,
-      error: `Groq direct call failed (${directError ?? "unknown"}); queue skipped at caller's request`,
+      error: `AI read failed (${directError ?? "unknown"}); queue skipped at caller's request`,
     };
   }
 
@@ -242,7 +122,7 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
     return {
       ok: false,
       queued: false,
-      error: `Groq direct call failed AND queue insert failed: ${error?.message ?? "unknown"}`,
+      error: `AI read failed (${directError ?? "queued only"}) AND queue insert failed: ${error?.message ?? "unknown"}`,
     };
   }
 

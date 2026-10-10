@@ -61,6 +61,9 @@ ORDER = [
     # 2026-10-09: staging raw bytes for Composio file arguments (CTS site pull
     # files its PDF to Drive). Shared with pfa-reconciliation-send.
     "../_shared/composio_stage.ts",
+    # 2026-10-09: the one Groq caller, the token clamp, Groq pacing and the
+    # Claude backup reader. lib/llm.ts is now a thin layer over this file.
+    "../_shared/llm.ts",
     "lib/composio.ts",
     "lib/docx.ts",
     "lib/llm.ts",
@@ -117,6 +120,11 @@ EXTRA_RENAMES = {
     "../_shared/composio.ts": [
         ("callComposio", "_sharedCallComposio"),
         ("fetchWithTimeout", "_sharedFetchWithTimeout"),
+    ],
+    # parsers/cts_site.ts declares its own module-scope sleep(); "sleep(" only
+    # occurs in _shared/llm.ts as that helper's declaration and calls.
+    "../_shared/llm.ts": [
+        ("sleep(", "_llmSleep("),
     ],
 }
 

@@ -102,6 +102,15 @@ function classifyWithdrawalType(description: string): string {
   return "Misc Withdrawal";
 }
 
+// Safety check on one AI answer, shared by the Claude backup and the guard below.
+function pfaStatementProblem(parsed: any): string | null {
+  if (!parsed?.statement_period_start || !parsed?.statement_period_end) return "LLM output missing statement period";
+  if (typeof parsed.opening_balance !== "number" || typeof parsed.closing_balance !== "number") {
+    return "LLM output missing opening/closing balance";
+  }
+  return null;
+}
+
 export async function processPfaStatement(opts: {
   agencyId: string;
   documentId: string;
@@ -119,18 +128,15 @@ export async function processPfaStatement(opts: {
     documentId: opts.documentId,
     purpose: "parse_pfa_statement",
     maxTokens: 6000,
+    check: pfaStatementProblem,
   });
   if (!llmResult.ok) {
     if (llmResult.queued) return { ok: false, queued: true, queueId: llmResult.queueId };
     return { ok: false, queued: false, error: llmResult.error };
   }
   const parsed = llmResult.json as ParsedPfaStatement;
-  if (!parsed?.statement_period_start || !parsed?.statement_period_end) {
-    return { ok: false, queued: false, error: "LLM output missing statement period" };
-  }
-  if (typeof parsed.opening_balance !== "number" || typeof parsed.closing_balance !== "number") {
-    return { ok: false, queued: false, error: "LLM output missing opening/closing balance" };
-  }
+  const shapeProblem = pfaStatementProblem(parsed);
+  if (shapeProblem) return { ok: false, queued: false, error: shapeProblem };
 
   // 2) Resolve PFA account
   const { data: pfaAccount, error: acctErr } = await sb

@@ -76,6 +76,13 @@ Rules:
 - Output raw JSON, never wrap it in code fences.
 `.trim();
 
+// Safety check on one AI answer, shared by the Claude backup and the guard below.
+function payrollHeaderProblem(json: any): string | null {
+  const run = json?.run;
+  return (!run?.pay_period_start || !run?.pay_period_end || !run?.pay_date)
+    ? "payroll header missing required dates" : null;
+}
+
 export async function parsePayrollRun(opts: {
   agencyId: string;
   composioApiKey: string;
@@ -92,6 +99,7 @@ export async function parsePayrollRun(opts: {
     documentId: opts.documentId,
     purpose: "parse_payroll_run",
     maxTokens: 6000,
+    check: payrollHeaderProblem,
   });
 
   if (!result.ok) {
@@ -100,9 +108,8 @@ export async function parsePayrollRun(opts: {
   }
 
   const run = result.json?.run;
-  if (!run?.pay_period_start || !run?.pay_period_end || !run?.pay_date) {
-    return { ok: false, queued: false, error: "payroll header missing required dates" };
-  }
+  const headerProblem = payrollHeaderProblem(result.json);
+  if (headerProblem) return { ok: false, queued: false, error: headerProblem };
 
   const rawDetails: any[] = Array.isArray(result.json?.details) ? result.json.details : [];
 

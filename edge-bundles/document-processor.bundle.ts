@@ -836,6 +836,394 @@ export async function stageFileWithComposio(opts: {
   return { ok: true, s3key, error: null };
 }
 
+// ==================== ../_shared/llm.ts ====================
+// =========================================================================
+// _shared/llm.ts
+// =========================================================================
+// Canonical Groq chat caller for ALL Newtworks edge functions. Replaces the
+// seven independent reimplementations that used to live in automation-runner,
+// telegram, chatbot, team-trajectory-summarize, llm-queue-drainer,
+// generate-custom-probes and document-processor/lib/llm.ts.
+//
+// Behavior knobs cover every existing call site:
+//   temperature / maxTokens — per caller
+//   jsonObject              — response_format {type:"json_object"} (runner style)
+//   retries                 — retry 429/5xx with 500ms*2^n backoff (runner style)
+//
+// Returns the RAW assistant content string. JSON parsing of the content is
+// the caller's job (some callers want text, some want JSON, some strip fences
+// first). stripFences lives in _shared/supabase.ts.
+// =========================================================================
+
+
+export const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
+export const LLM_MODEL_FALLBACK = "openai/gpt-oss-120b";
+
+// Reads settings.groq_model_default for the agency; falls back to
+// LLM_MODEL_FALLBACK if the row is missing OR the settings read errors.
+export async function getDefaultModel(agencyId: string): Promise<string> {
+  const v = await getSettingOrNull(agencyId, "groq_model_default");
+  return (v && v.trim()) || LLM_MODEL_FALLBACK;
+}
+
+// settings.groq_api_key, then the GROQ_API_KEY env var, then null.
+export async function getGroqKey(agencyId: string): Promise<string | null> {
+  const fromSettings = await getSettingOrNull(agencyId, "groq_api_key");
+  if (fromSettings) return fromSettings;
+  return Deno.env.get("GROQ_API_KEY") ?? null;
+}
+
+export interface GroqChatResult {
+  ok: boolean;
+  raw: string;            // assistant content when ok, "" otherwise
+  error: string | null;
+  httpStatus: number;     // 0 on network failure
+  // "length" means the model ran out of answer budget and the content is CUT
+  // OFF mid-stream. A caller that JSON.parses the content must check this
+  // first, otherwise a truncation is misreported as malformed JSON and the
+  // real cause (budget, not the model's output shape) stays hidden.
+  finishReason?: string | null;
+}
+
+function _llmSleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+export async function callGroqChat(opts: {
+  apiKey: string;
+  model: string;
+  systemPrompt: string;
+  userContent: string;
+  maxTokens?: number;      // default 4000
+  temperature?: number;    // default 0.1
+  jsonObject?: boolean;    // request response_format json_object
+  retries?: number;        // extra attempts on 429/5xx; default 0
+  // gpt-oss models are REASONING models: Groq bills their hidden thinking
+  // tokens against max_tokens, so thinking silently eats the answer budget.
+  // Measured live 2026-08-18 on AMEX Discretionary 26-08: max_tokens 2623,
+  // visible answer stopped at ~365 tokens (~1459 chars, mid-string) because
+  // roughly 2250 tokens went to thinking. Set "low" for mechanical extraction
+  // (statement parsing, field pulls) where thinking buys nothing. Omit to keep
+  // the provider default.
+  reasoningEffort?: "none" | "low" | "medium" | "high";
+  // Abort a call that has not answered in this many ms (none by default).
+  timeoutMs?: number;
+  // Pacing (2026-10-09). With agencyId set, the call first books its tokens
+  // against the agency's per-minute Groq budget (groq_pace() in the database,
+  // shared by every function and every invocation) and waits its turn, so a
+  // burst is spread out instead of tripping the 8,000-tokens-a-minute cap.
+  // A turn further off than maxPaceWaitMs (default 30s) is not waited for:
+  // the call returns "Groq busy" at once so the caller can use its backup.
+  agencyId?: string;
+  maxPaceWaitMs?: number;
+}): Promise<GroqChatResult> {
+  if (opts.agencyId) {
+    const need = estimateTokens(opts.systemPrompt + opts.userContent) + (opts.maxTokens ?? 4000);
+    const pace = await paceGroq(opts.agencyId, need, opts.maxPaceWaitMs ?? 30000);
+    if (pace.busyMs > 0) {
+      return {
+        ok: false, raw: "", httpStatus: 429,
+        error: `Groq busy: next turn under the per-minute token cap is ${Math.ceil(pace.busyMs / 1000)}s away`,
+      };
+    }
+    if (pace.waitMs > 0) await _llmSleep(pace.waitMs);
+  }
+  const body: Record<string, unknown> = {
+    model: opts.model,
+    messages: [
+      { role: "system", content: opts.systemPrompt },
+      { role: "user", content: opts.userContent },
+    ],
+    temperature: opts.temperature ?? 0.1,
+    max_tokens: opts.maxTokens ?? 4000,
+  };
+  if (opts.jsonObject) body.response_format = { type: "json_object" };
+  if (opts.reasoningEffort) body.reasoning_effort = opts.reasoningEffort;
+
+  const attempts = 1 + Math.max(0, opts.retries ?? 0);
+  let lastErr = "unknown";
+  let lastStatus = 0;
+  // A paced call that still gets a 429 (another account user, or a booking
+  // estimate that came in low) waits once for Groq's own retry-after when it
+  // is short, rather than giving up straight away.
+  let honoredRetryAfter = !opts.agencyId;
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    let res: Response;
+    const controller = new AbortController();
+    const timer = opts.timeoutMs ? setTimeout(() => controller.abort(), opts.timeoutMs) : null;
+    const startedAt = Date.now();
+    try {
+      res = await fetch(GROQ_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${opts.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      if (timer) clearTimeout(timer);
+      const timedOut = e instanceof Error && e.name === "AbortError";
+      return {
+        ok: false, raw: "", httpStatus: 0,
+        error: timedOut
+          ? `Groq call timed out after ${Date.now() - startedAt}ms`
+          : `Groq fetch failed: ${(e as Error).message}`,
+      };
+    }
+    lastStatus = res.status;
+
+    if (res.status === 429 && !honoredRetryAfter) {
+      const after = Number(res.headers.get("retry-after"));
+      if (Number.isFinite(after) && after > 0 && after <= 20) {
+        honoredRetryAfter = true;
+        await res.text().catch(() => "");
+        if (timer) clearTimeout(timer);
+        await _llmSleep(after * 1000 + 250);
+        attempt--; // this wait does not use up one of the caller's retries
+        continue;
+      }
+    }
+
+    if ((res.status === 429 || res.status >= 500) && attempt < attempts - 1) {
+      lastErr = `Groq HTTP ${res.status}`;
+      await res.text().catch(() => "");
+      if (timer) clearTimeout(timer);
+      await _llmSleep(500 * Math.pow(2, attempt));
+      continue;
+    }
+
+    let text: string;
+    try { text = await res.text(); }
+    catch (e) {
+      return { ok: false, raw: "", error: `Groq answer could not be read: ${(e as Error).message}`, httpStatus: res.status };
+    }
+    finally { if (timer) clearTimeout(timer); }
+    if (!res.ok) {
+      return { ok: false, raw: "", error: `Groq HTTP ${res.status}: ${text.slice(0, 400)}`, httpStatus: res.status };
+    }
+    let parsed: any;
+    try { parsed = JSON.parse(text); }
+    catch (e) {
+      return { ok: false, raw: text, error: `Groq returned non-JSON envelope: ${String(e)}`, httpStatus: res.status };
+    }
+    const finishReason = parsed?.choices?.[0]?.finish_reason ?? null;
+    const content = parsed?.choices?.[0]?.message?.content ?? "";
+    if (!content || typeof content !== "string") {
+      return { ok: false, raw: "", error: "Groq returned empty content", httpStatus: res.status, finishReason };
+    }
+    return { ok: true, raw: content, error: null, httpStatus: res.status, finishReason };
+  }
+
+  return { ok: false, raw: "", error: `Groq exhausted retries: ${lastErr}`, httpStatus: lastStatus };
+}
+
+// =========================================================================
+// Pacing (2026-10-09)
+// =========================================================================
+// Groq allows this account 8,000 tokens a minute (prompt + answer budget). A
+// burst of reads used to fire together and all but the first came back 429.
+// groq_pace() in the database keeps a one-minute booking list in the agency's
+// settings row 'groq_tpm_ledger', locked per call, so every function and every
+// invocation books from the same budget. It answers with how long to wait
+// before sending (waitMs, already booked) or, when the next turn is further
+// off than the caller will wait, how far off it is (busyMs, nothing booked).
+// If the booking itself fails the call goes ahead unpaced: pacing must never
+// be the reason a read does not happen.
+
+// Statement and payroll text is dense with digits; 3.4 chars a token errs high.
+export const CHARS_PER_TOKEN_EST = 3.4;
+export function estimateTokens(s: string): number {
+  return Math.ceil((s ?? "").length / CHARS_PER_TOKEN_EST);
+}
+
+// Groq caps EVERY request, prompt AND answer together, at 8,000 tokens on this
+// tier. A caller's answer budget is a CEILING, not a reservation: fit it to
+// what is left after the prompt. 413 (too big, fails forever) is not 429 (too
+// fast, works after a wait). The one copy of this clamp; document-processor's
+// parseWithLLM and llm-queue-drainer both call it (they each had their own
+// until 2026-10-09).
+export const GROQ_REQUEST_TOKEN_CAP = 8000;
+export const GROQ_SAFETY_MARGIN = 300;
+export function fitMaxTokens(systemPrompt: string, userContent: string, ceiling: number, floor = 400): number {
+  const available = GROQ_REQUEST_TOKEN_CAP - estimateTokens(systemPrompt + userContent) - GROQ_SAFETY_MARGIN;
+  return Math.max(floor, Math.min(ceiling, available));
+}
+
+export async function paceGroq(
+  agencyId: string, tokens: number, maxWaitMs: number,
+): Promise<{ waitMs: number; busyMs: number }> {
+  try {
+    const { data, error } = await sb.rpc("groq_pace", {
+      p_agency_id: agencyId, p_tokens: Math.max(1, Math.round(tokens)), p_max_wait_ms: Math.round(maxWaitMs),
+    });
+    if (error || !data) return { waitMs: 0, busyMs: 0 };
+    return { waitMs: Number(data.wait_ms) || 0, busyMs: Number(data.busy_ms) || 0 };
+  } catch (_e) {
+    return { waitMs: 0, busyMs: 0 };
+  }
+}
+
+// =========================================================================
+// Claude backup reader (2026-10-09)
+// =========================================================================
+// Groq reads first. Claude reads only when Groq errors or its answer fails
+// the caller's checks. The call is lean: the same instructions and the same
+// extracted text Groq got, nothing else. Pay-per-use key in
+// settings.anthropic_api_key (the same key the database's claude_api_call()
+// uses for the scheduled jobs).
+
+export const CLAUDE_BACKUP_MODEL = "claude-sonnet-5-5";
+const CLAUDE_ENDPOINT = "https://api.anthropic.com/v1/messages";
+
+export async function getClaudeKey(agencyId: string): Promise<string | null> {
+  return await getSettingOrNull(agencyId, "anthropic_api_key");
+}
+
+export async function callClaudeChat(opts: {
+  apiKey: string;
+  systemPrompt: string;
+  userContent: string;
+  maxTokens?: number;   // default 8000
+  model?: string;       // default CLAUDE_BACKUP_MODEL
+  timeoutMs?: number;   // default 90s
+}): Promise<GroqChatResult> {
+  const controller = new AbortController();
+  const timeoutMs = opts.timeoutMs ?? 90000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const startedAt = Date.now();
+  try {
+    const res = await fetch(CLAUDE_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "x-api-key": opts.apiKey,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: opts.model ?? CLAUDE_BACKUP_MODEL,
+        max_tokens: opts.maxTokens ?? 8000,
+        system: opts.systemPrompt,
+        messages: [{ role: "user", content: opts.userContent }],
+      }),
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      return { ok: false, raw: "", error: `Claude HTTP ${res.status}: ${text.slice(0, 400)}`, httpStatus: res.status };
+    }
+    let parsed: any;
+    try { parsed = JSON.parse(text); }
+    catch (e) {
+      return { ok: false, raw: text, error: `Claude returned non-JSON envelope: ${String(e)}`, httpStatus: res.status };
+    }
+    const content = Array.isArray(parsed?.content)
+      ? parsed.content.filter((b: any) => b?.type === "text").map((b: any) => b.text ?? "").join("")
+      : "";
+    // Same word Groq uses for a cut-off answer, so callers check one thing.
+    const finishReason = parsed?.stop_reason === "max_tokens" ? "length" : (parsed?.stop_reason ?? null);
+    if (!content) {
+      return { ok: false, raw: "", error: "Claude returned empty content", httpStatus: res.status, finishReason };
+    }
+    return { ok: true, raw: content, error: null, httpStatus: res.status, finishReason };
+  } catch (e) {
+    const timedOut = e instanceof Error && e.name === "AbortError";
+    return {
+      ok: false, raw: "", httpStatus: 0,
+      error: timedOut
+        ? `Claude call timed out after ${Date.now() - startedAt}ms`
+        : `Claude fetch failed: ${(e as Error).message}`,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export interface BackedReadResult extends GroqChatResult {
+  reader: "groq" | "claude" | null;   // who gave the answer in raw (null: nobody)
+  groqProblem: string | null;          // why Groq's answer was not used, if it was not
+  // On a double failure, each reader's raw answer when it had one, so a
+  // caller whose checks are only advisory can still use the better one.
+  groqRaw: string | null;
+  claudeRaw: string | null;
+}
+
+// The one place that decides "Groq first, Claude as backup". check() returns
+// null when an answer is good, or a short reason it is not. A cut-off answer
+// always counts as a failure.
+export async function readWithBackup(opts: {
+  agencyId: string;
+  groqKey: string | null;
+  model: string;
+  systemPrompt: string;
+  userContent: string;
+  maxTokens: number;            // Groq answer ceiling (callers clamp to the cap first)
+  claudeMaxTokens?: number;     // default 8000; Claude has no 8,000 request cap
+  temperature?: number;
+  reasoningEffort?: "none" | "low" | "medium" | "high";
+  groqTimeoutMs?: number;
+  claudeTimeoutMs?: number;
+  maxPaceWaitMs?: number;
+  check?: (raw: string) => string | null;
+  label?: string;               // for the log line, e.g. "purpose=bank document=<id>"
+}): Promise<BackedReadResult> {
+  const judge = (r: GroqChatResult): string | null => {
+    if (!r.ok) return r.error ?? "no answer";
+    if (r.finishReason === "length") return `answer cut off at the answer budget (${r.raw.length} chars returned)`;
+    try { return opts.check ? opts.check(r.raw) : null; }
+    catch (e) { return `check threw: ${(e as Error).message}`; }
+  };
+
+  let groqProblem: string | null = opts.groqKey ? null : "no groq_api_key setting";
+  let groqRaw: string | null = null;
+  if (opts.groqKey) {
+    const g = await callGroqChat({
+      apiKey: opts.groqKey,
+      model: opts.model,
+      systemPrompt: opts.systemPrompt,
+      userContent: opts.userContent,
+      maxTokens: opts.maxTokens,
+      temperature: opts.temperature ?? 0.1,
+      reasoningEffort: opts.reasoningEffort,
+      timeoutMs: opts.groqTimeoutMs,
+      agencyId: opts.agencyId,
+      maxPaceWaitMs: opts.maxPaceWaitMs,
+    });
+    groqRaw = g.ok ? g.raw : null;
+    groqProblem = judge(g);
+    if (!groqProblem) return { ...g, reader: "groq", groqProblem: null, groqRaw, claudeRaw: null };
+  }
+
+  const claudeKey = await getClaudeKey(opts.agencyId);
+  if (!claudeKey) {
+    return {
+      ok: false, raw: groqRaw ?? "", httpStatus: 0, reader: groqRaw ? "groq" : null,
+      error: `Groq: ${groqProblem}; Claude backup: no anthropic_api_key setting`,
+      groqProblem, groqRaw, claudeRaw: null,
+    };
+  }
+  console.log(`[llm] Claude backup read (${opts.label ?? "no label"}); Groq: ${groqProblem}`);
+  const c = await callClaudeChat({
+    apiKey: claudeKey,
+    systemPrompt: opts.systemPrompt,
+    userContent: opts.userContent,
+    maxTokens: opts.claudeMaxTokens ?? 8000,
+    timeoutMs: opts.claudeTimeoutMs,
+  });
+  const claudeRaw = c.ok ? c.raw : null;
+  const claudeProblem = judge(c);
+  if (!claudeProblem) return { ...c, reader: "claude", groqProblem, groqRaw, claudeRaw };
+  return {
+    ok: false, raw: claudeRaw ?? groqRaw ?? "", httpStatus: c.httpStatus,
+    reader: claudeRaw ? "claude" : (groqRaw ? "groq" : null),
+    finishReason: c.finishReason,
+    error: `Groq: ${groqProblem}; Claude backup: ${claudeProblem}`,
+    groqProblem, groqRaw, claudeRaw,
+  };
+}
+
 // ==================== lib/composio.ts ====================
 // =========================================================================
 // lib/composio.ts — document-processor-local shim over _shared/composio.ts
@@ -1107,48 +1495,26 @@ export async function extractDocxText(
 
 // ==================== lib/llm.ts ====================
 // =========================================================================
-// lib/llm.ts  (v3 — direct Groq API)
+// lib/llm.ts  (v4 — shared reader, Claude backup)
 // =========================================================================
-// Single chokepoint for LLM calls inside the document-processor.
+// Single chokepoint for AI reads inside the document-processor.
 //
-// CHANGED IN v3: Switched from COMPOSIO_SEARCH_GROQ_CHAT (which 404s on this
-// agency's composio_api_key) to calling Groq's HTTPS endpoint directly using
-// a `groq_api_key` setting.
+// v4 (2026-10-09): the Groq call, the token clamp and the "Groq first, Claude
+// as backup" decision all live in ../../_shared/llm.ts (readWithBackup). This
+// file used to carry its own Groq caller and its own copy of the clamp; both
+// are gone so there is one of each.
 //
-// Behavior on failure:
-//   1. Direct Groq call returns 4xx/5xx OR network error → fall through
-//   2. LLM returns non-JSON content → fall through
-//   3. Fall-through: INSERT into llm_parse_queue for workbench-side retry
-//
-// The queue path is now a true last resort, not the steady-state.
+// Order of readers:
+//   1. Groq, paced against the per-minute token cap.
+//   2. Claude (pay-per-use key, settings.anthropic_api_key) ONLY when Groq
+//      errors, is busy, cuts off, returns non-JSON, or fails the caller's
+//      check(). Same instructions, same extracted text, nothing else.
+//   3. Queue row in llm_parse_queue for llm-queue-drainer (true last resort,
+//      unless the caller set skipQueueOnFailure).
 // =========================================================================
 
 
-const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
-const LLM_MODEL_FALLBACK = "openai/gpt-oss-120b";
 const GROQ_TIMEOUT_MS = 25000;
-
-// TIMEOUT HANDLING added 2026-08-06 (Task 4, build-instructions 2026-08-06).
-// See lib/composio.ts's header comment for the full "why" -- same rationale
-// applies here: a stuck Groq call should fail fast and catchably instead of
-// riding the invocation to the platform's own wall-clock kill (observed as
-// an uncaught-exception 546 after ~105-113s). No retry added on purpose.
-function writeGroqTimeoutReport(elapsedMs: number, context: string): void {
-  console.error(
-    `[document-processor:groq_timeout] Groq call did not respond within ${elapsedMs}ms and was aborted. Context: ${context}`,
-  );
-}
-
-// Reads settings.groq_model_default for the agency; falls back to LLM_MODEL_FALLBACK
-// if the row is missing OR the settings read errors.
-async function getDefaultModel(agencyId: string): Promise<string> {
-  try {
-    const v = await getSetting(agencyId, "groq_model_default");
-    return (v && v.trim()) || LLM_MODEL_FALLBACK;
-  } catch (_e) {
-    return LLM_MODEL_FALLBACK;
-  }
-}
 
 export interface ParseLLMOpts {
   agencyId: string;
@@ -1160,24 +1526,24 @@ export interface ParseLLMOpts {
   purpose: string;
   model?: string;
   maxTokens?: number;
-  // When true, a failed Groq call returns { ok:false, queued:false } instead of
+  // When true, a failed read returns { ok:false, queued:false } instead of
   // parking a row in llm_parse_queue. For callers that already have their own
-  // fallback and would otherwise leave rows nobody drains — see the note on
-  // Step 3 below.
+  // fallback and would otherwise leave rows nobody drains.
   skipQueueOnFailure?: boolean;
   // Pointer to the row this job must write its result back to, stored on the
   // queue row as target_ref and read by llm-queue-drainer. Required for any
   // purpose whose write target is NOT implied by documentId or by the parsed
-  // payload itself. Shape is purpose-specific — the drainer's handler for the
-  // purpose defines it. Added 2026-08-07 after a queued wrapup_organize job
-  // proved undrainable: nothing recorded which weekly_cpr_team_detail row it
-  // belonged to, and the source email had already been archived.
+  // payload itself (2026-08-07, an undrainable wrapup_organize job).
   targetRef?: Record<string, unknown>;
-  // When true, skip the direct call entirely and queue the job for
-  // llm-queue-drainer. For purposes whose ONLY reader is the drainer — bank,
-  // card and investment statements since 2026-09-26, so every statement gets
-  // the same fine-print trimming, sign repairs and checks.
+  // When true, skip the direct read and queue the job for llm-queue-drainer.
+  // For purposes whose ONLY reader is the drainer — bank, card and investment
+  // statements since 2026-09-26. The drainer applies the same Groq-then-Claude
+  // order with the statement checks.
   queueOnly?: boolean;
+  // The parser's own safety check on the parsed answer: null when it is
+  // usable, otherwise a short reason. A failed check sends the read to the
+  // Claude backup. Answers that are not JSON always fail.
+  check?: (json: any) => string | null;
 }
 
 export type ParseLLMResult =
@@ -1185,148 +1551,49 @@ export type ParseLLMResult =
   | { ok: false; queued: true; queueId: string }
   | { ok: false; queued: false; error: string };
 
-async function callGroqDirect(opts: {
-  apiKey: string;
-  model: string;
-  systemPrompt: string;
-  userContent: string;
-  maxTokens: number;
-  context: string; // e.g. "purpose=resume_identity_extract document=<id>" -- for the timeout alert
-}): Promise<{ ok: boolean; raw: string; error: string | null; httpStatus: number }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);
-  const startedAt = Date.now();
-  try {
-    const res = await fetch(GROQ_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${opts.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: opts.model,
-        messages: [
-          { role: "system", content: opts.systemPrompt },
-          { role: "user", content: opts.userContent },
-        ],
-        temperature: 0.1,
-        max_tokens: opts.maxTokens,
-        // Groq supports response_format hinting for newer models; safe to omit.
-      }),
-      signal: controller.signal,
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      return {
-        ok: false,
-        raw: "",
-        error: `Groq HTTP ${res.status}: ${text.slice(0, 400)}`,
-        httpStatus: res.status,
-      };
-    }
-    let parsed: any;
-    try { parsed = JSON.parse(text); }
-    catch (e) {
-      return { ok: false, raw: text, error: `Groq returned non-JSON envelope: ${String(e)}`, httpStatus: res.status };
-    }
-    const content = parsed?.choices?.[0]?.message?.content ?? "";
-    if (!content || typeof content !== "string") {
-      return { ok: false, raw: "", error: "Groq returned empty content", httpStatus: res.status };
-    }
-    return { ok: true, raw: content, error: null, httpStatus: res.status };
-  } catch (e) {
-    const elapsedMs = Date.now() - startedAt;
-    const timedOut = e instanceof Error && e.name === "AbortError";
-    if (timedOut) writeGroqTimeoutReport(elapsedMs, opts.context);
-    const error = timedOut
-      ? `Groq call timed out after ${elapsedMs}ms`
-      : `Groq fetch failed: ${(e as Error).message}`;
-    return { ok: false, raw: "", error, httpStatus: 0 };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// ---------- Request budget ----------
-//
-// Groq caps EVERY request — prompt AND completion together — at a fixed token
-// budget, 8,000 on this account tier. A caller's maxTokens is therefore a
-// CEILING, not a reservation. Asking for 8,000 completion tokens on top of a
-// 4,200-token prompt is an 11,300-token request, and it comes back HTTP 413.
-//
-// A 413 is not a 429. A 429 means slow down and the identical payload succeeds
-// later; a 413 means this one request is too big and it will fail the same way
-// forever. Retrying it just delays the alert.
-//
-// llm-queue-drainer has fitted its budget this way since the AMEX statement
-// incident. The ingest side did not, so bank.ts still asked for a flat 8,000
-// and payroll, production and PFA each asked for 6,000 — every one of them a
-// 413 waiting for a large enough document. Clamping here fixes all call sites
-// at once and means no future caller can get it wrong.
-const GROQ_REQUEST_TOKEN_CAP = 8000;
-const GROQ_SAFETY_MARGIN = 300;
-// 4 chars/token is the prose rule of thumb, but statement and payroll text is
-// dense with digits and punctuation and tokenizes worse. Measured at 3.70 on a
-// real AMEX statement. Estimate low so sizing errs toward a slightly smaller
-// answer budget rather than a rejected request.
-const CHARS_PER_TOKEN_EST = 3.4;
-const GROQ_MIN_COMPLETION_TOKENS = 400;
-
-function fitMaxTokens(systemPrompt: string, userContent: string, ceiling: number): number {
-  const promptTokensEst = Math.ceil((systemPrompt.length + userContent.length) / CHARS_PER_TOKEN_EST);
-  const available = GROQ_REQUEST_TOKEN_CAP - promptTokensEst - GROQ_SAFETY_MARGIN;
-  return Math.max(GROQ_MIN_COMPLETION_TOKENS, Math.min(ceiling, available));
-}
-
 export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> {
-  // Step 0: resolve the model once — settings.groq_model_default or fallback
   const model = opts.model ?? await getDefaultModel(opts.agencyId);
-  // Step 1: load the Groq API key for this agency
-  const groqKey = await getSetting(opts.agencyId, "groq_api_key");
+  let directError: string | null = null;
 
-  // Step 2: try the direct Groq call (if key is present), unless the caller
-  // routes this purpose to the queue's reader only.
-  // What the direct call actually said. Carried into the failure below so a
-  // caller sees "Groq HTTP 429: ..." instead of a bare "failed" (2026-09-26:
-  // 14 CTS reads failed with nothing to say why).
-  let directError: string | null = groqKey ? null : "no groq_api_key setting";
-  if (groqKey && !opts.queueOnly) {
-    const llm = await callGroqDirect({
-      apiKey: groqKey,
+  if (!opts.queueOnly) {
+    const groqKey = await getSetting(opts.agencyId, "groq_api_key");
+    const read = await readWithBackup({
+      agencyId: opts.agencyId,
+      groqKey: groqKey || null,
       model,
       systemPrompt: opts.systemPrompt,
       userContent: opts.userContent,
       maxTokens: fitMaxTokens(opts.systemPrompt, opts.userContent, opts.maxTokens ?? 4000),
-      context: `purpose=${opts.purpose} document=${opts.documentId ?? "none"}`,
+      claudeMaxTokens: Math.max(opts.maxTokens ?? 4000, 4000),
+      groqTimeoutMs: GROQ_TIMEOUT_MS,
+      claudeTimeoutMs: 60000,
+      label: `purpose=${opts.purpose} document=${opts.documentId ?? "none"}`,
+      check: (raw) => {
+        let json: any;
+        try { json = JSON.parse(stripFences(raw)); }
+        catch (_e) { return `answer is not JSON: ${stripFences(raw).slice(0, 160)}`; }
+        return opts.check ? opts.check(json) : null;
+      },
     });
-
-    if (llm.ok) {
-      const cleaned = stripFences(llm.raw);
-      try {
-        return { ok: true, json: JSON.parse(cleaned), raw: cleaned };
-      } catch (_e) {
-        directError = `model returned non-JSON content: ${cleaned.slice(0, 160)}`;
-        // LLM returned non-JSON content. Fall through to queue with the raw
-        // content recorded as user_content so workbench can salvage it later.
+    if (read.ok) {
+      const cleaned = stripFences(read.raw);
+      if (read.reader === "claude") {
+        console.log(`[document-processor] ${opts.purpose} read by the Claude backup (Groq: ${read.groqProblem})`);
       }
+      return { ok: true, json: JSON.parse(cleaned), raw: cleaned };
     }
-    if (!llm.ok) directError = llm.error;
-    // Any failure path falls through to the queue below.
+    directError = read.error;
   }
 
-  // Step 3: queue for workbench-side processing (true last resort)
-  //
-  // Opt-out: llm-queue-drainer only handles the purposes it has handlers for.
-  // A caller whose purpose the drainer does not know would leave rows pending
-  // forever, inflating the queue with work nobody will ever pick up. Callers
-  // that carry their own fallback set skipQueueOnFailure and take the plain
-  // failure instead. (Found 2026-08-04: 69 stranded resume_identity_extract
-  // rows from the first full resume backlog run.)
+  // Last resort: queue for llm-queue-drainer, which only handles the purposes
+  // it has handlers for. A caller whose purpose the drainer does not know
+  // would leave rows pending forever (2026-08-04: 69 stranded rows), so those
+  // callers set skipQueueOnFailure and take the plain failure instead.
   if (opts.skipQueueOnFailure) {
     return {
       ok: false,
       queued: false,
-      error: `Groq direct call failed (${directError ?? "unknown"}); queue skipped at caller's request`,
+      error: `AI read failed (${directError ?? "unknown"}); queue skipped at caller's request`,
     };
   }
 
@@ -1349,7 +1616,7 @@ export async function parseWithLLM(opts: ParseLLMOpts): Promise<ParseLLMResult> 
     return {
       ok: false,
       queued: false,
-      error: `Groq direct call failed AND queue insert failed: ${error?.message ?? "unknown"}`,
+      error: `AI read failed (${directError ?? "queued only"}) AND queue insert failed: ${error?.message ?? "unknown"}`,
     };
   }
 
@@ -3046,6 +3313,13 @@ Rules:
 - Output raw JSON, never wrap it in code fences.
 `.trim();
 
+// Safety check on one AI answer, shared by the Claude backup and the guard below.
+function payrollHeaderProblem(json: any): string | null {
+  const run = json?.run;
+  return (!run?.pay_period_start || !run?.pay_period_end || !run?.pay_date)
+    ? "payroll header missing required dates" : null;
+}
+
 export async function parsePayrollRun(opts: {
   agencyId: string;
   composioApiKey: string;
@@ -3062,6 +3336,7 @@ export async function parsePayrollRun(opts: {
     documentId: opts.documentId,
     purpose: "parse_payroll_run",
     maxTokens: 6000,
+    check: payrollHeaderProblem,
   });
 
   if (!result.ok) {
@@ -3070,9 +3345,8 @@ export async function parsePayrollRun(opts: {
   }
 
   const run = result.json?.run;
-  if (!run?.pay_period_start || !run?.pay_period_end || !run?.pay_date) {
-    return { ok: false, queued: false, error: "payroll header missing required dates" };
-  }
+  const headerProblem = payrollHeaderProblem(result.json);
+  if (headerProblem) return { ok: false, queued: false, error: headerProblem };
 
   const rawDetails: any[] = Array.isArray(result.json?.details) ? result.json.details : [];
 
@@ -3284,31 +3558,10 @@ function resolveStaffId(idx: Map<string, string>, docName: string): string | nul
   return null;
 }
 
-export async function parseProductionReport(opts: {
-  agencyId: string;
-  composioApiKey: string;
-  composioUserId: string;
-  documentId: string;
-  reportVariant: "commission_report" | "team_production";
-  statementText: string;
-}): Promise<ParseProductionResult> {
-  const result = await parseWithLLM({
-    agencyId: opts.agencyId,
-    composioApiKey: opts.composioApiKey,
-    composioUserId: opts.composioUserId,
-    systemPrompt: SYSTEM_PROMPT_PRODUCTION,
-    userContent: `Report variant: ${opts.reportVariant}\n\n${opts.statementText}`,
-    documentId: opts.documentId,
-    purpose: `parse_${opts.reportVariant}`,
-    maxTokens: 6000,
-  });
-
-  if (!result.ok) {
-    if (result.queued) return { ok: false, queued: true, queueId: result.queueId };
-    return { ok: false, queued: false, error: result.error };
-  }
-
-  const rawRows: any[] = Array.isArray(result.json?.rows) ? result.json.rows : [];
+// The rows the parser can use from one AI answer. Also the safety check the
+// Claude backup reads against: no usable rows means the read failed.
+function productionRowsFrom(json: any): ProductionRow[] {
+  const rawRows: any[] = Array.isArray(json?.rows) ? json.rows : [];
   const rows: ProductionRow[] = [];
   for (const r of rawRows) {
     if (typeof r?.premium_issued !== "number") continue;
@@ -3329,6 +3582,35 @@ export async function parseProductionReport(opts: {
       notes: r.notes ? String(r.notes).slice(0, 500) : null,
     });
   }
+  return rows;
+}
+
+export async function parseProductionReport(opts: {
+  agencyId: string;
+  composioApiKey: string;
+  composioUserId: string;
+  documentId: string;
+  reportVariant: "commission_report" | "team_production";
+  statementText: string;
+}): Promise<ParseProductionResult> {
+  const result = await parseWithLLM({
+    agencyId: opts.agencyId,
+    composioApiKey: opts.composioApiKey,
+    composioUserId: opts.composioUserId,
+    systemPrompt: SYSTEM_PROMPT_PRODUCTION,
+    userContent: `Report variant: ${opts.reportVariant}\n\n${opts.statementText}`,
+    documentId: opts.documentId,
+    purpose: `parse_${opts.reportVariant}`,
+    maxTokens: 6000,
+    check: (json) => productionRowsFrom(json).length === 0 ? "answer has no usable production rows" : null,
+  });
+
+  if (!result.ok) {
+    if (result.queued) return { ok: false, queued: true, queueId: result.queueId };
+    return { ok: false, queued: false, error: result.error };
+  }
+
+  const rows = productionRowsFrom(result.json);
 
   if (rows.length === 0) {
     return { ok: false, queued: false, error: "LLM returned no parseable rows" };
@@ -4472,6 +4754,15 @@ function classifyWithdrawalType(description: string): string {
   return "Misc Withdrawal";
 }
 
+// Safety check on one AI answer, shared by the Claude backup and the guard below.
+function pfaStatementProblem(parsed: any): string | null {
+  if (!parsed?.statement_period_start || !parsed?.statement_period_end) return "LLM output missing statement period";
+  if (typeof parsed.opening_balance !== "number" || typeof parsed.closing_balance !== "number") {
+    return "LLM output missing opening/closing balance";
+  }
+  return null;
+}
+
 export async function processPfaStatement(opts: {
   agencyId: string;
   documentId: string;
@@ -4489,18 +4780,15 @@ export async function processPfaStatement(opts: {
     documentId: opts.documentId,
     purpose: "parse_pfa_statement",
     maxTokens: 6000,
+    check: pfaStatementProblem,
   });
   if (!llmResult.ok) {
     if (llmResult.queued) return { ok: false, queued: true, queueId: llmResult.queueId };
     return { ok: false, queued: false, error: llmResult.error };
   }
   const parsed = llmResult.json as ParsedPfaStatement;
-  if (!parsed?.statement_period_start || !parsed?.statement_period_end) {
-    return { ok: false, queued: false, error: "LLM output missing statement period" };
-  }
-  if (typeof parsed.opening_balance !== "number" || typeof parsed.closing_balance !== "number") {
-    return { ok: false, queued: false, error: "LLM output missing opening/closing balance" };
-  }
+  const shapeProblem = pfaStatementProblem(parsed);
+  if (shapeProblem) return { ok: false, queued: false, error: shapeProblem };
 
   // 2) Resolve PFA account
   const { data: pfaAccount, error: acctErr } = await sb
@@ -14367,6 +14655,22 @@ async function processOneAttachment(
         // preserveFormat is on: the default path reinjects newlines using a
         // pattern shaped for State Farm's own PDFs, and this is a different
         // vendor's layout.
+        // Emailed CTS report (Peter 2026-10-09): filed to Drive, never read.
+        // Scores come from the CTS site pull now, so an emailed copy gets no
+        // AI read, no candidate match and no alert. The hand-run Drive mode
+        // (cts_drive, parentArchive "Drive") still reads, as before.
+        if (!att.ctsPayload && att.parentArchive !== "Drive") {
+          await markDocument(documentId, "processed", 0, ["documents"],
+            "Emailed CTS report filed to Drive only; not read (scores come from the CTS site pull).");
+          await maybeArchiveThread(ctx, att.threadId, docType, sourceAccountCode);
+          results.push({
+            documentId, fileName: att.fileName, fromEmail: att.fromEmail,
+            docType, status: "processed", jeCount: 0, suspenseCount: 0,
+            sourceLabel: uploadSource,
+          });
+          break;
+        }
+
         // CTS site pull: the scores were read off the vendor's report page
         // already (parsers/cts_site.ts, no AI). The PDF is only filed.
         let parsed: { ok: true; candidateName: string | null; payload: Record<string, unknown> } | { ok: false; candidateName: string | null; error: string };
